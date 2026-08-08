@@ -6,31 +6,17 @@
 //!
 
 use {
-    crate::{block_cost_limits::*, transaction_cost::*},
+    crate::{allocated_accounts_data_size, block_cost_limits::*, transaction_cost::*},
     agave_feature_set::FeatureSet,
-    solana_bincode::limited_deserialize,
     solana_compute_budget::compute_budget_limits::DEFAULT_HEAP_COST,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_meta::TransactionMeta,
-    solana_sdk_ids::system_program,
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
-    solana_system_interface::{
-        MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION, MAX_PERMITTED_DATA_LENGTH,
-        instruction::SystemInstruction,
-    },
-    std::num::Saturating,
 };
 
 const ACCOUNT_DATA_COST_PAGE_SIZE: u64 = 32_u64.saturating_mul(1024);
 
 pub struct CostModel;
-
-#[derive(Debug, PartialEq)]
-enum SystemProgramAccountAllocation {
-    None,
-    Some(u64),
-    Failed,
-}
 
 impl CostModel {
     pub fn calculate_cost<'a, Tx: TransactionMeta + SVMStaticMessage>(
@@ -113,7 +99,7 @@ impl CostModel {
         let write_lock_cost = Self::get_write_lock_cost(num_write_locks);
 
         let allocated_accounts_data_size =
-            Self::calculate_allocated_accounts_data_size(instructions, feature_set);
+            allocated_accounts_data_size::calculate(instructions, feature_set);
 
         TransactionCost {
             transaction,
@@ -199,106 +185,6 @@ impl CostModel {
     ) -> u64 {
         Self::calculate_pages_cost(Self::calculate_pages_for_bytes(loaded_accounts_data_size))
     }
-
-    fn calculate_account_data_size_on_deserialized_system_instruction(
-        instruction: SystemInstruction,
-        feature_set: &FeatureSet,
-    ) -> SystemProgramAccountAllocation {
-        let validate_space = |space: u64| {
-            if space > MAX_PERMITTED_DATA_LENGTH {
-                SystemProgramAccountAllocation::Failed
-            } else {
-                SystemProgramAccountAllocation::Some(space)
-            }
-        };
-
-        match instruction {
-            SystemInstruction::CreateAccount { space, .. }
-            | SystemInstruction::CreateAccountWithSeed { space, .. }
-            | SystemInstruction::Allocate { space }
-            | SystemInstruction::AllocateWithSeed { space, .. } => validate_space(space),
-            SystemInstruction::CreateAccountAllowPrefund { space, .. } => {
-                if !feature_set.snapshot().create_account_allow_prefund {
-                    return SystemProgramAccountAllocation::Failed;
-                }
-                validate_space(space)
-            }
-            // DEVELOPER WARNING: New allocating instructions MUST return `Failed`
-            // until activated by a feature gate
-            SystemInstruction::Assign { .. }
-            | SystemInstruction::Transfer { .. }
-            | SystemInstruction::AdvanceNonceAccount
-            | SystemInstruction::WithdrawNonceAccount(..)
-            | SystemInstruction::InitializeNonceAccount(..)
-            | SystemInstruction::AuthorizeNonceAccount(..)
-            | SystemInstruction::UpgradeNonceAccount
-            | SystemInstruction::AssignWithSeed { .. }
-            | SystemInstruction::TransferWithSeed { .. } => SystemProgramAccountAllocation::None,
-            // DEVELOPER WARNING: New non-allocating instructions MUST return `Failed`
-            // until activated by a feature gate
-        } // Do not add wildcard pattern (_)
-    }
-
-    fn calculate_account_data_size_on_instruction(
-        program_id: &Pubkey,
-        instruction: SVMInstruction,
-        feature_set: &FeatureSet,
-    ) -> SystemProgramAccountAllocation {
-        if program_id == &system_program::id() {
-            if let Ok(instruction) =
-                limited_deserialize(instruction.data, solana_packet::PACKET_DATA_SIZE as u64)
-            {
-                Self::calculate_account_data_size_on_deserialized_system_instruction(
-                    instruction,
-                    feature_set,
-                )
-            } else {
-                SystemProgramAccountAllocation::Failed
-            }
-        } else {
-            SystemProgramAccountAllocation::None
-        }
-    }
-
-    /// eventually, potentially determine account data size of all writable accounts
-    /// at the moment, calculate account data size of account creation
-    fn calculate_allocated_accounts_data_size<'a>(
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
-        feature_set: &FeatureSet,
-    ) -> u64 {
-        let mut tx_attempted_allocation_size = Saturating(0u64);
-        for (program_id, instruction) in instructions {
-            match Self::calculate_account_data_size_on_instruction(
-                program_id,
-                instruction,
-                feature_set,
-            ) {
-                SystemProgramAccountAllocation::Failed => {
-                    // If any system program instructions can be statically
-                    // determined to fail, no allocations will actually be
-                    // persisted by the transaction. So return 0 here so that no
-                    // account allocation budget is used for this failed
-                    // transaction.
-                    return 0;
-                }
-                SystemProgramAccountAllocation::None => continue,
-                SystemProgramAccountAllocation::Some(ix_attempted_allocation_size) => {
-                    tx_attempted_allocation_size += ix_attempted_allocation_size;
-                }
-            }
-        }
-
-        // The runtime prevents transactions from allocating too much account
-        // data so clamp the attempted allocation size to the max amount.
-        //
-        // Note that if there are any custom bpf instructions in the transaction
-        // it's tricky to know whether a newly allocated account will be freed
-        // or not during an intermediate instruction in the transaction so we
-        // shouldn't assume that a large sum of allocations will necessarily
-        // lead to transaction failure.
-        (MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION as u64)
-            .min(tx_attempted_allocation_size.0)
-    }
 }
 
 #[cfg(test)]
@@ -320,7 +206,6 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::{compute_budget, system_program},
         solana_signer::Signer,
-        solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_system_interface::instruction::{self as system_instruction},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
@@ -329,233 +214,6 @@ mod tests {
     fn test_setup() -> (Keypair, Hash) {
         agave_logger::setup();
         (Keypair::new(), Hash::new_unique())
-    }
-
-    #[test]
-    fn test_calculate_allocated_accounts_data_size_no_allocation() {
-        let transaction = Transaction::new_unsigned(Message::new(
-            &[system_instruction::transfer(
-                &Pubkey::new_unique(),
-                &Pubkey::new_unique(),
-                1,
-            )],
-            Some(&Pubkey::new_unique()),
-        ));
-        let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
-
-        assert_eq!(
-            CostModel::calculate_allocated_accounts_data_size(
-                sanitized_tx.program_instructions_iter(),
-                &FeatureSet::all_enabled()
-            ),
-            0
-        );
-    }
-
-    #[test]
-    fn test_calculate_allocated_accounts_data_size_multiple_allocations() {
-        let space1 = 100;
-        let space2 = 200;
-        let transaction = Transaction::new_unsigned(Message::new(
-            &[
-                system_instruction::create_account(
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    1,
-                    space1,
-                    &Pubkey::new_unique(),
-                ),
-                system_instruction::allocate(&Pubkey::new_unique(), space2),
-            ],
-            Some(&Pubkey::new_unique()),
-        ));
-        let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
-
-        assert_eq!(
-            CostModel::calculate_allocated_accounts_data_size(
-                sanitized_tx.program_instructions_iter(),
-                &FeatureSet::all_enabled()
-            ),
-            space1 + space2
-        );
-    }
-
-    #[test]
-    fn test_calculate_allocated_accounts_data_size_max_limit() {
-        let spaces = [MAX_PERMITTED_DATA_LENGTH, MAX_PERMITTED_DATA_LENGTH, 100];
-        assert!(
-            spaces.iter().copied().sum::<u64>()
-                > MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION as u64
-        );
-        let transaction = Transaction::new_unsigned(Message::new(
-            &[
-                system_instruction::create_account(
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    1,
-                    spaces[0],
-                    &Pubkey::new_unique(),
-                ),
-                system_instruction::create_account(
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    1,
-                    spaces[1],
-                    &Pubkey::new_unique(),
-                ),
-                system_instruction::create_account(
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    1,
-                    spaces[2],
-                    &Pubkey::new_unique(),
-                ),
-            ],
-            Some(&Pubkey::new_unique()),
-        ));
-        let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
-
-        assert_eq!(
-            CostModel::calculate_allocated_accounts_data_size(
-                sanitized_tx.program_instructions_iter(),
-                &FeatureSet::all_enabled()
-            ),
-            MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION as u64,
-        );
-    }
-
-    #[test]
-    fn test_calculate_allocated_accounts_data_size_overflow() {
-        let transaction = Transaction::new_unsigned(Message::new(
-            &[
-                system_instruction::create_account(
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    1,
-                    100,
-                    &Pubkey::new_unique(),
-                ),
-                system_instruction::allocate(&Pubkey::new_unique(), u64::MAX),
-            ],
-            Some(&Pubkey::new_unique()),
-        ));
-        let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
-
-        assert_eq!(
-            0, // SystemProgramAccountAllocation::Failed,
-            CostModel::calculate_allocated_accounts_data_size(
-                sanitized_tx.program_instructions_iter(),
-                &FeatureSet::all_enabled()
-            ),
-        );
-    }
-
-    #[test]
-    fn test_calculate_allocated_accounts_data_size_invalid_ix() {
-        let transaction = Transaction::new_unsigned(Message::new(
-            &[
-                system_instruction::allocate(&Pubkey::new_unique(), 100),
-                Instruction::new_with_bincode(system_program::id(), &(), vec![]),
-            ],
-            Some(&Pubkey::new_unique()),
-        ));
-        let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
-
-        assert_eq!(
-            0, // SystemProgramAccountAllocation::Failed,
-            CostModel::calculate_allocated_accounts_data_size(
-                sanitized_tx.program_instructions_iter(),
-                &FeatureSet::all_enabled()
-            ),
-        );
-    }
-
-    #[test]
-    fn test_cost_model_data_len_cost() {
-        let lamports = 0;
-        let owner = Pubkey::default();
-        let seed = String::default();
-        let space = 100;
-        let base = Pubkey::default();
-        let feature_set = FeatureSet::all_enabled();
-
-        for instruction in [
-            SystemInstruction::CreateAccount {
-                lamports,
-                space,
-                owner,
-            },
-            SystemInstruction::CreateAccountAllowPrefund {
-                lamports,
-                space,
-                owner,
-            },
-            SystemInstruction::CreateAccountWithSeed {
-                base,
-                seed: seed.clone(),
-                lamports,
-                space,
-                owner,
-            },
-            SystemInstruction::Allocate { space },
-            SystemInstruction::AllocateWithSeed {
-                base,
-                seed,
-                space,
-                owner,
-            },
-        ] {
-            assert_eq!(
-                SystemProgramAccountAllocation::Some(space),
-                CostModel::calculate_account_data_size_on_deserialized_system_instruction(
-                    instruction,
-                    &feature_set
-                )
-            );
-        }
-        assert_eq!(
-            SystemProgramAccountAllocation::None,
-            CostModel::calculate_account_data_size_on_deserialized_system_instruction(
-                SystemInstruction::TransferWithSeed {
-                    lamports,
-                    from_seed: String::default(),
-                    from_owner: Pubkey::default(),
-                },
-                &feature_set
-            )
-        );
-    }
-
-    #[test]
-    fn test_cost_model_create_account_allow_prefund_feature_gate() {
-        let lamports = 0;
-        let owner = Pubkey::default();
-        let space = 100;
-        let instruction = SystemInstruction::CreateAccountAllowPrefund {
-            lamports,
-            space,
-            owner,
-        };
-
-        // Test with feature enabled
-        let feature_set_enabled = FeatureSet::all_enabled();
-        assert_eq!(
-            SystemProgramAccountAllocation::Some(space),
-            CostModel::calculate_account_data_size_on_deserialized_system_instruction(
-                instruction.clone(),
-                &feature_set_enabled
-            )
-        );
-
-        // Test with feature disabled
-        let feature_set_disabled = FeatureSet::default();
-        assert_eq!(
-            SystemProgramAccountAllocation::Failed,
-            CostModel::calculate_account_data_size_on_deserialized_system_instruction(
-                instruction,
-                &feature_set_disabled
-            )
-        );
     }
 
     #[test]
