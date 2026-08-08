@@ -13,7 +13,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::{Keypair, read_keypair_file},
-    solana_native_token::LAMPORTS_PER_SOL,
+    solana_native_token::sol_str_to_lamports,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_signature::Signature,
@@ -233,28 +233,7 @@ pub fn resolve_signer(
 /// Accepts plain or decimal strings ("50", "0.03", ".5", "1.").
 /// Any decimal places beyond 9 are truncated.
 pub fn lamports_of_sol(matches: &ArgMatches<'_>, name: &str) -> Option<u64> {
-    matches.value_of(name).and_then(|value| {
-        if value == "." {
-            None
-        } else {
-            let (sol, lamports) = value.split_once('.').unwrap_or((value, ""));
-            let sol = if sol.is_empty() {
-                0
-            } else {
-                sol.parse::<u64>().ok()?
-            };
-            let lamports = if lamports.is_empty() {
-                0
-            } else {
-                format!("{lamports:0<9}")[..9].parse().ok()?
-            };
-            Some(
-                LAMPORTS_PER_SOL
-                    .saturating_mul(sol)
-                    .saturating_add(lamports),
-            )
-        }
-    })
+    matches.value_of(name).and_then(sol_str_to_lamports)
 }
 
 pub fn cluster_type_of(matches: &ArgMatches<'_>, name: &str) -> Option<ClusterType> {
@@ -548,6 +527,16 @@ mod tests {
         let matches = app().get_matches_from(vec!["test", "--single", "6,998"]);
         assert_eq!(lamports_of_sol(&matches, "single"), None);
         let matches = app().get_matches_from(vec!["test", "--single", "6,998.00"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), None);
+        // Overflowing amounts return `None` instead of saturating to `u64::MAX`.
+        let matches = app().get_matches_from(vec!["test", "--single", "18446744073"]);
+        assert_eq!(
+            lamports_of_sol(&matches, "single"),
+            Some(18_446_744_073_000_000_000)
+        );
+        let matches = app().get_matches_from(vec!["test", "--single", "18446744074"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), None);
+        let matches = app().get_matches_from(vec!["test", "--single", "999999999999"]);
         assert_eq!(lamports_of_sol(&matches, "single"), None);
     }
 }
