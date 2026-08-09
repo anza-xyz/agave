@@ -143,6 +143,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-geyser-notifier-interface"
+version = "4.3.0-alpha.3"
+dependencies = [
+ "crossbeam-channel",
+ "solana-account 4.5.0",
+ "solana-clock",
+ "solana-hash 4.6.0",
+ "solana-message",
+ "solana-pubkey 4.3.0",
+ "solana-reward-info",
+ "solana-signature",
+ "solana-transaction",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "4.4.0-alpha.1"
 dependencies = [
@@ -5655,6 +5670,7 @@ name = "solana-accounts-db"
 version = "4.4.0-alpha.1"
 dependencies = [
  "agave-fs",
+ "agave-geyser-notifier-interface",
  "ahash 0.8.12",
  "blake3",
  "bv",
@@ -6680,6 +6696,7 @@ dependencies = [
 name = "solana-geyser-plugin-manager"
 version = "4.4.0-alpha.1"
 dependencies = [
+ "agave-geyser-notifier-interface",
  "agave-geyser-plugin-interface",
  "arc-swap",
  "bs58",
@@ -6691,7 +6708,6 @@ dependencies = [
  "log",
  "serde_json",
  "solana-account 4.6.0",
- "solana-accounts-db",
  "solana-clock",
  "solana-entry",
  "solana-gossip",
@@ -6700,8 +6716,8 @@ dependencies = [
  "solana-measure",
  "solana-message",
  "solana-pubkey 4.3.0",
+ "solana-reward-info",
  "solana-rpc",
- "solana-runtime",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-status",
@@ -6713,6 +6729,7 @@ dependencies = [
 name = "solana-gossip"
 version = "4.4.0-alpha.1"
 dependencies = [
+ "agave-geyser-notifier-interface",
  "agave-logger",
  "agave-random",
  "agave-votor-messages",
@@ -6951,6 +6968,7 @@ name = "solana-ledger"
 version = "4.4.0-alpha.1"
 dependencies = [
  "agave-feature-set",
+ "agave-geyser-notifier-interface",
  "agave-reserved-account-keys",
  "agave-snapshots",
  "agave-transaction-view",
@@ -7579,6 +7597,7 @@ name = "solana-rpc"
 version = "4.4.0-alpha.1"
 dependencies = [
  "agave-feature-set",
+ "agave-geyser-notifier-interface",
  "agave-snapshots",
  "agave-votor-messages",
  "base64 0.22.1",
