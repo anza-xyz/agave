@@ -269,6 +269,7 @@ impl ClusterNodes<BroadcastStage> {
         new_cluster_nodes(cluster_info, cluster_type, stakes, use_cha_cha_8)
     }
 
+    #[inline]
     pub(crate) fn get_broadcast_peer(&self, shred: &ShredId) -> Option<&ContactInfo> {
         let mut rng = TurbineRng::new_seeded(&self.pubkey, shred, self.use_cha_cha_8);
         let index = self.weighted_shuffle.first(&mut rng)?;
