@@ -86,7 +86,6 @@ use {
         collections::HashMap,
         sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
-        time::Duration,
     },
 };
 
@@ -303,22 +302,13 @@ impl Votor {
 
     pub fn join(self) -> thread::Result<()> {
         self.consensus_pool_service.join()?;
+        self.event_handler.join()?;
 
-        // Loop till we manage to unwrap the Arc and then we can join.
-        let mut timer_manager = self.timer_manager;
-        loop {
-            match Arc::try_unwrap(timer_manager) {
-                Ok(manager) => {
-                    manager.into_inner().join();
-                    break;
-                }
-                Err(m) => {
-                    timer_manager = m;
-                    thread::sleep(Duration::from_millis(1));
-                }
-            }
-        }
-        self.metrics.join()?;
-        self.event_handler.join()
+        // The event handler owns the only other TimerManager reference. Joining it first makes
+        // ownership deterministic and avoids waiting forever for a reference held by that thread.
+        let timer_manager = Arc::try_unwrap(self.timer_manager)
+            .unwrap_or_else(|_| panic!("event handler retained TimerManager after being joined"));
+        timer_manager.into_inner().join();
+        self.metrics.join()
     }
 }
