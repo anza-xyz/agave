@@ -52,6 +52,10 @@ use {
 };
 
 pub const CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS: u64 = 15000;
+/// How long staked CRDS values are retained before being purged.
+///
+/// This is fixed across clients and intentionally independent of slot and epoch duration.
+pub const CRDS_GOSSIP_PURGE_DURATION: Duration = Duration::from_secs(2 * 24 * 60 * 60);
 // Retention period of hashes of received outdated values.
 const FAILED_INSERTS_RETENTION_MS: u64 = 20_000;
 pub const FALSE_RATE: f64 = 0.1f64;
@@ -560,9 +564,9 @@ impl CrdsGossipPull {
         &self,
         self_pubkey: Pubkey,
         stakes: &'a HashMap<Pubkey, u64>,
-        epoch_duration: Duration,
+        purge_duration: Duration,
     ) -> CrdsTimeouts<'a> {
-        CrdsTimeouts::new(self_pubkey, self.crds_timeout, epoch_duration, stakes)
+        CrdsTimeouts::new(self_pubkey, self.crds_timeout, purge_duration, stakes)
     }
 
     /// Purge values from the crds that are older then `active_timeout`
@@ -592,10 +596,10 @@ impl<'a> CrdsTimeouts<'a> {
     pub fn new(
         pubkey: Pubkey,
         default_timeout: u64,
-        epoch_duration: Duration,
+        purge_duration: Duration,
         stakes: &'a HashMap<Pubkey, u64>,
     ) -> Self {
-        let extended_timeout = default_timeout.max(epoch_duration.as_millis() as u64);
+        let extended_timeout = default_timeout.max(purge_duration.as_millis() as u64);
         let default_timeout = if stakes.values().all(|&stake| stake == 0u64) {
             extended_timeout
         } else {

@@ -23,8 +23,8 @@ use {
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
-            self, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsFilter, CrdsTimeouts, ProcessPullStats,
-            PullRequest, get_max_bloom_filter_bytes,
+            self, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CRDS_GOSSIP_PURGE_DURATION, CrdsFilter,
+            CrdsTimeouts, ProcessPullStats, PullRequest, get_max_bloom_filter_bytes,
         },
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
@@ -47,7 +47,7 @@ use {
     itertools::{Either, Itertools},
     rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
-    solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH, Slot},
+    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
     solana_ledger::shred::Shred,
@@ -96,8 +96,6 @@ use {
     thiserror::Error,
 };
 
-const DEFAULT_EPOCH_DURATION: Duration =
-    Duration::from_millis(DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT);
 /// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// Interval between pull requests (in gossip rounds)
@@ -1469,16 +1467,11 @@ impl ClusterInfo {
             .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
     }
 
-    fn handle_purge(
-        &self,
-        thread_pool: &ThreadPool,
-        epoch_duration: Duration,
-        stakes: &HashMap<Pubkey, u64>,
-    ) {
+    fn handle_purge(&self, thread_pool: &ThreadPool, stakes: &HashMap<Pubkey, u64>) {
         let self_pubkey = self.id();
         let timeouts = self
             .gossip
-            .make_timeouts(self_pubkey, stakes, epoch_duration);
+            .make_timeouts(self_pubkey, stakes, CRDS_GOSSIP_PURGE_DURATION);
         let num_purged = {
             let _st = ScopedTimer::from(&self.stats.purge);
             self.gossip
@@ -1570,11 +1563,7 @@ impl ClusterInfo {
                         // Make pull requests every PULL_REQUEST_PERIOD rounds
                         gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
-                    let epoch_duration = epoch_specs
-                        .as_mut()
-                        .map(|es| es.epoch_duration())
-                        .unwrap_or(DEFAULT_EPOCH_DURATION);
-                    self.handle_purge(&thread_pool, epoch_duration, &stakes);
+                    self.handle_purge(&thread_pool, &stakes);
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
@@ -1745,7 +1734,6 @@ impl ClusterInfo {
         mut requests: Vec<PullRequest>,
         stakes: &HashMap<Pubkey, u64>,
     ) -> RecycledPacketBatch {
-        const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
         let output_size_limit =
             self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
         let mut packet_batch =
@@ -1782,7 +1770,7 @@ impl ClusterInfo {
         let get_score = |value: &CrdsValue| -> u64 {
             let age = now.saturating_sub(value.wallclock());
             // score CrdsValue: 2x score if staked; 2x score if ContactInfo
-            let score = DEFAULT_EPOCH_DURATION_MS
+            let score = (CRDS_GOSSIP_PURGE_DURATION.as_millis() as u64)
                 .saturating_sub(age)
                 .div(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS)
                 .max(1);
@@ -1845,14 +1833,13 @@ impl ClusterInfo {
         &self,
         responses: Vec<CrdsValue>,
         stakes: &HashMap<Pubkey, u64>,
-        epoch_duration: Duration,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_responses_time);
         if !responses.is_empty() {
             let self_pubkey = self.id();
-            let timeouts = self
-                .gossip
-                .make_timeouts(self_pubkey, stakes, epoch_duration);
+            let timeouts =
+                self.gossip
+                    .make_timeouts(self_pubkey, stakes, CRDS_GOSSIP_PURGE_DURATION);
             self.handle_pull_response(responses, &timeouts);
         }
     }
@@ -2036,7 +2023,6 @@ impl ClusterInfo {
         recycler: &PacketBatchRecycler,
         response_sender: &impl ChannelSend<PacketBatch>,
         stakes: &HashMap<Pubkey, u64>,
-        epoch_duration: Duration,
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.process_gossip_packets_time);
@@ -2157,7 +2143,7 @@ impl ClusterInfo {
             stakes,
             response_sender,
         );
-        self.handle_batch_pull_responses(pull_responses, stakes, epoch_duration);
+        self.handle_batch_pull_responses(pull_responses, stakes);
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
         self.handle_batch_pong_messages(pong_messages, Instant::now());
         self.handle_batch_pull_requests(pull_requests, recycler, stakes, response_sender);
@@ -2297,17 +2283,12 @@ impl ClusterInfo {
             .as_deref_mut()
             .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
-        let epoch_duration = epoch_specs
-            .as_deref_mut()
-            .map(|es| es.epoch_duration())
-            .unwrap_or(DEFAULT_EPOCH_DURATION);
         self.process_packets(
             packet_buf,
             thread_pool,
             recycler,
             response_sender,
             &stakes,
-            epoch_duration,
             should_check_duplicate_instance,
         )?;
         packet_buf.clear();
@@ -2826,7 +2807,7 @@ mod tests {
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),
             CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, // default_timeout
-            Duration::from_secs(48 * 3600),   // epoch_duration
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
 

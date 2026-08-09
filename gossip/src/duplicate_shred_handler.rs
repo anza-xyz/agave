@@ -245,7 +245,6 @@ mod tests {
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        std::time::Duration,
     };
 
     fn create_duplicate_proof(
@@ -315,7 +314,6 @@ mod tests {
             .get_slots_in_epoch(0);
         let epoch_specs = TestEpochSpecs {
             staked_nodes: Arc::new(HashMap::new()),
-            epoch_duration: Duration::from_millis(slots_in_epoch * 400),
             slots_in_epoch,
         };
 
@@ -440,7 +438,6 @@ mod tests {
             .get_slots_in_epoch(0);
         let epoch_specs = TestEpochSpecs {
             staked_nodes: Arc::new(HashMap::new()),
-            epoch_duration: Duration::from_millis(slots_in_epoch * 400),
             slots_in_epoch,
         };
 

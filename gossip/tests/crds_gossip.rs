@@ -12,8 +12,8 @@ use {
         crds_gossip::*,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
-            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsTimeouts, ProcessPullStats, PullRequest,
-            SAMPLE_RATE,
+            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CRDS_GOSSIP_PURGE_DURATION, CrdsTimeouts,
+            ProcessPullStats, PullRequest, SAMPLE_RATE,
         },
         crds_gossip_push::CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
         crds_value::{CrdsValue, CrdsValueLabel},
@@ -611,7 +611,7 @@ fn network_run_pull(
                     let timeouts = CrdsTimeouts::new(
                         node.keypair.pubkey(),
                         CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, // default_timeout
-                        Duration::from_secs(48 * 3600),   // epoch_duration
+                        CRDS_GOSSIP_PURGE_DURATION,
                         &stakes,
                     );
                     let (vers, vers_expired_timeout, failed_inserts) = node

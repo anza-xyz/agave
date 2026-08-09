@@ -851,6 +851,7 @@ mod tests {
         super::*,
         crate::{
             crds_data::{Deprecated, LowestSlot, SnapshotHashes, new_rand_timestamp},
+            crds_gossip_pull::CRDS_GOSSIP_PURGE_DURATION,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         rand::{Rng, rng},
@@ -1052,18 +1053,18 @@ mod tests {
         );
         let pubkey = Pubkey::new_unique();
         let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
-        let epoch_duration = Duration::from_secs(48 * 3600);
+        let purge_duration = CRDS_GOSSIP_PURGE_DURATION;
         let timeouts = CrdsTimeouts::new(
             pubkey,
             0u64, // default_timeout,
-            epoch_duration,
+            purge_duration,
             &stakes,
         );
         assert!(crds.find_old_labels(&thread_pool, 0, &timeouts).is_empty());
         let timeouts = CrdsTimeouts::new(
             pubkey,
             1u64, // default_timeout,
-            epoch_duration,
+            purge_duration,
             &stakes,
         );
         assert_eq!(
@@ -1073,7 +1074,7 @@ mod tests {
         let timeouts = CrdsTimeouts::new(
             pubkey,
             2u64, // default_timeout,
-            epoch_duration,
+            purge_duration,
             &stakes,
         );
         assert_eq!(
@@ -1090,8 +1091,8 @@ mod tests {
         let mut stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
-            3,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
+            3, // default_timeout
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
         assert_eq!(
@@ -1103,7 +1104,7 @@ mod tests {
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             1,                        // default_timeout
-            Duration::from_millis(1), // epoch_duration
+            Duration::from_millis(1), // purge_duration
             &stakes,
         );
         assert_eq!(
@@ -1112,23 +1113,23 @@ mod tests {
         );
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
-            3,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
+            3, // default_timeout
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
         assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
-            1,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
+            1, // default_timeout
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
         assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
         stakes.remove(&val.pubkey());
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
-            1,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
+            1, // default_timeout
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
         assert_eq!(
@@ -1149,8 +1150,8 @@ mod tests {
         let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
-            1,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
+            1, // default_timeout
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
         assert_eq!(
@@ -1175,8 +1176,8 @@ mod tests {
         let mut stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
-            0,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
+            0, // default_timeout
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
         //now < timestamp
@@ -1186,8 +1187,8 @@ mod tests {
         stakes.insert(val.pubkey(), 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
-            0,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
+            0, // default_timeout
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
         assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
@@ -1195,7 +1196,7 @@ mod tests {
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             0,                        // default_timeout
-            Duration::from_millis(2), // epoch_duration
+            Duration::from_millis(2), // purge_duration
             &stakes,
         );
         assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
@@ -1566,7 +1567,7 @@ mod tests {
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             1,                        // default_timeout
-            Duration::from_millis(1), // epoch_duration
+            Duration::from_millis(1), // purge_duration
             &stakes,
         );
         assert_eq!(
