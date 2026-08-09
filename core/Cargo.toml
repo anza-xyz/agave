@@ -97,7 +97,7 @@ shaq = { workspace = true }
 signal-hook = { workspace = true }
 slab = { workspace = true }
 smallvec = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bincode = { workspace = true }

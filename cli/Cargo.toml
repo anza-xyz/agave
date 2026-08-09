@@ -110,13 +110,14 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-nonce = { workspace = true, features = ["wincode"] }
-solana-nonce-account = { workspace = true }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-presigner = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api"] }
 solana-sha256-hasher = { workspace = true }

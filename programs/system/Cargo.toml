@@ -43,6 +43,7 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
 criterion = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-hash = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }

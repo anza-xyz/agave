@@ -81,7 +81,7 @@ protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 shuttle = { workspace = true, optional = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-address-lookup-table-interface = { workspace = true, optional = true, features = [
     "bincode",
     "bytemuck",

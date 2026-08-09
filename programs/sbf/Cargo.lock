@@ -7560,15 +7560,14 @@ dependencies = [
 
 [[package]]
 name = "solana-nonce-account"
-version = "4.2.0"
+version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "120e156ad2cb96f9fae373cb6891b4e2b537f9edddc959041fa66a5ffa3a855b"
+checksum = "337cf70e23d7e33d61e5020106ae9894fe10434b3de943e8bc57eb5d7207c1bf"
 dependencies = [
  "solana-account 4.5.0",
  "solana-hash 4.6.0",
  "solana-nonce",
  "solana-sdk-ids",
- "wincode",
 ]
 
 [[package]]

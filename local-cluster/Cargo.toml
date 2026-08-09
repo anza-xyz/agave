@@ -38,7 +38,7 @@ itertools = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-accounts-db = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }

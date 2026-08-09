@@ -32,7 +32,7 @@ bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-accounts-db = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-cli-output = { workspace = true }
