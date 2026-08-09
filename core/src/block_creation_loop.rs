@@ -17,7 +17,7 @@ use {
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
@@ -654,10 +654,20 @@ fn record_and_complete_block(
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
-    let reward_cert_request = ctx
-        .reward_certs_requestor
-        .request_reward_certs(ctx.my_pubkey, bank_slot)
-        .map_err(|()| PohRecorderError::ChannelDisconnected)?;
+    // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
+    // would be tower slots.
+    let reward_cert_request = if bank_slot
+        > ctx
+            .genesis_cert_block_marker
+            .slot
+            .saturating_add(NUM_SLOTS_FOR_REWARD)
+    {
+        ctx.reward_certs_requestor
+            .request_reward_certs(ctx.my_pubkey, bank_slot)
+            .map_err(|()| PohRecorderError::ChannelDisconnected)?
+    } else {
+        None
+    };
     let mut accumulated_txs = vec![];
     let mut records_shutdown = false;
     let window_has_moved_on = loop {
