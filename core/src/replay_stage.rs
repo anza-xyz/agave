@@ -4081,10 +4081,6 @@ impl ReplayStage {
                         ("computed", computed_hash.to_string(), String),
                     );
 
-                    if let Err(err) = bank_hash_details::write_bank_hash_details_file(bank) {
-                        warn!("Unable to write bank hash details file: {err}");
-                    }
-
                     mark_replay_dead_slot(
                         bank,
                         &BlockstoreProcessorError::BankHashMismatch(

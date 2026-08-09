@@ -31,7 +31,7 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, bank_hash_details},
         leader_schedule_utils::{
             first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
         },
@@ -956,6 +956,9 @@ impl EventHandler {
                     && let Some(expected_hash) = bank.expected_bank_hash()
                     && expected_hash != bank.hash()
                 {
+                    if let Err(err) = bank_hash_details::write_bank_hash_details_file(&bank) {
+                        error!("Unable to write bank hash details file: {err}");
+                    }
                     panic!(
                         "{my_pubkey}: Block {block:?} has been finalized, however we have a bank \
                          hash mismatch. The cluster bank hash is {expected_hash} however we \
@@ -1051,7 +1054,7 @@ mod tests {
         },
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, BankTestConfig, SlotLeader},
             bank_forks::BankForks,
             bank_forks_controller::{BankForksController, BankForksControllerError},
             genesis_utils::{
@@ -1092,8 +1095,8 @@ mod tests {
         local_context: LocalContext,
         bls_ops: Vec<BLSOp>,
         vote_history_storage: Arc<FileVoteHistoryStorage>,
-        // Keep the temp directory alive for `vote_history_storage`.
-        _vote_history_storage_dir: TempDir,
+        // Keep the temp directory alive for vote history and bank hash details.
+        _test_dir: TempDir,
     }
 
     struct DirectBankForksController {
@@ -1169,7 +1172,15 @@ mod tests {
         let my_vote_keypair = validator_keypairs[my_index].vote_keypair.insecure_clone();
         let my_bls_keypair =
             BLSKeypair::derive_from_signer(&my_vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-        let bank0 = Bank::new_for_tests(&genesis.genesis_config);
+        let test_dir = TempDir::new().unwrap();
+        let mut bank_test_config = BankTestConfig::default();
+        bank_test_config.accounts_db_config.bank_hash_details_dir = test_dir.path().to_path_buf();
+        let bank0 = Bank::new_with_paths_for_tests(
+            &genesis.genesis_config,
+            Some(bank_test_config),
+            vec![],
+            None,
+        );
         let bank_forks = BankForks::new_rw_arc(bank0);
         let contact_info = ContactInfo::new_localhost(&my_node_keypair.pubkey(), 0);
         let cluster_info = Arc::new(ClusterInfo::new(
@@ -1203,10 +1214,8 @@ mod tests {
         });
         let highest_parent_ready = Arc::new(RwLock::default());
 
-        let vote_history_storage_dir = TempDir::new().unwrap();
-        let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(
-            vote_history_storage_dir.path().to_path_buf(),
-        ));
+        let vote_history_storage =
+            Arc::new(FileVoteHistoryStorage::new(test_dir.path().to_path_buf()));
         let shared_context = SharedContext {
             cluster_info: cluster_info.clone(),
             bank_forks: bank_forks.clone(),
@@ -1273,7 +1282,7 @@ mod tests {
             local_context,
             bls_ops: vec![],
             vote_history_storage,
-            _vote_history_storage_dir: vote_history_storage_dir,
+            _test_dir: test_dir,
         }
     }
 
