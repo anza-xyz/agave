@@ -76,6 +76,7 @@ use {
         status_cache::{SlotDelta, StatusCache},
         sysvar_account::{create_account, create_account_with_bincode, from_account},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
+        validated_reward_certificate::RewardCredit,
     },
     accounts_lt_hash::AccountsLtHashAsyncProgress,
     agave_bls_cert_verify::cert_verify::{self, Error as CertVerifyError},
@@ -704,6 +705,7 @@ impl PartialEq for Bank {
             accounts_lt_hash_async_progress: _,
             block_id,
             expected_bank_hash: _,
+            reward_credit: _,
             bank_hash_stats: _,
             epoch_rewards_calculation_cache: _,
             block_component_processor: _,
@@ -1054,6 +1056,11 @@ pub struct Bank {
     /// later when the bank is frozen.
     expected_bank_hash: RwLock<Option<Hash>>,
 
+    /// Whether this node was credited by the reward certificate in this block's footer.
+    /// Set when processing the footer, read by votor to report lost credits. Node-local
+    /// observability state; does not affect the bank hash.
+    reward_credit: RwLock<Option<RewardCredit>>,
+
     /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
 
@@ -1271,6 +1278,7 @@ impl Bank {
             accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress::new(),
             block_id: RwLock::new(None),
             expected_bank_hash: RwLock::new(None),
+            reward_credit: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
@@ -1538,6 +1546,7 @@ impl Bank {
             accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress::new(),
             block_id: RwLock::new(None),
             expected_bank_hash: RwLock::new(None),
+            reward_credit: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
@@ -2196,6 +2205,7 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             expected_bank_hash: RwLock::new(None),
+            reward_credit: RwLock::new(None),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
             is_alpenglow: AtomicBool::new(false),
         };
@@ -3108,6 +3118,17 @@ impl Bank {
     /// Returns the expected bank hash if any.
     pub fn expected_bank_hash(&self) -> Option<Hash> {
         *self.expected_bank_hash.read().unwrap()
+    }
+
+    /// Record whether this node was credited by the reward certificate in this block's footer.
+    pub fn set_reward_credit(&self, reward_credit: RewardCredit) {
+        *self.reward_credit.write().unwrap() = Some(reward_credit);
+    }
+
+    /// Returns this node's reward-certificate outcome for this block, if a reward certificate
+    /// was present in the footer and our stake entry could be resolved.
+    pub fn reward_credit(&self) -> Option<RewardCredit> {
+        *self.reward_credit.read().unwrap()
     }
 
     // dangerous; don't use this; this is only needed for ledger-tool's special command

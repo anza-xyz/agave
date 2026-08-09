@@ -62,6 +62,20 @@ pub(crate) struct EventHandlerStats {
     // Number of times we updated the root.
     pub(crate) set_root_count: u16,
 
+    // Vote credits lost, bucketed by cause. A credit for slot S is earned only if our
+    // vote account is in the reward certificate carried by the block for
+    // S + NUM_SLOTS_FOR_REWARD. Each counter below covers slots we did vote for.
+    //
+    // The certificate was built and we are missing from it: our vote did not reach that
+    // leader in time. This is the only bucket that indicts our own vote delivery.
+    pub(crate) credits_lost_not_in_cert: u16,
+
+    // The block exists but carries no reward certificate, so nobody was credited.
+    pub(crate) credits_lost_no_cert: u16,
+
+    // The block was skipped, so the certificate it owed could never be produced.
+    pub(crate) credits_lost_no_block: u16,
+
     // Number of times we setup timeouts for a new leader window.
     pub(crate) timeout_set: u16,
 
@@ -133,6 +147,9 @@ impl EventHandlerStats {
             ignored: 0,
             leader_window_replaced: 0,
             set_root_count: 0,
+            credits_lost_not_in_cert: 0,
+            credits_lost_no_cert: 0,
+            credits_lost_no_block: 0,
             timeout_set: 0,
             receive_event_time_us: 0,
             send_votes_batch_time_us: 0,
@@ -220,6 +237,12 @@ impl EventHandlerStats {
             ),
             ("set_root_count", self.set_root_count as i64, i64),
             ("timeout_set", self.timeout_set as i64, i64),
+        );
+        datapoint_info!(
+            "votor_credits_lost",
+            ("not_in_cert", self.credits_lost_not_in_cert as i64, i64),
+            ("no_cert", self.credits_lost_no_cert as i64, i64),
+            ("no_block", self.credits_lost_no_block as i64, i64),
         );
         for (event, EventCountAndTime { count, time_us }) in &self.received_events_count_and_timing
         {

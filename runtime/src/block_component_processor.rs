@@ -8,7 +8,9 @@ use {
         validated_block_finalization::{
             BlockFinalizationCertError, ValidatedBlockFinalizationCert,
         },
-        validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
+        validated_reward_certificate::{
+            Error as ValidatedRewardCertError, RewardCredit, ValidatedRewardCert,
+        },
     },
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
@@ -623,6 +625,7 @@ impl BlockComponentProcessor {
 
         Self::update_bank_with_footer_fields(
             &bank,
+            my_pubkey,
             block_producer_time_nanos,
             Some(bank_hash),
             reward_cert,
@@ -753,14 +756,42 @@ impl BlockComponentProcessor {
         (min_working_bank_time, max_working_bank_time)
     }
 
+    /// Record on `bank` whether our own vote account was credited by `cert`.
+    ///
+    /// The bitmap is keyed by vote account, so we resolve our identity through the rank map
+    /// for the rewarded slot. A node with no stake entry there (unstaked, or not yet in the
+    /// epoch's staked set) records nothing, so votor reports no loss for it.
+    fn record_reward_credit(bank: &Bank, my_pubkey: &Pubkey, cert: &ValidatedRewardCert) {
+        let reward_slot = cert.slot();
+        let Some(epoch_stakes) = bank.epoch_stakes_from_slot(reward_slot) else {
+            return;
+        };
+        let Some((_rank, entry)) = epoch_stakes
+            .bls_pubkey_to_rank_map()
+            .get_ranked_entry_for_node(my_pubkey)
+        else {
+            return;
+        };
+        bank.set_reward_credit(RewardCredit {
+            reward_slot,
+            credited: cert.validators().contains(&entry.vote_account_pubkey),
+        });
+    }
+
     pub fn update_bank_with_footer_fields(
         bank: &Bank,
+        my_pubkey: &Pubkey,
         block_producer_time_nanos: i64,
         bank_hash: Option<Hash>,
         reward_cert: Option<ValidatedRewardCert>,
         final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
     ) -> Result<(), BankFooterError> {
         bank.update_clock_from_footer(block_producer_time_nanos);
+        // Both the replay and the leader path land here, so recording our own outcome here
+        // keeps the credits-lost metric from treating our own blocks as missing a cert.
+        if let Some(cert) = &reward_cert {
+            Self::record_reward_credit(bank, my_pubkey, cert);
+        }
         calc_vote_rewards_update_vote_states(
             bank,
             reward_cert,
@@ -783,7 +814,10 @@ mod tests {
         crate::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
-            genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
+            genesis_utils::{
+                ValidatorVoteKeypairs, activate_all_features_alpenglow, create_genesis_config,
+                create_genesis_config_with_alpenglow_vote_accounts,
+            },
         },
         rand::Rng,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
@@ -795,6 +829,7 @@ mod tests {
             entry::Entry,
         },
         solana_hash::Hash,
+        solana_signer::Signer,
         std::{
             assert_matches,
             sync::{Arc, RwLock},
@@ -802,6 +837,64 @@ mod tests {
     };
 
     const DEFAULT_NS_PER_SLOT: u64 = DEFAULT_MS_PER_SLOT * 1_000_000;
+
+    /// The reward bitmap is keyed by vote account, so `record_reward_credit` has to resolve
+    /// our identity through the rank map before it can tell whether we were credited.
+    #[test]
+    fn test_record_reward_credit_resolves_own_vote_account() {
+        let validator_keypairs = (0..3)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            vec![100; validator_keypairs.len()],
+        );
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis.genesis_config);
+        let me = &validator_keypairs[0];
+        let my_identity = me.node_keypair.pubkey();
+        let my_vote_account = me.vote_keypair.pubkey();
+        let other_vote_account = validator_keypairs[1].vote_keypair.pubkey();
+        let reward_slot = bank.slot();
+
+        // Present in the bitmap.
+        BlockComponentProcessor::record_reward_credit(
+            &bank,
+            &my_identity,
+            &ValidatedRewardCert::new_for_tests(reward_slot, vec![my_vote_account]),
+        );
+        assert_eq!(
+            bank.reward_credit(),
+            Some(RewardCredit {
+                reward_slot,
+                credited: true
+            })
+        );
+
+        // Someone else is in the bitmap, we are not.
+        BlockComponentProcessor::record_reward_credit(
+            &bank,
+            &my_identity,
+            &ValidatedRewardCert::new_for_tests(reward_slot, vec![other_vote_account]),
+        );
+        assert_eq!(
+            bank.reward_credit(),
+            Some(RewardCredit {
+                reward_slot,
+                credited: false
+            })
+        );
+
+        // An identity with no stake entry records nothing, so it is never reported as a
+        // loss. Use a fresh bank so a stale value cannot masquerade as success.
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis.genesis_config);
+        BlockComponentProcessor::record_reward_credit(
+            &bank,
+            &Pubkey::new_unique(),
+            &ValidatedRewardCert::new_for_tests(reward_slot, vec![my_vote_account]),
+        );
+        assert_eq!(bank.reward_credit(), None);
+    }
 
     fn create_test_bank() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
         let genesis_config_info = create_genesis_config(10_000);

@@ -22,7 +22,7 @@ use {
     },
     agave_votor_messages::{
         consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
-        vote::Vote,
+        reward_certificate::NUM_SLOTS_FOR_REWARD, vote::Vote,
     },
     crossbeam_channel::select,
     parking_lot::RwLock,
@@ -32,6 +32,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
+        bank_forks::BankForks,
         leader_schedule_utils::{
             first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
         },
@@ -915,6 +916,67 @@ impl EventHandler {
     ///
     /// Additionally check if any of the finalized blocks is frozen with a bank hash mismatch.
     /// If so panic as it is unrecoverable.
+    /// Report vote credits lost on the slots that `new_root` newly finalizes.
+    ///
+    /// We earn a credit for slot S only if our vote account appears in the reward
+    /// certificate that the leader of `S + NUM_SLOTS_FOR_REWARD` puts in its block. The
+    /// runtime records whether we made it into that certificate on the bank that carried
+    /// it, so here we walk the newly rooted chain and join that against what we actually
+    /// voted for. Only rooted blocks are inspected, so an abandoned fork never reports a
+    /// loss.
+    fn report_lost_credits(
+        bank_forks: &BankForks,
+        vote_history: &VoteHistory,
+        old_root: Slot,
+        new_root: Slot,
+        stats: &mut EventHandlerStats,
+    ) {
+        // `voted` panics below the vote history root, and anything that old has been
+        // pruned, so treat it as not voted rather than reaching for it.
+        let voted = |slot: Slot| slot >= vote_history.root() && vote_history.voted(slot);
+
+        let mut next = bank_forks.get(new_root);
+        while let Some(bank) = next {
+            let slot = bank.slot();
+            if slot <= old_root {
+                break;
+            }
+            match bank.reward_credit() {
+                // We were in the rank map and the block carried a certificate, so this is
+                // the exact answer for that slot.
+                Some(credit) => {
+                    if !credit.credited && voted(credit.reward_slot) {
+                        stats.credits_lost_not_in_cert =
+                            stats.credits_lost_not_in_cert.saturating_add(1);
+                    }
+                }
+                // No certificate in the footer, or we hold no stake entry for the rewarded
+                // slot. In the latter case we would not have voted either, so the `voted`
+                // check keeps unstaked nodes out of this bucket.
+                None => {
+                    if let Some(reward_slot) = slot.checked_sub(NUM_SLOTS_FOR_REWARD)
+                        && voted(reward_slot)
+                    {
+                        stats.credits_lost_no_cert = stats.credits_lost_no_cert.saturating_add(1);
+                    }
+                }
+            }
+
+            // Slots skipped between this block and its parent produced no block at all, so
+            // the certificates they owed were never built. Clamp to `old_root`: anything at
+            // or below it was accounted for by an earlier root advance.
+            let parent_slot = bank.parent_slot();
+            for skipped in parent_slot.max(old_root).saturating_add(1)..slot {
+                if let Some(reward_slot) = skipped.checked_sub(NUM_SLOTS_FOR_REWARD)
+                    && voted(reward_slot)
+                {
+                    stats.credits_lost_no_block = stats.credits_lost_no_block.saturating_add(1);
+                }
+            }
+            next = bank_forks.get(parent_slot);
+        }
+    }
+
     fn check_rootable_blocks_and_bank_hash_mismatches(
         my_pubkey: &Pubkey,
         ctx: &SharedContext,
@@ -962,6 +1024,13 @@ impl EventHandler {
             // No rootable banks
             return;
         };
+        Self::report_lost_credits(
+            &bank_forks_r,
+            &vctx.vote_history,
+            old_root,
+            new_root.slot,
+            stats,
+        );
         drop(bank_forks_r);
         root_utils::set_root(
             my_pubkey,
@@ -1040,6 +1109,7 @@ mod tests {
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
             installed_scheduler_pool::BankWithScheduler,
+            validated_reward_certificate::RewardCredit,
         },
         solana_streamer::evicting_sender::EvictingSender,
         std::{
@@ -2392,6 +2462,120 @@ mod tests {
         test_context.check_for_own_vote(&restored_vote);
         test_context.check_no_own_vote();
         assert!(test_context.bls_ops.is_empty());
+    }
+
+    /// Chain banks at `slots` off a fresh genesis, so `report_lost_credits` has a rooted
+    /// path to walk. Gaps in `slots` become skipped slots.
+    fn bank_forks_with_slots(slots: &[Slot]) -> Arc<RwLock<BankForks>> {
+        let validator_keypairs = (0..2)
+            .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
+            .collect::<Vec<_>>();
+        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            vec![100; validator_keypairs.len()],
+        );
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
+        let mut parent = bank_forks.read().unwrap().get(0).unwrap();
+        for &slot in slots {
+            let bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
+            bank.freeze();
+            let mut w = bank_forks.write().unwrap();
+            w.insert(bank);
+            parent = w.get(slot).unwrap();
+        }
+        bank_forks
+    }
+
+    /// Each cause of a missing credit lands in its own bucket, and a slot we were
+    /// credited for lands in none.
+    #[test]
+    fn test_report_lost_credits_buckets_each_cause() {
+        // Bank slots reward `slot - NUM_SLOTS_FOR_REWARD`, so with the constant at 8 these
+        // banks cover rewarded slots 1, 2, 3 and 5. Slot 12 is absent, dropping rewarded
+        // slot 4 on the floor.
+        let bank_forks = bank_forks_with_slots(&[8, 9, 10, 11, 13]);
+        let bank_forks_r = bank_forks.read().unwrap();
+
+        bank_forks_r
+            .get(9)
+            .unwrap()
+            .set_reward_credit(RewardCredit {
+                reward_slot: 1,
+                credited: true,
+            });
+        bank_forks_r
+            .get(10)
+            .unwrap()
+            .set_reward_credit(RewardCredit {
+                reward_slot: 2,
+                credited: false,
+            });
+        // Bank 11 gets no reward credit at all: its footer carried no certificate.
+        bank_forks_r
+            .get(13)
+            .unwrap()
+            .set_reward_credit(RewardCredit {
+                reward_slot: 5,
+                credited: true,
+            });
+
+        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
+        for slot in 1..=5 {
+            vote_history.add_vote(Vote::new_skip_vote(slot));
+        }
+
+        let mut stats = EventHandlerStats::new();
+        EventHandler::report_lost_credits(&bank_forks_r, &vote_history, 8, 13, &mut stats);
+
+        assert_eq!(stats.credits_lost_not_in_cert, 1, "rewarded slot 2");
+        assert_eq!(stats.credits_lost_no_cert, 1, "rewarded slot 3");
+        assert_eq!(stats.credits_lost_no_block, 1, "rewarded slot 4");
+    }
+
+    /// Slots we never voted for are not losses, however the certificate turned out.
+    #[test]
+    fn test_report_lost_credits_ignores_slots_we_did_not_vote_for() {
+        let bank_forks = bank_forks_with_slots(&[8, 9, 10]);
+        let bank_forks_r = bank_forks.read().unwrap();
+        for (slot, reward_slot) in [(9, 1), (10, 2)] {
+            bank_forks_r
+                .get(slot)
+                .unwrap()
+                .set_reward_credit(RewardCredit {
+                    reward_slot,
+                    credited: false,
+                });
+        }
+
+        let vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
+        let mut stats = EventHandlerStats::new();
+        EventHandler::report_lost_credits(&bank_forks_r, &vote_history, 8, 10, &mut stats);
+
+        assert_eq!(stats.credits_lost_not_in_cert, 0);
+        assert_eq!(stats.credits_lost_no_cert, 0);
+        assert_eq!(stats.credits_lost_no_block, 0);
+    }
+
+    /// Rewarded slots below the vote history root have been pruned. `VoteHistory::voted`
+    /// asserts on those, so they must be skipped rather than queried.
+    #[test]
+    fn test_report_lost_credits_below_vote_history_root() {
+        let bank_forks = bank_forks_with_slots(&[8, 9]);
+        let bank_forks_r = bank_forks.read().unwrap();
+        bank_forks_r
+            .get(9)
+            .unwrap()
+            .set_reward_credit(RewardCredit {
+                reward_slot: 1,
+                credited: false,
+            });
+
+        let vote_history = VoteHistory::new(Pubkey::new_unique(), 5);
+        let mut stats = EventHandlerStats::new();
+        EventHandler::report_lost_credits(&bank_forks_r, &vote_history, 8, 9, &mut stats);
+
+        assert_eq!(stats.credits_lost_not_in_cert, 0);
     }
 
     #[test]

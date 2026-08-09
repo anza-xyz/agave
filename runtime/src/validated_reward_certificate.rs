@@ -68,6 +68,19 @@ fn extract_slot(
     Ok(Some(slot))
 }
 
+/// Whether this node's vote account was credited by the reward certificate carried in a
+/// block footer. Recorded on the bank during footer processing so that votor can join it
+/// against its vote history and report credits that were lost in transit.
+///
+/// Node-local observability state only: it never affects the bank hash or consensus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RewardCredit {
+    /// The slot the reward certificate rewards, i.e. `bank.slot() - NUM_SLOTS_FOR_REWARD`.
+    pub reward_slot: Slot,
+    /// Whether our vote account appears in the certificate's bitmap.
+    pub credited: bool,
+}
+
 /// Struct built by validating incoming reward certs.
 #[derive(Debug, Clone)]
 pub struct ValidatedRewardCert {
