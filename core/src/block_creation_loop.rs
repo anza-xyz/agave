@@ -794,6 +794,7 @@ fn record_and_complete_block(
 
         BlockComponentProcessor::update_bank_with_footer_fields(
             &bank,
+            &ctx.my_pubkey,
             i64::try_from(footer.block_producer_time_nanos)
                 .expect("locally produced block timestamp must fit in i64"),
             None, // Banks we produce do not need the bank hash mismatch check
