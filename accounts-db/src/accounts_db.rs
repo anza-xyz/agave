@@ -84,7 +84,7 @@ use {
         borrow::Cow,
         boxed::Box,
         collections::{BTreeSet, HashMap, HashSet, VecDeque},
-        io, iter,
+        io, iter, mem,
         num::Saturating,
         ops::RangeBounds,
         path::{Path, PathBuf},
@@ -832,14 +832,6 @@ pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<Path
     Ok((temp_dirs, paths))
 }
 
-#[derive(Default, Debug)]
-struct CleaningInfo {
-    /// Indicates if this account might have a zero lamport index entry.
-    /// If false, the account *shall* not have zero lamport index entries.
-    /// If true, the account *might* have zero lamport index entries.
-    might_contain_zero_lamport_entry: bool,
-}
-
 /// Indicates when to mark accounts obsolete
 /// * Disabled - do not mark accounts obsolete
 /// * Enabled - mark accounts obsolete during write cache flush
@@ -850,12 +842,11 @@ pub enum MarkObsoleteAccounts {
     Enabled,
 }
 
+/// One accounts index bin's worth of pubkeys that are candidates for cleaning
+type CleaningCandidatesBin = HashSet<Pubkey, PubkeyHasherBuilder>;
 /// This is the return type of AccountsDb::construct_candidate_clean_keys.
-/// It's a collection of pubkeys with associated information to
-/// facilitate the decision making about which accounts can be removed
-/// from the accounts index. In addition, the minimal dirty slot is
-/// included in the returned value.
-type CleaningCandidates = Box<[RwLock<HashMap<Pubkey, CleaningInfo>>]>;
+/// It's a collection of pubkeys that are candidates for cleaning
+type CleaningCandidates = Box<[RwLock<CleaningCandidatesBin>]>;
 type AccountInfoAccountsIndex = AccountsIndex<AccountInfo, AccountInfo>;
 
 // This structure handles the load/store of the accounts
@@ -1386,7 +1377,7 @@ impl AccountsDb {
     fn remove_uncleaned_slots_up_to_slot_and_move_pubkeys(
         &self,
         max_slot_inclusive: Option<Slot>,
-        candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
+        candidates: &[RwLock<CleaningCandidatesBin>],
     ) {
         let uncleaned_slots = self.collect_uncleaned_slots_up_to_slot(max_slot_inclusive);
         for uncleaned_slot in uncleaned_slots.into_iter() {
@@ -1413,25 +1404,14 @@ impl AccountsDb {
                             candidates_bin = candidates[curr_bin].write().unwrap();
                             prev_bin = curr_bin;
                         }
-                        // Conservatively mark the candidate might have a zero lamport entry for
-                        // correctness so that scan WILL try to look in disk if it is
-                        // not in-mem. These keys are from 1) recently processed
-                        // slots, 2) zero lamports found in shrink. Therefore, they are very likely
-                        // to be in-memory, and seldomly do we need to look them up in disk.
-                        candidates_bin.insert(
-                            removed_pubkey,
-                            CleaningInfo {
-                                might_contain_zero_lamport_entry: true,
-                                ..Default::default()
-                            },
-                        );
+                        candidates_bin.insert(removed_pubkey);
                     }
                 }
             }
         }
     }
 
-    fn count_pubkeys(candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>]) -> u64 {
+    fn count_pubkeys(candidates: &[RwLock<CleaningCandidatesBin>]) -> u64 {
         candidates
             .iter()
             .map(|x| x.read().unwrap().len())
@@ -1489,18 +1469,15 @@ impl AccountsDb {
 
         let dirty_stores_len = dirty_stores.len();
         let num_bins = self.accounts_index.bins();
-        let candidates: Box<_> =
-            std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
+        let candidates: CleaningCandidates =
+            std::iter::repeat_with(|| RwLock::new(CleaningCandidatesBin::default()))
                 .take(num_bins)
                 .collect();
 
-        let insert_candidate = |pubkey, is_zero_lamport| {
+        let insert_candidate = |pubkey| {
             let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
             let mut candidates_bin = candidates[index].write().unwrap();
-            candidates_bin
-                .entry(pubkey)
-                .or_default()
-                .might_contain_zero_lamport_entry |= is_zero_lamport;
+            candidates_bin.insert(pubkey);
         };
 
         // `min_dirty_slot` (computed above) already holds the oldest dirty slot over this same set.
@@ -1514,8 +1491,7 @@ impl AccountsDb {
                         store
                             .scan_accounts_without_data(|_offset, account| {
                                 let pubkey = *account.pubkey();
-                                let is_zero_lamport = account.is_zero_lamport();
-                                insert_candidate(pubkey, is_zero_lamport);
+                                insert_candidate(pubkey);
                             })
                             .expect("must scan accounts storage");
                     });
@@ -1571,7 +1547,7 @@ impl AccountsDb {
                         .is_none_or(|max_clean_root_inclusive| max_clean_root_inclusive >= *slot)
                         && latest_full_snapshot_slot >= *slot;
                     if is_candidate_for_clean {
-                        insert_candidate(*pubkey, true);
+                        insert_candidate(*pubkey);
                     }
                     !is_candidate_for_clean
                 });
@@ -1794,15 +1770,13 @@ impl AccountsDb {
                 let mut missing = 0;
                 let mut useful = 0;
                 let mut purges_old_accounts_local = 0;
-                let mut candidates_bin = candidates_bin.write().unwrap();
-                // Iterate over each HashMap entry to
-                // avoid capturing the HashMap in the
-                // closure passed to scan thus making
-                // conflicting read and write borrows.
-                for (candidate_pubkey, candidate_info) in candidates_bin.iter_mut() {
+                // Take the bin so its allocation is freed by this thread once the bin is
+                // scanned, rather than serially after every bin completes.
+                let candidates_bin = mem::take(&mut *candidates_bin.write().unwrap());
+                for candidate_pubkey in candidates_bin {
                     let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
-                        iter::once(candidate_pubkey),
+                        iter::once(&candidate_pubkey),
                         |_candidate_pubkey, slot_list_and_ref_count| {
                             let mut useless = true;
                             if let Some((slot_list, _)) = slot_list_and_ref_count {
@@ -1858,15 +1832,11 @@ impl AccountsDb {
                                 useful += 1;
                             }
                         },
-                        if candidate_info.might_contain_zero_lamport_entry {
-                            ScanFilter::All
-                        } else {
-                            self.scan_filter_for_shrinking
-                        },
+                        ScanFilter::All,
                     );
                     if should_collect_reclaims {
                         let reclaims_new =
-                            self.collect_reclaims(candidate_pubkey, max_clean_root_inclusive);
+                            self.collect_reclaims(&candidate_pubkey, max_clean_root_inclusive);
                         if !reclaims_new.is_empty() {
                             reclaims.lock().unwrap().extend(reclaims_new);
                         }
@@ -1890,9 +1860,6 @@ impl AccountsDb {
         }
         accounts_scan.stop();
         drop(active_guard);
-
-        // the candidates are no longer needed, free them before reclaiming
-        drop(candidates);
 
         let reclaims = reclaims.into_inner().unwrap();
 

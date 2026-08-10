@@ -5170,8 +5170,8 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
     db.uncleaned_pubkeys.insert(slot3, vec![pubkey3]);
 
     let num_bins = db.accounts_index.bins();
-    let candidates: Box<_> =
-        std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
+    let candidates: CleaningCandidates =
+        iter::repeat_with(|| RwLock::new(CleaningCandidatesBin::default()))
             .take(num_bins)
             .collect();
     db.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(Some(slot3), &candidates);
