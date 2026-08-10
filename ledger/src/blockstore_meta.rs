@@ -987,6 +987,32 @@ mod test {
     }
 
     #[test]
+    fn test_update_parent_info_from_slot_meta() {
+        // No UpdateParent marker (replay_fec_set_index == 0) -> None
+        let meta = SlotMeta::new(5, Some(3));
+        assert_eq!(update_parent_info_from_slot_meta(5, &meta), None);
+
+        // Marker present, but parent unknown (orphan) -> None
+        let mut meta = SlotMeta::new_orphan(5);
+        meta.replay_fec_set_index = 7;
+        assert_eq!(update_parent_info_from_slot_meta(5, &meta), None);
+
+        // Marker present with a known parent -> all fields carried over
+        let mut meta = SlotMeta::new(5, Some(3));
+        meta.replay_fec_set_index = 7;
+        meta.parent_block_id = Hash::new_unique();
+        assert_eq!(
+            update_parent_info_from_slot_meta(5, &meta),
+            Some(UpdateParentInfo {
+                slot: 5,
+                update_parent_fec_set_index: 7,
+                parent_slot: 3,
+                parent_block_id: meta.parent_block_id,
+            })
+        );
+    }
+
+    #[test]
     fn test_slot_meta_slot_zero_connected() {
         let meta = SlotMeta::new(0 /* slot */, None /* parent */);
         assert!(meta.is_parent_connected());

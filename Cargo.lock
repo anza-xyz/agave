@@ -7918,6 +7918,7 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-rayon-threadlimit",
  "solana-rent",
+ "solana-reward-info",
  "solana-rpc",
  "solana-rpc-client-api",
  "solana-runtime",

@@ -92,6 +92,7 @@ use {
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::first_of_consecutive_leader_slots,
+        reward_info::RewardInfo,
         snapshot_controller::SnapshotController,
         transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
@@ -4272,21 +4273,8 @@ impl ReplayStage {
                     let commission_rate_in_basis_points =
                         bank.feature_set.snapshot().commission_rate_in_basis_points;
                     let rewards_and_num_partitions = bank.get_rewards_and_num_partitions();
-                    let keyed_rewards: Vec<_> = rewards_and_num_partitions
-                        .keyed_rewards
-                        .iter()
-                        .map(|(pubkey, reward)| {
-                            (
-                                *pubkey,
-                                BlockRewardInfo {
-                                    reward_type: reward.reward_type,
-                                    lamports: reward.lamports,
-                                    post_balance: reward.post_balance,
-                                    commission_bps: reward.commission_bps,
-                                },
-                            )
-                        })
-                        .collect();
+                    let keyed_rewards =
+                        build_block_reward_infos(&rewards_and_num_partitions.keyed_rewards);
                     block_metadata_notifier.notify_block_metadata(
                         bank.parent_slot(),
                         &parent_blockhash.to_string(),
@@ -5575,6 +5563,27 @@ impl ReplayStage {
     pub fn join(self) -> thread::Result<()> {
         self.t_replay.join().map(|_| ())
     }
+}
+
+/// Converts the runtime reward representation into the Geyser boundary type
+/// accepted by [`BlockMetadataNotifier`](solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifier).
+fn build_block_reward_infos(
+    keyed_rewards: &[(Pubkey, RewardInfo)],
+) -> Vec<(Pubkey, BlockRewardInfo)> {
+    keyed_rewards
+        .iter()
+        .map(|(pubkey, reward)| {
+            (
+                *pubkey,
+                BlockRewardInfo {
+                    reward_type: reward.reward_type,
+                    lamports: reward.lamports,
+                    post_balance: reward.post_balance,
+                    commission_bps: reward.commission_bps,
+                },
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

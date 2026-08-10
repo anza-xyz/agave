@@ -29,7 +29,7 @@ pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
 mod read_optimized_dashmap;
 pub mod rent_collector;
-mod reward_info;
+pub mod reward_info;
 pub mod runtime_config;
 pub mod serde_snapshot;
 pub mod slot_params;

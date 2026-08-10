@@ -195,6 +195,42 @@ mod tests {
     }
 
     #[test]
+    fn test_build_rewards_commission_representation() {
+        use {
+            crate::block_metadata_notifier_interface::BlockRewardInfo, solana_pubkey::Pubkey,
+            solana_reward_info::RewardType,
+        };
+        let pubkey = Pubkey::from([9u8; 32]);
+        let keyed_rewards = [(
+            pubkey,
+            BlockRewardInfo {
+                reward_type: RewardType::Voting,
+                lamports: 11,
+                post_balance: 111,
+                commission_bps: Some(525),
+            },
+        )];
+
+        // Legacy percent representation: bps rounded down to whole percent
+        let rewards = BlockMetadataNotifierImpl::build_rewards(&keyed_rewards, Some(4), false);
+        assert_eq!(rewards.num_partitions, Some(4));
+        let reward = &rewards.rewards[0];
+        assert_eq!(reward.pubkey, pubkey.to_string());
+        assert_eq!(reward.lamports, 11);
+        assert_eq!(reward.post_balance, 111);
+        assert_eq!(reward.reward_type, Some(RewardType::Voting));
+        assert_eq!(reward.commission, Some(5));
+        assert_eq!(reward.commission_bps, None);
+
+        // Basis point representation passes bps through unmodified
+        let rewards = BlockMetadataNotifierImpl::build_rewards(&keyed_rewards, None, true);
+        assert_eq!(rewards.num_partitions, None);
+        let reward = &rewards.rewards[0];
+        assert_eq!(reward.commission, None);
+        assert_eq!(reward.commission_bps, Some(525));
+    }
+
+    #[test]
     fn test_notify_block_metadata_includes_bank_id() {
         let updates = Arc::new(Mutex::new(Vec::new()));
         let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {

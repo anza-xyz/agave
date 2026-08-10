@@ -64,3 +64,28 @@ impl ReadableAccount for AccountForGeyser<'_> {
         self.rent_epoch
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_account_for_geyser_readable_account() {
+        let pubkey = Pubkey::from([1u8; 32]);
+        let owner = Pubkey::from([2u8; 32]);
+        let data = [3u8, 4, 5];
+        let account = AccountForGeyser {
+            pubkey: &pubkey,
+            lamports: 42,
+            owner: &owner,
+            executable: true,
+            rent_epoch: 7,
+            data: &data,
+        };
+        assert_eq!(account.lamports(), 42);
+        assert_eq!(account.data(), &data);
+        assert_eq!(account.owner(), &owner);
+        assert!(account.executable());
+        assert_eq!(account.rent_epoch(), 7);
+    }
+}

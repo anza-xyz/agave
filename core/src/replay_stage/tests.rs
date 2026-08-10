@@ -7114,3 +7114,56 @@ fn test_process_duplicate_confirmed_slots(same_batch: bool) {
         &mut PurgeRepairSlotCounter::default(),
     );
 }
+
+#[test]
+fn test_build_block_reward_infos() {
+    use solana_reward_info::RewardType;
+    let voter = Pubkey::new_unique();
+    let staker = Pubkey::new_unique();
+    let keyed_rewards = vec![
+        (
+            voter,
+            RewardInfo {
+                reward_type: RewardType::Voting,
+                lamports: 10,
+                post_balance: 100,
+                commission_bps: Some(550),
+            },
+        ),
+        (
+            staker,
+            RewardInfo {
+                reward_type: RewardType::Staking,
+                lamports: -5,
+                post_balance: 50,
+                commission_bps: None,
+            },
+        ),
+    ];
+
+    let converted = build_block_reward_infos(&keyed_rewards);
+
+    assert_eq!(
+        converted,
+        vec![
+            (
+                voter,
+                BlockRewardInfo {
+                    reward_type: RewardType::Voting,
+                    lamports: 10,
+                    post_balance: 100,
+                    commission_bps: Some(550),
+                },
+            ),
+            (
+                staker,
+                BlockRewardInfo {
+                    reward_type: RewardType::Staking,
+                    lamports: -5,
+                    post_balance: 50,
+                    commission_bps: None,
+                },
+            ),
+        ],
+    );
+}
