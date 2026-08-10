@@ -21,7 +21,8 @@ pub mod points;
 
 /// Maximum commission, in basis points.
 pub(crate) const MAX_BPS: u16 = 10_000;
-const MAX_BPS_U128: u128 = MAX_BPS as u128;
+/// Maximum commission, in basis points, expressed as a u128
+pub(crate) const MAX_BPS_U128: u128 = MAX_BPS as u128;
 
 #[derive(Debug, PartialEq, Eq)]
 struct CalculatedStakeRewards {
