@@ -84,7 +84,7 @@ use {
         borrow::Cow,
         boxed::Box,
         collections::{BTreeSet, HashMap, HashSet, VecDeque},
-        io, iter, mem,
+        io, iter,
         num::Saturating,
         ops::RangeBounds,
         path::{Path, PathBuf},
@@ -1206,37 +1206,6 @@ impl AccountsDb {
         reclaims
     }
 
-    /// Brings clean candidate information cached during the index scan up date based on
-    /// slots reclaimed
-    fn update_candidate_after_reclaims(
-        &self,
-        candidate_info: &mut CleaningInfo,
-        reclaims: &ReclaimsWithNewestSlot<AccountInfo>,
-    ) {
-        if candidate_info.slot_list.is_empty() {
-            return;
-        }
-        candidate_info.ref_count = candidate_info
-            .ref_count
-            .checked_sub(reclaims.len() as RefCount)
-            .expect("candidate ref count covers every reclaimed entry");
-        // Remove any entry that was reclaimed from the candidate slot list.
-        let slot_list_len = candidate_info.slot_list.len();
-        candidate_info.slot_list.retain(|(slot, _)| {
-            !reclaims
-                .iter()
-                .any(|((reclaimed_slot, _), _)| reclaimed_slot == slot)
-        });
-        // Ensure that the current slot_list length + the reclaims length is equal
-        // to the original slot list len. This guarantees all reclaimed entries
-        // were removed from the candidate slot list.
-        debug_assert_eq!(
-            candidate_info.slot_list.len() + reclaims.len(),
-            slot_list_len,
-            "every reclaimed entry is in the candidate slot list"
-        );
-    }
-
     /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
     ///
     /// The reclaimed accounts were already unref'd and removed from the slot list when the
@@ -1804,7 +1773,7 @@ impl AccountsDb {
             .activate(ActiveStatItem::CleanConstructCandidates);
         let mut measure_construct_candidates = Measure::start("construct_candidates");
         let mut key_timings = CleanKeyTimings::default();
-        let mut candidates = self.construct_candidate_clean_keys(
+        let candidates = self.construct_candidate_clean_keys(
             max_clean_root_inclusive,
             is_startup,
             &mut key_timings,
@@ -1832,7 +1801,7 @@ impl AccountsDb {
                 // avoid capturing the HashMap in the
                 // closure passed to scan thus making
                 // conflicting read and write borrows.
-                candidates_bin.retain(|candidate_pubkey, candidate_info| {
+                for (candidate_pubkey, candidate_info) in candidates_bin.iter_mut() {
                     let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
                         iter::once(candidate_pubkey),
@@ -1909,12 +1878,10 @@ impl AccountsDb {
                         let reclaims_new =
                             self.collect_reclaims(candidate_pubkey, max_clean_root_inclusive);
                         if !reclaims_new.is_empty() {
-                            self.update_candidate_after_reclaims(candidate_info, &reclaims_new);
                             reclaims.lock().unwrap().extend(reclaims_new);
                         }
                     }
-                    !candidate_info.slot_list.is_empty()
-                });
+                }
                 found_not_zero_accum.fetch_add(found_not_zero, Ordering::Relaxed);
                 not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
                 missing_accum.fetch_add(missing, Ordering::Relaxed);
@@ -1934,13 +1901,9 @@ impl AccountsDb {
         accounts_scan.stop();
         drop(active_guard);
 
-        // strip the RwLock from the candidate bins now that we no longer need it
-        let candidates: Box<_> = candidates
-            .iter_mut()
-            .map(|candidates_bin| mem::take(candidates_bin.get_mut().unwrap()))
-            .collect();
+        // the candidates are no longer needed, free them before reclaiming
+        drop(candidates);
 
-        let retained_keys_count: usize = candidates.iter().map(HashMap::len).sum();
         let reclaims = reclaims.into_inner().unwrap();
 
         let active_guard = self.active_stats.activate(ActiveStatItem::CleanOldAccounts);
@@ -1981,7 +1944,6 @@ impl AccountsDb {
             ("zero_lamport_sweep_us", key_timings.zero_lamport_sweep_us, i64),
             ("useful_keys", useful_accum.load(Ordering::Relaxed), i64),
             ("total_keys_count", num_candidates, i64),
-            ("retained_keys_count", retained_keys_count, i64),
             (
                 "scan_found_not_zero",
                 found_not_zero_accum.load(Ordering::Relaxed),
