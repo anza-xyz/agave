@@ -2703,11 +2703,10 @@ mod tests {
         }
     }
 
-    fn create_test_infos(count: usize) -> AncientSlotInfos {
-        let db = AccountsDb::default_for_tests();
+    fn create_test_infos(db: &AccountsDb, count: usize) -> AncientSlotInfos {
         let slot1 = 1;
         let alive = true;
-        create_storages_and_update_index(&db, slot1, 1, alive, None);
+        create_storages_and_update_index(db, slot1, 1, alive, None);
         let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
         AncientSlotInfos {
             all_infos: (0..count)
@@ -2735,9 +2734,10 @@ mod tests {
     fn test_filter_by_smallest_capacity_empty() {
         for method in TestSmallestCapacity::iter() {
             for max_storages in 1..3 {
+                let db = AccountsDb::default_for_tests();
                 // requesting N max storage, has 1 storage, N >= 1 so nothing to do
                 let ideal_storage_size_large = get_ancient_append_vec_capacity();
-                let mut infos = create_test_infos(1);
+                let mut infos = create_test_infos(&db, 1);
                 let tuning = PackedAncientStorageTuning {
                     max_ancient_slots: max_storages,
                     ideal_storage_size: NonZeroU64::new(ideal_storage_size_large).unwrap(),
@@ -2770,7 +2770,8 @@ mod tests {
         for method in TestSmallestCapacity::iter() {
             let ideal_storage_size_large = get_ancient_append_vec_capacity();
             for reorder in [false, true] {
-                let mut infos = create_test_infos(7);
+                let db = AccountsDb::default_for_tests();
+                let mut infos = create_test_infos(&db, 7);
                 infos
                     .all_infos
                     .iter_mut()
@@ -2825,12 +2826,13 @@ mod tests {
     /// we should still have all the high slots after calling `filter_by_smallest_capacity().
     #[test]
     fn test_filter_by_smallest_capacity_high_slot_more() {
+        let db = AccountsDb::default_for_tests();
         let tuning = default_tuning();
 
         // Ensure we have more storages with high slots than the 'max resulting storages'.
         let num_high_slots = tuning.max_resulting_storages.get() * 2;
         let num_ancient_storages = num_high_slots * 3;
-        let mut infos = create_test_infos(num_ancient_storages as usize);
+        let mut infos = create_test_infos(&db, num_ancient_storages as usize);
         infos
             .all_infos
             .sort_unstable_by_key(|slot_info| slot_info.slot);
@@ -2870,12 +2872,13 @@ mod tests {
     /// we should still have all the high slots after calling `filter_by_smallest_capacity().
     #[test]
     fn test_filter_by_smallest_capacity_high_slot_less() {
+        let db = AccountsDb::default_for_tests();
         let tuning = default_tuning();
 
         // Ensure we have less storages with high slots than the 'max resulting storages'.
         let num_high_slots = tuning.max_resulting_storages.get() / 2;
         let num_ancient_storages = num_high_slots * 5;
-        let mut infos = create_test_infos(num_ancient_storages as usize);
+        let mut infos = create_test_infos(&db, num_ancient_storages as usize);
         infos
             .all_infos
             .sort_unstable_by_key(|slot_info| slot_info.slot);
@@ -2928,7 +2931,8 @@ mod tests {
     fn test_truncate_to_max_storages() {
         for filter in [false, true] {
             let ideal_storage_size_large = get_ancient_append_vec_capacity();
-            let mut infos = create_test_infos(1);
+            let db = AccountsDb::default_for_tests();
+            let mut infos = create_test_infos(&db, 1);
             let max_storages = 1;
             // 1 storage, 1 max, but 1 storage does not fill the entire new combined storage, so truncate nothing
             let tuning = PackedAncientStorageTuning {
@@ -2939,7 +2943,8 @@ mod tests {
             test(filter, &mut infos, &tuning);
             assert_eq!(infos.all_infos.len(), usize::from(!filter));
 
-            let mut infos = create_test_infos(1);
+            let db = AccountsDb::default_for_tests();
+            let mut infos = create_test_infos(&db, 1);
             let max_storages = 1;
             let tuning = PackedAncientStorageTuning {
                 max_ancient_slots: max_storages,
@@ -2951,7 +2956,8 @@ mod tests {
             test(filter, &mut infos, &tuning);
             assert_eq!(infos.all_infos.len(), usize::from(!filter));
 
-            let mut infos = create_test_infos(1);
+            let db = AccountsDb::default_for_tests();
+            let mut infos = create_test_infos(&db, 1);
             let max_storages = 2;
             let tuning = PackedAncientStorageTuning {
                 max_ancient_slots: max_storages,
@@ -2975,7 +2981,8 @@ mod tests {
                 );
             }
 
-            let mut infos = create_test_infos(1);
+            let db = AccountsDb::default_for_tests();
+            let mut infos = create_test_infos(&db, 1);
             infos.all_infos[0].alive_bytes = ideal_storage_size_large + 1;
             let max_storages = 2;
             let tuning = PackedAncientStorageTuning {
@@ -3004,7 +3011,8 @@ mod tests {
                     ideal_storage_size: NonZeroU64::new(ideal_storage_size).unwrap(),
                     ..default_tuning()
                 };
-                let mut infos = create_test_infos(2);
+                let db = AccountsDb::default_for_tests();
+                let mut infos = create_test_infos(&db, 2);
                 test(filter, &mut infos, &tuning);
                 assert_eq!(infos.all_infos.len(), 2);
             }
@@ -3014,7 +3022,8 @@ mod tests {
             // storage[4] is big enough to cause us to need another storage
             // so, storage[0..=2] can be combined into 1, resulting in 3 remaining storages, which is
             // the goal, so we only have to combine the first 3 to hit the goal
-            let mut infos = create_test_infos(5);
+            let db = AccountsDb::default_for_tests();
+            let mut infos = create_test_infos(&db, 5);
             infos.all_infos[4].alive_bytes = ideal_storage_size_large;
             let max_storages = 4;
             let tuning = PackedAncientStorageTuning {
@@ -3145,7 +3154,8 @@ mod tests {
 
     #[test]
     fn test_clear_should_shrink_after_cutoff_empty() {
-        let mut infos = create_test_infos(2);
+        let db = AccountsDb::default_for_tests();
+        let mut infos = create_test_infos(&db, 2);
         for count in 0..2 {
             for i in 0..count {
                 infos.all_infos[i].should_shrink = true;
@@ -3327,7 +3337,8 @@ mod tests {
                 for (percent_of_alive_shrunk_data, mut expected_infos) in
                     [(0, 0), (9, 1), (10, 1), (89, 2), (90, 2), (91, 2), (100, 2)]
                 {
-                    let mut infos = create_test_infos(2);
+                    let db = AccountsDb::default_for_tests();
+                    let mut infos = create_test_infos(&db, 2);
                     infos
                         .all_infos
                         .iter_mut()
