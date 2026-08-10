@@ -33,18 +33,6 @@ pub struct AccountStorageEntry {
 
     pub(crate) num_alive_bytes: AtomicUsize,
 
-    /// offsets to accounts that are zero lamport single ref (ZLSR) stored in this
-    /// storage. These are still alive. But, shrink will be able to remove them.
-    ///
-    /// NOTE: It's possible that one of these zero lamport single ref accounts
-    /// could be written in a new transaction (and later rooted & flushed) and a
-    /// later clean runs and marks this account dead before this storage gets a
-    /// chance to be shrunk, thus making the account dead in both "num_alive_bytes"
-    /// and as a zero lamport single ref. If this happens, we will count this
-    /// account as "dead" twice. However, this should be fine. It just makes
-    /// shrink more likely to visit this storage.
-    zero_lamport_single_ref_offsets: RwLock<IntSet<Offset>>,
-
     /// offsets to zero-lamport accounts that have been removed from the accounts index entirely
     /// (a tombstone — carried forward to this storage by shrink). The index has no slot_list entry
     /// pointing at them; their bytes are retained only so an incremental snapshot taken after the
@@ -81,7 +69,6 @@ impl AccountStorageEntry {
             accounts,
             num_alive_accounts: AtomicUsize::new(0),
             num_alive_bytes: AtomicUsize::new(0),
-            zero_lamport_single_ref_offsets: RwLock::default(),
             tombstone_offsets: RwLock::default(),
             obsolete_accounts: RwLock::default(),
         }
@@ -95,9 +82,6 @@ impl AccountStorageEntry {
             num_alive_accounts: AtomicUsize::new(self.count()),
             num_alive_bytes: AtomicUsize::new(self.alive_bytes()),
             accounts,
-            zero_lamport_single_ref_offsets: RwLock::new(
-                self.zero_lamport_single_ref_offsets.read().unwrap().clone(),
-            ),
             tombstone_offsets: RwLock::new(self.tombstone_offsets.read().unwrap().clone()),
             obsolete_accounts: RwLock::new(self.obsolete_accounts.read().unwrap().clone()),
         })
@@ -115,7 +99,6 @@ impl AccountStorageEntry {
             accounts,
             num_alive_accounts: AtomicUsize::new(0),
             num_alive_bytes: AtomicUsize::new(0),
-            zero_lamport_single_ref_offsets: RwLock::default(),
             tombstone_offsets: RwLock::default(),
             obsolete_accounts: RwLock::new(obsolete_accounts),
         }
@@ -163,7 +146,7 @@ impl AccountStorageEntry {
     /// entries (`zero_lamport_single_ref_offsets`) and tombstones removed from the index
     /// (`tombstone_offsets`). Used for shrink-productivity accounting.
     pub(crate) fn num_zero_lamport_single_ref_accounts(&self) -> usize {
-        self.zero_lamport_single_ref_offsets.read().unwrap().len() + self.num_tombstones()
+        self.num_tombstones()
     }
 
     /// Batch-insert tombstone offsets, taking the offsets lock once.
