@@ -1315,6 +1315,11 @@ mod tests {
             let json_rpc_config =
                 crate::commands::run::args::json_rpc_config::tests::default_json_rpc_config();
 
+            let blockstore_options = BlockstoreOptions {
+                enable_wal: false,
+                ..BlockstoreOptions::default_for_tests()
+            };
+
             RunArgs {
                 identity_keypair,
                 ledger_path,
@@ -1323,7 +1328,7 @@ mod tests {
                 known_validators,
                 socket_addr_space: SocketAddrSpace::Global,
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
-                blockstore_options: BlockstoreOptions::default(),
+                blockstore_options,
                 json_rpc_config,
                 pub_sub_config: PubSubConfig {
                     worker_threads: 4,

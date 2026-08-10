@@ -2160,7 +2160,7 @@ fn test_merkle_root_metas_data() {
     );
 
     // Block is now dead
-    blockstore.db.write(write_batch).unwrap();
+    blockstore.write_batch(write_batch).unwrap();
     assert!(blockstore.is_dead(slot));
     blockstore.remove_dead_slot(slot).unwrap();
 
@@ -2218,7 +2218,7 @@ fn test_merkle_root_metas_data() {
         write_batch,
         ..
     } = shred_insertion_tracker;
-    blockstore.db.write(write_batch).unwrap();
+    blockstore.write_batch(write_batch).unwrap();
 
     // Verify that we still have the merkle root meta for the original shred
     // and the new shred

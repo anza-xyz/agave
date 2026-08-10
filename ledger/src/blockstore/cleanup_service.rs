@@ -116,6 +116,7 @@ impl BlockstoreCleanupService {
                     thread::sleep(Duration::from_secs(1));
                 }
 
+                blockstore.prepare_for_exit();
                 info!("BlockstoreCleanupService has stopped");
             })
             .unwrap();
@@ -318,18 +319,6 @@ mod tests {
         solana_hash::Hash,
     };
 
-    fn flush_blockstore_contents_to_disk(blockstore: Blockstore) -> Blockstore {
-        // The maybe_generate_automatic_cleanup_request() routine uses a method
-        // that queries data from RocksDB SST files. On a running validator,
-        // these are created fairly regularly as new data comes in and older
-        // data is pushed to disk. In these unit tests, we aren't pushing nearly
-        // enough data for this to happen organically. So, instead open and
-        // close the Blockstore which will perform the flush to SSTs.
-        let ledger_path = blockstore.ledger_path().clone();
-        drop(blockstore);
-        Blockstore::open(&ledger_path).unwrap()
-    }
-
     #[test]
     fn test_maybe_generate_automatic_cleanup_request() {
         // maybe_generate_automatic_cleanup_request() does not modify Blockstore
@@ -352,7 +341,7 @@ mod tests {
         blockstore.insert_shreds(shreds, false).unwrap();
 
         // Initiate a flush so inserted shreds found by find_slots_to_clean()
-        let blockstore = Arc::new(flush_blockstore_contents_to_disk(blockstore));
+        blockstore.flush().unwrap();
 
         // Note that last_purge_slot gets updated after a couple basic checks to
         // avoid rescanning all the Blockstore SST files again. This is good for
@@ -512,7 +501,7 @@ mod tests {
         }
 
         // Initiate a flush so inserted shreds found by maybe_generate_automatic_cleanup_request()
-        let blockstore = flush_blockstore_contents_to_disk(blockstore);
+        blockstore.flush().unwrap();
 
         let mut last_purge_slot = 0;
         let purge_interval = 0;
@@ -544,7 +533,7 @@ mod tests {
         blockstore.insert_shreds(shreds, false).unwrap();
 
         // Initiate a flush so inserted shreds found by maybe_generate_automatic_cleanup_request()
-        let blockstore = Arc::new(flush_blockstore_contents_to_disk(blockstore));
+        blockstore.flush().unwrap();
 
         // Mark 40 as a root to cleanup all older slots
         let root = 40;
