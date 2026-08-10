@@ -77,15 +77,18 @@ pub(crate) const HANDSHAKE_BURST: u64 = 400;
 /// the max number of cores we dedicate to processing of the TLS handshakes, per endpoint.
 pub(crate) const HANDSHAKE_WORKERS_PER_ENDPOINT: usize = 1;
 
-/// Maximum inbound handshakes allowed in flight; once reached we stop pulling
-/// new ones off the endpoint. Bounds handshake memory use. Sized to the
-/// validator set, which may be handshaking all at once after a restart.
-pub const MAX_INFLIGHT_HANDSHAKES: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
-
 /// Hard timeout for an inbound handshake, enforced regardless of what
 /// the peer sends. ~1s suffices for a 300ms-RTT handshake with no packet
 /// loss, so we use 2s to have margin for losses & retransmits.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Maximum inbound handshakes allowed in flight; once reached we stop pulling
+/// new ones off the endpoint. Bounds handshake memory use. Sized to the most
+/// handshakes the rate limiter can admit within one [`HANDSHAKE_TIMEOUT`]
+/// under sustained [`HANDSHAKE_GLOBAL_RATE`] load, so admission is governed by
+/// the rate limiter rather than by this cap.
+pub const MAX_INFLIGHT_HANDSHAKES: usize =
+    (HANDSHAKE_GLOBAL_RATE * HANDSHAKE_TIMEOUT.as_secs_f64()) as usize;
 
 /// How often endpoint metrics are reported.
 pub(crate) const METRICS_INTERVAL: Duration = Duration::from_secs(1);
