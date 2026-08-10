@@ -633,11 +633,8 @@ impl Bank {
             }
         });
 
-        let CachedVoteAccounts {
-            snapshot_epoch_vote_accounts,
-            rewarded_epoch_vote_accounts,
-            distribution_epoch_vote_accounts,
-        } = cached_vote_accounts;
+        let distribution_epoch_vote_accounts =
+            cached_vote_accounts.distribution_epoch_vote_accounts;
 
         let vote_pubkey = stake_account.delegation().voter_pubkey;
 
@@ -706,21 +703,28 @@ impl Bank {
         // When `commission_rate_in_basis_points` is true, use the new field
         // `inflation_rewards_commission_bps`; otherwise use the legacy
         // percentage field and convert to basis points by multiplying by 100.
-        let commission_bps = if delay_commission_updates {
-            let vote_state_for_commission = snapshot_epoch_vote_accounts
-                .and_then(|eva| eva.get(&vote_pubkey))
-                .or_else(|| rewarded_epoch_vote_accounts.and_then(|eva| eva.get(&vote_pubkey)))
-                .map(|vote_account| vote_account.vote_state_view())
-                .unwrap_or(vote_state);
-            if commission_rate_in_basis_points {
-                vote_state_for_commission.inflation_rewards_commission()
-            } else {
-                vote_state_for_commission.commission() as u16 * 100
-            }
-        } else if commission_rate_in_basis_points {
+        let current_commission_bps = if commission_rate_in_basis_points {
             vote_state.inflation_rewards_commission()
         } else {
-            vote_state.commission() as u16 * 100
+            u16::from(vote_state.commission()) * 100
+        };
+        let commission_bps = if delay_commission_updates {
+            cached_vote_accounts
+                .snapshot_epoch_stakes
+                .and_then(|epoch_stakes| {
+                    epoch_stakes.get_commission_bps(&vote_pubkey, commission_rate_in_basis_points)
+                })
+                .or_else(|| {
+                    cached_vote_accounts
+                        .rewarded_epoch_stakes
+                        .and_then(|epoch_stakes| {
+                            epoch_stakes
+                                .get_commission_bps(&vote_pubkey, commission_rate_in_basis_points)
+                        })
+                })
+                .unwrap_or(current_commission_bps)
+        } else {
+            current_commission_bps
         };
 
         match redeem_rewards(
@@ -1381,8 +1385,8 @@ mod tests {
             }
             let distribution_epoch_vote_accounts = VoteAccounts::from(Arc::new(vote_accounts_map));
             let cached_vote_accounts = CachedVoteAccounts {
-                snapshot_epoch_vote_accounts: None,
-                rewarded_epoch_vote_accounts: None,
+                snapshot_epoch_stakes: None,
+                rewarded_epoch_stakes: None,
                 distribution_epoch_vote_accounts: &distribution_epoch_vote_accounts,
             };
 
@@ -2139,6 +2143,217 @@ mod tests {
                 )],
             },
         );
+    }
+
+    #[test_case(false; "tower")]
+    #[test_case(true; "migration_epoch")]
+    fn test_vat_filtered_history_delays_commission(migration: bool) {
+        const HISTORICAL_COMMISSION_BPS: u16 = 500;
+        const CURRENT_COMMISSION_BPS: u16 = 10_000;
+        const MIGRATION_SLOT: u64 = SLOTS_PER_EPOCH + SLOTS_PER_EPOCH / 2 - 1;
+
+        let GenesisConfigInfo {
+            mut genesis_config,
+            mint_keypair,
+            ..
+        } = genesis_utils::create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            42 * LAMPORTS_PER_SOL,
+        );
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        for feature_id in [
+            agave_feature_set::alpenglow::id(),
+            agave_feature_set::bls_pubkey_management_in_vote_account::id(),
+            agave_feature_set::validator_admission_ticket::id(),
+        ] {
+            genesis_utils::activate_feature(&mut genesis_config, feature_id);
+        }
+        deactivate_features(
+            &mut genesis_config,
+            &vec![agave_feature_set::custom_commission_collector::id()],
+        );
+
+        let vote_pubkey = Pubkey::new_unique();
+        let stake_pubkey = Pubkey::new_unique();
+        let authority = Keypair::new();
+        let vote_lamports = genesis_utils::minimum_vote_account_balance_for_vat(100);
+        let stake_lamports = 100_000 * LAMPORTS_PER_SOL;
+        let (bls_pubkey, proof_of_possession) =
+            vote_state::create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+
+        let edit_vote_state = |account: &mut AccountSharedData, edit: &dyn Fn(&mut VoteStateV4)| {
+            let VoteStateVersions::V4(mut vote_state) =
+                account.deserialize_data::<VoteStateVersions>().unwrap()
+            else {
+                unreachable!();
+            };
+            edit(&mut vote_state);
+            account
+                .serialize_data(&VoteStateVersions::V4(vote_state))
+                .unwrap();
+        };
+        let mut vote_account = vote_state::create_v4_account_with_authorized(
+            &vote_pubkey,
+            &authority.pubkey(),
+            bls_pubkey,
+            &authority.pubkey(),
+            HISTORICAL_COMMISSION_BPS,
+            &vote_pubkey,
+            0,
+            &authority.pubkey(),
+            vote_lamports,
+        );
+        edit_vote_state(&mut vote_account, &|vote_state| {
+            vote_state.bls_pubkey_compressed = None;
+        });
+        genesis_config.accounts.insert(
+            stake_pubkey,
+            stake_utils::create_stake_account(
+                &stake_pubkey,
+                &vote_pubkey,
+                &vote_account,
+                &genesis_config.rent,
+                stake_lamports,
+            )
+            .into(),
+        );
+        genesis_config
+            .accounts
+            .insert(vote_pubkey, vote_account.into());
+
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let next_bank = |bank, slot| {
+            Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                bank,
+                SlotLeader::new_unique(),
+                slot,
+            )
+        };
+        let send = |bank: &Bank, instruction, authority: &Keypair| {
+            let transaction = solana_transaction::Transaction::new_signed_with_payer(
+                &[instruction],
+                Some(&mint_keypair.pubkey()),
+                &[&mint_keypair, authority],
+                bank.last_blockhash(),
+            );
+            bank.process_transaction(&transaction).unwrap();
+        };
+        let assert_filtered_but_historical = |bank: &Bank, epoch| {
+            let epoch_stakes = bank.epoch_stakes(epoch).unwrap();
+            assert!(
+                epoch_stakes
+                    .stakes()
+                    .vote_accounts()
+                    .get(&vote_pubkey)
+                    .is_none()
+            );
+            assert_eq!(
+                epoch_stakes.get_commission_bps(&vote_pubkey, true),
+                Some(HISTORICAL_COMMISSION_BPS),
+            );
+        };
+
+        assert_filtered_but_historical(&bank, 1);
+        let bank = next_bank(bank, SLOTS_PER_EPOCH);
+        assert_filtered_but_historical(&bank, 2);
+
+        send(
+            &bank,
+            solana_vote_program::vote_instruction::authorize(
+                &vote_pubkey,
+                &authority.pubkey(),
+                &Pubkey::new_unique(),
+                solana_vote_interface::state::VoteAuthorize::VoterWithBLS(
+                    solana_vote_interface::state::VoterWithBLSArgs {
+                        bls_pubkey,
+                        bls_proof_of_possession: proof_of_possession,
+                    },
+                ),
+            ),
+            &authority,
+        );
+        send(
+            &bank,
+            solana_vote_program::vote_instruction::update_commission(
+                &vote_pubkey,
+                &authority.pubkey(),
+                100,
+            ),
+            &authority,
+        );
+        let mut account = bank.get_account(&vote_pubkey).unwrap();
+        edit_vote_state(&mut account, &|vote_state| {
+            assert_eq!(
+                vote_state.inflation_rewards_commission_bps,
+                CURRENT_COMMISSION_BPS,
+            );
+            let old_credits = vote_state.credits();
+            vote_state
+                .epoch_credits
+                .push((1, old_credits + 1_000, old_credits));
+        });
+        bank.store_account(&vote_pubkey, &account);
+
+        let bank = if migration {
+            let bank = next_bank(bank, MIGRATION_SLOT);
+            bank.set_alpenglow_genesis_certificate(
+                &agave_votor_messages::certificate::GenesisCert {
+                    block: agave_votor_messages::consensus_message::Block {
+                        slot: MIGRATION_SLOT,
+                        block_id: solana_hash::Hash::default(),
+                    },
+                    signature: agave_votor_messages::certificate::CertSignature {
+                        signature: solana_bls_signatures::Signature(
+                            [0; solana_bls_signatures::BLS_SIGNATURE_AFFINE_SIZE],
+                        ),
+                        bitmap: vec![],
+                    },
+                },
+            );
+            bank
+        } else {
+            bank
+        };
+        let bank = next_bank(bank, 2 * SLOTS_PER_EPOCH);
+
+        let ag_epoch_type =
+            AlpenglowEpochType::get(&bank, 1, || RewardEpochDelegatedStakes::get(&bank));
+        match (&ag_epoch_type, migration) {
+            (AlpenglowEpochType::Tower, false) => {}
+            (
+                AlpenglowEpochType::MigrationEpoch {
+                    num_tower_slots,
+                    num_ag_slots,
+                    migration_epoch: 1,
+                    ..
+                },
+                true,
+            ) => assert_eq!(
+                (*num_tower_slots, *num_ag_slots),
+                (SLOTS_PER_EPOCH / 2, SLOTS_PER_EPOCH / 2),
+            ),
+            _ => panic!("wrong epoch type for migration={migration}: {ag_epoch_type:?}"),
+        }
+
+        let EpochRewardStatus::Active(EpochRewardPhase::Calculation(calculation)) =
+            &bank.epoch_reward_status
+        else {
+            unreachable!();
+        };
+        let reward = calculation
+            .all_stake_rewards
+            .enumerated_rewards_iter()
+            .find(|(_, reward)| reward.stake_pubkey == stake_pubkey)
+            .map(|(_, reward)| reward)
+            .unwrap();
+        assert_eq!(
+            reward.inflation.commission_bps,
+            Some(HISTORICAL_COMMISSION_BPS),
+        );
+        assert!(reward.inflation.stake_reward > 0);
     }
 
     #[test]

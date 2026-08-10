@@ -54,7 +54,7 @@ use {
         },
         epoch_stakes::{
             BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
-            VersionedEpochStakes,
+            VersionedEpochStakes, VoteAccountCommission, VoteAccountCommissions,
         },
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
@@ -1338,10 +1338,21 @@ impl Bank {
         //  slot = 0 and genesis configuration
         {
             let stakes = bank.get_top_epoch_stakes();
+            let leader_schedule_epoch = bank.get_leader_schedule_epoch(bank.slot);
+            let vote_account_commissions = Self::collect_filtered_vote_account_commissions(
+                bank.stakes_cache.stakes().vote_accounts(),
+                stakes.vote_accounts(),
+            );
             let stakes = SerdeStakesToStakeFormat::from(stakes);
-            for epoch in 0..=bank.get_leader_schedule_epoch(bank.slot) {
-                bank.epoch_stakes
-                    .insert(epoch, VersionedEpochStakes::new(stakes.clone(), epoch));
+            for epoch in 0..=leader_schedule_epoch {
+                bank.epoch_stakes.insert(
+                    epoch,
+                    VersionedEpochStakes::new(
+                        stakes.clone(),
+                        epoch,
+                        Some(vote_account_commissions.clone()),
+                    ),
+                );
             }
             bank.update_stake_history(None);
         }
@@ -1733,18 +1744,14 @@ impl Bank {
         // Snapshot of vote account state from the beginning of the epoch prior to
         // the rewarded epoch. This snapshot state is saved a full epoch before
         // being used to prevent last minute commission rugs.
-        let snapshot_epoch_vote_accounts = self
-            .epoch_stakes(rewarded_epoch)
-            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
+        let snapshot_epoch_stakes = self.epoch_stakes(rewarded_epoch);
 
         // Vote account state from the beginning of the rewarded epoch.
-        let rewarded_epoch_vote_accounts = self
-            .epoch_stakes(self.epoch())
-            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
+        let rewarded_epoch_stakes = self.epoch_stakes(self.epoch());
 
         CachedVoteAccounts {
-            snapshot_epoch_vote_accounts,
-            rewarded_epoch_vote_accounts,
+            snapshot_epoch_stakes,
+            rewarded_epoch_stakes,
             distribution_epoch_vote_accounts,
         }
     }
@@ -2621,8 +2628,16 @@ impl Bank {
                 Some(prefiltered) => Stakes::new(prefiltered, self.epoch()),
                 None => self.get_top_epoch_stakes(),
             };
+            let vote_account_commissions = Self::collect_filtered_vote_account_commissions(
+                self.stakes_cache.stakes().vote_accounts(),
+                stakes.vote_accounts(),
+            );
             let stakes = SerdeStakesToStakeFormat::from(stakes);
-            let new_epoch_stakes = VersionedEpochStakes::new(stakes, leader_schedule_epoch);
+            let new_epoch_stakes = VersionedEpochStakes::new(
+                stakes,
+                leader_schedule_epoch,
+                Some(vote_account_commissions),
+            );
             info!(
                 "new epoch stakes, epoch: {}, total_stake: {}",
                 leader_schedule_epoch,
@@ -6720,6 +6735,28 @@ impl Bank {
     pub fn clear_accounts_lt_hash_async_progress_is_at_end(&self) {
         self.accounts_lt_hash_async_progress
             .clear_is_at_end_of_slot();
+    }
+
+    fn collect_filtered_vote_account_commissions(
+        unfiltered_vote_accounts: &VoteAccounts,
+        filtered_vote_accounts: &VoteAccounts,
+    ) -> Arc<VoteAccountCommissions> {
+        Arc::new(
+            unfiltered_vote_accounts
+                .iter()
+                .filter(|(vote_pubkey, _)| filtered_vote_accounts.get(vote_pubkey).is_none())
+                .map(|(vote_pubkey, vote_account)| {
+                    let vote_state = vote_account.vote_state_view();
+                    (
+                        *vote_pubkey,
+                        VoteAccountCommission::new(
+                            vote_state.commission(),
+                            vote_state.inflation_rewards_commission(),
+                        ),
+                    )
+                })
+                .collect(),
+        )
     }
 }
 

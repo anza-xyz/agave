@@ -504,6 +504,7 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
         VersionedEpochStakes::new(
             SerdeStakesToStakeFormat::from(stakes_t_2),
             leader_schedule_epoch.saturating_sub(1),
+            None,
         ),
     );
     epoch_stakes.insert(
@@ -511,6 +512,7 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
         VersionedEpochStakes::new(
             SerdeStakesToStakeFormat::from(stakes_t_1),
             leader_schedule_epoch,
+            None,
         ),
     );
 

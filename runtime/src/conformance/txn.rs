@@ -124,6 +124,7 @@ pub fn execute_txn(
         let mut entry = VersionedEpochStakes::new(
             SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
             key,
+            None,
         );
         entry.set_total_stake(total_epoch_stake);
         epoch_stakes.insert(key, entry);

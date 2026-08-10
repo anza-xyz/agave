@@ -6,8 +6,8 @@ mod sysvar;
 use {
     super::Bank,
     crate::{
-        inflation_rewards::points::PointValue, reward_info::RewardInfo,
-        stake_account::StakeAccount, stake_history::StakeHistory,
+        epoch_stakes::VersionedEpochStakes, inflation_rewards::points::PointValue,
+        reward_info::RewardInfo, stake_account::StakeAccount, stake_history::StakeHistory,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -308,11 +308,11 @@ pub(super) struct CachedVoteAccounts<'a> {
     /// being used to prevent last minute commission rugs.
     ///
     /// Developer note: This field is `Option` to handle large bank warps
-    pub(super) snapshot_epoch_vote_accounts: Option<&'a VoteAccounts>,
+    pub(super) snapshot_epoch_stakes: Option<&'a VersionedEpochStakes>,
     /// Vote account state from the beginning of the rewarded epoch.
     ///
     /// Developer note: This field is `Option` to handle large bank warps
-    pub(super) rewarded_epoch_vote_accounts: Option<&'a VoteAccounts>,
+    pub(super) rewarded_epoch_stakes: Option<&'a VersionedEpochStakes>,
     /// Vote account state from the end of the rewarded epoch / beginning of the
     /// distribution epoch.
     pub(super) distribution_epoch_vote_accounts: &'a VoteAccounts,

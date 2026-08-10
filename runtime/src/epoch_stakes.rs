@@ -194,6 +194,32 @@ pub struct NodeVoteAccounts {
     pub total_stake: u64,
 }
 
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub struct VoteAccountCommission {
+    commission: u8,
+    inflation_rewards_commission_bps: u16,
+}
+
+impl VoteAccountCommission {
+    pub(crate) fn new(commission: u8, inflation_rewards_commission_bps: u16) -> Self {
+        Self {
+            commission,
+            inflation_rewards_commission_bps,
+        }
+    }
+
+    fn commission_bps(self, commission_rate_in_basis_points: bool) -> u16 {
+        if commission_rate_in_basis_points {
+            self.inflation_rewards_commission_bps
+        } else {
+            u16::from(self.commission) * 100
+        }
+    }
+}
+
+pub(crate) type VoteAccountCommissions = HashMap<Pubkey, VoteAccountCommission>;
+
 /// Simplified, intermediate representation of [`VersionedEpochStakes`]
 ///
 /// Its bincode serializaiton format is identical as `VersionedEpochStakes`, but allows faster
@@ -214,6 +240,17 @@ pub(crate) enum DeserializableVersionedEpochStakes {
         total_stake: u64,
         node_id_to_vote_accounts: NodeIdToVoteAccounts,
         epoch_authorized_voters: EpochAuthorizedVoters,
+    },
+    CommissionHistory {
+        #[cfg_attr(
+            feature = "frozen-abi",
+            stable_abi_sample(with = "stable_abi_sample_deserializable_epoch_stakes(rng)")
+        )]
+        stakes: DeserializableEpochStakes,
+        total_stake: u64,
+        node_id_to_vote_accounts: NodeIdToVoteAccounts,
+        epoch_authorized_voters: EpochAuthorizedVoters,
+        vote_account_commissions: VoteAccountCommissions,
     },
 }
 
@@ -254,39 +291,81 @@ pub enum VersionedEpochStakes {
         #[wincode(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
+    CommissionHistory {
+        stakes: EpochStakes,
+        /// Total stake in Lamports
+        total_stake: u64,
+        node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
+        epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
+        vote_account_commissions: Arc<VoteAccountCommissions>,
+        #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
+        #[serde(skip)]
+        #[wincode(skip)]
+        bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
+    },
 }
 
 impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
     fn from(epoch_stakes: DeserializableVersionedEpochStakes) -> Self {
-        let DeserializableVersionedEpochStakes::Current {
-            stakes,
-            total_stake,
-            node_id_to_vote_accounts,
-            epoch_authorized_voters,
-        } = epoch_stakes;
-        Self::Current {
-            stakes: stakes.into(),
-            total_stake,
-            node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
-            epoch_authorized_voters: Arc::new(epoch_authorized_voters),
-            bls_pubkey_to_rank_map: OnceLock::new(),
+        match epoch_stakes {
+            DeserializableVersionedEpochStakes::Current {
+                stakes,
+                total_stake,
+                node_id_to_vote_accounts,
+                epoch_authorized_voters,
+            } => Self::Current {
+                stakes: stakes.into(),
+                total_stake,
+                node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
+                epoch_authorized_voters: Arc::new(epoch_authorized_voters),
+                bls_pubkey_to_rank_map: OnceLock::new(),
+            },
+            DeserializableVersionedEpochStakes::CommissionHistory {
+                stakes,
+                total_stake,
+                node_id_to_vote_accounts,
+                epoch_authorized_voters,
+                vote_account_commissions,
+            } => Self::CommissionHistory {
+                stakes: stakes.into(),
+                total_stake,
+                node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
+                epoch_authorized_voters: Arc::new(epoch_authorized_voters),
+                vote_account_commissions: Arc::new(vote_account_commissions),
+                bls_pubkey_to_rank_map: OnceLock::new(),
+            },
         }
     }
 }
 
 impl VersionedEpochStakes {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn new(stakes: SerdeStakesToStakeFormat, leader_schedule_epoch: Epoch) -> Self {
+    pub(crate) fn new(
+        stakes: SerdeStakesToStakeFormat,
+        leader_schedule_epoch: Epoch,
+        vote_account_commissions: Option<Arc<VoteAccountCommissions>>,
+    ) -> Self {
         let stakes = EpochStakes::from(stakes);
         let epoch_vote_accounts = stakes.vote_accounts();
         let (total_stake, node_id_to_vote_accounts, epoch_authorized_voters) =
             Self::parse_epoch_vote_accounts(epoch_vote_accounts.as_ref(), leader_schedule_epoch);
-        Self::Current {
-            stakes,
-            total_stake,
-            node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
-            epoch_authorized_voters: Arc::new(epoch_authorized_voters),
-            bls_pubkey_to_rank_map: OnceLock::new(),
+        if let Some(vote_account_commissions) = vote_account_commissions {
+            Self::CommissionHistory {
+                stakes,
+                total_stake,
+                node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
+                epoch_authorized_voters: Arc::new(epoch_authorized_voters),
+                vote_account_commissions,
+                bls_pubkey_to_rank_map: OnceLock::new(),
+            }
+        } else {
+            Self::Current {
+                stakes,
+                total_stake,
+                node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
+                epoch_authorized_voters: Arc::new(epoch_authorized_voters),
+                bls_pubkey_to_rank_map: OnceLock::new(),
+            }
         }
     }
 
@@ -302,19 +381,22 @@ impl VersionedEpochStakes {
                 imbl::HashMap::default(),
             )),
             leader_schedule_epoch,
+            None,
         )
     }
 
     pub fn stakes(&self) -> &EpochStakes {
         match self {
-            Self::Current { stakes, .. } => stakes,
+            Self::Current { stakes, .. } | Self::CommissionHistory { stakes, .. } => stakes,
         }
     }
 
     /// Returns the total stake in Lamports.
     pub fn total_stake(&self) -> u64 {
         match self {
-            Self::Current { total_stake, .. } => *total_stake,
+            Self::Current { total_stake, .. } | Self::CommissionHistory { total_stake, .. } => {
+                *total_stake
+            }
         }
     }
 
@@ -322,6 +404,10 @@ impl VersionedEpochStakes {
     pub fn set_total_stake(&mut self, total_stake: u64) {
         match self {
             Self::Current {
+                total_stake: total_stake_field,
+                ..
+            }
+            | Self::CommissionHistory {
                 total_stake: total_stake_field,
                 ..
             } => {
@@ -333,6 +419,10 @@ impl VersionedEpochStakes {
     pub fn node_id_to_vote_accounts(&self) -> &Arc<NodeIdToVoteAccounts> {
         match self {
             Self::Current {
+                node_id_to_vote_accounts,
+                ..
+            }
+            | Self::CommissionHistory {
                 node_id_to_vote_accounts,
                 ..
             } => node_id_to_vote_accounts,
@@ -350,6 +440,10 @@ impl VersionedEpochStakes {
             Self::Current {
                 epoch_authorized_voters,
                 ..
+            }
+            | Self::CommissionHistory {
+                epoch_authorized_voters,
+                ..
             } => epoch_authorized_voters,
         }
     }
@@ -357,6 +451,10 @@ impl VersionedEpochStakes {
     pub fn bls_pubkey_to_rank_map(&self) -> &Arc<BLSPubkeyToRankMap> {
         match self {
             Self::Current {
+                bls_pubkey_to_rank_map,
+                ..
+            }
+            | Self::CommissionHistory {
                 bls_pubkey_to_rank_map,
                 ..
             } => bls_pubkey_to_rank_map.get_or_init(|| {
@@ -372,6 +470,32 @@ impl VersionedEpochStakes {
         self.stakes()
             .vote_accounts()
             .get_delegated_stake(vote_account)
+    }
+
+    pub(crate) fn get_commission_bps(
+        &self,
+        vote_pubkey: &Pubkey,
+        commission_rate_in_basis_points: bool,
+    ) -> Option<u16> {
+        if let Some(vote_account) = self.stakes().vote_accounts().get(vote_pubkey) {
+            let vote_state = vote_account.vote_state_view();
+            return Some(if commission_rate_in_basis_points {
+                vote_state.inflation_rewards_commission()
+            } else {
+                u16::from(vote_state.commission()) * 100
+            });
+        }
+        let Self::CommissionHistory {
+            vote_account_commissions,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        vote_account_commissions
+            .get(vote_pubkey)
+            .copied()
+            .map(|commission| commission.commission_bps(commission_rate_in_basis_points))
     }
 
     fn parse_epoch_vote_accounts(
@@ -581,6 +705,13 @@ pub(crate) mod tests {
         vote_account: Pubkey,
         account: AccountSharedData,
         authorized_voter: Pubkey,
+    }
+
+    #[test]
+    fn test_vote_account_commission_bps() {
+        let commission = VoteAccountCommission::new(5, 550);
+        assert_eq!(commission.commission_bps(false), 500);
+        assert_eq!(commission.commission_bps(true), 550);
     }
 
     fn new_vote_accounts(
@@ -1013,7 +1144,8 @@ pub(crate) mod tests {
         // ensure stake delegations start off *not* empty
         assert!(!stakes.stake_delegations().is_empty());
 
-        let epoch_stakes = VersionedEpochStakes::new(SerdeStakesToStakeFormat::Account(stakes), 0);
+        let epoch_stakes =
+            VersionedEpochStakes::new(SerdeStakesToStakeFormat::Account(stakes), 0, None);
 
         assert_eq!(
             epoch_stakes
