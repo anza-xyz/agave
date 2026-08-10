@@ -1215,7 +1215,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -4606,22 +4606,12 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.11.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b82eaa1d779e9a4bc1c3217db8ffbeabaae1dca241bf70183242128d48681cd"
-dependencies = [
- "bytes",
- "prost-derive 0.11.9",
-]
-
-[[package]]
-name = "prost"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "528ac67416ff8646872a3c02cad9cc4ee5dc9f9540c9b10771855c95cb2e5ae1"
 dependencies = [
  "bytes",
- "prost-derive 0.14.4",
+ "prost-derive",
 ]
 
 [[package]]
@@ -4636,26 +4626,13 @@ dependencies = [
  "multimap",
  "petgraph",
  "prettyplease",
- "prost 0.14.4",
+ "prost",
  "prost-types",
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",
  "regex",
  "syn 2.0.117",
  "tempfile",
-]
-
-[[package]]
-name = "prost-derive"
-version = "0.11.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5d2d8d10f3c6ded6da8b05b5fb3b8a5082514344d56c9f871412d29b4e075b4"
-dependencies = [
- "anyhow",
- "itertools 0.10.5",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -4677,7 +4654,7 @@ version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
- "prost 0.14.4",
+ "prost",
 ]
 
 [[package]]
@@ -4711,11 +4688,11 @@ dependencies = [
 
 [[package]]
 name = "protosol"
-version = "11.0.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69385b9321a454c4d168688ef83877e4fd7b92af510b33c34e131151ca765048"
+checksum = "e8fccd898e44663e984bf80ea74ab110e869db50e42c7229ea14a2d833cae1d6"
 dependencies = [
- "prost 0.11.9",
+ "prost",
 ]
 
 [[package]]
@@ -7231,7 +7208,7 @@ dependencies = [
  "num_cpus",
  "num_enum",
  "parking_lot 0.12.5",
- "prost 0.14.4",
+ "prost",
  "qualifier_attr",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
@@ -8487,7 +8464,7 @@ dependencies = [
  "http 1.4.2",
  "hyper-util",
  "log",
- "prost 0.14.4",
+ "prost",
  "prost-types",
  "serde",
  "smpl_jwt",
@@ -8516,7 +8493,7 @@ name = "solana-storage-proto"
 version = "4.3.0-alpha.3"
 dependencies = [
  "bs58",
- "prost 0.14.4",
+ "prost",
  "protobuf-src",
  "serde",
  "solana-account-decoder",
@@ -8579,7 +8556,7 @@ dependencies = [
  "ahash 0.8.12",
  "bincode",
  "log",
- "prost 0.11.9",
+ "prost",
  "protosol",
  "qualifier_attr",
  "serde",
@@ -8649,7 +8626,7 @@ dependencies = [
  "agave-precompiles",
  "bincode",
  "clap 4.6.1",
- "prost 0.11.9",
+ "prost",
  "protosol",
  "serde",
  "solana-account 4.5.0",
@@ -10087,7 +10064,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
 dependencies = [
  "bytes",
- "prost 0.14.4",
+ "prost",
  "tonic",
 ]
 

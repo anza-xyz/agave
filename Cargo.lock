@@ -5706,11 +5706,11 @@ dependencies = [
 
 [[package]]
 name = "protosol"
-version = "11.0.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69385b9321a454c4d168688ef83877e4fd7b92af510b33c34e131151ca765048"
+checksum = "e8fccd898e44663e984bf80ea74ab110e869db50e42c7229ea14a2d833cae1d6"
 dependencies = [
- "prost 0.11.9",
+ "prost 0.14.4",
 ]
 
 [[package]]
@@ -8768,7 +8768,7 @@ dependencies = [
  "log",
  "num-traits",
  "num_cpus",
- "prost 0.11.9",
+ "prost 0.14.4",
  "protosol",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
@@ -10297,7 +10297,7 @@ dependencies = [
  "num-derive 0.5.1",
  "num-traits",
  "proptest",
- "prost 0.11.9",
+ "prost 0.14.4",
  "protosol",
  "qualifier_attr",
  "rand 0.9.4",
@@ -10926,7 +10926,7 @@ dependencies = [
  "env_logger",
  "libsecp256k1",
  "log",
- "prost 0.11.9",
+ "prost 0.14.4",
  "protosol",
  "qualifier_attr",
  "rand 0.9.4",
