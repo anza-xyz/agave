@@ -354,7 +354,6 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V3,
         optimize_rodata: false,
         aligned_memory_mapping: false,
-        allow_memory_region_zero: true,
     };
 
     // These functions are system calls the compile contract calls during execution, so they

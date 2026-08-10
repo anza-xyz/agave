@@ -355,7 +355,6 @@ pub fn create_program_runtime_environment(
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.virtual_address_space_adjustments,
-        allow_memory_region_zero: true,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 
