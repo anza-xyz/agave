@@ -655,7 +655,10 @@ pub enum LoadedAccountAccessor {
 }
 
 impl LoadedAccountAccessor {
-    fn check_and_get_loaded_account_shared_data(&mut self) -> AccountSharedData {
+    fn check_and_get_loaded_account_shared_data(
+        &mut self,
+        load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
+    ) -> Option<AccountSharedData> {
         // all of these following .expect() and .unwrap() are like serious logic errors,
         // ideal for representing this as rust type system....
 
@@ -666,15 +669,40 @@ impl LoadedAccountAccessor {
                 // was still in the storage map. This means even if the storage entry is removed
                 // from the storage map after we grabbed the storage entry, the recycler should not
                 // reset the storage entry until we drop the reference to the storage entry.
-                maybe_storage_entry
-                    .accounts
-                    .get_account_shared_data(*offset)
-                    .expect(
-                        "If a storage entry was found in the storage map, it must not have been \
-                         reset yet",
-                    )
+
+                // If there's a load filter, read only the account metadata first.
+                // This way we don't read the whole account (including its data)
+                // from disk, only to discard it later.
+                let should_load_account = load_filter.is_none_or(|load_filter| {
+                    maybe_storage_entry
+                        .accounts
+                        .get_stored_account_without_data_callback(*offset, |account| {
+                            load_filter(account.lamports, account.owner, account.data_len)
+                        })
+                        .expect(
+                            "If a storage entry was found in the storage map, it must not have \
+                             been reset yet",
+                        )
+                });
+
+                should_load_account.then(|| {
+                    maybe_storage_entry
+                        .accounts
+                        .get_account_shared_data(*offset)
+                        .expect(
+                            "If a storage entry was found in the storage map, it must not have \
+                             been reset yet",
+                        )
+                })
             }
-            _ => self.check_and_get_loaded_account(|loaded_account| loaded_account.take_account()),
+
+            // It is safe ("""safe""") to skip consulting `load_filter` here because this
+            // branch immediately and invariably panics.
+            LoadedAccountAccessor::Stored(None) => {
+                let account = self
+                    .check_and_get_loaded_account(|loaded_account| loaded_account.take_account());
+                unreachable!("{account:?}");
+            }
         }
     }
 
@@ -2749,6 +2777,7 @@ impl AccountsDb {
                 &pubkey,
                 LoadHint::Unspecified,
                 PopulateReadCache::False,
+                None::<fn(_, &_, _) -> _>,
             ) {
                 scan_func(Some((&pubkey, account, slot)));
             }
@@ -2869,9 +2898,16 @@ impl AccountsDb {
         pubkey: &Pubkey,
         load_hint: LoadHint,
         populate_read_cache: PopulateReadCache,
+        load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load(ancestors, pubkey, load_hint, populate_read_cache)
-            .filter(|(account, _)| !account.is_zero_lamport())
+        self.do_load(
+            ancestors,
+            pubkey,
+            load_hint,
+            populate_read_cache,
+            load_filter,
+        )
+        .filter(|(account, _)| !account.is_zero_lamport())
     }
 
     fn read_index_for_accessor_or_load_slow<'a>(
@@ -3137,18 +3173,24 @@ impl AccountsDb {
         pubkey: &Pubkey,
         load_hint: LoadHint,
         populate_read_cache: PopulateReadCache,
+        load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
         let starting_max_root = self.max_root();
 
-        // Check the write cache first; a hit is the freshest version visible on this fork,
-        // so return it
+        // Check the write cache first; a hit is the freshest version visible on this fork
         if let Some((cached_account, cached_slot)) =
             self.accounts_cache.load_latest(pubkey, ancestors)
         {
             self.load_account_stats
                 .num_loaded_from_write_cache
                 .fetch_add(1, Ordering::Relaxed);
-            return Some((cached_account.account.clone(), cached_slot));
+
+            let account = &cached_account.account;
+            let should_load_account = load_filter.as_ref().is_none_or(|load_filter| {
+                load_filter(account.lamports(), account.owner(), account.data().len())
+            });
+
+            return should_load_account.then(|| (cached_account.account.clone(), cached_slot));
         }
 
         let (slot, storage_location, _maybe_account_accessor) =
@@ -3160,7 +3202,12 @@ impl AccountsDb {
             self.load_account_stats
                 .num_loaded_from_read_cache
                 .fetch_add(1, Ordering::Relaxed);
-            return Some((account, slot));
+
+            let should_load_account = load_filter.as_ref().is_none_or(|load_filter| {
+                load_filter(account.lamports(), account.owner(), account.data().len())
+            });
+
+            return should_load_account.then_some((account, slot));
         }
 
         let (mut account_accessor, slot) = self.retry_to_get_account_accessor(
@@ -3174,9 +3221,12 @@ impl AccountsDb {
             .num_loaded_from_index_storage
             .fetch_add(1, Ordering::Relaxed);
 
-        let account = account_accessor.check_and_get_loaded_account_shared_data();
+        let maybe_account =
+            account_accessor.check_and_get_loaded_account_shared_data(load_filter.as_ref());
 
-        if populate_read_cache == PopulateReadCache::True {
+        if let Some(ref account) = maybe_account
+            && populate_read_cache == PopulateReadCache::True
+        {
             /*
             We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
             safe/reflect 'A''s latest state on this fork.
@@ -3203,7 +3253,7 @@ impl AccountsDb {
                 );
             }
         }
-        Some((account, slot))
+        maybe_account.map(|account| (account, slot))
     }
 
     #[cfg_attr(test, qualifiers(pub(crate)))]
@@ -4056,6 +4106,7 @@ impl AccountsDb {
                     pubkey,
                     LoadHint::FixedMaxRoot,
                     PopulateReadCache::False,
+                    None::<fn(_, &_, _) -> _>,
                 ) {
                     cache_lt_hash.mix_in(&Self::lt_hash_account(&account, pubkey).0);
                 }
@@ -4125,6 +4176,7 @@ impl AccountsDb {
                         pubkey,
                         LoadHint::FixedMaxRoot,
                         PopulateReadCache::False,
+                        None::<fn(_, &_, _) -> _>,
                     )
                     .map(|(account, _slot)| account.lamports())
                     .unwrap_or(0);
@@ -5781,6 +5833,7 @@ impl AccountsDb {
             pubkey,
             LoadHint::Unspecified,
             PopulateReadCache::True,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 

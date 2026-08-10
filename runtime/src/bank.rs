@@ -5114,6 +5114,23 @@ impl Bank {
         self.load_slow_with_fixed_root(&self.ancestors, pubkey)
     }
 
+    // See note above get_account_with_fixed_root() about when to prefer this function.
+    //
+    // `load_filter` is a predicate over an account's lamports, owner, and data length,
+    // which AccountsDb uses to avoid loading the full data. Callers should regard
+    // the predicate as a performance hint, not a validation function, and perform
+    // all necessary validation on the returned account themselves.
+    pub fn get_account_with_fixed_root_if(
+        &self,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        self.rc
+            .accounts
+            .load_with_fixed_root(&self.ancestors, pubkey, Some(load_filter))
+            .map(|(acc, _slot)| acc)
+    }
+
     pub fn get_account_modified_slot(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.load_slow(&self.ancestors, pubkey)
     }
@@ -5134,7 +5151,9 @@ impl Bank {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.rc.accounts.load_with_fixed_root(ancestors, pubkey)
+        self.rc
+            .accounts
+            .load_with_fixed_root(ancestors, pubkey, None::<fn(_, &_, _) -> _>)
     }
 
     pub fn get_program_accounts(
@@ -6769,7 +6788,7 @@ impl TransactionProcessingCallback for Bank {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.rc
             .accounts
-            .load_with_fixed_root(&self.ancestors, pubkey)
+            .load_with_fixed_root(&self.ancestors, pubkey, None::<fn(_, &_, _) -> _>)
     }
 
     fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {

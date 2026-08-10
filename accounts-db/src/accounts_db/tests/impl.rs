@@ -32,6 +32,8 @@ use {
 
 const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
 
+const NO_LOAD_FILTER: Option<fn(u64, &Pubkey, usize) -> bool> = None;
+
 impl AccountsDb {
     fn get_storage_for_slot(&self, slot: Slot) -> Option<Arc<AccountStorageEntry>> {
         self.storage.get_slot_storage_entry(slot)
@@ -61,7 +63,9 @@ impl AccountsDb {
                 let storage_location = account_info.storage_location();
                 let mut accessor = self.get_account_accessor(slot, &storage_location);
 
-                accessor.check_and_get_loaded_account_shared_data()
+                accessor
+                    .check_and_get_loaded_account_shared_data(NO_LOAD_FILTER)
+                    .unwrap()
             },
         )
     }
@@ -3421,6 +3425,7 @@ fn test_read_only_accounts_cache() {
             &account_key,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::True,
+            NO_LOAD_FILTER,
         )
         .map(|(account, _)| account)
         .unwrap();
@@ -3432,6 +3437,7 @@ fn test_read_only_accounts_cache() {
             &account_key,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::True,
+            NO_LOAD_FILTER,
         )
         .map(|(account, _)| account)
         .unwrap();
@@ -3445,6 +3451,7 @@ fn test_read_only_accounts_cache() {
             &account_key,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::True,
+            NO_LOAD_FILTER,
         )
         .map(|(account, _)| account);
     assert!(account.is_none());
@@ -3478,6 +3485,7 @@ fn test_load_with_read_only_accounts_cache() {
             &account_key,
             LoadHint::Unspecified,
             PopulateReadCache::False,
+            NO_LOAD_FILTER,
         )
         .unwrap();
     assert_eq!(account.lamports(), 1);
@@ -3490,6 +3498,7 @@ fn test_load_with_read_only_accounts_cache() {
             &account_key,
             LoadHint::Unspecified,
             PopulateReadCache::True,
+            NO_LOAD_FILTER,
         )
         .unwrap();
     assert_eq!(account.lamports(), 1);
@@ -3502,6 +3511,7 @@ fn test_load_with_read_only_accounts_cache() {
         &account_key,
         LoadHint::Unspecified,
         PopulateReadCache::False,
+        NO_LOAD_FILTER,
     );
     assert!(account.is_none());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
@@ -3513,6 +3523,7 @@ fn test_load_with_read_only_accounts_cache() {
         &account_key,
         LoadHint::Unspecified,
         PopulateReadCache::True,
+        NO_LOAD_FILTER,
     );
     assert!(account.is_none());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
@@ -3525,6 +3536,7 @@ fn test_load_with_read_only_accounts_cache() {
             &account_key,
             LoadHint::Unspecified,
             PopulateReadCache::False,
+            NO_LOAD_FILTER,
         )
         .unwrap();
     assert_eq!(account.lamports(), 2);
@@ -3539,12 +3551,143 @@ fn test_load_with_read_only_accounts_cache() {
             &account_key,
             LoadHint::Unspecified,
             PopulateReadCache::True,
+            NO_LOAD_FILTER,
         )
         .unwrap();
     assert_eq!(account.lamports(), 2);
     // The account shouldn't be added to read_only_cache because it is in write_cache.
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
     assert_eq!(slot, 2);
+}
+
+#[test]
+fn test_load_filter_with_open_accounts() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let ancestors = Ancestors::from(vec![0]);
+
+    let account_key = Pubkey::new_unique();
+    let owner = Pubkey::new_unique();
+    let data_size = 40;
+    let account = AccountSharedData::new(123, data_size, &owner);
+
+    let satisfied = |_, o: &_, d| o == &owner && d == data_size;
+    let wrong_owner = |_, o: &_, _| o != &owner;
+    let wrong_size = |_, _: &_, d| d != data_size;
+
+    fn load_if(
+        db: &AccountsDb,
+        ancestors: &Ancestors,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        db.load(
+            ancestors,
+            pubkey,
+            LoadHint::Unspecified,
+            PopulateReadCache::True,
+            Some(load_filter),
+        )
+        .map(|(account, _slot)| account)
+    }
+
+    // storing the account puts it in write cache
+    db.store_for_tests((0, &[(&account_key, &account)][..]));
+
+    // load from write cache
+    let loaded = load_if(&db, &ancestors, &account_key, satisfied).unwrap();
+    assert_eq!(loaded, account);
+
+    assert!(load_if(&db, &ancestors, &account_key, wrong_owner).is_none());
+    assert!(load_if(&db, &ancestors, &account_key, wrong_size).is_none());
+
+    // never populate from write to read
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+
+    // storage. rejected loads do not enter the read cache
+    db.add_root_and_flush_write_cache(0);
+    assert!(load_if(&db, &ancestors, &account_key, wrong_owner).is_none());
+    assert!(load_if(&db, &ancestors, &account_key, wrong_size).is_none());
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+
+    // load from storage succeeds and populates read cache
+    let loaded = load_if(&db, &ancestors, &account_key, satisfied).unwrap();
+    assert_eq!(loaded, account);
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+
+    // load from read cache
+    let loaded = load_if(&db, &ancestors, &account_key, satisfied).unwrap();
+    assert_eq!(loaded, account);
+
+    // account remains despite rejection
+    assert!(load_if(&db, &ancestors, &account_key, wrong_owner).is_none());
+    assert!(load_if(&db, &ancestors, &account_key, wrong_size).is_none());
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+}
+
+#[test]
+fn test_load_filter_with_closed_accounts() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let ancestors = Ancestors::from(vec![0, 1]);
+
+    let missing_key = Pubkey::new_unique();
+    let cached_key = Pubkey::new_unique();
+    let stored_key = Pubkey::new_unique();
+    let owner = Pubkey::new_unique();
+    let data_size = 40;
+    let always_load = |_, _: &_, _| true;
+
+    // this always becomes AccountSharedData::default() on readback
+    let zero_lamport_account = AccountSharedData::new(0, data_size, &owner);
+
+    let assert_absent = |pubkey: &Pubkey| {
+        assert!(
+            db.load(
+                &ancestors,
+                pubkey,
+                LoadHint::Unspecified,
+                PopulateReadCache::True,
+                Some(&always_load),
+            )
+            .is_none()
+        );
+
+        assert!(
+            db.load(
+                &ancestors,
+                pubkey,
+                LoadHint::Unspecified,
+                PopulateReadCache::True,
+                NO_LOAD_FILTER,
+            )
+            .is_none()
+        );
+    };
+
+    // no entry
+    assert_absent(&missing_key);
+
+    // zero lamports, from write cache
+    db.store_for_tests((0, &[(&cached_key, &zero_lamport_account)][..]));
+    assert_absent(&cached_key);
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+
+    // zero lamports in storage *and* index, so we actually check the account
+    let slot = 1;
+    db.set_latest_full_snapshot_slot(slot - 1);
+    let storage = db.create_store(slot, DEFAULT_FILE_SIZE);
+    append_single_account_with_default_hash(
+        &storage,
+        &stored_key,
+        &zero_lamport_account,
+        true,
+        Some(&db.accounts_index),
+    );
+    db.storage.insert(Arc::new(storage));
+    db.add_root(slot);
+
+    // the filtered load reads storage and caches, so the unfiltered one hits the read cache
+    assert_absent(&stored_key);
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
 }
 
 /// `select_pubkeys_to_store` stores only the newest version of each account across the
@@ -3684,6 +3827,7 @@ fn test_flush_cache_dont_clean_zero_lamport_account() {
             &zero_lamport_account_key,
             load_hint,
             PopulateReadCache::True,
+            NO_LOAD_FILTER,
         )
         .is_none()
     );
@@ -4684,7 +4828,13 @@ fn start_load_thread(
 
                 // Load should never be unable to find this key
                 let loaded_account = db
-                    .do_load(&ancestors, &pubkey, load_hint, PopulateReadCache::True)
+                    .do_load(
+                        &ancestors,
+                        &pubkey,
+                        load_hint,
+                        PopulateReadCache::True,
+                        NO_LOAD_FILTER,
+                    )
                     .unwrap();
                 // slot + 1 == account.lamports because of the account-cache-flush thread
                 assert_eq!(

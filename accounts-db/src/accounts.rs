@@ -111,7 +111,11 @@ impl Accounts {
         loaded_addresses: &mut LoadedAddresses,
     ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
-            .load_with_fixed_root(ancestors, address_table_lookup.account_key)
+            .load_with_fixed_root(
+                ancestors,
+                address_table_lookup.account_key,
+                None::<fn(_, &_, _) -> _>,
+            )
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
 
@@ -165,12 +169,14 @@ impl Accounts {
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
+        load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
         self.accounts_db.load(
             ancestors,
             pubkey,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::True,
+            load_filter,
         )
     }
 
@@ -186,6 +192,7 @@ impl Accounts {
             pubkey,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::False,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 
@@ -199,6 +206,7 @@ impl Accounts {
             pubkey,
             LoadHint::Unspecified,
             PopulateReadCache::True,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 
