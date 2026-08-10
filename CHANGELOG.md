@@ -46,6 +46,9 @@ still accepted for backwards compatibility but slated for full removal in the fu
   `CommitCancelled` errors in non-all-or-nothing batches. All-or-nothing batches continue to use
   `ALL_OR_NOTHING_BATCH_FAILURE`.
 * Using the deprecated value `minimal` for `--accounts-index-limit` now defaults to 25GB.
+* Unstaked nodes can now receive consensus messages via votor from any staked node.
+  Specify `--votor-peer-overrides <VALIDATOR IDENTITY>...` to additionally send votor
+  messages to identities outside the staked set.
 ### Geyser
 #### Deprecations
 * The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and

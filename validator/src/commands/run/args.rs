@@ -816,11 +816,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .hidden(hidden_unless_forced())
             .help(
-                "A list of validator identities that this node admits into the votor transport \
-                 regardless of their stake, and pushes consensus messages to while this node is \
-                 itself staked. Their addresses are resolved from gossip. Staked validators are \
-                 always admitted, so this is only needed for peers that hold no stake. [default: \
-                 staked validators only]",
+                "A list of additional validator identities for this node to send votor consensus \
+                 messages to while staked. By default we only send consensus messages to staked \
+                 nodes, however an operator can use this flag to additionally send messages to an \
+                 unstaked RPC node for faster state. These identities are resolved from gossip.",
             ),
     )
     .arg(
