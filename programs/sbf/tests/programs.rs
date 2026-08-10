@@ -12,7 +12,7 @@ use solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT;
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
-    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
+    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
@@ -24,12 +24,12 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
     },
-    solana_message::{Message, inner_instruction::InnerInstruction},
+    solana_message::{inner_instruction::InnerInstruction, Message},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -37,8 +37,9 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+            bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
+            GenesisConfigInfo,
         },
         loader_utils::{create_program, load_upgradeable_buffer},
     },
@@ -56,7 +57,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
+    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -128,16 +129,11 @@ fn default_program_cache_with_program(
     program_cache
 }
 
-// If upgrade authority isn't provided, a default one would be used.
 fn upgradeable_program_accounts(
     program_id: &Pubkey,
     program_elf: &[u8],
     upgrade_authority_address: Option<Pubkey>,
 ) -> Vec<(Pubkey, Account)> {
-    let upgrade_authority_address = match upgrade_authority_address {
-        Some(_) => upgrade_authority_address,
-        None => Some(Pubkey::default()),
-    };
     solana_program_binaries::bpf_loader_upgradeable_program_accounts(
         program_id,
         program_elf,
@@ -333,7 +329,8 @@ fn test_program_sbf_sanity() {
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas);
 
-        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+        let mut accounts =
+            upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
         accounts.extend([(pubkey1, Account::default()), (pubkey2, Account::default())]);
 
         let mut program_cache =
@@ -573,7 +570,8 @@ fn test_program_sbf_duplicate_accounts() {
             AccountMeta::new(pubkey, false),
             AccountMeta::new(pubkey, false),
         ];
-        let program_accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+        let program_accounts =
+            upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
 
         let mut execute = |data: &[u8]| {
             let mut accounts = program_accounts.clone();
@@ -625,7 +623,8 @@ fn test_program_sbf_duplicate_accounts() {
             AccountMeta::new_readonly(pubkey, true),
             AccountMeta::new_readonly(program_id, false),
         ];
-        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+        let mut accounts =
+            upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
         accounts.extend([
             (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
             (payee_pubkey, Account::new(10, 1, &program_id)),
@@ -663,7 +662,8 @@ fn test_program_sbf_error_handling() {
 
         let pubkey1 = Pubkey::new_unique();
 
-        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+        let mut accounts =
+            upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
         accounts.push((pubkey1, Account::default()));
 
         let mut program_cache =
@@ -749,7 +749,8 @@ fn test_return_data_and_log_data_syscall() {
         let feature_set = SVMFeatureSet::all_enabled();
 
         let pubkey = Pubkey::new_unique();
-        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+        let mut accounts =
+            upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
         accounts.push((pubkey, Account::default()));
 
         let mut program_cache =
@@ -766,21 +767,17 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(
-            effects
-                .logs
-                .iter()
-                .any(|log| log == "Program data: AQID BAUG")
-        );
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == "Program data: AQID BAUG"));
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(
-            effects
-                .logs
-                .iter()
-                .any(|log| log == &format!("Program return: {} CAFE", program_id))
-        );
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
     }
 }
 
@@ -1424,12 +1421,12 @@ fn test_program_sbf_program_id_spoofing() {
     accounts.extend(upgradeable_program_accounts(
         &malicious_swap_pubkey,
         &spoof1_elf,
-        None,
+        Some(Pubkey::default()),
     ));
     accounts.extend(upgradeable_program_accounts(
         &malicious_system_pubkey,
         &spoof1_system_elf,
-        None,
+        Some(Pubkey::default()),
     ));
     accounts.extend([
         (from_pubkey, Account::new(10, 0, &system_program::id())),
@@ -1489,11 +1486,12 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let mut accounts = upgradeable_program_accounts(&caller_pubkey, &caller_access_elf, None);
+    let mut accounts =
+        upgradeable_program_accounts(&caller_pubkey, &caller_access_elf, Some(Pubkey::default()));
     accounts.extend(upgradeable_program_accounts(
         &caller2_pubkey,
         &caller_access_elf,
-        None,
+        Some(Pubkey::default()),
     ));
 
     let mut program_cache = default_program_cache();
@@ -1541,7 +1539,7 @@ fn test_program_sbf_ro_modify() {
     accounts.extend(upgradeable_program_accounts(
         &program_id,
         &program_elf,
-        None,
+        Some(Pubkey::default()),
     ));
     accounts.push((test_pubkey, Account::new(10, 0, &system_program::id())));
 
@@ -1584,7 +1582,8 @@ fn test_program_sbf_call_depth() {
     let mut program_cache =
         default_program_cache_with_program(&program_id, &program_elf, &feature_set);
     let sysvar_cache = default_sysvar_cache();
-    let program_accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+    let program_accounts =
+        upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
 
     let mut execute = |depth: usize| {
         let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
@@ -1615,7 +1614,7 @@ fn test_program_sbf_compute_budget() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+    let accounts = upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
 
     let mut program_cache =
         default_program_cache_with_program(&program_id, &program_elf, &feature_set);
@@ -1693,7 +1692,8 @@ fn assert_instruction_count() {
             default_program_cache_with_program(&program_id, &program_elf, &feature_set);
 
         let account_pubkey = Pubkey::new_unique();
-        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+        let mut accounts =
+            upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
         accounts.push((account_pubkey, Account::new(0, 0, &program_id)));
 
         let instruction_accounts = vec![AccountMeta {
@@ -1818,7 +1818,7 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
     accounts.extend(upgradeable_program_accounts(
         &program_id,
         &program_elf,
-        None,
+        Some(Pubkey::default()),
     ));
 
     // The provided instruction data will be set to the return data.
@@ -2436,7 +2436,8 @@ fn test_program_sbf_c_dup() {
     ];
     let instruction = Instruction::new_with_bytes(program_id, &[4, 5, 6, 7], account_metas);
 
-    let mut accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+    let mut accounts =
+        upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
     accounts.push((account_address, account));
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
@@ -2758,7 +2759,8 @@ fn test_program_sbf_ro_account_modify() {
     let sysvar_cache = default_sysvar_cache();
 
     let argument_pubkey = Pubkey::new_unique();
-    let mut accounts = upgradeable_program_accounts(&program_id, &program_elf, None);
+    let mut accounts =
+        upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default()));
     accounts.push((argument_pubkey, Account::new(42, 100, &program_id)));
 
     let account_metas = vec![
@@ -3922,11 +3924,9 @@ fn test_program_sbf_processed_inner_instruction() {
         &[instruction2, instruction1, instruction0],
         Some(&mint_keypair.pubkey()),
     );
-    assert!(
-        bank_client
-            .send_and_confirm_message(&[&mint_keypair], message)
-            .is_ok()
-    );
+    assert!(bank_client
+        .send_and_confirm_message(&[&mint_keypair], message)
+        .is_ok());
 }
 
 #[test]
@@ -4674,7 +4674,7 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
 
     let context = InstrContext {
         feature_set,
-        accounts: upgradeable_program_accounts(&program_id, &program_elf, None),
+        accounts: upgradeable_program_accounts(&program_id, &program_elf, Some(Pubkey::default())),
         instruction,
         cu_avail: 10_000,
     };
@@ -5752,7 +5752,7 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
     accounts.extend(upgradeable_program_accounts(
         &program_id,
         &program_elf,
-        None,
+        Some(Pubkey::default()),
     ));
 
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
