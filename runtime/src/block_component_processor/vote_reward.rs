@@ -1,6 +1,6 @@
 use {
     crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
-    agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
+    agave_votor_messages::{alpenglow_slot::AlpenglowSlot, migration::AG_MIGRATION_EPOCH_CREDIT},
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -40,8 +40,11 @@ pub enum CalcVoteRewardUpdateVoteStatesError {
 pub enum AllocateAccountsError {
     #[error("did not find rank map for final_slot={final_slot} in bank_slot={bank_slot}")]
     FinalCert { bank_slot: Slot, final_slot: Slot },
-    #[error("did not find rank map for reward_slot={reward_slot} in bank_slot={bank_slot}")]
-    RewardCert { bank_slot: Slot, reward_slot: Slot },
+    #[error("did not find rank map for reward_slot={reward_slot:?} in bank_slot={bank_slot}")]
+    RewardCert {
+        bank_slot: Slot,
+        reward_slot: AlpenglowSlot,
+    },
 }
 
 /// Different types of error that happen when looking up state to process the reward cert.
@@ -49,20 +52,26 @@ pub enum AllocateAccountsError {
 /// These errors should cause the processing of the bank to fail.
 #[derive(Debug, Error)]
 pub enum RewardStateError {
-    #[error("missing epoch stakes for reward_slot {reward_slot} in bank_slot {bank_slot}")]
-    MissingEpochStakes { reward_slot: Slot, bank_slot: Slot },
+    #[error("missing epoch stakes for reward_slot {reward_slot:?} in bank_slot {bank_slot}")]
+    MissingEpochStakes {
+        reward_slot: AlpenglowSlot,
+        bank_slot: Slot,
+    },
     #[error("missing EpochInflationAccountState for bank_slot {bank_slot}")]
     MissingEpochInflationAccountState { bank_slot: Slot },
     #[error("missing epoch inflation state for in bank_slot {bank_slot}")]
     MissingEpochInflationState { bank_slot: Slot },
-    #[error("validator {pubkey} missing in bank_slot {bank_slot} for reward slot {reward_slot}")]
+    #[error("validator {pubkey} missing in bank_slot {bank_slot} for reward slot {reward_slot:?}")]
     MissingRewardSlotValidator {
         pubkey: Pubkey,
-        reward_slot: Slot,
+        reward_slot: AlpenglowSlot,
         bank_slot: Slot,
     },
-    #[error("genesis cert not found. reward_slot={reward_slot}; bank_slot={bank_slot}")]
-    GenesisCertNotFound { reward_slot: Slot, bank_slot: Slot },
+    #[error("genesis cert not found. reward_slot={reward_slot:?}; bank_slot={bank_slot}")]
+    GenesisCertNotFound {
+        reward_slot: AlpenglowSlot,
+        bank_slot: Slot,
+    },
 }
 
 /// Data needed to operate on `VoteStateHandler`.
@@ -165,7 +174,7 @@ struct RewardState<'a> {
     /// The epoch in which the reward was paid into the vote account.
     current_epoch: Epoch,
     /// The slot in which the reward was earned.
-    reward_slot: Slot,
+    reward_slot: AlpenglowSlot,
     /// Validators present in the reward cert.
     reward_validators: &'a HashSet<Pubkey>,
     /// The slot in which the reward is being paid into the vote account.
@@ -184,12 +193,12 @@ struct RewardState<'a> {
 impl<'a> RewardState<'a> {
     fn try_new(
         bank: &'a Bank,
-        reward_slot: Slot,
+        reward_slot: AlpenglowSlot,
         reward_validators: &'a HashSet<Pubkey>,
         block_producer_time_nanos: i64,
     ) -> Result<Self, RewardStateError> {
         let bank_slot = bank.slot();
-        let epoch_stakes = bank.epoch_stakes_from_slot(reward_slot).ok_or(
+        let epoch_stakes = bank.epoch_stakes_from_slot(reward_slot.into()).ok_or(
             RewardStateError::MissingEpochStakes {
                 reward_slot,
                 bank_slot,
@@ -216,7 +225,7 @@ impl<'a> RewardState<'a> {
                 bank_slot,
             })?;
         let reward_slot_timestamp_ns =
-            calc_slot_timestamp(bank, reward_slot, block_producer_time_nanos);
+            calc_slot_timestamp(bank, reward_slot.into(), block_producer_time_nanos);
         Ok(Self {
             reward_slot_timestamp_ns,
             current_epoch,
@@ -258,7 +267,7 @@ impl<'a> RewardState<'a> {
 
     fn update_votes(&self, vote_state: &mut VoteState) {
         debug_assert!(self.reward_validators.contains(&vote_state.vote_pubkey));
-        vote_state.maybe_update_votes(self.reward_slot, self.reward_slot_timestamp_ns);
+        vote_state.maybe_update_votes(self.reward_slot.into(), self.reward_slot_timestamp_ns);
     }
 
     fn update_account(
@@ -360,7 +369,7 @@ fn allocate_updated_accounts(
                 })?
                 .len();
             let reward_cert_slot_max_validators = bank
-                .get_rank_map(reward_cert.slot())
+                .get_rank_map(reward_cert.slot().into())
                 .ok_or(AllocateAccountsError::RewardCert {
                     bank_slot: bank.slot(),
                     reward_slot: reward_cert.slot(),

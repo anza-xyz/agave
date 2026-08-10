@@ -10,6 +10,7 @@ use {
     std::collections::HashMap,
 };
 
+pub mod alpenglow_slot;
 pub mod certificate;
 pub mod consensus_message;
 pub mod finalized_slot;
