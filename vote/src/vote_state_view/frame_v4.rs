@@ -90,7 +90,7 @@ impl VoteStateFrameV4 {
         Self::inflation_rewards_commission_offset() + core::mem::size_of::<u16>()
     }
 
-    const fn pending_delegator_rewards_offset() -> usize {
+    pub(crate) const fn pending_delegator_rewards_offset() -> usize {
         Self::block_revenue_commission_offset() + core::mem::size_of::<u16>()
     }
 
