@@ -5,17 +5,19 @@ use {
         blockstore_meta::SlotMeta,
         entry_notifier_service::{EntryNotification, EntryNotifierSender},
         leader_schedule_cache::LeaderScheduleCache,
+        shred::MAX_FEC_SETS_PER_SLOT,
+        thread_pool::{WorkerJob, WorkerPool},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
-    agave_votor_messages::{migration::MigrationStatus, own_message::OwnMessage},
-    ahash::AHashSet,
+    agave_votor_messages::{certificate::Certificate, migration::MigrationStatus},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
     log::*,
     rayon::ThreadPool,
     scopeguard::defer,
+    smallvec::SmallVec,
     solana_accounts_db::{
         account_locks::validate_account_locks, accounts_db::AccountsDbConfig,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -23,7 +25,7 @@ use {
     solana_clock::{BankId, Slot},
     solana_entry::{
         block_component::{BlockComponent, VersionedBlockMarker},
-        entry::{self, Entry, EntrySlice, EntryType, create_ticks},
+        entry::{self, Entry, EntrySlice, EntryType, UnverifiedSignatures, create_ticks},
     },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -55,11 +57,15 @@ use {
     std::{
         cmp,
         collections::{HashMap, HashSet},
+        mem,
         num::Saturating,
-        ops::Index,
+        ops::{Index, Range},
         path::PathBuf,
         result,
-        sync::{Arc, OnceLock, RwLock, atomic::AtomicBool},
+        sync::{
+            Arc, OnceLock, RwLock,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -82,16 +88,6 @@ pub enum ChainedBlockIdCheck {
     Mismatch,
     /// Data shred 0 not received yet; cannot determine chained block ID.
     Unavailable,
-}
-
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn create_thread_pool(num_threads: usize) -> ThreadPool {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(num_threads)
-        .stack_size(8 * 1024 * 1024)
-        .thread_name(|i| format!("solReplayTx{i:02}"))
-        .build()
-        .expect("new rayon threadpool")
 }
 
 fn transaction_hash_verify_thread_pool() -> &'static ThreadPool {
@@ -158,7 +154,6 @@ pub fn process_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) 
 }
 
 fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> Result<()> {
-    let replay_tx_thread_pool = create_thread_pool(1);
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
         move |versioned_tx: VersionedTransaction,
@@ -179,7 +174,7 @@ fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> 
     } = entry::validate_and_hash_transactions(
         entries,
         num_txs,
-        &replay_tx_thread_pool,
+        transaction_hash_verify_thread_pool(),
         validate_and_hash_transaction,
     )?;
     unverified_signatures.verify()?;
@@ -219,10 +214,6 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
                 }
             }
             EntryType::Transactions(transactions) => {
-                if transactions.is_empty() {
-                    continue;
-                }
-
                 // Any bank replaying transactions must have a scheduler installed. Slot 0 -
                 // the only bank replayed before the scheduler pool is installed - is tick-only,
                 // so it never reaches here.
@@ -251,21 +242,13 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
 }
 
 /// Validate an entry's transactions before scheduling: each transaction's account
-/// locks (count and duplicates), and rejection of duplicate message hashes within
-/// the entry. Does not take account locks - the unified scheduler orders conflicts.
-/// Post-SIMD-83 the duplicate-message-hash check is what rejects an entry that
-/// replays the same transaction twice (it no longer conflicts on locks).
+/// locks (count and duplicates). Does not take account locks - the unified scheduler orders conflicts.
 fn validate_entry_transactions(
     transactions: &[RuntimeTransaction<SanitizedTransaction>],
     tx_account_lock_limit: usize,
 ) -> Result<()> {
-    let mut batch_message_hashes = AHashSet::with_capacity(transactions.len());
-
     for transaction in transactions {
         validate_account_locks(transaction.account_keys(), tx_account_lock_limit)?;
-        if !batch_message_hashes.insert(transaction.message_hash()) {
-            return Err(TransactionError::AlreadyProcessed);
-        }
     }
 
     Ok(())
@@ -308,6 +291,19 @@ pub enum BlockstoreProcessorError {
 
     #[error("bank hash mismatch at slot {0}: expected {1}, got {2}")]
     BankHashMismatch(Slot, Hash, Hash),
+}
+
+impl BlockstoreProcessorError {
+    /// Returns whether replay stopped because a verified genesis certificate advanced the
+    /// migration to `ReadyToEnable`. This is control flow, not an invalid block.
+    pub fn is_alpenglow_migration_transition(&self) -> bool {
+        matches!(
+            self,
+            Self::BlockComponentProcessor(
+                BlockComponentProcessorError::AlpenglowMigrationTransition
+            )
+        )
+    }
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -370,7 +366,7 @@ pub(crate) fn process_blockstore_for_bank_0(
     let bank_forks = BankForks::new_rw_arc(bank0);
 
     info!("Processing ledger for slot 0...");
-    let replay_tx_thread_pool = create_thread_pool(num_cpus::get());
+    let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(num_cpus::get());
     process_bank_0(
         &bank_forks
             .read()
@@ -379,7 +375,7 @@ pub(crate) fn process_blockstore_for_bank_0(
             .unwrap(),
         compute_shred_version(&genesis_config.hash(), Some(&hard_forks)),
         blockstore,
-        &replay_tx_thread_pool,
+        &replay_verification_worker_pool,
         opts,
         transaction_status_sender,
         entry_notification_sender,
@@ -449,13 +445,13 @@ pub fn process_blockstore_from_root(
         .meta(start_slot)
         .unwrap_or_else(|_| panic!("Failed to get meta for slot {start_slot}"))
     {
-        let replay_tx_thread_pool = create_thread_pool(num_cpus::get());
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(num_cpus::get());
         load_frozen_forks(
             bank_forks,
             shred_version,
             &start_slot_meta,
             blockstore,
-            &replay_tx_thread_pool,
+            &replay_verification_worker_pool,
             leader_schedule_cache,
             opts,
             transaction_status_sender,
@@ -572,7 +568,7 @@ fn confirm_full_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
     shred_version: u16,
-    replay_tx_thread_pool: &ThreadPool,
+    replay_verification_worker_pool: &ReplayVerificationWorkerPool,
     opts: &ProcessOptions,
     progress: &mut ConfirmationProgress,
     entry_notification_sender: Option<&EntryNotifierSender>,
@@ -597,7 +593,7 @@ fn confirm_full_slot(
         blockstore,
         bank,
         shred_version,
-        replay_tx_thread_pool,
+        replay_verification_worker_pool,
         &mut confirmation_timing,
         progress,
         skip_verification,
@@ -947,7 +943,7 @@ impl ConfirmationProgress {
         debug_assert!(
             async_verification
                 .as_ref()
-                .map(|av| av.pending_jobs == 0 && av.first_error.is_none())
+                .map(|av| { av.pending_jobs == 0 && av.first_error.is_none() })
                 .unwrap_or(true)
         );
         Self {
@@ -957,9 +953,12 @@ impl ConfirmationProgress {
         }
     }
 
-    fn async_verification(&mut self) -> &mut AsyncVerificationProgress {
+    fn async_verification(
+        &mut self,
+        worker_pool: &ReplayVerificationWorkerPool,
+    ) -> &mut AsyncVerificationProgress {
         self.async_verification
-            .get_or_insert_with(AsyncVerificationProgress::new)
+            .get_or_insert_with(|| AsyncVerificationProgress::new(worker_pool.job_capacity))
     }
 
     fn collect_available_verification_results(
@@ -967,12 +966,14 @@ impl ConfirmationProgress {
         poh_verify_elapsed: &mut u64,
         transaction_verify_elapsed: &mut u64,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        self.async_verification
-            .as_mut()
-            .map_or(Ok(()), |async_verification| {
-                async_verification
-                    .collect_available_results(poh_verify_elapsed, transaction_verify_elapsed)
-            })
+        let Some(async_verification) = self.async_verification.as_mut() else {
+            return Ok(());
+        };
+        let result = async_verification.collect_available_results();
+        let (poh_us, transaction_us) = async_verification.take_timings();
+        *poh_verify_elapsed = poh_verify_elapsed.saturating_add(poh_us);
+        *transaction_verify_elapsed = transaction_verify_elapsed.saturating_add(transaction_us);
+        result
     }
 
     pub fn wait_for_all_verification_results(
@@ -980,19 +981,21 @@ impl ConfirmationProgress {
         poh_verify_elapsed: &mut u64,
         transaction_verify_elapsed: &mut u64,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        self.async_verification
-            .as_mut()
-            .map_or(Ok(()), |async_verification| {
-                async_verification
-                    .wait_for_all_results(poh_verify_elapsed, transaction_verify_elapsed)
-            })
+        let Some(async_verification) = self.async_verification.as_mut() else {
+            return Ok(());
+        };
+        let result = async_verification.wait_for_all_results();
+        let (poh_us, transaction_us) = async_verification.take_timings();
+        *poh_verify_elapsed = poh_verify_elapsed.saturating_add(poh_us);
+        *transaction_verify_elapsed = transaction_verify_elapsed.saturating_add(transaction_us);
+        result
     }
 
     pub fn take_async_verification(&mut self) -> Option<AsyncVerificationProgress> {
         debug_assert!(
             self.async_verification
                 .as_ref()
-                .map(|av| av.pending_jobs == 0 && av.first_error.is_none())
+                .map(|av| { av.pending_jobs == 0 && av.first_error.is_none() })
                 .unwrap_or(true)
         );
         self.async_verification.take()
@@ -1005,70 +1008,302 @@ struct AsyncVerificationResult {
     error: Option<BlockstoreProcessorError>,
 }
 
+// Wrapper used to track wall clock time for work that is split into multiple jobs and executed in
+// parallel. The last job to finish will decrement remaining_jobs to 0 and record the total elapsed
+// time since the batch was started.
+struct VerificationBatch<T> {
+    data: T,
+    started: Instant,
+    remaining_jobs: AtomicUsize,
+}
+
+impl<T> VerificationBatch<T> {
+    fn finish_job(&self) -> u64 {
+        if self.remaining_jobs.fetch_sub(1, Ordering::Relaxed) == 1 {
+            self.started.elapsed().as_micros() as u64
+        } else {
+            0
+        }
+    }
+}
+
+struct PohVerificationJob {
+    entries: Arc<VerificationBatch<Vec<entry::EntryVerificationData>>>,
+    range: Range<usize>,
+    start_hash: Hash,
+    slot: Slot,
+    result_sender: Sender<AsyncVerificationResult>,
+}
+
+impl PohVerificationJob {
+    fn run(self) {
+        let Self {
+            entries,
+            range,
+            start_hash,
+            slot,
+            result_sender,
+        } = self;
+        let verified = range.into_iter().all(|index| {
+            let previous_hash = if index == 0 {
+                &start_hash
+            } else {
+                &entries.data[index - 1].hash
+            };
+            entries.data[index].verify(previous_hash)
+        });
+        let elapsed_us = entries.finish_job();
+        let error = (!verified).then(|| {
+            warn!("Ledger proof of history failed at slot: {slot}");
+            BlockstoreProcessorError::InvalidBlock(BlockError::InvalidEntryHash)
+        });
+        let _ = result_sender.send(AsyncVerificationResult {
+            poh_verify_elapsed: elapsed_us,
+            transaction_verify_elapsed: 0,
+            error,
+        });
+    }
+}
+
+struct SignaturesVerificationJob {
+    signatures: Arc<VerificationBatch<UnverifiedSignatures>>,
+    range: Range<usize>,
+    slot: Slot,
+    bank_id: BankId,
+    result_sender: Sender<AsyncVerificationResult>,
+    replay_vote_sender: Option<ReplayVoteSender>,
+}
+
+impl SignaturesVerificationJob {
+    fn run(self) {
+        let Self {
+            signatures,
+            range,
+            slot,
+            bank_id,
+            result_sender,
+            replay_vote_sender,
+        } = self;
+        let verified = range
+            .clone()
+            .all(|index| signatures.data.verify_signatures(index));
+        let elapsed_us = signatures.finish_job();
+        let error = (!verified).then_some(BlockstoreProcessorError::InvalidTransaction(
+            TransactionError::SignatureFailure,
+        ));
+        if let Some(err) = &error {
+            warn!("Ledger transaction signature verification failed at slot {slot}: {err}");
+            if let Some(replay_vote_sender) = &replay_vote_sender {
+                let _ = replay_vote_sender.send(ReplayVoteMessage::InvalidBank {
+                    replay_bank_id: bank_id,
+                    replay_slot: slot,
+                });
+            }
+        } else if let Some(replay_vote_sender) = &replay_vote_sender {
+            let message_hashes = range
+                .filter_map(|index| signatures.data.vote_transaction_message_hash(index))
+                .collect::<Vec<_>>();
+            if !message_hashes.is_empty() {
+                let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
+                    replay_bank_id: bank_id,
+                    replay_slot: slot,
+                    message_hashes,
+                });
+            }
+        }
+        let _ = result_sender.send(AsyncVerificationResult {
+            poh_verify_elapsed: 0,
+            transaction_verify_elapsed: elapsed_us,
+            error,
+        });
+    }
+}
+
+enum VerificationJob {
+    Poh(PohVerificationJob),
+    Signatures(SignaturesVerificationJob),
+}
+
+impl WorkerJob for VerificationJob {
+    fn run(self) {
+        match self {
+            Self::Poh(job) => job.run(),
+            Self::Signatures(job) => job.run(),
+        }
+    }
+}
+
+pub struct ReplayVerificationWorkerPool {
+    inner: WorkerPool<VerificationJob>,
+    job_capacity: usize,
+}
+
+impl ReplayVerificationWorkerPool {
+    pub fn new(num_workers: usize) -> Self {
+        // set the maximum number of jobs that can be sent replaying a completely full slot as
+        // the capacity, so we avoid blocking the replay thread when sending work. ~8MB of
+        // memory. Not load bearing, a smaller capacity would do, just cause more stalls.
+        let job_capacity = (MAX_FEC_SETS_PER_SLOT as usize)
+            // poh + signature verification
+            .checked_mul(2)
+            .unwrap()
+            // each poh/signature batch can be split into multiple jobs, at most 1 for each worker
+            .checked_mul(num_workers)
+            .expect("verification job queue capacity overflow");
+        Self::with_capacity(num_workers, job_capacity)
+    }
+
+    fn with_capacity(num_workers: usize, job_capacity: usize) -> Self {
+        Self {
+            inner: WorkerPool::new("solReplayVer", num_workers, job_capacity),
+            job_capacity,
+        }
+    }
+
+    fn send(&self, job: VerificationJob) {
+        self.inner.send(job);
+    }
+}
+
 pub struct AsyncVerificationProgress {
     sender: Sender<AsyncVerificationResult>,
     receiver: Receiver<AsyncVerificationResult>,
     pending_jobs: usize,
     first_error: Option<BlockstoreProcessorError>,
-}
-
-impl Default for AsyncVerificationProgress {
-    fn default() -> Self {
-        Self::new()
-    }
+    poh_verify_elapsed: u64,
+    transaction_verify_elapsed: u64,
 }
 
 impl AsyncVerificationProgress {
-    // The capacity of the channel is somewhat arbitrary. At the time of this writing this is 100x
-    // the number of max entries per slot on mnb. The channel will effectively never fill up, but if
-    // it does, that condition is handled gracefully in spawn().
-    const RESULT_CHANNEL_CAPACITY: usize = 100000;
-
-    pub fn new() -> Self {
-        let (sender, receiver) = crossbeam_channel::bounded(Self::RESULT_CHANNEL_CAPACITY);
+    pub fn new(result_channel_capacity: usize) -> Self {
+        assert_ne!(
+            result_channel_capacity, 0,
+            "verification result channel capacity must be nonzero"
+        );
+        let (sender, receiver) = crossbeam_channel::bounded(result_channel_capacity);
         Self {
             sender,
             receiver,
             pending_jobs: 0,
             first_error: None,
+            poh_verify_elapsed: 0,
+            transaction_verify_elapsed: 0,
         }
     }
 
-    // Spawns the given work on the given thread pool. The result, once
-    // available, can be collected by calling `collect_available_results()` or
-    // `wait_for_all_results()`.
-    fn spawn(
+    fn spawn_poh_verification(
         &mut self,
-        replay_tx_thread_pool: &ThreadPool,
-        poh_verify_elapsed: &mut u64,
-        transaction_verify_elapsed: &mut u64,
-        work: impl FnOnce() -> AsyncVerificationResult + Send + 'static,
+        worker_pool: &ReplayVerificationWorkerPool,
+        entries: Vec<entry::EntryVerificationData>,
+        start_hash: Hash,
+        slot: Slot,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        while self.sender.is_full() {
-            // Note that we spin here if the channel is full. This is fine because it can only be
-            // full if we are not keeping up, in which case pulling results as fast as possible is
-            // the right thing to do.
-            //
-            // We also really don't want sender.send(result) below to sleep, because that would
-            // block rayon threads slowing down progress even more.
-            self.collect_available_results(poh_verify_elapsed, transaction_verify_elapsed)?;
+        let item_count = entries.len();
+        if item_count == 0 {
+            return Ok(());
         }
-        self.pending_jobs = self.pending_jobs.saturating_add(1);
         let sender = self.sender.clone();
-        replay_tx_thread_pool.spawn(move || {
-            let _ = sender.send(work());
+        self.send_jobs(worker_pool, entries, item_count, move |range, entries| {
+            VerificationJob::Poh(PohVerificationJob {
+                entries,
+                range,
+                start_hash,
+                slot,
+                result_sender: sender.clone(),
+            })
+        })
+    }
+
+    fn spawn_signature_verification(
+        &mut self,
+        worker_pool: &ReplayVerificationWorkerPool,
+        signatures: UnverifiedSignatures,
+        slot: Slot,
+        bank_id: BankId,
+        replay_vote_sender: Option<ReplayVoteSender>,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        let item_count = signatures.len();
+        if item_count == 0 {
+            return Ok(());
+        }
+        let sender = self.sender.clone();
+        self.send_jobs(
+            worker_pool,
+            signatures,
+            item_count,
+            move |range, signatures| {
+                VerificationJob::Signatures(SignaturesVerificationJob {
+                    signatures,
+                    range,
+                    slot,
+                    bank_id,
+                    result_sender: sender.clone(),
+                    replay_vote_sender: replay_vote_sender.clone(),
+                })
+            },
+        )
+    }
+
+    fn send_jobs<T>(
+        &mut self,
+        worker_pool: &ReplayVerificationWorkerPool,
+        data: T,
+        item_count: usize,
+        create_job: impl Fn(Range<usize>, Arc<VerificationBatch<T>>) -> VerificationJob,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        debug_assert!(item_count > 0);
+        let job_count = worker_pool.inner.num_workers().min(item_count);
+        let result_capacity = self.sender.capacity().unwrap();
+        assert!(
+            self.pending_jobs <= result_capacity,
+            "verification pending job count exceeds result channel capacity"
+        );
+
+        // Split the work evenly across workers. This is kinda naive but a good first impl.
+        let items_per_job = item_count / job_count;
+        let remainder = item_count % job_count;
+
+        // wrap the data in Arc<VerificationBatch> so that we can track the wall clock time to
+        // verify the whole thing
+        let data = Arc::new(VerificationBatch {
+            data,
+            started: Instant::now(),
+            remaining_jobs: AtomicUsize::new(job_count),
         });
+
+        let mut range_start = 0;
+        for job_index in 0..job_count {
+            // The workers can be shared across banks. We never want them to stall because they've
+            // done their job but can't post the result.
+            if self.pending_jobs == result_capacity {
+                let result = self.receiver.recv().map_err(|_| {
+                    BlockstoreProcessorError::InvalidBlock(BlockError::InvalidEntryHash)
+                })?;
+                self.apply_result(result);
+            }
+
+            // the first `remainder` workers get an extra item each
+            let range_end = range_start + items_per_job + usize::from(job_index < remainder);
+            self.pending_jobs = self
+                .pending_jobs
+                .checked_add(1)
+                .expect("verification pending job count overflow");
+            worker_pool.send(create_job(range_start..range_end, Arc::clone(&data)));
+            range_start = range_end;
+        }
+
+        // all jobs must be sent before returning an error because
+        // `VerificationBatch::remaining_jobs` was initialized with `job_count`
+        if let Some(error) = self.first_error.take() {
+            return Err(error);
+        }
         Ok(())
     }
 
     // Collects all available results from the channel.
-    fn collect_available_results(
-        &mut self,
-        poh_verify_elapsed: &mut u64,
-        transaction_verify_elapsed: &mut u64,
-    ) -> result::Result<(), BlockstoreProcessorError> {
+    fn collect_available_results(&mut self) -> result::Result<(), BlockstoreProcessorError> {
         while let Ok(result) = self.receiver.try_recv() {
-            self.apply_result(result, poh_verify_elapsed, transaction_verify_elapsed);
+            self.apply_result(result);
         }
         if let Some(error) = self.first_error.take() {
             return Err(error);
@@ -1079,16 +1314,12 @@ impl AsyncVerificationProgress {
     // Waits for all pending jobs to complete and collects their results.
     //
     // This MUST be called at the end of a slot.
-    fn wait_for_all_results(
-        &mut self,
-        poh_verify_elapsed: &mut u64,
-        transaction_verify_elapsed: &mut u64,
-    ) -> result::Result<(), BlockstoreProcessorError> {
+    fn wait_for_all_results(&mut self) -> result::Result<(), BlockstoreProcessorError> {
         while self.pending_jobs > 0 {
             let result = self.receiver.recv().map_err(|_| {
                 BlockstoreProcessorError::InvalidBlock(BlockError::InvalidEntryHash)
             })?;
-            self.apply_result(result, poh_verify_elapsed, transaction_verify_elapsed);
+            self.apply_result(result);
         }
         if let Some(error) = self.first_error.take() {
             return Err(error);
@@ -1099,19 +1330,29 @@ impl AsyncVerificationProgress {
     fn apply_result(
         &mut self,
         AsyncVerificationResult {
-            poh_verify_elapsed: poh_us,
-            transaction_verify_elapsed: tx_verify_us,
+            poh_verify_elapsed,
+            transaction_verify_elapsed,
             error,
         }: AsyncVerificationResult,
-        poh_verify_elapsed: &mut u64,
-        transaction_verify_elapsed: &mut u64,
     ) {
-        self.pending_jobs = self.pending_jobs.saturating_sub(1);
-        *poh_verify_elapsed = poh_verify_elapsed.saturating_add(poh_us);
-        *transaction_verify_elapsed = transaction_verify_elapsed.saturating_add(tx_verify_us);
+        self.pending_jobs = self
+            .pending_jobs
+            .checked_sub(1)
+            .expect("verification result without a pending job");
+        self.poh_verify_elapsed = self.poh_verify_elapsed.saturating_add(poh_verify_elapsed);
+        self.transaction_verify_elapsed = self
+            .transaction_verify_elapsed
+            .saturating_add(transaction_verify_elapsed);
         if self.first_error.is_none() {
             self.first_error = error;
         }
+    }
+
+    fn take_timings(&mut self) -> (u64, u64) {
+        (
+            mem::take(&mut self.poh_verify_elapsed),
+            mem::take(&mut self.transaction_verify_elapsed),
+        )
     }
 }
 
@@ -1120,13 +1361,13 @@ pub fn confirm_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
     shred_version: u16,
-    replay_tx_thread_pool: &ThreadPool,
+    replay_verification_worker_pool: &ReplayVerificationWorkerPool,
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    finalization_cert_sender: Option<&Sender<OwnMessage>>,
+    finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
     allow_dead_slots: bool,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1205,7 +1446,7 @@ pub fn confirm_slot(
 
                 confirm_slot_entries(
                     bank,
-                    replay_tx_thread_pool,
+                    replay_verification_worker_pool,
                     (entries, num_shreds as u64, slot_full),
                     timing,
                     progress,
@@ -1241,7 +1482,11 @@ pub fn confirm_slot(
                             migration_status,
                         )
                         .inspect_err(|err| {
-                            if !matches!(err, BlockComponentProcessorError::AbandonedBank(_)) {
+                            if !matches!(
+                                err,
+                                BlockComponentProcessorError::AbandonedBank(_)
+                                    | BlockComponentProcessorError::AlpenglowMigrationTransition
+                            ) {
                                 warn!(
                                     "BlockComponentProcessor::on_marker() for slot {slot} failed \
                                      with {err}"
@@ -1281,7 +1526,7 @@ pub fn confirm_slot(
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
-    replay_tx_thread_pool: &ThreadPool,
+    replay_verification_worker_pool: &ReplayVerificationWorkerPool,
     slot_entries_load_result: (Vec<Entry>, u64, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
@@ -1365,31 +1610,18 @@ fn confirm_slot_entries(
     if !skip_verification {
         let start_hash = progress.last_entry;
         let verify_entries = entry::entries_to_verification_data(&entries);
-        progress.async_verification().spawn(
-            replay_tx_thread_pool,
-            poh_verify_elapsed,
-            transaction_verify_elapsed,
-            move || {
-                datapoint_debug!(
-                    "verify-batch-size",
-                    ("size", verify_entries.len() as i64, i64)
-                );
-                let state = entry::verify_entries_cpu(&verify_entries, &start_hash);
-                let error = if state.status() {
-                    None
-                } else {
-                    warn!("Ledger proof of history failed at slot: {slot}");
-                    Some(BlockstoreProcessorError::InvalidBlock(
-                        BlockError::InvalidEntryHash,
-                    ))
-                };
-                AsyncVerificationResult {
-                    poh_verify_elapsed: state.poh_duration_us(),
-                    transaction_verify_elapsed: 0,
-                    error,
-                }
-            },
-        )?;
+        datapoint_debug!(
+            "verify-batch-size",
+            ("size", verify_entries.len() as i64, i64)
+        );
+        progress
+            .async_verification(replay_verification_worker_pool)
+            .spawn_poh_verification(
+                replay_verification_worker_pool,
+                verify_entries,
+                start_hash,
+                slot,
+            )?;
     }
 
     let validate_and_hash_transaction = {
@@ -1435,41 +1667,15 @@ fn confirm_slot_entries(
         }
     } else {
         let replay_vote_sender = replay_vote_sender.cloned();
-        progress.async_verification().spawn(
-            replay_tx_thread_pool,
-            poh_verify_elapsed,
-            transaction_verify_elapsed,
-            move || {
-                let verification_start = Instant::now();
-                let error = unverified_signatures
-                    .verify()
-                    .map_err(BlockstoreProcessorError::from)
-                    .err();
-                if let Some(err) = &error {
-                    warn!("Ledger transaction signature verification failed at slot {slot}: {err}");
-                    if let Some(replay_vote_sender) = &replay_vote_sender {
-                        let _ = replay_vote_sender.send(ReplayVoteMessage::InvalidBank {
-                            replay_bank_id: bank_id,
-                            replay_slot: slot,
-                        });
-                    }
-                } else if let Some(replay_vote_sender) = &replay_vote_sender {
-                    let message_hashes = unverified_signatures.vote_transaction_message_hashes();
-                    if !message_hashes.is_empty() {
-                        let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
-                            replay_bank_id: bank_id,
-                            replay_slot: slot,
-                            message_hashes,
-                        });
-                    }
-                }
-                AsyncVerificationResult {
-                    poh_verify_elapsed: 0,
-                    transaction_verify_elapsed: verification_start.elapsed().as_micros() as u64,
-                    error,
-                }
-            },
-        )?;
+        progress
+            .async_verification(replay_verification_worker_pool)
+            .spawn_signature_verification(
+                replay_verification_worker_pool,
+                unverified_signatures,
+                slot,
+                bank_id,
+                replay_vote_sender,
+            )?;
     }
 
     let mut replay_timer = Measure::start("replay_elapsed");
@@ -1522,12 +1728,13 @@ fn confirm_slot_entries(
 }
 
 // Special handling required for processing the entries in slot 0
+#[allow(clippy::too_many_arguments)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn process_bank_0(
     bank0: &BankWithScheduler,
     shred_version: u16,
     blockstore: &Blockstore,
-    replay_tx_thread_pool: &ThreadPool,
+    replay_verification_worker_pool: &ReplayVerificationWorkerPool,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
@@ -1539,7 +1746,7 @@ fn process_bank_0(
         blockstore,
         bank0,
         shred_version,
-        replay_tx_thread_pool,
+        replay_verification_worker_pool,
         opts,
         &mut progress,
         entry_notification_sender,
@@ -1751,7 +1958,7 @@ fn load_frozen_forks(
     shred_version: u16,
     start_slot_meta: &SlotMeta,
     blockstore: &Blockstore,
-    replay_tx_thread_pool: &ThreadPool,
+    replay_verification_worker_pool: &ReplayVerificationWorkerPool,
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
@@ -1848,7 +2055,7 @@ fn load_frozen_forks(
                 blockstore,
                 &bank,
                 shred_version,
-                replay_tx_thread_pool,
+                replay_verification_worker_pool,
                 opts,
                 &mut progress,
                 transaction_status_sender,
@@ -1858,15 +2065,12 @@ fn load_frozen_forks(
                 &migration_status,
             ) {
                 assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
-                if opts.abort_on_invalid_block {
-                    return Err(error);
-                }
-
-                // If this block was the first alpenglow block and advanced the migration phase, we can enable alpenglow.
-                //
-                // This bank must have failed to freeze as it is an Alpenglow block being verified as a TowerBFT one.
-                // We are safe to cleanly transition to alpenglow here
-                if migration_status.is_ready_to_enable() {
+                if error.is_alpenglow_migration_transition() {
+                    assert!(migration_status.is_ready_to_enable());
+                    // This was the first Alpenglow block. Enable Alpenglow and replay it with
+                    // Alpenglow rules. Handle the transition even when `abort_on_invalid_block`
+                    // is set because the bank is not invalid; it was deliberately interrupted
+                    // while configured for TowerBFT.
                     let genesis_slot = migration_status.enable_alpenglow_during_startup();
 
                     // We need to clear pending_slots as it might contain Alpenglow blocks initialized as TowerBFT banks.
@@ -1881,6 +2085,11 @@ fn load_frozen_forks(
                         opts,
                         &migration_status,
                     )?;
+                    continue;
+                }
+
+                if opts.abort_on_invalid_block {
+                    return Err(error);
                 }
 
                 continue;
@@ -1903,6 +2112,7 @@ fn load_frozen_forks(
                     supermajority_root_from_vote_accounts(
                         bank.total_epoch_stake(),
                         &bank.vote_accounts(),
+                        &migration_status,
                     ).and_then(|supermajority_root| {
                         if supermajority_root > root {
                             // If there's a cluster confirmed root greater than our last
@@ -2049,6 +2259,7 @@ fn supermajority_root(roots: &[(Slot, u64)], total_epoch_stake: u64) -> Option<S
 fn supermajority_root_from_vote_accounts(
     total_epoch_stake: u64,
     vote_accounts: &VoteAccountsHashMap,
+    migration_status: &MigrationStatus,
 ) -> Option<Slot> {
     let mut roots_stakes: Vec<(Slot, u64)> = vote_accounts
         .values()
@@ -2064,8 +2275,11 @@ fn supermajority_root_from_vote_accounts(
     // Sort from greatest to smallest slot
     roots_stakes.sort_unstable_by_key(|a| cmp::Reverse(a.0));
 
-    // Find latest root
+    // Vote state identifies a root by slot only, so it can only be used to infer TowerBFT roots.
+    // In particular, reject the migration slot itself before the caller performs any rooting side
+    // effects.
     supermajority_root(&roots_stakes, total_epoch_stake)
+        .filter(|slot| migration_status.should_report_commitment_or_root(*slot))
 }
 
 /// Validates the chained block ID for a child slot against its parent.
@@ -2142,7 +2356,7 @@ pub fn process_single_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
     shred_version: u16,
-    replay_tx_thread_pool: &ThreadPool,
+    replay_verification_worker_pool: &ReplayVerificationWorkerPool,
     opts: &ProcessOptions,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
@@ -2176,7 +2390,7 @@ pub fn process_single_slot(
         blockstore,
         bank,
         shred_version,
-        replay_tx_thread_pool,
+        replay_verification_worker_pool,
         opts,
         progress,
         entry_notification_sender,
@@ -2185,8 +2399,12 @@ pub fn process_single_slot(
         migration_status,
     )
     .map_err(|err| {
-        warn!("slot {slot} failed to verify: {err}");
-        mark_dead_if_primary_access(blockstore, slot);
+        if err.is_alpenglow_migration_transition() {
+            info!("slot {slot} replay interrupted to enable Alpenglow");
+        } else {
+            warn!("slot {slot} failed to verify: {err}");
+            mark_dead_if_primary_access(blockstore, slot);
+        }
         err
     })?;
 
@@ -2274,7 +2492,6 @@ pub mod tests {
         assert_matches::assert_matches,
         crossbeam_channel::bounded,
         rand::{Rng, rng},
-        rayon::ThreadPoolBuilder,
         solana_account::{AccountSharedData, WritableAccount},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{
@@ -3705,7 +3922,8 @@ pub mod tests {
         // keypair2=3
         // keypair3=3
 
-        // succeeds following simd83 locking, fails otherwise
+        // transactions within an entry may read/write and write/write the same accounts, so the
+        // colliding entry is valid and the scheduler orders the conflicts itself
         let result = process_entries_for_tests_with_scheduler(
             &bank,
             vec![
@@ -3743,9 +3961,9 @@ pub mod tests {
         assert_matches!(bank.transfer(5, &mint_keypair, &keypair1.pubkey()), Ok(_));
         assert_matches!(bank.transfer(5, &mint_keypair, &keypair2.pubkey()), Ok(_));
 
-        // one entry, two instances of the same transaction. this entry is invalid
-        // without simd83: due to lock conflicts
-        // with simd83: due to message hash duplication
+        // The scheduler executes identical transactions sequentially. The first transfer commits,
+        // then the status cache rejects the second as already processed.
+
         let entry_1_to_2_twice = next_entry(
             &bank.last_blockhash(),
             1,
@@ -3764,19 +3982,9 @@ pub mod tests {
                 ),
             ],
         );
-        // should now be:
-        // keypair1=5
-        // keypair2=5
 
-        // succeeds following simd83 locking, fails otherwise
         let result = process_entries_for_tests_with_scheduler(&bank, vec![entry_1_to_2_twice]);
 
-        let balances = [
-            bank.get_balance(&keypair1.pubkey()),
-            bank.get_balance(&keypair2.pubkey()),
-        ];
-
-        assert_eq!(balances, [5, 5]);
         assert_eq!(result, Err(TransactionError::AlreadyProcessed));
     }
 
@@ -4211,12 +4419,12 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let replay_tx_thread_pool = create_thread_pool(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
         process_bank_0(
             &bank0,
             compute_shred_version(&genesis_config.hash(), None),
             &blockstore,
-            &replay_tx_thread_pool,
+            &replay_verification_worker_pool,
             &opts,
             None,
             None,
@@ -4231,7 +4439,7 @@ pub mod tests {
             &blockstore,
             &bank1,
             compute_shred_version(&genesis_config.hash(), None),
-            &replay_tx_thread_pool,
+            &replay_verification_worker_pool,
             &opts,
             &mut ConfirmationProgress::new(bank0_last_blockhash),
             None,
@@ -4754,18 +4962,30 @@ pub mod tests {
         let total_stake = 10;
 
         // Supermajority root should be None
-        assert!(supermajority_root_from_vote_accounts(total_stake, &HashMap::default()).is_none());
+        let migration_status = MigrationStatus::default();
+        assert!(
+            supermajority_root_from_vote_accounts(
+                total_stake,
+                &HashMap::default(),
+                &migration_status,
+            )
+            .is_none()
+        );
 
         // Supermajority root should be None
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 1)];
         let accounts = convert_to_vote_accounts(roots_stakes);
-        assert!(supermajority_root_from_vote_accounts(total_stake, &accounts).is_none());
+        assert!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .is_none()
+        );
 
         // Supermajority root should be 4, has 7/10 of the stake
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 5)];
         let accounts = convert_to_vote_accounts(roots_stakes);
         assert_eq!(
-            supermajority_root_from_vote_accounts(total_stake, &accounts).unwrap(),
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .unwrap(),
             4
         );
 
@@ -4773,8 +4993,45 @@ pub mod tests {
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 6)];
         let accounts = convert_to_vote_accounts(roots_stakes);
         assert_eq!(
-            supermajority_root_from_vote_accounts(total_stake, &accounts).unwrap(),
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .unwrap(),
             8
+        );
+
+        // Vote-state roots do not identify an Alpenglow block. Once migration starts, only
+        // pre-migration roots may be inferred from vote accounts.
+        let migration_slot = migration_status.record_feature_activation(0);
+        let accounts = convert_to_vote_accounts(vec![(migration_slot - 1, total_stake)]);
+        assert_eq!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status),
+            Some(migration_slot - 1),
+        );
+        let accounts = convert_to_vote_accounts(vec![(migration_slot, total_stake)]);
+        assert!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .is_none()
+        );
+
+        // After the migrationary phase, no vote-account root may be inferred, including a root
+        // whose slot predates migration.
+        let genesis_block = Block {
+            slot: migration_slot - 1,
+            block_id: BlockId::new_unique(),
+        };
+        migration_status.set_genesis_block(genesis_block);
+        migration_status.set_genesis_certificate(genesis_certificate(genesis_block));
+        assert!(migration_status.is_ready_to_enable());
+        let accounts = convert_to_vote_accounts(vec![(migration_slot - 1, total_stake)]);
+        assert!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .is_none()
+        );
+
+        migration_status.enable_alpenglow_during_startup();
+        assert!(migration_status.is_alpenglow_enabled());
+        assert!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .is_none()
         );
     }
 
@@ -4785,11 +5042,11 @@ pub mod tests {
         slot_full: bool,
         progress: &mut ConfirmationProgress,
     ) -> result::Result<(), BlockstoreProcessorError> {
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
         let bank = take_bank_with_scheduler_for_tests(pool, bank.clone());
-        let replay_tx_thread_pool = create_thread_pool(1);
         let result = confirm_slot_entries(
             &bank,
-            &replay_tx_thread_pool,
+            &replay_verification_worker_pool,
             (slot_entries, 0, slot_full),
             &mut ConfirmationTiming::default(),
             progress,
@@ -4977,44 +5234,166 @@ pub mod tests {
     }
 
     #[test]
+    fn test_verification_workers_small_capacity() {
+        let num_workers = 2;
+        let channel_capacity = 1;
+        let worker_pool =
+            ReplayVerificationWorkerPool::with_capacity(num_workers, channel_capacity);
+        let mut progress = AsyncVerificationProgress::new(channel_capacity);
+        let start_hash = Hash::new_unique();
+        let verification_entries = entry::entries_to_verification_data(&create_ticks(
+            (num_workers + 1) as u64,
+            1,
+            start_hash,
+        ));
+
+        for _ in 0..10 {
+            progress
+                .spawn_poh_verification(&worker_pool, verification_entries.clone(), start_hash, 0)
+                .unwrap();
+            assert_eq!(progress.pending_jobs, channel_capacity);
+        }
+
+        progress.wait_for_all_results().unwrap();
+        assert_eq!(progress.pending_jobs, 0);
+    }
+
+    #[test]
+    fn test_verification_workers_max_results() {
+        let num_workers = 4;
+        // ideally we'd use MAX_FEC_SETS_PER_SLOT here, but CI is too slow to be true
+        let fake_max_fec_sets_per_slot = 10usize;
+        let job_capacity = fake_max_fec_sets_per_slot
+            // poh + signature verification
+            .checked_mul(2)
+            .unwrap()
+            // each poh/signature batch can be split into multiple jobs, at most 1 for each worker
+            .checked_mul(num_workers)
+            .expect("verification job queue capacity overflow");
+        let worker_pool = ReplayVerificationWorkerPool::with_capacity(num_workers, job_capacity);
+
+        // make sure that each batch generates work for each worker
+        let num_items = num_workers + 1;
+
+        let start_hash = Hash::new_unique();
+        let verification_entries =
+            entry::entries_to_verification_data(&create_ticks(num_items as u64, 1, start_hash));
+        let transaction = system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            Hash::new_unique(),
+        );
+        let entry = Entry::new(&Hash::new_unique(), 1, vec![transaction; num_items]);
+
+        // Simulate two parallel banks. This tests that we make progress even when the number of
+        // jobs exceeds the capacity of the pool.
+        let result_channel_capacity = worker_pool.job_capacity;
+        let mut progresses = [
+            AsyncVerificationProgress::new(result_channel_capacity),
+            AsyncVerificationProgress::new(result_channel_capacity),
+        ];
+
+        // simulate full slots
+        for _ in 0..fake_max_fec_sets_per_slot {
+            for (slot, progress) in progresses.iter_mut().enumerate() {
+                let slot = slot as Slot;
+                progress
+                    .spawn_poh_verification(
+                        &worker_pool,
+                        verification_entries.clone(),
+                        start_hash,
+                        slot,
+                    )
+                    .unwrap();
+                let unverified_signatures = entry::validate_and_hash_transactions(
+                    vec![entry.clone()],
+                    num_items,
+                    transaction_hash_verify_thread_pool(),
+                    |transaction, _| {
+                        Ok(RuntimeTransaction::from_transaction_for_tests(
+                            transaction.into_legacy_transaction().unwrap(),
+                        ))
+                    },
+                )
+                .unwrap()
+                .unverified_signatures;
+                progress
+                    .spawn_signature_verification(
+                        &worker_pool,
+                        unverified_signatures,
+                        slot,
+                        slot,
+                        None,
+                    )
+                    .unwrap();
+            }
+        }
+
+        let expected_results = result_channel_capacity;
+        for progress in &progresses {
+            assert_eq!(progress.pending_jobs, expected_results);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while progresses
+            .iter()
+            .any(|progress| progress.receiver.len() < expected_results)
+            && Instant::now() < deadline
+        {
+            thread::yield_now();
+        }
+        let result_counts = progresses
+            .each_ref()
+            .map(|progress| progress.receiver.len());
+
+        for progress in &mut progresses {
+            progress.wait_for_all_results().unwrap();
+        }
+        assert_eq!(
+            result_counts, [expected_results; 2],
+            "verification workers did not send all results before the timeout"
+        );
+    }
+
+    #[test]
     fn test_async_verification_progress_drop() {
-        let exit_barrier = Arc::new(Barrier::new(2));
-        let drop_barrier = Arc::new(Barrier::new(2));
+        struct BlockingVerificationJob {
+            job: VerificationJob,
+            barrier: Arc<Barrier>,
+        }
 
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(1)
-            .exit_handler({
-                let exit_barrier = exit_barrier.clone();
-                move |_| {
-                    exit_barrier.wait();
-                }
-            })
-            .build()
-            .unwrap();
+        impl WorkerJob for BlockingVerificationJob {
+            fn run(self) {
+                self.barrier.wait();
+                self.job.run();
+            }
+        }
 
-        let mut progress = AsyncVerificationProgress::new();
-        progress
-            .spawn(&pool, &mut 0, &mut 0, {
-                let drop_barrier = drop_barrier.clone();
-                move || {
-                    // wait for the test to drop `progress` so the channel spawn() sends results to
-                    // gets disconnected
-                    drop_barrier.wait();
-                    AsyncVerificationResult {
-                        poh_verify_elapsed: 0,
-                        transaction_verify_elapsed: 0,
-                        error: None,
-                    }
-                }
-            })
-            .unwrap();
-
-        // ensure that in flight or pending tasks don't panic if AsyncVerificationProgress gets
-        // dropped
+        let pool = WorkerPool::new("solReplayTest", 1, 1);
+        let barrier = Arc::new(Barrier::new(2));
+        let progress = AsyncVerificationProgress::new(1);
+        let entries = Arc::new(VerificationBatch {
+            data: Vec::new(),
+            started: Instant::now(),
+            remaining_jobs: AtomicUsize::new(1),
+        });
+        let result_sender = progress.sender.clone();
+        pool.send(BlockingVerificationJob {
+            job: VerificationJob::Poh(PohVerificationJob {
+                entries,
+                range: 0..0,
+                start_hash: Hash::default(),
+                slot: 0,
+                result_sender,
+            }),
+            barrier: Arc::clone(&barrier),
+        });
+        // this tests that dropping the progress while a job is running does not panic. Can happen
+        // when a slot is dumped.
         drop(progress);
-        drop_barrier.wait();
+        barrier.wait();
+        // this will join the pool
         drop(pool);
-        exit_barrier.wait();
     }
 
     #[test]
@@ -5263,7 +5642,12 @@ pub mod tests {
 
     fn confirm_slot_with_block_markers_common(
         footer_before_alpentick: bool,
-    ) -> (Blockstore, GenesisConfig, tempfile::TempDir, ThreadPool) {
+    ) -> (
+        Blockstore,
+        GenesisConfig,
+        tempfile::TempDir,
+        ReplayVerificationWorkerPool,
+    ) {
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(100 * LAMPORTS_PER_SOL);
@@ -5386,19 +5770,19 @@ pub mod tests {
         }
         blockstore.insert_shreds(all_shreds, true).unwrap();
 
-        let replay_tx_thread_pool = create_thread_pool(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
 
         (
             blockstore,
             genesis_config,
             ledger_path,
-            replay_tx_thread_pool,
+            replay_verification_worker_pool,
         )
     }
 
     #[test]
     fn test_confirm_slot_block_with_markers_fails_without_alpenglow() {
-        let (blockstore, genesis_config, _ledger_path, replay_tx_thread_pool) =
+        let (blockstore, genesis_config, _ledger_path, replay_verification_worker_pool) =
             confirm_slot_with_block_markers_common(true);
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
@@ -5415,7 +5799,7 @@ pub mod tests {
             &blockstore,
             &bank1,
             compute_shred_version(&genesis_config.hash(), None),
-            &replay_tx_thread_pool,
+            &replay_verification_worker_pool,
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             false,
@@ -5430,7 +5814,7 @@ pub mod tests {
 
     #[test]
     fn test_confirm_slot_block_with_markers_succeeds_with_alpenglow() {
-        let (blockstore, genesis_config, _ledger_path, replay_tx_thread_pool) =
+        let (blockstore, genesis_config, _ledger_path, replay_verification_worker_pool) =
             confirm_slot_with_block_markers_common(true);
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
@@ -5450,7 +5834,7 @@ pub mod tests {
             &blockstore,
             &bank1,
             compute_shred_version(&genesis_config.hash(), None),
-            &replay_tx_thread_pool,
+            &replay_verification_worker_pool,
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             true,
@@ -5509,7 +5893,7 @@ pub mod tests {
 
     #[test]
     fn test_confirm_slot_rejects_alpentick_before_footer() {
-        let (blockstore, genesis_config, _ledger_path, replay_tx_thread_pool) =
+        let (blockstore, genesis_config, _ledger_path, replay_verification_worker_pool) =
             confirm_slot_with_block_markers_common(false);
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
@@ -5522,7 +5906,7 @@ pub mod tests {
             &blockstore,
             &bank1,
             compute_shred_version(&genesis_config.hash(), None),
-            &replay_tx_thread_pool,
+            &replay_verification_worker_pool,
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             true,
@@ -5826,12 +6210,12 @@ pub mod tests {
             ..ProcessOptions::default()
         };
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
-        let replay_tx_thread_pool = create_thread_pool(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
         process_bank_0(
             &bank0,
             compute_shred_version(&genesis_config.hash(), None),
             &blockstore,
-            &replay_tx_thread_pool,
+            &replay_verification_worker_pool,
             &opts,
             None,
             None,
@@ -5987,21 +6371,6 @@ pub mod tests {
         assert_eq!(
             validate_entry_transactions(&txs, 10),
             Err(TransactionError::AccountLoadedTwice)
-        );
-    }
-
-    #[test]
-    fn test_validate_entry_transactions_duplicate_message_hash() {
-        let payer = Keypair::new();
-        let hash = Hash::new_unique();
-        let tx = system_transaction::transfer(&payer, &Pubkey::new_unique(), 1, hash);
-        let txs = vec![
-            RuntimeTransaction::from_transaction_for_tests(tx.clone()),
-            RuntimeTransaction::from_transaction_for_tests(tx),
-        ];
-        assert_eq!(
-            validate_entry_transactions(&txs, 10),
-            Err(TransactionError::AlreadyProcessed)
         );
     }
 }

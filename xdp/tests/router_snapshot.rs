@@ -35,7 +35,7 @@ fn router_snapshot_resolves_gre_routes_from_netlink() {
 
         let gre_route = next_hop.gre.as_ref().expect("route should use GRE");
         assert_eq!(gre_route.if_index, gre.if_index);
-        assert_eq!(gre_route.mac_addr, links.right_mac);
+        assert_eq!(gre_route.underlay_mac_addr, Some(links.right_mac));
         assert_eq!(gre_route.tunnel_info.local, IpAddr::V4(gre.local_ip));
         assert_eq!(gre_route.tunnel_info.remote, IpAddr::V4(gre.remote_ip));
         assert_eq!(gre_route.tunnel_info.ttl, 64);

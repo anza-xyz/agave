@@ -1,4 +1,4 @@
-//! AccountInfo represents a reference to AccountSharedData in an AppendVec
+//! AccountInfo represents a reference to AccountSharedData in an AccountsFile
 //! AccountInfo is not persisted anywhere between program runs.
 //! AccountInfo is purely runtime state.
 //! Note that AccountInfo is saved to disk buckets during runtime, but disk buckets are recreated at startup.
@@ -12,27 +12,27 @@ use {
     modular_bitfield::prelude::*,
 };
 
-/// offset within an append vec to account data
+/// offset within an accounts file to account data
 pub type Offset = usize;
 
 /// specify where account data is located
 #[derive(Debug, PartialEq, Eq)]
 pub enum StorageLocation {
-    AppendVec(AccountsFileId, Offset),
+    AccountsFile(AccountsFileId, Offset),
 }
 
 impl StorageLocation {
     pub fn is_offset_equal(&self, other: &StorageLocation) -> bool {
         match self {
-            StorageLocation::AppendVec(_, offset) => match other {
-                StorageLocation::AppendVec(_, other_offset) => other_offset == offset,
+            StorageLocation::AccountsFile(_, offset) => match other {
+                StorageLocation::AccountsFile(_, other_offset) => other_offset == offset,
             },
         }
     }
     pub fn is_store_id_equal(&self, other: &StorageLocation) -> bool {
         match self {
-            StorageLocation::AppendVec(store_id, _) => match other {
-                StorageLocation::AppendVec(other_store_id, _) => other_store_id == store_id,
+            StorageLocation::AccountsFile(store_id, _) => match other {
+                StorageLocation::AccountsFile(other_store_id, _) => other_store_id == store_id,
             },
         }
     }
@@ -80,7 +80,7 @@ impl AccountInfo {
     pub fn new(storage_location: StorageLocation, is_zero_lamport: bool) -> Self {
         let mut packed_offset_and_flags = PackedOffsetAndFlags::default();
         let store_id = match storage_location {
-            StorageLocation::AppendVec(store_id, offset) => {
+            StorageLocation::AccountsFile(store_id, offset) => {
                 packed_offset_and_flags.set_offset_reduced(Self::get_reduced_offset(offset));
                 assert_eq!(
                     Self::reduced_offset_to_offset(packed_offset_and_flags.offset_reduced()),
@@ -114,7 +114,7 @@ impl AccountInfo {
     }
 
     pub fn storage_location(&self) -> StorageLocation {
-        StorageLocation::AppendVec(self.store_id, self.offset())
+        StorageLocation::AccountsFile(self.store_id, self.offset())
     }
 }
 
@@ -134,7 +134,7 @@ mod test {
             ALIGN_BOUNDARY_OFFSET,
             4 * ALIGN_BOUNDARY_OFFSET,
         ] {
-            let info = AccountInfo::new(StorageLocation::AppendVec(0, offset), true);
+            let info = AccountInfo::new(StorageLocation::AccountsFile(0, offset), true);
             assert!(info.offset() == offset);
         }
     }
@@ -143,6 +143,6 @@ mod test {
     #[should_panic(expected = "illegal offset")]
     fn test_alignment() {
         let offset = 1; // not aligned
-        AccountInfo::new(StorageLocation::AppendVec(0, offset), true);
+        AccountInfo::new(StorageLocation::AccountsFile(0, offset), true);
     }
 }

@@ -74,7 +74,7 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Builtin => Builtin in TransactionBatchProcessor::add_builtin
 
     Un/re/deployment (with delay and cooldown):
-    - Empty / Closed => Loaded / FailedVerification in UpgradeableLoaderInstruction::DeployWithMaxDataLen
+    - Empty / Closed => Unloaded in UpgradeableLoaderInstruction::DeployWithMaxDataLen
     - Loaded / FailedVerification => Loaded in UpgradeableLoaderInstruction::Upgrade
     - Loaded / FailedVerification => Closed in UpgradeableLoaderInstruction::Close
 
@@ -108,9 +108,9 @@ pub enum ProgramCacheEntryType {
     Closed,
     /// Tombstone for programs which have recently been modified but the new version is not visible yet.
     DelayVisibility,
-    /// Successfully verified but not currently compiled.
+    /// Valid program account, but not relocated, verified or compiled.
     ///
-    /// It continues to track usage statistics even when the compiled executable of the program is evicted from memory.
+    /// It continues to track usage statistics even when the executable of the program is evicted from memory.
     Unloaded(ProgramRuntimeEnvironment),
     /// Verified program.
     ///
@@ -193,58 +193,13 @@ impl PartialEq for ProgramCacheEntry {
 }
 
 impl ProgramCacheEntry {
-    /// Creates a new user program
-    pub fn new(
+    /// Creates a loaded user program
+    pub fn load(
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::new_internal(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            elf_bytes,
-            #[cfg(feature = "metrics")]
-            metrics,
-            false, /* reloading */
-        )
-    }
-
-    /// Reloads a user program, *without* running the verifier.
-    ///
-    /// # Safety
-    ///
-    /// This method is unsafe since it assumes that the program has already been verified. Should
-    /// only be called when the program was previously verified and loaded in the cache, but was
-    /// unloaded due to inactivity. It should also be checked that the `program_runtime_environment`
-    /// hasn't changed since it was unloaded.
-    pub unsafe fn reload(
-        loader_key: &Pubkey,
-        program_runtime_environment: ProgramRuntimeEnvironment,
-        deployment_slot: Slot,
-        elf_bytes: &[u8],
-        #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::new_internal(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            elf_bytes,
-            #[cfg(feature = "metrics")]
-            metrics,
-            true, /* reloading */
-        )
-    }
-
-    fn new_internal(
-        loader_key: &Pubkey,
-        program_runtime_environment: ProgramRuntimeEnvironment,
-        deployment_slot: Slot,
-        elf_bytes: &[u8],
-        #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
-        reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let entry_stats = ProgramStatistics::default();
         #[cfg(feature = "metrics")]
@@ -256,14 +211,12 @@ impl ProgramCacheEntry {
             metrics.load_elf_us = load_elf_time.end_as_us();
         }
 
-        if !reloading {
-            #[cfg(feature = "metrics")]
-            let verify_code_time = solana_svm_measure::measure::Measure::start("verify_code_time");
-            executable.verify::<RequisiteVerifier>()?;
-            #[cfg(feature = "metrics")]
-            {
-                metrics.verify_code_us = verify_code_time.end_as_us();
-            }
+        #[cfg(feature = "metrics")]
+        let verify_code_time = solana_svm_measure::measure::Measure::start("verify_code_time");
+        executable.verify::<RequisiteVerifier>()?;
+        #[cfg(feature = "metrics")]
+        {
+            metrics.verify_code_us = verify_code_time.end_as_us();
         }
 
         #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
@@ -285,6 +238,20 @@ impl ProgramCacheEntry {
             stats: entry_stats.into(),
             latest_access_slot: AtomicU64::new(0),
         })
+    }
+
+    pub fn new_unloaded(
+        deployment_slot: Slot,
+        account_owner: ProgramCacheEntryOwner,
+        program_runtime_environment: ProgramRuntimeEnvironment,
+    ) -> Self {
+        Self {
+            program: ProgramCacheEntryType::Unloaded(program_runtime_environment),
+            account_owner,
+            deployment_slot,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::new(0),
+        }
     }
 
     pub fn to_unloaded_in_env(&self, environment: ProgramRuntimeEnvironment) -> Option<Self> {
@@ -326,29 +293,45 @@ impl ProgramCacheEntry {
         }
     }
 
-    pub fn new_tombstone(
-        slot: Slot,
+    pub fn new_failed_verification_tombstone(
+        deployment_slot: Slot,
         account_owner: ProgramCacheEntryOwner,
-        reason: ProgramCacheEntryType,
+        program_runtime_environment: ProgramRuntimeEnvironment,
     ) -> Self {
-        Self::new_tombstone_with_stats(slot, account_owner, reason, Arc::default())
+        Self {
+            program: ProgramCacheEntryType::FailedVerification(program_runtime_environment),
+            account_owner,
+            deployment_slot,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::new(0),
+        }
     }
 
-    pub fn new_tombstone_with_stats(
-        slot: Slot,
+    pub fn new_closed_tombstone(
+        deployment_slot: Slot,
         account_owner: ProgramCacheEntryOwner,
-        reason: ProgramCacheEntryType,
+    ) -> Self {
+        Self {
+            program: ProgramCacheEntryType::Closed,
+            account_owner,
+            deployment_slot,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::new(0),
+        }
+    }
+
+    pub fn new_delay_visibility_tombstone(
+        deployment_slot: Slot,
+        account_owner: ProgramCacheEntryOwner,
         stats: Arc<ProgramStatistics>,
     ) -> Self {
-        let tombstone = Self {
-            program: reason,
+        Self {
+            program: ProgramCacheEntryType::DelayVisibility,
             account_owner,
-            deployment_slot: slot,
+            deployment_slot,
             stats,
             latest_access_slot: AtomicU64::new(0),
-        };
-        debug_assert!(tombstone.is_tombstone());
-        tombstone
+        }
     }
 
     pub fn is_tombstone(&self) -> bool {

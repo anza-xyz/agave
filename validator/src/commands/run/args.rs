@@ -799,6 +799,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("num_votor_endpoints")
+            .long("num-votor-endpoints")
+            .takes_value(true)
+            .default_value(&default_args.num_votor_endpoints)
+            .validator(is_parsable::<usize>)
+            .hidden(hidden_unless_forced())
+            .help("The number of QUIC endpoints used for the votor transport."),
+    )
+    .arg(
         Arg::with_name("staked_nodes_overrides")
             .long("staked-nodes-overrides")
             .value_name("PATH")
@@ -1063,7 +1072,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
                  accounts index in memory. All index entries that are not in memory are kept in \
                  the disk-backed index. The disk-backed index has lower performance; prefer \
-                 higher explicit limits here.",
+                 higher explicit limits here. \"minimal\" is deprecated and behaves as \"25GB\".",
             ),
     )
     .arg(

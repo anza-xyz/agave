@@ -16,7 +16,6 @@ use {
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ShredFlags, ShredId, ShredType},
@@ -923,9 +922,7 @@ fn notify_subscribers(
             .notify_first_shred_received(slot);
     }
 
-    if notifiers.migration_status.should_send_votor_event(slot)
-        && slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
-    {
+    if notifiers.migration_status.should_send_first_shred(slot) {
         match notifiers
             .votor_event_sender
             .try_send(VotorEvent::FirstShred(slot))
@@ -955,6 +952,7 @@ mod tests {
         solana_entry::entry::create_ticks,
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     };
 
@@ -1102,5 +1100,48 @@ mod tests {
            First time seeing shred Y w/ changed header (FEC Set index 3)=>Dup because common \
              header is unique but shred ID seen twice already"
         );
+    }
+
+    #[test]
+    fn test_notify_subscribers_sends_first_shred_after_genesis() {
+        let (votor_event_sender, votor_event_receiver) = crossbeam_channel::bounded(1);
+        let migration_status = Arc::new(MigrationStatus::post_migration_status());
+        let genesis_slot = migration_status.genesis_block().unwrap().slot;
+        let notifiers = RetransmitNotifiers {
+            rpc_subscriptions: None,
+            slot_status_notifier: None,
+            migration_status,
+            votor_event_sender,
+        };
+        let mut pending_first_shred_event = None;
+
+        let slot = genesis_slot.checked_add(1).unwrap();
+        assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
+        notify_subscribers(
+            slot,
+            /*timestamp:*/ 0,
+            &notifiers,
+            &mut pending_first_shred_event,
+        );
+
+        assert!(matches!(
+            votor_event_receiver.try_recv(),
+            Ok(VotorEvent::FirstShred(received_slot)) if received_slot == slot
+        ));
+        assert!(pending_first_shred_event.is_none());
+
+        // Later unaligned slots do not need a FirstShred event.
+        let slot = slot.checked_add(1).unwrap();
+        assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
+        notify_subscribers(
+            slot,
+            /*timestamp:*/ 0,
+            &notifiers,
+            &mut pending_first_shred_event,
+        );
+        assert!(matches!(
+            votor_event_receiver.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
     }
 }

@@ -41,7 +41,7 @@ tokio-util = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-fee-calculator = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }

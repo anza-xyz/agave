@@ -5,7 +5,10 @@ use {
         shred::{
             ShredFlags, max_ticks_per_n_shreds,
             merkle::finish_erasure_batch_for_tests,
-            merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, verify_merkle_proof},
+            merkle_tree::{
+                SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
+                verify_merkle_proof,
+            },
         },
     },
     assert_matches::assert_matches,
@@ -6468,7 +6471,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     // FEC sets
     for (fec_set, root) in fec_set_roots.iter().enumerate() {
         verify_merkle_proof(
-            *root,
+            hash_as_merkle_proof_entry(root),
             fec_set,
             double_merkle_meta
                 .get_fec_set_proof(fec_set as u32)
@@ -6480,7 +6483,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
 
     // Parent info - final proof
     verify_merkle_proof(
-        parent_info_hash,
+        hash_as_merkle_proof_entry(&parent_info_hash),
         double_merkle_meta.fec_set_count as usize,
         double_merkle_meta.get_parent_info_proof().unwrap(),
         double_merkle_meta.double_merkle_root,

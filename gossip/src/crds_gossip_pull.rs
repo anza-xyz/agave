@@ -1371,6 +1371,19 @@ pub(crate) mod tests {
         }
     }
 
+    // MAX_BYTES_CACHE maps each filter size to the largest max_bytes producing
+    // it, so max_bytes + 1 always overflows the packet.
+    fn verify_max_bloom_filter_bytes_is_maximal<R: Rng>(rng: &mut R, caller: &CrdsValue) {
+        let max_bytes = get_max_bloom_filter_bytes(caller);
+        let filters = CrdsFilterSet::new(rng, /*num_items:*/ 1, max_bytes + 1);
+
+        for filter in Vec::<CrdsFilter>::from(filters) {
+            let request = Protocol::PullRequest(filter, caller.clone());
+            let request_bytes = wincode::serialized_size(&request).unwrap();
+            assert!(request_bytes > PACKET_DATA_SIZE as u64);
+        }
+    }
+
     #[test_case(1)]
     #[test_case(7)]
     #[test_case(81)]
@@ -1390,8 +1403,8 @@ pub(crate) mod tests {
         };
         {
             let caller: CrdsValue = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1184);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
+            verify_max_bloom_filter_bytes_is_maximal(&mut rng, &caller);
         }
         let node = {
             let socket = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 1), 8053));
@@ -1401,8 +1414,8 @@ pub(crate) mod tests {
         };
         {
             let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1175);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
+            verify_max_bloom_filter_bytes_is_maximal(&mut rng, &caller);
         }
     }
 

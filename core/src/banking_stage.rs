@@ -49,6 +49,7 @@ use {
     tokio::sync::mpsc,
     tokio_util::sync::CancellationToken,
     transaction_scheduler::{
+        check_worker::spawn_check_workers,
         greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         receive_and_buffer::TransactionViewReceiveAndBuffer,
     },
@@ -507,24 +508,35 @@ impl BankingStage {
 
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
+        const NUM_CHECK_WORKERS: NonZeroUsize = NonZeroUsize::new(8).unwrap();
+        const CHANNEL_CAPACITY: usize = 10_000;
 
         let exit = self.worker_exit_signal.clone();
 
         // Setup receive & buffer.
         let sharable_banks = self.bank_forks.read().unwrap().sharable_banks();
-        let receive_and_buffer = TransactionViewReceiveAndBuffer {
-            receiver: self.non_vote_receiver.clone(),
-            sharable_banks: sharable_banks.clone(),
-            filter_keys: self.filter_keys.clone(),
-        };
+        let priority_floor = self.priority_floor.clone();
+        let (check_work_sender, check_work_receiver) = bounded(CHANNEL_CAPACITY);
+        let (check_result_sender, check_result_receiver) = bounded(CHANNEL_CAPACITY);
+        let check_worker_handles = spawn_check_workers(
+            NUM_CHECK_WORKERS,
+            check_work_receiver,
+            check_result_sender,
+            sharable_banks.clone(),
+            self.filter_keys.clone(),
+        );
+        let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
+            self.non_vote_receiver.clone(),
+            check_work_sender,
+            check_result_receiver,
+        );
 
         // Spawn vote worker.
-        let mut threads = Vec::with_capacity(num_workers + 2);
+        let mut threads = Vec::with_capacity(num_workers + NUM_CHECK_WORKERS.get() + 2);
+        threads.extend(check_worker_handles);
         threads.push(self.spawn_vote_worker());
 
         // Create channels for communication between scheduler and workers
-        const CHANNEL_CAPACITY: usize = 10_000; // unlikely we'll ever hit this given default configuration.
-
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
             (0..num_workers).map(|_| bounded(CHANNEL_CAPACITY)).unzip();
         let (finished_work_sender, finished_work_receiver) =
@@ -567,7 +579,6 @@ impl BankingStage {
             finished_work_receiver,
             GreedySchedulerConfig::default(),
         );
-        let priority_floor = self.priority_floor.clone();
         let exit = exit.clone();
         let shutdown_signal = self.banking_shutdown_signal.clone();
         threads.push(

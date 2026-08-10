@@ -12,6 +12,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
+    agave_votor_transport::MAX_ENDPOINTS,
     bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -22,7 +23,8 @@ use {
         accounts_file::AccountsFileProvider,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
-            DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
+            DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold,
+            MINIMAL_THRESHOLD_NUM_BYTES, ScanFilter,
         },
         partitioned_rewards::PartitionedEpochRewardsConfig,
         utils::{
@@ -68,7 +70,6 @@ use {
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
-    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_turbine::broadcast_stage::BroadcastStageType,
     solana_validator_exit::Exit,
     std::{
@@ -253,6 +254,12 @@ pub fn execute(
     }
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+    let num_votor_quic_endpoints = value_t_or_exit!(matches, "num_votor_endpoints", NonZeroUsize);
+    if num_votor_quic_endpoints.get() > MAX_ENDPOINTS {
+        Err(format!(
+            "--num-votor-endpoints must be at most {MAX_ENDPOINTS}"
+        ))?;
+    }
 
     let node_config = NodeConfig {
         advertised_ip,
@@ -265,6 +272,7 @@ pub fn execute(
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
+        num_votor_quic_endpoints,
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
@@ -519,12 +527,6 @@ pub fn execute(
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
-    let tpu_connection_pool_size = matches
-        .value_of("tpu_connection_pool_size")
-        .unwrap_or("")
-        .parse()
-        .unwrap_or(DEFAULT_TPU_CONNECTION_POOL_SIZE);
-
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
         Err(format!(
@@ -558,45 +560,44 @@ pub fn execute(
 
     let accounts_index_limit =
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
-    let index_limit = {
-        enum CliIndexLimit {
-            // deprecated in v4.1.0
-            Minimal,
-            Unlimited,
-            Threshold(u64),
+    enum CliIndexLimit {
+        Unlimited,
+        Threshold(u64),
+    }
+    let cli_index_limit = match accounts_index_limit.as_str() {
+        "minimal" => {
+            warn!(
+                "Using `minimal` for `--accounts-index-limit` is deprecated. Using 25GB instead."
+            );
+            CliIndexLimit::Threshold(MINIMAL_THRESHOLD_NUM_BYTES)
         }
-        let cli_index_limit = match accounts_index_limit.as_str() {
-            "minimal" => {
-                warn!("Using `minimal` for `--accounts-index-limit` is deprecated.");
-                CliIndexLimit::Minimal
-            }
-            "unlimited" => CliIndexLimit::Unlimited,
-            "25GB" => CliIndexLimit::Threshold(25_000_000_000),
-            "50GB" => CliIndexLimit::Threshold(50_000_000_000),
-            "100GB" => CliIndexLimit::Threshold(100_000_000_000),
-            "200GB" => CliIndexLimit::Threshold(200_000_000_000),
-            "400GB" => CliIndexLimit::Threshold(400_000_000_000),
-            "800GB" => CliIndexLimit::Threshold(800_000_000_000),
-            x => {
-                // clap will enforce only the above values are possible
-                unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
-            }
-        };
-        match cli_index_limit {
-            CliIndexLimit::Minimal => IndexLimit::Minimal,
-            CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
-            CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
-                num_bytes,
-                num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
-                num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
-            }),
+        "unlimited" => CliIndexLimit::Unlimited,
+        "25GB" => CliIndexLimit::Threshold(25_000_000_000),
+        "50GB" => CliIndexLimit::Threshold(50_000_000_000),
+        "100GB" => CliIndexLimit::Threshold(100_000_000_000),
+        "200GB" => CliIndexLimit::Threshold(200_000_000_000),
+        "400GB" => CliIndexLimit::Threshold(400_000_000_000),
+        "800GB" => CliIndexLimit::Threshold(800_000_000_000),
+        x => {
+            // clap will enforce only the above values are possible
+            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
         }
     };
+
     // Note: need to still handle --enable-accounts-disk-index until it is removed
-    let index_limit = if matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::Minimal
+    let cli_index_limit = if matches.is_present("enable_accounts_disk_index") {
+        CliIndexLimit::Threshold(MINIMAL_THRESHOLD_NUM_BYTES)
     } else {
-        index_limit
+        cli_index_limit
+    };
+
+    let index_limit = match cli_index_limit {
+        CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
+        CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
+            num_bytes,
+            num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
+            num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
+        }),
     };
 
     let mut accounts_index_config = AccountsIndexConfig {
@@ -1119,7 +1120,6 @@ pub fn execute(
         run_args.socket_addr_space,
         ValidatorTpuConfig {
             vote_use_quic,
-            tpu_connection_pool_size,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1136,7 +1136,7 @@ pub fn execute(
     }
     info!("Validator initialized");
     validator.listen_for_signals()?;
-    validator.join();
+    validator.close();
     info!("Validator exiting...");
 
     Ok(())

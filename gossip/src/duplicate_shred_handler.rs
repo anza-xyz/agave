@@ -142,10 +142,12 @@ impl DuplicateShredHandler {
                     shred2.into_payload(),
                 )?;
 
-                // Notify duplicate consensus state machine. Drop if channel is over 50% full
-                // to avoid blocking replay.
-                if self.duplicate_slots_sender.len() * 2
-                    < self.duplicate_slots_sender.capacity().unwrap_or(usize::MAX)
+                // Notify the Tower duplicate-consensus state machine. ReplayStage stops
+                // consuming this channel once Alpenglow is enabled, while duplicate proofs are
+                // still stored during the mixed epoch for slashing.
+                if !self.migration_status.is_alpenglow_enabled()
+                    && self.duplicate_slots_sender.len() * 2
+                        < self.duplicate_slots_sender.capacity().unwrap_or(usize::MAX)
                 {
                     self.duplicate_slots_sender
                         .try_send(slot)
@@ -331,7 +333,7 @@ mod tests {
             epoch_specs.clone_box(),
             sender,
             shred_version,
-            migration_status,
+            migration_status.clone(),
         );
         let chunks = create_duplicate_proof(
             my_keypair.clone(),
@@ -390,6 +392,25 @@ mod tests {
                 }
             }
         }
+
+        // Duplicate proofs are retained for slashing during the mixed Alpenglow epoch, but the
+        // Tower duplicate-consensus channel no longer has a consumer.
+        migration_status.enable_alpenglow_for_tests();
+        let alpenglow_slot = start_slot + 3;
+        let chunks = create_duplicate_proof(
+            my_keypair,
+            None,
+            alpenglow_slot,
+            None,
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            shred_version,
+        )
+        .unwrap();
+        for chunk in chunks {
+            duplicate_shred_handler.handle(chunk);
+        }
+        assert!(blockstore.has_duplicate_shreds_in_slot(alpenglow_slot));
+        assert!(receiver.is_empty());
     }
 
     #[test]

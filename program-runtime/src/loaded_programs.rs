@@ -335,10 +335,9 @@ impl ProgramCacheForTxBatch {
                     // Found a program entry on the current fork, but it's not effective
                     // yet. It indicates that the program has delayed visibility. Return
                     // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
+                    Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
                         entry.deployment_slot,
                         entry.account_owner,
-                        ProgramCacheEntryType::DelayVisibility,
                         Arc::clone(&entry.stats),
                     ))
                 } else {
@@ -370,7 +369,6 @@ impl ProgramCacheForTxBatch {
 #[derive(Clone, PartialEq, Debug)]
 pub enum ProgramCacheMatchCriteria {
     DeployedOnOrAfterSlot(Slot),
-    Tombstone,
     NoCriteria,
 }
 
@@ -445,11 +443,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 ProgramCacheEntryType::Builtin(_),
                                 ProgramCacheEntryType::Builtin(_),
                             )
-                            | (ProgramCacheEntryType::Closed, ProgramCacheEntryType::Loaded(_))
-                            | (
-                                ProgramCacheEntryType::Closed,
-                                ProgramCacheEntryType::FailedVerification(_),
-                            )
+                            | (ProgramCacheEntryType::Closed, ProgramCacheEntryType::Unloaded(_))
                             | (
                                 ProgramCacheEntryType::Unloaded(_),
                                 ProgramCacheEntryType::Loaded(_),
@@ -629,7 +623,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot) => {
                 program.deployment_slot >= *slot
             }
-            ProgramCacheMatchCriteria::Tombstone => program.is_tombstone(),
             ProgramCacheMatchCriteria::NoCriteria => true,
         }
     }
@@ -711,10 +704,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
+                                    Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
                                         entry.deployment_slot,
                                         entry.account_owner,
-                                        ProgramCacheEntryType::DelayVisibility,
                                         Arc::clone(&entry.stats),
                                     ))
                                 } else {
@@ -1069,17 +1061,16 @@ pub(crate) mod tests {
         })
     }
 
-    fn set_tombstone<FG: ForkGraph>(
+    fn set_failed_verification_tombstone<FG: ForkGraph>(
         cache: &mut ProgramCache<FG>,
         key: Pubkey,
         current_slot: Slot,
-        reason: ProgramCacheEntryType,
+        env: ProgramRuntimeEnvironment,
     ) -> Arc<ProgramCacheEntry> {
-        let env = get_mock_program_runtime_environment();
-        let program = Arc::new(ProgramCacheEntry::new_tombstone(
+        let program = Arc::new(ProgramCacheEntry::new_failed_verification_tombstone(
             current_slot,
             ProgramCacheEntryOwner::LoaderV2,
-            reason,
+            ProgramRuntimeEnvironment::clone(&env),
         ));
         cache.assign_program(&env, key, current_slot, program.clone());
         program
@@ -1139,11 +1130,11 @@ pub(crate) mod tests {
         // Add tombstones entries for program
         let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         for slot in 21..31 {
-            set_tombstone(
+            set_failed_verification_tombstone(
                 cache,
                 program,
                 slot,
-                ProgramCacheEntryType::FailedVerification(env.clone()),
+                ProgramRuntimeEnvironment::clone(&env),
             );
         }
 
@@ -1437,12 +1428,10 @@ pub(crate) mod tests {
                         latest_access_slot: AtomicU64::new(deployment_slot),
                     }
                 } else {
-                    ProgramCacheEntry::new_tombstone(
+                    ProgramCacheEntry::new_failed_verification_tombstone(
                         deployment_slot,
                         ProgramCacheEntryOwner::LoaderV2,
-                        ProgramCacheEntryType::FailedVerification(ProgramRuntimeEnvironment::from(
-                            BuiltinProgram::new_mock(),
-                        )), // Assign them different environments
+                        ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock()), // Assign them different environments
                     )
                 });
                 assert!(!cache.assign_program(&env, program_id, deployment_slot, entry));
@@ -1474,10 +1463,16 @@ pub(crate) mod tests {
         )
     )]
     #[test_matrix(
+        ProgramCacheEntryType::Closed,
         (
+            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
-        ),
+            new_loaded_entry(get_mock_program_runtime_environment()),
+            ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+        )
+    )]
+    #[test_matrix(
+        ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
         (
             ProgramCacheEntryType::Closed,
             ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
@@ -1525,14 +1520,15 @@ pub(crate) mod tests {
     }
 
     #[test_matrix(
-        (
-            ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
-        ),
+        ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
         (
             new_loaded_entry(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
         )
+    )]
+    #[test_case(
+        ProgramCacheEntryType::Closed,
+        ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment())
     )]
     #[test_case(
         ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
@@ -1621,10 +1617,10 @@ pub(crate) mod tests {
     #[test]
     fn test_tombstone() {
         let env = get_mock_program_runtime_environment();
-        let tombstone = ProgramCacheEntry::new_tombstone(
+        let tombstone = ProgramCacheEntry::new_failed_verification_tombstone(
             0,
             ProgramCacheEntryOwner::LoaderV2,
-            ProgramCacheEntryType::FailedVerification(env.clone()),
+            env.clone(),
         );
         assert_matches!(
             tombstone.program,
@@ -1634,11 +1630,8 @@ pub(crate) mod tests {
         assert_eq!(tombstone.deployment_slot, 0);
         assert_eq!(tombstone.effective_slot(), 0);
 
-        let tombstone = ProgramCacheEntry::new_tombstone(
-            100,
-            ProgramCacheEntryOwner::LoaderV2,
-            ProgramCacheEntryType::Closed,
-        );
+        let tombstone =
+            ProgramCacheEntry::new_closed_tombstone(100, ProgramCacheEntryOwner::LoaderV2);
         assert_matches!(tombstone.program, ProgramCacheEntryType::Closed);
         assert!(tombstone.is_tombstone());
         assert_eq!(tombstone.deployment_slot, 100);
@@ -1646,12 +1639,7 @@ pub(crate) mod tests {
 
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
         let program1 = Pubkey::new_unique();
-        let tombstone = set_tombstone(
-            &mut cache,
-            program1,
-            10,
-            ProgramCacheEntryType::FailedVerification(env.clone()),
-        );
+        let tombstone = set_failed_verification_tombstone(&mut cache, program1, 10, env.clone());
         let slot_versions = cache.get_slot_versions_for_tests(&program1);
         assert_eq!(slot_versions.len(), 1);
         assert!(slot_versions.first().unwrap().is_tombstone());
@@ -1665,12 +1653,7 @@ pub(crate) mod tests {
         assert_eq!(slot_versions.len(), 1);
         assert!(!slot_versions.first().unwrap().is_tombstone());
 
-        let tombstone = set_tombstone(
-            &mut cache,
-            program2,
-            60,
-            ProgramCacheEntryType::FailedVerification(env),
-        );
+        let tombstone = set_failed_verification_tombstone(&mut cache, program2, 60, env);
         let slot_versions = cache.get_slot_versions_for_tests(&program2);
         assert_eq!(slot_versions.len(), 2);
         assert!(!slot_versions.first().unwrap().is_tombstone());
@@ -2274,10 +2257,9 @@ pub(crate) mod tests {
             &env,
             program1,
             10,
-            Arc::new(ProgramCacheEntry::new_tombstone(
+            Arc::new(ProgramCacheEntry::new_closed_tombstone(
                 10,
                 ProgramCacheEntryOwner::LoaderV3,
-                ProgramCacheEntryType::Closed,
             )),
         );
         cache.assign_program(&env, program1, 20, new_test_entry(20));
@@ -2472,20 +2454,14 @@ pub(crate) mod tests {
     #[test]
     fn test_usable_entries_for_slot() {
         ProgramCache::<TestForkGraph>::new(0);
-        let tombstone = Arc::new(ProgramCacheEntry::new_tombstone(
+        let tombstone = Arc::new(ProgramCacheEntry::new_closed_tombstone(
             0,
             ProgramCacheEntryOwner::LoaderV2,
-            ProgramCacheEntryType::Closed,
         ));
 
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
             &tombstone,
             &ProgramCacheMatchCriteria::NoCriteria
-        ));
-
-        assert!(ProgramCache::<TestForkGraph>::matches_criteria(
-            &tombstone,
-            &ProgramCacheMatchCriteria::Tombstone
         ));
 
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
@@ -2505,11 +2481,6 @@ pub(crate) mod tests {
             &ProgramCacheMatchCriteria::NoCriteria
         ));
 
-        assert!(!ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::Tombstone
-        ));
-
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
             &program,
             &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0)
@@ -2525,11 +2496,6 @@ pub(crate) mod tests {
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
             &program,
             &ProgramCacheMatchCriteria::NoCriteria
-        ));
-
-        assert!(!ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::Tombstone
         ));
 
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(

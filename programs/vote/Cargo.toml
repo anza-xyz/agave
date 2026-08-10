@@ -61,7 +61,7 @@ solana-vote-interface = { workspace = true, features = ["bincode"] }
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-clock = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
@@ -78,6 +78,10 @@ test-case = { workspace = true }
 
 [[bench]]
 name = "vote_instructions"
+harness = false
+
+[[bench]]
+name = "process_vote"
 harness = false
 
 [lints]

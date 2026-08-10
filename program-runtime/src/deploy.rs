@@ -6,7 +6,7 @@ use {
     crate::{
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
     },
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
@@ -100,30 +100,21 @@ pub fn deploy_program(
         verify_code_time.stop();
         load_program_metrics.verify_code_us = verify_code_time.as_us();
     }
-    // Reload but with program_runtime_environment
-    let executor = unsafe {
-        // SAFETY: The executable has been verified just above.
-        ProgramCacheEntry::reload(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            programdata,
-            #[cfg(feature = "metrics")]
-            load_program_metrics,
-        )
-    }
-    .map_err(|err| {
-        ic_logger_msg!(log_collector, "{}", err);
-        InstructionError::InvalidAccountData
-    })?;
+    // Insert but with program_runtime_environment
+    let program_cache_entry = ProgramCacheEntry::new_unloaded(
+        deployment_slot,
+        ProgramCacheEntryOwner::try_from(loader_key)
+            .map_err(|_| InstructionError::InvalidAccountData)?,
+        program_runtime_environment,
+    );
     if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
-        executor.stats.merge_from(&old_entry.stats);
+        program_cache_entry.stats.merge_from(&old_entry.stats);
     }
     #[cfg(feature = "metrics")]
     {
         load_program_metrics.program_id = program_id.to_string();
     }
-    program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(executor));
+    program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(program_cache_entry));
     Ok(())
 }
 

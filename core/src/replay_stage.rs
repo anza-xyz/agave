@@ -42,14 +42,15 @@ use {
         voting_utils::{self, GenerateVoteTxResult},
     },
     agave_votor_messages::{
-        consensus_message::Block,
+        certificate::Certificate,
+        consensus_message::{Block, VoteMessage},
         migration::{GENESIS_VOTE_REFRESH, MigrationStatus},
-        own_message::OwnMessage,
         vote::Vote,
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, select},
     itertools::Itertools,
     rayon::{ThreadPool, prelude::*},
+    smallvec::SmallVec,
     solana_accounts_db::contains::Contains,
     solana_clock::{BankId, Slot},
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
@@ -63,7 +64,7 @@ use {
         blockstore_processor::{
             self, AsyncVerificationProgress, BlockstoreProcessorError, ChainedBlockIdCheck,
             ConfirmationProgress, ExecuteBatchesInternalMetrics, ReplaySlotStats,
-            check_chained_block_id,
+            ReplayVerificationWorkerPool, check_chained_block_id,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -94,6 +95,7 @@ use {
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote::vote_transaction::VoteTransaction,
@@ -261,7 +263,7 @@ struct ProcessActiveBanksContext {
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     votor_event_sender: VotorEventSender,
     replay_mode: ForkReplayMode,
-    replay_tx_thread_pool: ThreadPool,
+    replay_verification_worker_pool: ReplayVerificationWorkerPool,
     migration_status: Arc<MigrationStatus>,
 }
 
@@ -439,6 +441,7 @@ pub struct ReplayStageConfig {
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
+    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
 }
 
 pub struct ReplaySenders {
@@ -458,7 +461,8 @@ pub struct ReplaySenders {
     pub block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     pub dumped_slots_sender: Sender<Vec<(u64, Hash)>>,
     pub votor_event_sender: VotorEventSender,
-    pub own_message_sender: Sender<OwnMessage>,
+    pub own_votes_sender: EvictingSender<VoteMessage>,
+    pub footer_certs_sender: Sender<SmallVec<[Certificate; 2]>>,
     pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
     pub lockouts_sender: Sender<TowerCommitmentAggregationData>,
 }
@@ -758,6 +762,7 @@ impl ReplayStage {
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
+            highest_parent_ready,
         } = config;
 
         let ReplaySenders {
@@ -777,9 +782,10 @@ impl ReplayStage {
             block_metadata_notifier,
             dumped_slots_sender,
             votor_event_sender,
-            own_message_sender,
             optimistic_parent_sender,
             lockouts_sender,
+            own_votes_sender,
+            footer_certs_sender,
         } = senders;
 
         let ReplayReceivers {
@@ -802,7 +808,7 @@ impl ReplayStage {
         let mut identity_keypair = cluster_info.keypair().clone();
         let mut my_pubkey = identity_keypair.pubkey();
 
-        let mut highest_frozen_slot = bank_forks
+        let highest_frozen_slot = bank_forks
             .read()
             .unwrap()
             .highest_frozen_bank()
@@ -895,13 +901,8 @@ impl ReplayStage {
                     .expect("new rayon threadpool");
                 ForkReplayMode::Parallel(pool)
             };
-            // Thread pool to replay multiple transactions within one block in parallel
-            let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(replay_transactions_threads.get())
-                .stack_size(8 * 1024 * 1024)
-                .thread_name(|i| format!("solReplayTx{i:02}"))
-                .build()
-                .expect("new rayon threadpool");
+            let replay_verification_worker_pool =
+                ReplayVerificationWorkerPool::new(replay_transactions_threads.get());
 
             let process_active_banks_context = ProcessActiveBanksContext {
                 bank_forks: bank_forks.clone(),
@@ -918,7 +919,7 @@ impl ReplayStage {
                 block_metadata_notifier: block_metadata_notifier.clone(),
                 votor_event_sender: votor_event_sender.clone(),
                 replay_mode,
-                replay_tx_thread_pool,
+                replay_verification_worker_pool,
                 migration_status: migration_status.clone(),
             };
             let process_bank_forks_context = ProcessBankForksContext {
@@ -973,6 +974,7 @@ impl ReplayStage {
                     &update_parent_receiver,
                     &replay_vote_sender,
                     migration_status.as_ref(),
+                    entry_notification_sender.as_ref(),
                 );
 
                 let mut generate_new_bank_forks_time =
@@ -1002,7 +1004,7 @@ impl ReplayStage {
                     let r_bank_forks = bank_forks.read().unwrap();
                     (r_bank_forks.ancestors(), r_bank_forks.descendants())
                 };
-                let new_frozen_slots = Self::process_active_banks(
+                let mut new_frozen_slots = Self::process_active_banks(
                     cluster_info.my_shred_version(),
                     &process_active_banks_context,
                     &mut progress,
@@ -1014,7 +1016,7 @@ impl ReplayStage {
                     &my_pubkey,
                     &vote_account,
                     &mut replay_timing,
-                    &own_message_sender,
+                    &footer_certs_sender,
                 );
                 let did_complete_bank = !new_frozen_slots.is_empty();
                 replay_active_banks_time.stop();
@@ -1041,10 +1043,21 @@ impl ReplayStage {
                         &mut ancestors,
                         &mut descendants,
                         &mut progress,
+                        &replay_highest_frozen,
+                        &mut new_frozen_slots,
                     );
                 }
 
                 if migration_status.is_alpenglow_enabled() {
+                    // These channels feed Tower-only state machines below. Their producers are
+                    // disabled when Alpenglow is enabled, but drain anything queued before the
+                    // transition (or raced with it) so the old state is not retained forever.
+                    for _ in ancestor_duplicate_slots_receiver.try_iter() {}
+                    for _ in duplicate_confirmed_slots_receiver.try_iter() {}
+                    for _ in gossip_verified_vote_hash_receiver.try_iter() {}
+                    for _ in popular_pruned_forks_receiver.try_iter() {}
+                    for _ in duplicate_slots_receiver.try_iter() {}
+
                     if my_pubkey != cluster_info.id() {
                         identity_keypair = cluster_info.keypair();
                         let my_old_pubkey = my_pubkey;
@@ -1064,6 +1077,7 @@ impl ReplayStage {
                         &mut async_verification_freelist,
                         &replay_vote_sender,
                         migration_status.as_ref(),
+                        entry_notification_sender.as_ref(),
                     );
                     Self::alpenglow_handle_newly_frozen_banks(
                         &new_frozen_slots,
@@ -1073,8 +1087,8 @@ impl ReplayStage {
                         &leader_schedule_cache,
                         &optimistic_parent_sender,
                         &optimistic_parent_receiver,
+                        &highest_parent_ready,
                         &replay_highest_frozen,
-                        &mut highest_frozen_slot,
                     );
                     let mut process_switch_bank_events_time =
                         Measure::start("process_switch_bank_events_time");
@@ -1228,7 +1242,7 @@ impl ReplayStage {
                             vote_account,
                             &identity_keypair,
                             &authorized_voter_keypairs,
-                            &own_message_sender,
+                            &own_votes_sender,
                             &bls_sender,
                         )
                     {
@@ -1607,8 +1621,8 @@ impl ReplayStage {
         leader_schedule_cache: &LeaderScheduleCache,
         optimistic_parent_sender: &Sender<LeaderWindowInfo>,
         optimistic_parent_receiver: &Receiver<LeaderWindowInfo>,
+        highest_parent_ready: &RwLock<(Slot, Block)>,
         replay_highest_frozen: &ReplayHighestFrozen,
-        highest_frozen_slot: &mut Slot,
     ) {
         let flh_candidate_banks = {
             let bank_forks_r = bank_forks.read().unwrap();
@@ -1621,6 +1635,7 @@ impl ReplayStage {
                 })
                 .collect_vec()
         };
+        let highest_parent_ready_slot = highest_parent_ready.read().unwrap().0;
         for bank in flh_candidate_banks {
             Self::maybe_notify_of_optimistic_parent(
                 &bank,
@@ -1628,17 +1643,17 @@ impl ReplayStage {
                 leader_schedule_cache,
                 optimistic_parent_sender,
                 optimistic_parent_receiver,
+                highest_parent_ready_slot,
             );
         }
 
-        if let Some(highest) = new_frozen_slots.iter().max()
-            && *highest > *highest_frozen_slot
-        {
-            *highest_frozen_slot = *highest;
+        if let Some(highest) = new_frozen_slots.iter().max() {
             let mut l_highest_frozen = replay_highest_frozen.highest_frozen_slot.lock().unwrap();
-            // Let the block creation loop know about this new frozen slot
-            *l_highest_frozen = *highest;
-            replay_highest_frozen.freeze_notification.notify_one();
+            if *highest > *l_highest_frozen {
+                // Let the block creation loop know about this new frozen slot
+                *l_highest_frozen = *highest;
+                replay_highest_frozen.freeze_notification.notify_one();
+            }
         }
     }
 
@@ -1662,6 +1677,8 @@ impl ReplayStage {
         ancestors: &mut HashMap<Slot, HashSet<Slot>>,
         descendants: &mut HashMap<Slot, HashSet<Slot>>,
         progress: &mut ProgressMap,
+        replay_highest_frozen: &ReplayHighestFrozen,
+        new_frozen_slots: &mut Vec<Slot>,
     ) {
         let root_bank = bank_forks.read().unwrap().root_bank();
 
@@ -1723,6 +1740,13 @@ impl ReplayStage {
             );
         }
 
+        // Reset highest frozen to genesis
+        {
+            let mut l_highest_frozen = replay_highest_frozen.highest_frozen_slot.lock().unwrap();
+            *l_highest_frozen = genesis_block.slot;
+            new_frozen_slots.clear()
+        }
+
         // Purge any partial slots greater than the genesis slot
         let start_slot = genesis_block.slot + 1;
         let end_slot = blockstore
@@ -1755,7 +1779,7 @@ impl ReplayStage {
         vote_account: Pubkey,
         identity_keypair: &Arc<Keypair>,
         authorized_voter_keypairs: &Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
-        own_message_sender: &Sender<OwnMessage>,
+        own_vote_sender: &EvictingSender<VoteMessage>,
         bls_sender: &Sender<BLSOp>,
     ) -> bool {
         let Some(block) = migration_status.eligible_genesis_block() else {
@@ -1781,7 +1805,7 @@ impl ReplayStage {
                     identity_keypair.pubkey()
                 );
                 // Unlikely that these channels are backed up, but even so we have refresh logic on the genesis vote
-                let _ = own_message_sender.try_send(OwnMessage::Vote(vote_msg.clone()));
+                let _ = own_vote_sender.try_send(vote_msg.clone());
                 let _ = bls_sender.try_send(BLSOp::PushVote {
                     vote: Arc::new(vote_msg),
                 });
@@ -3000,19 +3024,20 @@ impl ReplayStage {
         bank: &BankWithScheduler,
         replay_stats: &RwLock<ReplaySlotStats>,
         replay_progress: &RwLock<ConfirmationProgress>,
-        finalization_cert_sender: &Sender<OwnMessage>,
+        finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let mut w_replay_stats = replay_stats.write().unwrap();
         let mut w_replay_progress = replay_progress.write().unwrap();
         let tx_count_before = w_replay_progress.num_txs;
-        // All errors must lead to marking the slot as dead, otherwise,
-        // the `check_slot_agrees_with_cluster()` called by `replay_active_banks()`
-        // will break!
+        // All errors except an Alpenglow migration transition must lead to marking the slot as
+        // dead, otherwise `check_slot_agrees_with_cluster()` in `replay_active_banks()` will
+        // break. A migration transition is handled synchronously after replay results are
+        // processed; enabling Alpenglow purges this interrupted TowerBFT bank.
         blockstore_processor::confirm_slot(
             &process_active_banks_context.blockstore,
             bank,
             my_shred_version,
-            &process_active_banks_context.replay_tx_thread_pool,
+            &process_active_banks_context.replay_verification_worker_pool,
             &mut w_replay_stats,
             &mut w_replay_progress,
             false,
@@ -3670,7 +3695,7 @@ impl ReplayStage {
         process_active_banks_context: &ProcessActiveBanksContext,
         bank_replay_result_tracker: BankReplayResultTracker,
         my_pubkey: &Pubkey,
-        finalization_cert_sender: &Sender<OwnMessage>,
+        finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> (ReplaySlotFromBlockstore, Option<u64>) {
         let BankReplayResultTracker {
             mut replay_result,
@@ -3746,7 +3771,7 @@ impl ReplayStage {
         bank_replay_result_trackers: Vec<BankReplayResultTracker>,
         replay_timing: &mut ReplayLoopTiming,
         my_pubkey: &Pubkey,
-        finalization_cert_sender: &Sender<OwnMessage>,
+        finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> Vec<ReplaySlotFromBlockstore> {
         match &process_active_banks_context.replay_mode {
             // Skip the overhead of the threadpool if there is only one bank to play
@@ -3946,6 +3971,20 @@ impl ReplayStage {
                         );
                         continue;
                     }
+                    Err(BlockstoreProcessorError::BlockComponentProcessor(
+                        BlockComponentProcessorError::AlpenglowMigrationTransition,
+                    )) => {
+                        assert!(
+                            process_active_banks_context
+                                .migration_status
+                                .is_ready_to_enable()
+                        );
+                        info!(
+                            "Stopping replay of slot {bank_slot} to enable Alpenglow and rebuild \
+                             the bank"
+                        );
+                        return vec![];
+                    }
                     Err(err) => {
                         mark_replay_dead_slot(
                             bank,
@@ -4041,10 +4080,6 @@ impl ReplayStage {
                         ("expected", expected_hash.to_string(), String),
                         ("computed", computed_hash.to_string(), String),
                     );
-
-                    if let Err(err) = bank_hash_details::write_bank_hash_details_file(bank) {
-                        warn!("Unable to write bank hash details file: {err}");
-                    }
 
                     mark_replay_dead_slot(
                         bank,
@@ -4280,7 +4315,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         replay_timing: &mut ReplayLoopTiming,
-        finalization_cert_sender: &Sender<OwnMessage>,
+        finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> Vec<Slot> /* completed slots */ {
         let bank_replay_result_trackers = Self::prepare_active_banks_for_replay(
             process_active_banks_context,
@@ -4325,18 +4360,31 @@ impl ReplayStage {
         leader_schedule_cache: &LeaderScheduleCache,
         optimistic_parent_sender: &Sender<LeaderWindowInfo>,
         optimistic_parent_receiver: &Receiver<LeaderWindowInfo>,
+        highest_parent_ready_slot: Slot,
     ) {
         let next_slot = bank.slot().saturating_add(1);
+        if next_slot != first_of_consecutive_leader_slots(next_slot) {
+            return;
+        }
+
+        // Make sure we're not getting tricked into sending an optimistic parent for a
+        // leader window that is too far in the future.
+        let parent_window_start = first_of_consecutive_leader_slots(bank.slot());
+        if highest_parent_ready_slot < parent_window_start {
+            trace!(
+                "suppressing optimistic parent {} for window starting at {next_slot}: highest \
+                 ParentReady {highest_parent_ready_slot} is before parent window \
+                 {parent_window_start}",
+                bank.slot()
+            );
+            return;
+        }
 
         let is_next_leader = leader_schedule_cache
             .slot_leader_at(next_slot, Some(bank))
             .is_some_and(|leader| Self::leader_is_me(&leader.id, my_pubkey));
 
         if !is_next_leader {
-            return;
-        }
-
-        if next_slot != first_of_consecutive_leader_slots(next_slot) {
             return;
         }
 

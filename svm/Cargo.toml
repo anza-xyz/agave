@@ -27,6 +27,8 @@ conformance = [
     "dep:prost",
     "dep:protosol",
     "dep:solana-poseidon",
+    "dep:solana-signature",
+    "dep:solana-transaction",
     "dep:solana-vote-program",
     "dep:solana-zk-elgamal-proof-program",
     "dep:xxhash-rust",
@@ -79,7 +81,7 @@ protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 shuttle = { workspace = true, optional = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-address-lookup-table-interface = { workspace = true, optional = true, features = [
     "bincode",
     "bytemuck",
@@ -113,6 +115,7 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true, optional = true, features = ["wincode"] }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
@@ -125,6 +128,7 @@ solana-syscalls = { workspace = true, optional = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
 solana-sysvar-id = { workspace = true }
+solana-transaction = { workspace = true, optional = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true, optional = true }
@@ -138,7 +142,7 @@ assert_matches = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 rand = { workspace = true }
-solana-account = { workspace = true, features = ["dev-context-only-utils"] }
+solana-account = { workspace = true }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }

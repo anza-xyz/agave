@@ -3,11 +3,15 @@ use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaDeshredTransactionInfoV2, ReplicaDeshredTransactionInfoVersions,
+        ReplicaDeshredUpdateParentInfo, ReplicaDeshredUpdateParentInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::Slot,
-    solana_ledger::deshred_transaction_notifier_interface::DeshredTransactionNotifier,
+    solana_ledger::{
+        blockstore_meta::UpdateParentInfo,
+        deshred_transaction_notifier_interface::DeshredTransactionNotifier,
+    },
     solana_measure::measure::Measure,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
@@ -82,6 +86,28 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
         self.plugin_manager
             .load()
             .deshred_transaction_alt_resolution_enabled()
+    }
+
+    fn notify_deshred_update_parent(&self, update_parent: &UpdateParentInfo) {
+        let plugin_manager = self.plugin_manager.load();
+        let update_parent_info = ReplicaDeshredUpdateParentInfo {
+            slot: update_parent.slot,
+            update_parent_fec_set_index: update_parent.update_parent_fec_set_index,
+            parent_slot: update_parent.parent_slot,
+            parent_block_id: &update_parent.parent_block_id,
+        };
+        for plugin in plugin_manager.plugins.iter() {
+            if plugin.deshred_transaction_notifications_enabled()
+                && let Err(err) = plugin.notify_deshred_update_parent(
+                    ReplicaDeshredUpdateParentInfoVersions::V0_0_1(&update_parent_info),
+                )
+            {
+                error!(
+                    "Failed to notify deshred UpdateParent, error: ({err}) to plugin {}",
+                    plugin.name()
+                );
+            }
+        }
     }
 }
 

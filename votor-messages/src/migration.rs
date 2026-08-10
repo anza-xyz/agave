@@ -53,6 +53,7 @@ use {
     solana_address::Address,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
     std::{
         sync::{
@@ -259,6 +260,23 @@ impl MigrationPhase {
         self.is_alpenglow_block(slot)
     }
 
+    /// Should retransmit send a `FirstShred` event to Votor?
+    ///
+    /// Normally only the first slot in a leader window needs an event. The first
+    /// slot after the migration genesis is also included because the genesis
+    /// block is not guaranteed to end on a leader-window boundary.
+    fn should_send_first_shred(&self, slot: Slot) -> bool {
+        let is_first_slot_after_genesis = match self {
+            MigrationPhase::AlpenglowEnabled { genesis_cert } => {
+                genesis_cert.block.slot.checked_add(1) == Some(slot)
+            }
+            _ => false,
+        };
+        self.should_send_votor_event(slot)
+            && (slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot)
+                || is_first_slot_after_genesis)
+    }
+
     /// Should we respond to ancestor hashes repair requests  for this slot?
     fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool {
         // Same as epoch slots, while in the mixed migration epoch respond for tower bft slots
@@ -445,6 +463,7 @@ impl MigrationStatus {
     dispatch!(pub fn should_root_during_startup(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_publish_epoch_slots(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_send_votor_event(&self, slot: Slot) -> bool);
+    dispatch!(pub fn should_send_first_shred(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);

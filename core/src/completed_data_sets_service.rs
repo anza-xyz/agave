@@ -12,6 +12,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore::{Blockstore, CompletedDataSetInfo},
+        blockstore_meta::UpdateParentInfo,
         deshred_transaction_notifier_interface::{
             DeshredTransactionNotifier, DeshredTransactionNotifierArc,
         },
@@ -166,6 +167,22 @@ impl CompletedDataSetsService {
                 let completed_data_set_ending_shred_index_exclusive = indices.end;
                 match blockstore.get_entries_in_data_block(slot, indices, /*slot_meta:*/ None) {
                     Ok(entries) => {
+                        if let Some(notifier) = deshred_transaction_notifier
+                            && let Some(update_parent) = blockstore
+                                .meta(slot)
+                                .inspect_err(|err| {
+                                    warn!("failed to read slot meta for slot {slot}: {err:?}")
+                                })
+                                .ok()
+                                .flatten()
+                                .and_then(|slot_meta| {
+                                    UpdateParentInfo::from_slot_meta(slot, &slot_meta)
+                                })
+                            && update_parent.update_parent_fec_set_index
+                                == completed_data_set_starting_shred_index
+                        {
+                            notifier.notify_deshred_update_parent(&update_parent);
+                        }
                         Self::notify_deshred_transactions_for_completed_data_set(
                             slot,
                             completed_data_set_starting_shred_index,
@@ -297,15 +314,22 @@ impl CompletedDataSetsService {
 pub mod test {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         crossbeam_channel::bounded,
-        solana_entry::entry::next_versioned_entry,
+        solana_entry::{
+            block_component::{
+                BlockComponent, BlockHeaderV1, UpdateParentV1, VersionedBlockMarker,
+            },
+            entry::next_versioned_entry,
+        },
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore, blockstore::Blockstore, get_tmp_ledger_path_auto_delete,
-            shred::max_ticks_per_n_shreds,
+            blockstore::{self, Blockstore},
+            get_tmp_ledger_path_auto_delete,
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
         },
         solana_message::{
             Message, VersionedMessage,
@@ -341,6 +365,7 @@ pub mod test {
     #[derive(Default)]
     struct TestDeshredTransactionNotifier {
         notifications: Mutex<Vec<DeshredNotification>>,
+        update_parents: Mutex<Vec<(u64, u32, u64, BlockId)>>,
     }
 
     impl DeshredTransactionNotifier for TestDeshredTransactionNotifier {
@@ -370,6 +395,15 @@ pub mod test {
 
         fn alt_resolution_enabled(&self) -> bool {
             false
+        }
+
+        fn notify_deshred_update_parent(&self, update_parent: &UpdateParentInfo) {
+            self.update_parents.lock().unwrap().push((
+                update_parent.slot,
+                update_parent.update_parent_fec_set_index,
+                update_parent.parent_slot,
+                update_parent.parent_block_id,
+            ));
         }
     }
 
@@ -582,6 +616,89 @@ pub mod test {
             completed_data_set.indices.end
         );
         assert_eq!(max_slots.shred_insert.load(Ordering::Relaxed), 11);
+
+        // A stale notification after the slot is cleared must not panic or notify.
+        blockstore.clear_unconfirmed_slot(11);
+        sender.send(vec![completed_data_set]).unwrap();
+        CompletedDataSetsService::recv_completed_data_sets(
+            &receiver,
+            &blockstore,
+            Some(&rpc_subscriptions),
+            &notifier,
+            &max_slots,
+            &bank_forks,
+        )
+        .unwrap();
+        assert_eq!(test_notifier.notifications.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_recv_completed_data_sets_notifies_update_parent() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
+        let max_slots = Arc::new(MaxSlots::default());
+        let test_notifier = Arc::new(TestDeshredTransactionNotifier::default());
+        let notifier = Some(test_notifier.clone() as DeshredTransactionNotifierArc);
+        let (sender, receiver) = bounded(1);
+        let update_parent = UpdateParentInfo {
+            slot: 12,
+            update_parent_fec_set_index: 32,
+            parent_slot: 10,
+            parent_block_id: BlockId::new_unique(),
+        };
+        let make_marker_shreds = |marker, shred_index| {
+            let component = BlockComponent::new_block_marker(marker);
+            Shredder::new(update_parent.slot, 11, 0, 0)
+                .unwrap()
+                .make_merkle_shreds_from_component(
+                    &Keypair::new(),
+                    &component,
+                    false,
+                    Hash::new_unique(),
+                    shred_index,
+                    shred_index,
+                    &ReedSolomonCache::default(),
+                    &mut ProcessShredsStats::default(),
+                )
+                .collect::<Vec<_>>()
+        };
+        let mut shreds = make_marker_shreds(
+            VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                parent_slot: 11,
+                parent_block_id: BlockId::new_unique(),
+            }),
+            0,
+        );
+        shreds.extend(make_marker_shreds(
+            VersionedBlockMarker::from_update_parent(UpdateParentV1 {
+                new_parent_slot: update_parent.parent_slot,
+                new_parent_block_id: update_parent.parent_block_id,
+            }),
+            update_parent.update_parent_fec_set_index,
+        ));
+        let completed_data_sets = blockstore.insert_shreds(shreds, true).unwrap();
+        sender.send(completed_data_sets).unwrap();
+
+        CompletedDataSetsService::recv_completed_data_sets(
+            &receiver,
+            &blockstore,
+            None,
+            &notifier,
+            &max_slots,
+            &bank_forks,
+        )
+        .unwrap();
+
+        assert_eq!(
+            *test_notifier.update_parents.lock().unwrap(),
+            vec![(
+                update_parent.slot,
+                update_parent.update_parent_fec_set_index,
+                update_parent.parent_slot,
+                update_parent.parent_block_id,
+            )]
+        );
     }
 
     #[test]

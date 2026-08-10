@@ -794,6 +794,11 @@ impl PohRecorder {
         self.start_bank.slot()
     }
 
+    /// Returns the unique identity of the bank on which the current PoH state is based.
+    pub fn start_bank_id(&self) -> BankId {
+        self.start_bank.bank_id()
+    }
+
     /// Returns if the leader slot has been reached along with the current poh
     /// slot and the parent slot (could be a few slots ago if any previous
     /// leaders needed to be skipped).

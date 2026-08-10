@@ -3523,7 +3523,7 @@ fn test_program_sbf_realloc_invoke() {
 
     // Realloc shrink, then CPI, then realloc extend
     let mut invoke_account = AccountSharedData::new(100_000_000, 10, &realloc_invoke_program_id);
-    invoke_account.set_data(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    invoke_account.set_data_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     bank.store_account(&invoke_pubkey, &invoke_account);
     let mut instruction_data = vec![];
     instruction_data.extend_from_slice(&[INVOKE_REALLOC_SHRINK_THEN_CPI_THEN_REALLOC_EXTEND, 1]);
@@ -4176,7 +4176,7 @@ fn test_cpi_account_data_updates() {
         // data length. The callee should see the extended data (asserted in the
         // callee program, not here).
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
+        account.set_data_from_slice(b"foo");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS];
         instruction_data.extend_from_slice(b"bar");
@@ -4210,7 +4210,7 @@ fn test_cpi_account_data_updates() {
         // region contains the new data. In this test the callee owns the account,
         // the caller can't write but the CPI glue still updates correctly.
         let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
-        account.set_data(b"foo".to_vec());
+        account.set_data_from_slice(b"foo");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_GROWS];
         instruction_data.extend_from_slice(b"bar");
@@ -4250,7 +4250,7 @@ fn test_cpi_account_data_updates() {
         // above, the callee owns the account but the changes are still reflected in
         // the caller even if things are readonly from the caller's POV.
         let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
-        account.set_data(b"foobar".to_vec());
+        account.set_data_from_slice(b"foobar");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
@@ -4292,7 +4292,7 @@ fn test_cpi_account_data_updates() {
         // correct value in the caller frame, and the realloc region must be zeroed
         // (again tested in the invoked program).
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
+        account.set_data_from_slice(b"foo");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
@@ -4329,7 +4329,7 @@ fn test_cpi_account_data_updates() {
         // _below_ the original data length. Both the spare capacity in the account
         // data _end_ the realloc region must be zeroed.
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
+        account.set_data_from_slice(b"foo");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
@@ -4700,7 +4700,7 @@ fn test_update_callee_account() {
         // I. do CPI with account in read only (separate code path with virtual_address_space_adjustments)
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -4747,7 +4747,7 @@ fn test_update_callee_account() {
         // II. do CPI with account with resize to smaller and write
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4789,7 +4789,7 @@ fn test_update_callee_account() {
         // III. do CPI with account with resize to larger and write
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4830,7 +4830,7 @@ fn test_update_callee_account() {
         // IV. do CPI with account with resize to larger and write
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4881,7 +4881,7 @@ fn test_update_callee_account() {
         // V. clone data, modify and CPI
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5142,7 +5142,7 @@ fn test_clone_account_data() {
     // error in the caller
     let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
+    account.set_data_from_slice(&data);
 
     bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5175,7 +5175,7 @@ fn test_clone_account_data() {
     // we have only modified a copy of the data. Fails in caller
     let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
+    account.set_data_from_slice(&data);
 
     bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5207,7 +5207,7 @@ fn test_clone_account_data() {
     // Note the caller needs to modify the original account data, not the copy
     let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
+    account.set_data_from_slice(&data);
 
     bank.store_account(&account_keypair.pubkey(), &account);
 

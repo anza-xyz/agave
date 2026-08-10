@@ -66,6 +66,13 @@ impl<'a> SnapshotMinimizer<'a> {
         minimizer.add_accounts(Self::get_owner_accounts, "owner accounts");
         minimizer.add_accounts(Self::get_programdata_accounts, "programdata accounts");
 
+        // The minimized output is the next full snapshot: no incremental snapshot will
+        // build on an earlier one, so zero-lamport and tombstone retention is measured
+        // against this bank's slot
+        minimizer
+            .accounts_db()
+            .set_latest_full_snapshot_slot(minimizer.bank.slot());
+
         minimizer.minimize_accounts_db();
 
         // Update accounts_cache and capitalization
@@ -628,6 +635,152 @@ mod tests {
                 .accounts_index
                 .ref_count_from_storage(&pubkey_multi),
             1
+        );
+    }
+
+    /// A dead slot whose storage carries a shrink-produced tombstone must still purge
+    /// cleanly: `minimize` declares the minimized bank's slot as the latest full snapshot
+    /// slot, so `purge_slot_storage` marks the tombstone-only remainder dead instead of
+    /// panicking.
+    #[test]
+    fn test_minimize_purges_dead_slot_with_tombstone() {
+        let (genesis_config, _) = create_genesis_config(1_000_000);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let accounts = &bank.accounts().accounts_db;
+
+        let zero_lamport_pubkey = Pubkey::new_unique();
+        let rewritten_pubkey = Pubkey::new_unique();
+        let open_account = AccountSharedData::new(223, 0, &Pubkey::default());
+        let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+        // zero_lamport_pubkey is live in the first slot and zeroed out in tombstone_slot;
+        // rewritten_pubkey's tombstone_slot copy becomes dead bytes that make the storage
+        // worth shrinking; the filler accounts keep each storage alive
+        let mut slot = 1;
+        accounts.store_for_tests((slot, [(&zero_lamport_pubkey, &open_account)].as_slice()));
+        accounts.add_root_and_flush_write_cache(slot);
+        slot += 1;
+        let tombstone_slot = slot;
+        accounts.store_for_tests((
+            tombstone_slot,
+            [
+                (&zero_lamport_pubkey, &closed_account),
+                (&rewritten_pubkey, &open_account),
+                (&Pubkey::new_unique(), &open_account),
+            ]
+            .as_slice(),
+        ));
+        accounts.add_root_and_flush_write_cache(tombstone_slot);
+        slot += 1;
+        accounts.store_for_tests((slot, [(&rewritten_pubkey, &open_account)].as_slice()));
+        accounts.add_root_and_flush_write_cache(slot);
+
+        // With the latest full snapshot behind tombstone_slot, clean retains the
+        // zero-lamport single-ref account and shrink carries it forward as a tombstone:
+        // its bytes stay in tombstone_slot's storage while its index entry is removed
+        accounts.set_latest_full_snapshot_slot(tombstone_slot - 1);
+        accounts.clean_accounts_for_tests();
+        accounts.shrink_all_slots(false, None);
+        assert!(!accounts.contains(&zero_lamport_pubkey));
+        assert_eq!(
+            accounts
+                .storage
+                .get_slot_storage_entry(tombstone_slot)
+                .unwrap()
+                .count(),
+            2
+        );
+
+        // No slot holds a minimized account, so all three are purged as dead slots;
+        // tombstone_slot's storage still carries the tombstone
+        let child_bank = Bank::new_from_parent(bank.clone(), *bank.leader(), slot + 1);
+        let child_bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(child_bank)
+            .clone_without_scheduler();
+        SnapshotMinimizer::minimize(&child_bank, slot + 1, DashSet::new(), false);
+
+        assert!(
+            accounts
+                .get_storages(tombstone_slot - 1..=slot)
+                .0
+                .is_empty()
+        );
+    }
+
+    /// A storage that is already tombstone-only when `minimize` starts has no live index
+    /// entries, so `purge_slot_storage` finds nothing to reclaim; it must still remove
+    /// the storage rather than panicking.
+    #[test]
+    fn test_minimize_purges_tombstone_only_storage() {
+        let (genesis_config, _) = create_genesis_config(1_000_000);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let accounts = &bank.accounts().accounts_db;
+
+        let zero_lamport_pubkey = Pubkey::new_unique();
+        let rewritten_pubkey = Pubkey::new_unique();
+        let open_account = AccountSharedData::new(223, 0, &Pubkey::default());
+        let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+        // zero_lamport_pubkey starts out live
+        let mut slot = 1;
+        accounts.store_for_tests((slot, [(&zero_lamport_pubkey, &open_account)].as_slice()));
+        accounts.add_root_and_flush_write_cache(slot);
+
+        // Zero out zero_lamport_pubkey; rewritten_pubkey's copy here becomes dead bytes
+        // that make the storage worth shrinking; no other account keeps it alive
+        slot += 1;
+        let tombstone_slot = slot;
+        // Keep the latest full snapshot behind tombstone_slot so its tombstone is retained
+        accounts.set_latest_full_snapshot_slot(tombstone_slot - 1);
+        accounts.store_for_tests((
+            tombstone_slot,
+            [
+                (&zero_lamport_pubkey, &closed_account),
+                (&rewritten_pubkey, &open_account),
+            ]
+            .as_slice(),
+        ));
+        accounts.add_root_and_flush_write_cache(tombstone_slot);
+
+        // Rewrite rewritten_pubkey, stranding its copy in tombstone_slot
+        slot += 1;
+        accounts.store_for_tests((slot, [(&rewritten_pubkey, &open_account)].as_slice()));
+        accounts.add_root_and_flush_write_cache(slot);
+
+        // The flushes above left tombstone_slot's storage holding only a tombstone
+        // not covered by the full snapshot so clean and shrink leave it untouched.
+        // When minimize is called, it is a tombstone-only storage which should be
+        // removed as a dead slot
+        accounts.clean_accounts_for_tests();
+        accounts.shrink_all_slots(false, None);
+        assert!(!accounts.contains(&zero_lamport_pubkey));
+        assert_eq!(
+            accounts
+                .storage
+                .get_slot_storage_entry(tombstone_slot)
+                .unwrap()
+                .count(),
+            1
+        );
+
+        // Minimize at the next slot: no stored slot holds a minimized account, so all are
+        // purged as dead slots; tombstone_slot's tombstone-only storage produces no index
+        // reclaims at all
+        let child_bank = Bank::new_from_parent(bank.clone(), *bank.leader(), slot + 1);
+        let child_bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(child_bank)
+            .clone_without_scheduler();
+        SnapshotMinimizer::minimize(&child_bank, slot + 1, DashSet::new(), false);
+
+        assert!(
+            accounts
+                .get_storages(tombstone_slot - 1..=slot)
+                .0
+                .is_empty()
         );
     }
 

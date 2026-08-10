@@ -294,7 +294,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_data: Cow<'ix_data, [u8]>,
         caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
-        debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
+        debug_assert_eq!(
+            deduplication_map.len(),
+            usize::from(self.get_number_of_accounts()).min(MAX_ACCOUNTS_PER_TRANSACTION)
+        );
 
         let instruction = self
             .instruction_trace
@@ -337,8 +340,15 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// For tests only
-    fn deduplicate_accounts_for_tests(instruction_accounts: &[InstructionAccount]) -> Vec<u16> {
-        let mut dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+    fn deduplicate_accounts_for_tests(
+        &self,
+        instruction_accounts: &[InstructionAccount],
+    ) -> Vec<u16> {
+        let mut dedup_map = vec![
+            u16::MAX;
+            usize::from(self.get_number_of_accounts())
+                .min(MAX_ACCOUNTS_PER_TRANSACTION)
+        ];
         for (idx, account) in instruction_accounts.iter().enumerate() {
             let index_in_instruction = dedup_map
                 .get_mut(account.index_in_transaction as usize)
@@ -358,7 +368,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
-        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+        let dedup_map = self.deduplicate_accounts_for_tests(&instruction_accounts);
 
         self.configure_instruction_at_index(
             self.next_top_level_instruction_index,
@@ -379,7 +389,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
-        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+        let dedup_map = self.deduplicate_accounts_for_tests(&instruction_accounts);
         let caller_index = self.get_current_instruction_index()?;
         let cpi_index = self.get_instruction_trace_length();
         self.configure_instruction_at_index(
@@ -780,7 +790,7 @@ mod tests {
 
     #[test]
     fn test_instruction_shared_items() {
-        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 10];
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 11];
         let mut transaction_context =
             TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
 
@@ -919,7 +929,7 @@ mod tests {
                 0,
                 0,
                 vec![InstructionAccount::new(1, false, false)],
-                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                vec![0; 3],
                 Vec::new().into(),
                 None,
             )
@@ -931,7 +941,7 @@ mod tests {
                 1,
                 0,
                 vec![InstructionAccount::new(1, false, false)],
-                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                vec![0; 3],
                 Vec::new().into(),
                 None,
             )
@@ -1362,7 +1372,7 @@ mod tests {
                     InstructionAccount::new(0, false, false),
                     InstructionAccount::new(1, false, false),
                 ],
-                vec![u16::MAX; 256],
+                vec![u16::MAX; 3],
                 Cow::Owned(Vec::new()),
                 None,
             )
@@ -1377,7 +1387,7 @@ mod tests {
                     InstructionAccount::new(0, false, false),
                     InstructionAccount::new(1, false, true),
                 ],
-                vec![u16::MAX; 256],
+                vec![u16::MAX; 3],
                 Cow::Owned(Vec::new()),
                 None,
             )

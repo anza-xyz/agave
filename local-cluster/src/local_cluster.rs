@@ -54,7 +54,7 @@ use {
         state::{Authorized, Lockup, StakeStateV2},
     },
     solana_system_transaction as system_transaction,
-    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+    solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     solana_vote_program::{
@@ -68,7 +68,7 @@ use {
         collections::HashMap,
         io::{Error, Result},
         iter,
-        net::SocketAddr,
+        net::{SocketAddr, UdpSocket},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
         time::Duration,
@@ -111,7 +111,6 @@ pub struct ClusterConfig {
     pub cluster_type: ClusterType,
     pub poh_config: PohConfig,
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
-    pub tpu_connection_pool_size: usize,
     pub vote_use_quic: bool,
 }
 
@@ -149,7 +148,6 @@ impl Default for ClusterConfig {
             poh_config: PohConfig::default(),
             skip_warmup_slots: false,
             additional_accounts: vec![],
-            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
         }
     }
@@ -909,9 +907,8 @@ impl LocalCluster {
         num_new_notarized_votes: usize,
         test_name: &str,
         socket_addr_space: SocketAddrSpace,
-        vote_listener_addr: std::net::UdpSocket,
-        validator_node_keypairs: &[Arc<Keypair>],
-        node_stakes: &[u64],
+        vote_listener_socket: UdpSocket,
+        listener_keypair: Keypair,
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
         let bank_forks = self.bank_forks();
@@ -921,9 +918,8 @@ impl LocalCluster {
             num_new_notarized_votes,
             &alive_node_contact_infos,
             test_name,
-            vote_listener_addr,
-            validator_node_keypairs,
-            node_stakes,
+            vote_listener_socket,
+            listener_keypair,
             bank_forks,
         );
         info!("{test_name} done waiting for notarized votes");

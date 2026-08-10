@@ -51,6 +51,7 @@ solana-cluster-type = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-feature-gate-interface = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
@@ -91,6 +92,7 @@ solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
@@ -103,7 +105,6 @@ agave-votor-messages = { workspace = true }
 assert_cmd = { workspace = true }
 solana-bls-signatures = { workspace = true }
 tempfile = { workspace = true }
-wincode = { workspace = true }
 
 [lints]
 workspace = true

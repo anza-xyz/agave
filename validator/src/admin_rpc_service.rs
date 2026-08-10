@@ -949,6 +949,25 @@ impl AdminRpcImpl {
         require_vote_history: bool,
     ) -> Result<()> {
         meta.with_post_init(|post_init| {
+            let old_identity = post_init.cluster_info.id();
+            let new_identity = identity_keypair.pubkey();
+            if old_identity != new_identity {
+                let root_bank = post_init.bank_forks.read().unwrap().root_bank();
+                let epoch = root_bank.epoch();
+                let staked_nodes = root_bank.epoch_staked_nodes(epoch).ok_or_else(|| {
+                    error!("Missing epoch stakes for root bank epoch {epoch}");
+                    jsonrpc_core::Error::internal_error()
+                })?;
+                let is_staked =
+                    |identity| staked_nodes.get(identity).is_some_and(|stake| *stake > 0);
+                if is_staked(&old_identity) && is_staked(&new_identity) {
+                    return Err(jsonrpc_core::error::Error::invalid_params(format!(
+                        "Changing identity from staked node {old_identity} to staked node \
+                         {new_identity} is not supported"
+                    )));
+                }
+            }
+
             if require_tower {
                 let _ = Tower::restore(meta.tower_storage.as_ref(), &identity_keypair.pubkey())
                     .map_err(|err| {
@@ -988,14 +1007,29 @@ impl AdminRpcImpl {
                 }
             }
 
-            for (key, notifier) in &*post_init.notifies.read().unwrap() {
-                if let Err(err) = notifier.update_key(&identity_keypair) {
+            // Updaters block until the new key is in effect, so take a copy of the
+            // list instead of running them under the lock.
+            let notifiers = {
+                let notifies = post_init.notifies.read().unwrap();
+                notifies
+                    .into_iter()
+                    .map(|(key, notifier)| (key.clone(), Arc::clone(notifier)))
+                    .collect::<Vec<_>>()
+            };
+            // Bail out rather than switch identity on top of a network layer that
+            // may still be running under the old one. Updaters already run at this
+            // point keep the new key, so the operator must retry to converge.
+            for (key, notifier) in notifiers {
+                notifier.update_key(&identity_keypair).map_err(|err| {
                     error!("Error updating network layer keypair: {err} on {key:?}");
-                }
+                    jsonrpc_core::error::Error {
+                        code: ErrorCode::InternalError,
+                        message: format!("Failed to apply new identity to {key:?}: {err}"),
+                        data: None,
+                    }
+                })?;
             }
 
-            let old_identity = post_init.cluster_info.id();
-            let new_identity = identity_keypair.pubkey();
             solana_metrics::set_host_id(new_identity.to_string());
             // Emit the datapoint after updating metrics to emit the new pubkey
             datapoint_info!(
@@ -1176,6 +1210,7 @@ mod tests {
         solana_runtime::{
             bank::{Bank, BankTestConfig},
             bank_forks::BankForks,
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
         tokio::sync::mpsc,
@@ -1339,6 +1374,51 @@ mod tests {
     }
 
     #[test]
+    fn test_set_identity_rejects_staked_to_staked_transition() {
+        let rpc = RpcHandler::_start();
+        let validators = [
+            ValidatorVoteKeypairs::new_rand(),
+            ValidatorVoteKeypairs::new_rand(),
+        ];
+        let old_identity = validators[0].node_keypair.pubkey();
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_vote_accounts(1_000_000_000, &validators, vec![1, 1]);
+        let bank = Bank::new_for_tests(&genesis_config);
+        {
+            let mut post_init = rpc.meta.post_init.write().unwrap();
+            let post_init = post_init.as_mut().unwrap();
+            post_init
+                .cluster_info
+                .set_keypair(Arc::new(validators[0].node_keypair.insecure_clone()));
+            post_init.bank_forks = BankForks::new_rw_arc(bank);
+        }
+
+        assert_matches!(
+            AdminRpcImpl::set_identity_keypair(
+                rpc.meta.clone(),
+                validators[1].node_keypair.insecure_clone(),
+                false,
+                false,
+            ),
+            Err(jsonrpc_core::Error {
+                code: ErrorCode::InvalidParams,
+                ..
+            })
+        );
+        assert_eq!(
+            rpc.meta
+                .post_init
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .cluster_info
+                .id(),
+            old_identity
+        );
+    }
+
+    #[test]
     fn test_vat_status() {
         let rpc = RpcHandler::_start();
         let RpcHandler { io, meta, .. } = rpc;
@@ -1375,6 +1455,10 @@ mod tests {
         meta: AdminRpcRequestMetadata,
         io: MetaIoHandler<AdminRpcRequestMetadata>,
         validator_ledger_path: PathBuf,
+        /// Kept alive for the lifetime of the test: `set_identity` reaches into
+        /// live network services, which are gone once the validator is dropped.
+        /// `Option` only so `Drop` can call the consuming `close()`.
+        validator: Option<Validator>,
     }
 
     impl TestValidatorWithAdminRpc {
@@ -1418,7 +1502,7 @@ mod tests {
                 rpc_to_plugin_manager_sender: None,
             };
 
-            let _validator = Validator::new(
+            let validator = Validator::new(
                 validator_node,
                 Arc::new(validator_keypair),
                 &validator_ledger_path,
@@ -1453,8 +1537,8 @@ mod tests {
                     KeyUpdaterType::TpuVote,
                     KeyUpdaterType::Forward,
                     KeyUpdaterType::RpcService,
-                    KeyUpdaterType::Bls,
-                    KeyUpdaterType::BlsConnectionCache,
+                    KeyUpdaterType::Votor,
+                    KeyUpdaterType::VotorPeerListService,
                 ])
             );
             let mut io = MetaIoHandler::default();
@@ -1463,6 +1547,7 @@ mod tests {
                 meta,
                 io,
                 validator_ledger_path,
+                validator: Some(validator),
             }
         }
 
@@ -1473,6 +1558,10 @@ mod tests {
 
     impl Drop for TestValidatorWithAdminRpc {
         fn drop(&mut self) {
+            self.validator
+                .take()
+                .expect("validator is only taken here")
+                .close();
             remove_dir_all(self.validator_ledger_path.clone()).unwrap();
         }
     }

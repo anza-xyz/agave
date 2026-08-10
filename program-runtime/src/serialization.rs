@@ -811,6 +811,8 @@ mod tests {
                     instruction_accounts.push(instruction_accounts.last().cloned().unwrap());
                 }
                 let instruction_data = vec![];
+                let num_transaction_accounts =
+                    transaction_accounts.len().min(MAX_ACCOUNTS_PER_TRANSACTION);
 
                 with_mock_invoke_context!(
                     invoke_context,
@@ -821,7 +823,7 @@ mod tests {
                     // Special case implementation of configure_next_instruction_for_tests()
                     // which avoids the overflow when constructing the dedup_map
                     // by simply not filling it.
-                    let dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+                    let dedup_map = vec![u16::MAX; num_transaction_accounts];
                     invoke_context
                         .transaction_context
                         .configure_instruction_at_index(

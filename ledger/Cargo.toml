@@ -33,7 +33,6 @@ agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor-messages = { workspace = true }
-ahash = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bitflags = { workspace = true }
@@ -136,6 +135,7 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-bls-signatures = { workspace = true }
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -147,7 +147,6 @@ solana-signature = { workspace = true, features = ["rand"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
-spl-pod = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]

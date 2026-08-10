@@ -33,6 +33,10 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
+      - name: install anza-xtask
+        run: |
+          cargo install anza-xtask@0.2.0 --locked
+
       - name: update code
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -50,7 +54,7 @@ jobs:
           new_version="${BASH_REMATCH[3]}"
           echo "crate_name: $crate_name, old_version: $old_version, new_version: $new_version"
 
-          cargo xtask update-crate --package $crate_name --from $old_version --to $new_version
+          cargo anza-xtask update-crate --package "$crate_name" --from "$old_version" --to "$new_version"
 
           ./scripts/cargo-for-all-lock-files.sh --ignore-exit-code -- update -p $crate_name:$old_version --precise $new_version
 

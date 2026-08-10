@@ -6,6 +6,10 @@
 #[cfg(feature = "ffi")]
 pub mod elf_loader;
 #[cfg(feature = "ffi")]
+pub mod instr;
+#[cfg(feature = "ffi")]
 pub mod serialization;
 #[cfg(feature = "ffi")]
 pub mod syscall;
+#[cfg(feature = "ffi")]
+pub mod txn;

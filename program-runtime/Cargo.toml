@@ -22,7 +22,11 @@ name = "solana_program_runtime"
 [features]
 agave-unstable-api = []
 conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
-dev-context-only-utils = ["dep:qualifier_attr", "dep:solana-message"]
+dev-context-only-utils = [
+    "dep:qualifier_attr",
+    "dep:solana-message",
+    "solana-epoch-schedule/wincode",
+]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []

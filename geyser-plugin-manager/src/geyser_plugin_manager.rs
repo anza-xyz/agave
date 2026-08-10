@@ -520,12 +520,16 @@ mod tests {
         },
         agave_geyser_plugin_interface::geyser_plugin_interface::{
             GeyserPlugin, ReplicaDeshredTransactionInfo, ReplicaDeshredTransactionInfoVersions,
-            Result as PluginResult,
+            ReplicaDeshredUpdateParentInfoVersions, Result as PluginResult,
         },
+        agave_votor_messages::consensus_message::BlockId,
         arc_swap::ArcSwap,
         libloading::Library,
         solana_clock::Slot,
-        solana_ledger::deshred_transaction_notifier_interface::DeshredTransactionNotifier,
+        solana_ledger::{
+            blockstore_meta::UpdateParentInfo,
+            deshred_transaction_notifier_interface::DeshredTransactionNotifier,
+        },
         solana_message::{Instruction, Message, VersionedMessage, v0::LoadedAddresses},
         solana_pubkey::Pubkey,
         solana_signature::Signature,
@@ -613,12 +617,15 @@ mod tests {
         loaded_addresses: Option<LoadedAddresses>,
     }
 
+    type DeshredUpdateParent = (Slot, u32, Slot, BlockId);
+
     #[derive(Clone, Debug)]
     struct DeshredTestPlugin {
         name: &'static str,
         enabled: bool,
         alt_resolution_enabled: bool,
         notifications: Arc<Mutex<Vec<RecordedDeshredNotification>>>,
+        update_parents: Arc<Mutex<Vec<DeshredUpdateParent>>>,
     }
 
     impl GeyserPlugin for DeshredTestPlugin {
@@ -653,6 +660,20 @@ mod tests {
 
         fn deshred_transaction_notifications_enabled(&self) -> bool {
             self.enabled
+        }
+
+        fn notify_deshred_update_parent(
+            &self,
+            update_parent: ReplicaDeshredUpdateParentInfoVersions,
+        ) -> PluginResult<()> {
+            let ReplicaDeshredUpdateParentInfoVersions::V0_0_1(update_parent) = update_parent;
+            self.update_parents.lock().unwrap().push((
+                update_parent.slot,
+                update_parent.update_parent_fec_set_index,
+                update_parent.parent_slot,
+                *update_parent.parent_block_id,
+            ));
+            Ok(())
         }
 
         fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
@@ -776,6 +797,7 @@ mod tests {
                         enabled: false,
                         alt_resolution_enabled: false,
                         notifications: Arc::new(Mutex::new(Vec::new())),
+                        update_parents: Arc::new(Mutex::new(Vec::new())),
                     },
                     DUMMY_CONFIG,
                 )
@@ -792,6 +814,7 @@ mod tests {
                         enabled: true,
                         alt_resolution_enabled: false,
                         notifications: Arc::new(Mutex::new(Vec::new())),
+                        update_parents: Arc::new(Mutex::new(Vec::new())),
                     },
                     DUMMY_CONFIG,
                 )
@@ -805,6 +828,8 @@ mod tests {
     fn test_deshred_transaction_notifier_forwards_only_enabled_plugins() {
         let enabled_notifications = Arc::new(Mutex::new(Vec::new()));
         let disabled_notifications = Arc::new(Mutex::new(Vec::new()));
+        let enabled_update_parents = Arc::new(Mutex::new(Vec::new()));
+        let disabled_update_parents = Arc::new(Mutex::new(Vec::new()));
         let plugin_manager = Arc::new(ArcSwap::new(Arc::new(GeyserPluginManager {
             plugins: vec![
                 Arc::new(
@@ -814,6 +839,7 @@ mod tests {
                             enabled: true,
                             alt_resolution_enabled: false,
                             notifications: enabled_notifications.clone(),
+                            update_parents: enabled_update_parents.clone(),
                         },
                         DUMMY_CONFIG,
                     )
@@ -826,6 +852,7 @@ mod tests {
                             enabled: false,
                             alt_resolution_enabled: false,
                             notifications: disabled_notifications.clone(),
+                            update_parents: disabled_update_parents.clone(),
                         },
                         DUMMY_CONFIG,
                     )
@@ -846,6 +873,13 @@ mod tests {
             &transaction,
             Some(&loaded_addresses),
         );
+        let parent_block_id = BlockId::new_unique();
+        notifier.notify_deshred_update_parent(&UpdateParentInfo {
+            slot: 11,
+            update_parent_fec_set_index: 32,
+            parent_slot: 9,
+            parent_block_id,
+        });
 
         let enabled_notifications = enabled_notifications.lock().unwrap().clone();
         assert_eq!(enabled_notifications.len(), 1);
@@ -869,6 +903,11 @@ mod tests {
             Some(loaded_addresses)
         );
         assert!(disabled_notifications.lock().unwrap().is_empty());
+        assert_eq!(
+            *enabled_update_parents.lock().unwrap(),
+            vec![(11, 32, 9, parent_block_id)]
+        );
+        assert!(disabled_update_parents.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -879,6 +918,7 @@ mod tests {
             enabled: true,
             alt_resolution_enabled: false,
             notifications: Arc::new(Mutex::new(Vec::new())),
+            update_parents: Arc::new(Mutex::new(Vec::new())),
         };
         let transaction = sample_transaction();
         let deshred_info = ReplicaDeshredTransactionInfo {
@@ -907,6 +947,7 @@ mod tests {
                         enabled: true,
                         alt_resolution_enabled: false,
                         notifications: Arc::new(Mutex::new(Vec::new())),
+                        update_parents: Arc::new(Mutex::new(Vec::new())),
                     },
                     DUMMY_CONFIG,
                 )
@@ -923,6 +964,7 @@ mod tests {
                         enabled: true,
                         alt_resolution_enabled: true,
                         notifications: Arc::new(Mutex::new(Vec::new())),
+                        update_parents: Arc::new(Mutex::new(Vec::new())),
                     },
                     DUMMY_CONFIG,
                 )

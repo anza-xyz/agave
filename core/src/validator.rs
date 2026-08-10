@@ -14,6 +14,7 @@ use {
         consensus::{
             ExternalRootSource, Tower, reconcile_blockstore_roots_with_external_source,
             tower_storage::{NullTowerStorage, TowerStorage},
+            verify_blockstore_root_with_vote_history,
         },
         forwarding_stage::ForwardingClientConfig,
         repair::{
@@ -125,7 +126,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
+        bank::Bank,
         bank_forks::BankForks,
         bank_forks_controller::BankForksControllerHandle,
         commitment::BlockCommitmentCache,
@@ -584,8 +585,6 @@ struct TransactionHistoryServices {
 pub struct ValidatorTpuConfig {
     /// Controls if to use QUIC for sending TPU votes
     pub vote_use_quic: bool,
-    /// Controls the connection cache pool size
-    pub tpu_connection_pool_size: usize,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
@@ -635,7 +634,6 @@ impl ValidatorTpuConfig {
 
         ValidatorTpuConfig {
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -747,7 +745,6 @@ impl Validator {
 
         let ValidatorTpuConfig {
             vote_use_quic,
-            tpu_connection_pool_size,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1179,7 +1176,7 @@ impl Validator {
         let vote_connection_cache = if vote_use_quic {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
-                tpu_connection_pool_size,
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
                 Some(node.sockets.quic_vote_client),
                 Some((
                     &identity_keypair,
@@ -1196,36 +1193,11 @@ impl Validator {
         } else {
             Arc::new(ConnectionCache::with_udp(
                 "connection_cache_vote_udp",
-                tpu_connection_pool_size,
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
             ))
         };
 
-        let bls_connection_cache = Arc::new(ConnectionCache::new_with_max_connections(
-            "connection_cache_bls_quic",
-            // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
-            // we wouldn't expect more than a 100 PPS. 1 connection is enough.
-            1, /* connection_pool_size */
-            // Overprovision to account for epoch boundary validator set rotations
-            MAX_ALPENGLOW_VOTE_ACCOUNTS * 2, /* max_connections */
-            Some(node.sockets.quic_alpenglow_client),
-            Some((
-                &identity_keypair,
-                node.info
-                    .alpenglow()
-                    .ok_or_else(|| {
-                        ValidatorError::Other(String::from(
-                            "Invalid QUIC address for Alpenglow BLS",
-                        ))
-                    })?
-                    .ip(),
-            )),
-            Some((&staked_nodes, &identity_keypair.pubkey())),
-        ));
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
-        key_notifiers.write().unwrap().add(
-            KeyUpdaterType::BlsConnectionCache,
-            bls_connection_cache.clone(),
-        );
 
         // test-validator crate may start the validator in a tokio runtime
         // context which forces us to use the same runtime because a nested
@@ -1552,6 +1524,9 @@ impl Validator {
         let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(100);
 
         let banking_stage_sender_for_bcl = banking_tracer_channels.non_vote_sender.clone();
+        let entry_notification_sender = entry_notifier_service
+            .as_ref()
+            .map(|service| service.sender_cloned());
 
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
@@ -1564,6 +1539,7 @@ impl Validator {
             rpc_subscriptions: rpc_subscriptions.clone(),
             banking_tracer: banking_tracer.clone(),
             slot_status_notifier: slot_status_notifier.clone(),
+            entry_notification_sender: entry_notification_sender.clone(),
             leader_window_info_receiver,
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
@@ -1588,10 +1564,6 @@ impl Validator {
         let (verified_vote_sender, verified_vote_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
-
-        let entry_notification_sender = entry_notifier_service
-            .as_ref()
-            .map(|service| service.sender_cloned());
 
         let serve_repair_service = ServeRepairService::new(
             serve_repair,
@@ -1633,7 +1605,6 @@ impl Validator {
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
-                alpenglow: node.sockets.alpenglow,
                 block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
@@ -1693,10 +1664,12 @@ impl Validator {
                 bank_forks_controller_receiver,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
-                cancel: cancel.clone(),
-                staked_nodes: staked_nodes.clone(),
+                cancel: cancel.child_token(),
+                validator_exit: config.validator_exit.clone(),
                 key_notifiers: key_notifiers.clone(),
-                bls_connection_cache,
+                votor_server_sockets: node.sockets.votor_server,
+                votor_client_socket: node.sockets.quic_votor_client,
+                #[cfg(feature = "dev-context-only-utils")]
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
             },
@@ -1930,8 +1903,8 @@ impl Validator {
             node.sockets.retransmit_sockets[0].local_addr().unwrap()
         );
         info!(
-            "local alpenglow address: {}",
-            node.sockets.alpenglow.local_addr().unwrap()
+            "local alpenglow votor server address: {}",
+            node.sockets.votor_server[0].local_addr().unwrap()
         );
     }
 
@@ -2616,14 +2589,11 @@ impl<'a> ProcessBlockStore<'a> {
         let vote_history = {
             let vote_history =
                 restore_vote_history(self.config, self.bank_forks, self.id, self.vote_account)?;
-            // reconciliation attempt 1 of 2 with vote history
-            reconcile_blockstore_roots_with_external_source(
-                ExternalRootSource::VoteHistory(vote_history.root()),
+            verify_blockstore_root_with_vote_history(
+                vote_history.root(),
                 self.blockstore,
-                &mut self.original_blockstore_root,
-            )
-            .map_err(|err| format!("Failed to reconcile blockstore with vote history: {err:?}"))?;
-
+                self.original_blockstore_root,
+            );
             post_process_restored_vote_history(
                 vote_history,
                 self.id,
@@ -2637,7 +2607,7 @@ impl<'a> ProcessBlockStore<'a> {
             self.bank_forks.read().unwrap().root(),
         ) {
             // reconciliation attempt 2 of 2 with hard fork
-            // it is intentional that we do this second, as having the hard fork root < tower/vote_history root
+            // it is intentional that we do this second, as having the hard fork root < tower root
             // is invalid! This means we've hard forked and missed a finalized slot
             reconcile_blockstore_roots_with_external_source(
                 ExternalRootSource::HardFork(hard_fork_restart_slot),

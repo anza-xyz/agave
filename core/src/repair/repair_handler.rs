@@ -2,7 +2,7 @@ use {
     super::{
         malicious_repair_handler::{MaliciousRepairConfig, MaliciousRepairHandler},
         repair_response::repair_response_packet_from_bytes,
-        serve_repair::ServeRepair,
+        serve_repair::{FecSetRoot, ServeRepair},
         standard_repair_handler::StandardRepairHandler,
     },
     crate::repair::{
@@ -207,7 +207,7 @@ pub trait RepairHandler {
         let fec_set_proof = double_merkle_meta.get_fec_set_proof(proof_index)?.to_vec();
 
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root,
+            fec_set_root: FecSetRoot::from(fec_set_root),
             fec_set_proof,
         };
         create_response_packet_batch(recycler, &response, from_addr, nonce, "run_fec_set_root")
@@ -420,7 +420,8 @@ mod tests {
                     fec_set_proof,
                 } => {
                     assert_eq!(
-                        fec_set_root, *expected_root,
+                        fec_set_root,
+                        FecSetRoot::from(*expected_root),
                         "FEC set root should match for index {fec_set_index}"
                     );
                     assert!(

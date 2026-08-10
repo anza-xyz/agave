@@ -248,7 +248,7 @@ fn route_monitor_publishes_live_gre_route_updates() {
                         && next_hop.preferred_src_ip == Some(gre.overlay_ip)
                         && next_hop.gre.as_ref().is_some_and(|gre_route| {
                             gre_route.if_index == gre.if_index
-                                && gre_route.mac_addr == links.right_mac
+                                && gre_route.underlay_mac_addr == Some(links.right_mac)
                                 && gre_route.tunnel_info.local == IpAddr::V4(gre.local_ip)
                                 && gre_route.tunnel_info.remote == IpAddr::V4(gre.remote_ip)
                         }) =>

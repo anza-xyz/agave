@@ -232,7 +232,8 @@ fn verify_base3(
 }
 
 /// Aggregates a slice of public keys into a single projective public key.
-pub fn aggregate_pubkeys(
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+fn aggregate_pubkeys(
     pubkeys: &[PopVerified<BlsPubkeyAffine>],
 ) -> Result<AggregatePubkey<PubkeyProjective>, Error> {
     if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {

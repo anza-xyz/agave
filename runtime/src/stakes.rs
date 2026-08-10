@@ -1045,7 +1045,7 @@ pub(crate) mod tests {
         let cache_data = vote_account.data().to_vec();
         let mut pushed = vote_account.data().to_vec();
         pushed.push(0);
-        vote_account.set_data(pushed);
+        vote_account.set_data_from_slice(&pushed);
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
 
         {
@@ -1056,7 +1056,7 @@ pub(crate) mod tests {
         }
 
         // Vote account uninitialized
-        vote_account.set_data(vec![0; VoteStateV4::size_of()]);
+        vote_account.set_data_from_slice(&vec![0; VoteStateV4::size_of()]);
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
 
         {
@@ -1066,7 +1066,7 @@ pub(crate) mod tests {
             assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey), 0);
         }
 
-        vote_account.set_data(cache_data);
+        vote_account.set_data_from_slice(&cache_data);
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
 
         {

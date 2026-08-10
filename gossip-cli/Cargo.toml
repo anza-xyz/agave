@@ -30,7 +30,7 @@ log = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-gossip = { workspace = true }
 solana-net-utils = { workspace = true }
-solana-pubkey = { version = "=4.2.0", features = ["rand"] }
+solana-pubkey = { version = "=4.3.0", features = ["rand"] }
 solana-version = { workspace = true }
 
 [lints]

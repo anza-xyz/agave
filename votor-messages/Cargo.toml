@@ -31,6 +31,7 @@ bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
+smallvec = { workspace = true }
 solana-address = { workspace = true, features = ["curve25519"] }
 solana-bls-signatures = { workspace = true, features = [
     "bytemuck",
@@ -45,6 +46,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode", "atomic"] }
+solana-leader-schedule = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-short-vec = { workspace = true, features = ["wincode"] }
 solana-signer-store = { workspace = true }

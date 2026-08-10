@@ -278,24 +278,7 @@ impl ConsensusPool {
                 }
                 new_certs
             }
-            PoolMessage::Certificates(certs) => {
-                let mut new_certs = vec![];
-                for cert in certs {
-                    let cert_type = cert.cert_type;
-                    match self.add_certificate(root_bank, cert, events) {
-                        Err(e) => {
-                            trace!(
-                                "{}: add_certificate(cert_type={cert_type:?}) failed with {e:?}",
-                                self.cluster_info.id()
-                            );
-                        }
-                        Ok(mut certs) => {
-                            new_certs.append(&mut certs);
-                        }
-                    }
-                }
-                new_certs
-            }
+            PoolMessage::Certificates(certs) => self.add_certs(root_bank, certs, events),
         };
         // If we have a new highest finalized slot, return it
         let new_finalized_slot = if self.highest_finalized_slot() > current_highest_finalized_slot {
@@ -354,30 +337,36 @@ impl ConsensusPool {
         Ok(new_cert)
     }
 
-    fn add_certificate(
+    fn add_certs(
         &mut self,
         root_bank: &Bank,
-        cert: Certificate,
+        certs: impl IntoIterator<Item = Certificate>,
         events: &mut Vec<VotorEvent>,
-    ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
-        let cert_type = cert.cert_type;
-        self.stats.incoming_certs = self.stats.incoming_certs.saturating_add(1);
-        if cert_type.slot() < root_bank.slot() {
-            self.stats.out_of_range_certs = self.stats.out_of_range_certs.saturating_add(1);
-            return Err(AddVoteError::OldMessage {
-                slot: cert_type.slot(),
-                root_slot: root_bank.slot(),
-            });
+    ) -> Vec<Arc<Certificate>> {
+        let mut new_certs = vec![];
+        for cert in certs {
+            self.stats.incoming_certs = self.stats.incoming_certs.saturating_add(1);
+            let cert_type = &cert.cert_type;
+            if cert_type.slot() < root_bank.slot() {
+                self.stats.out_of_range_certs = self.stats.out_of_range_certs.saturating_add(1);
+                trace!(
+                    "{}: received old cert: cert_slot: {} root_slot: {}",
+                    self.cluster_info.id(),
+                    cert_type.slot(),
+                    root_bank.slot()
+                );
+                continue;
+            }
+            if self.completed_certificates.contains_key(cert_type) {
+                self.stats.exist_certs = self.stats.exist_certs.saturating_add(1);
+                continue;
+            }
+            self.stats.incr_ingested_cert(cert_type);
+            let cert = Arc::new(cert);
+            self.insert_certificate(root_bank, cert.clone(), events);
+            new_certs.push(cert);
         }
-        if self.completed_certificates.contains_key(&cert_type) {
-            self.stats.exist_certs = self.stats.exist_certs.saturating_add(1);
-            return Ok(vec![]);
-        }
-        let cert = Arc::new(cert);
-        self.insert_certificate(root_bank, cert.clone(), events);
-        self.stats.incr_ingested_cert(&cert_type);
-
-        Ok(vec![cert])
+        new_certs
     }
 
     /// Get the Notarize certificate for a slot
@@ -718,13 +707,8 @@ mod tests {
                     (new_certs, events)
                 }
                 SigVerifiedBatch::Certificates(certs) => {
-                    let mut new_certs = vec![];
                     let mut events = vec![];
-                    for cert in certs {
-                        let mut certs =
-                            self.pool.add_certificate(&bank, cert, &mut events).unwrap();
-                        new_certs.append(&mut certs);
-                    }
+                    let new_certs = self.pool.add_certs(&bank, certs, &mut events);
                     (new_certs, events)
                 }
             };
@@ -1130,17 +1114,15 @@ mod tests {
         // For Finalize votes, we need a corresponding Notarize certificate first
         // because finalization requires both Finalize and Notarize certificates
         if vote.is_finalize() {
-            let notarize_cert = Certificate {
+            let notarize_cert = [Certificate {
                 cert_type: CertificateType::Notarize(Block {
                     slot: vote.slot(),
                     block_id: BlockId::default(),
                 }),
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
-            };
-            ctx.pool
-                .add_certificate(&bank, notarize_cert, &mut vec![])
-                .unwrap();
+            }];
+            ctx.pool.add_certs(&bank, notarize_cert, &mut vec![]);
         }
 
         let highest_slot_fn = match &vote {
@@ -1773,15 +1755,17 @@ mod tests {
             .unwrap_err();
 
         // Send a cert on slot 2, it should be rejected
-        let cert_type = CertificateType::Notarize(Block::new_unique(2));
-        let cert = Certificate {
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 2,
+            block_id: BlockId::new_unique(),
+        });
+        let cert = [Certificate {
             cert_type,
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
-        };
-        ctx.pool
-            .add_certificate(&new_bank, cert, &mut vec![])
-            .unwrap_err();
+        }];
+        ctx.pool.add_certs(&new_bank, cert, &mut vec![]);
+        assert_eq!(ctx.pool.stats.out_of_range_certs, 1);
     }
 
     #[test]

@@ -766,10 +766,9 @@ fn process_loader_upgradeable_instruction(
                                 .program_cache_for_tx_batch
                                 .store_modified_entry(
                                     program_key,
-                                    Arc::new(ProgramCacheEntry::new_tombstone(
+                                    Arc::new(ProgramCacheEntry::new_closed_tombstone(
                                         clock.slot,
                                         ProgramCacheEntryOwner::LoaderV3,
-                                        ProgramCacheEntryType::Closed,
                                     )),
                                 );
                         }
@@ -1075,7 +1074,7 @@ mod test_utils {
                     .data()
                     .get(programdata_data_offset.min(account.data().len())..)
                     .unwrap();
-                let loaded_program = ProgramCacheEntry::new(
+                let loaded_program = ProgramCacheEntry::load(
                     owner,
                     ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                     0,
@@ -1182,9 +1181,8 @@ mod tests {
 
             // Consume the harness cell after Shuttle exits so extraction does
             // not call `shuttle::sync::Mutex::lock` outside the scheduler.
-            let mut result = match shuttle::sync::Arc::try_unwrap(result) {
-                Ok(result) => result,
-                Err(_) => panic!("shuttle test result still has outstanding references"),
+            let Ok(mut result) = shuttle::sync::Arc::try_unwrap(result) else {
+                panic!("shuttle test result still has outstanding references")
             };
             result
                 .get_mut()
@@ -1232,7 +1230,7 @@ mod tests {
         let rent = Rent::default();
         let mut program_account =
             AccountSharedData::new(rent.minimum_balance(elf.len()), 0, loader_id);
-        program_account.set_data(elf);
+        program_account.set_data_from_slice(&elf);
         program_account.set_executable(true);
         program_account
     }
@@ -1697,7 +1695,7 @@ mod tests {
     fn truncate_data(account: &mut AccountSharedData, len: usize) {
         let mut data = account.data().to_vec();
         data.truncate(len);
-        account.set_data(data);
+        account.set_data_from_slice(&data);
     }
 
     #[test]
@@ -3837,6 +3835,34 @@ mod tests {
             accounts.first().unwrap().data().len()
         );
 
+        // Case: close a program account with a non-writable program account
+        process_instruction(
+            &loader_id,
+            &instruction,
+            vec![
+                (programdata_address, programdata_account.clone()),
+                (recipient_address, recipient_account.clone()),
+                (authority_address, authority_account.clone()),
+                (program_address, program_account.clone()),
+                (sysvar::clock::id(), clock_account.clone()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: programdata_address,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                recipient_meta.clone(),
+                authority_meta.clone(),
+                AccountMeta {
+                    pubkey: program_address,
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            Err(InstructionError::InvalidArgument),
+        );
+
         // Case: close a program account
         let accounts = process_instruction(
             &loader_id,
@@ -3999,7 +4025,7 @@ mod tests {
             0..255,
             |bytes: &mut [u8]| {
                 let mut program_account = AccountSharedData::new(1, 0, &loader_id);
-                program_account.set_data(bytes.to_vec());
+                program_account.set_data_from_slice(bytes);
                 program_account.set_executable(true);
                 process_instruction(
                     &program_id,

@@ -465,6 +465,7 @@ fn accounts_hasher_thread_pool() -> &'static ThreadPool {
     static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(NUM_ACCOUNTS_HASHER_THREADS)
+            .stack_size(8 * 1024 * 1024)
             .thread_name(|i| format!("solAcctsHashr{i:02}"))
             .build()
             .expect("new accounts hasher rayon threadpool")
@@ -486,7 +487,11 @@ mod tests {
         ahash::HashSetExt as _,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
-            accounts_index::{ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountsIndexConfig, IndexLimit},
+            accounts_index::{
+                ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountsIndexConfig,
+                DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit,
+                IndexLimitThreshold,
+            },
         },
         solana_cluster_type::ClusterType,
         solana_fee_calculator::FeeRateGovernor,
@@ -780,9 +785,15 @@ mod tests {
         assert_eq!(expected_accounts_lt_hash, calculated_accounts_lt_hash);
     }
 
+    const INDEX_LIMIT_THRESHOLD: IndexLimit = IndexLimit::Threshold(IndexLimitThreshold {
+        num_bytes: 25_000_000_000,
+        num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
+        num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
+    });
+
     #[test_matrix(
         [Features::None, Features::All],
-        [IndexLimit::Minimal, IndexLimit::InMemOnly]
+        [INDEX_LIMIT_THRESHOLD, IndexLimit::InMemOnly]
     )]
     fn test_verify_accounts_lt_hash_at_startup(
         features: Features,

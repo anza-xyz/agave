@@ -40,7 +40,9 @@ use {
     },
 };
 pub use {
-    bucket_map_holder::{DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT},
+    bucket_map_holder::{
+        DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT, MINIMAL_THRESHOLD_NUM_BYTES,
+    },
     secondary::{
         AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude, IndexKey,
     },
@@ -843,6 +845,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         map.replace(pubkey, (new_slot, account_info), old_slot);
     }
 
+    /// Removes the pubkey from the index
+    /// Populate reclaims with any entries previously in the slot list
+    pub fn delete(&self, pubkey: &Pubkey, reclaims: &mut ReclaimsSlotList<T>) {
+        let map = self.get_bin(pubkey);
+        map.delete(pubkey, reclaims);
+    }
+
     pub fn ref_count_from_storage(&self, pubkey: &Pubkey) -> RefCount {
         let map = self.get_bin(pubkey);
         map.get_internal_inner(pubkey, |entry| {
@@ -906,8 +915,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }) == 0
     }
 
-    /// return true if pubkey does not exist in the accounts index.
-    /// This means it should NOT be unref'd later.
+    /// Remove all older rooted entries for `pubkey` from the accounts index, pushing each
+    /// removed entry into `reclaims`.
+    /// Return true if this call removed the pubkey's entry from the accounts index.
+    ///
+    /// When secondary indexes are enabled and this returns true, callers must pass `pubkey` to
+    /// `AccountsDb::purge_secondary_indexes_for_dead_keys`, otherwise its secondary index
+    /// entries leak.
     #[must_use]
     pub fn clean_rooted_entries(
         &self,
@@ -916,14 +930,32 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         max_clean_root_inclusive: Option<Slot>,
     ) -> bool {
         let map = self.get_bin(pubkey);
+        // `None` means the pubkey is not in the index; nothing was removed.
         map.slot_list_mut_with_entry(pubkey, |mut slot_list, entry| {
             let reclaims_start = reclaims.len();
             self.purge_older_root_entries(&mut slot_list, reclaims, max_clean_root_inclusive);
-            // Unref each reclaimed entry. This must happen inside the closure so the
+            let mut unref_count = (reclaims.len() - reclaims_start) as RefCount;
+
+            // If reclaiming leaves a single ref zero lamport account, it is safe to delete
+            // the account entirely and mark it as a tombstone. An untouched single-entry
+            // zero-lamport account stays on the classic zero-lamport purge path: its offset
+            // is already marked zero-lamport single-ref at flush or index generation.
+            if unref_count > 0
+                && entry.ref_count() == unref_count + 1
+                && let &[(slot, account_info)] = &*slot_list
+                && account_info.is_zero_lamport()
+            {
+                reclaims.push(((slot, account_info), slot));
+                slot_list.clear();
+                unref_count += 1;
+            }
+            // Unref the reclaimed entries. This must happen inside the closure so the
             // updated ref count is visible to the write-through check.
-            entry.unref_by_count((reclaims.len() - reclaims_start) as RefCount);
+            entry.unref_by_count(unref_count);
+            slot_list.is_empty()
         })
-        .is_none()
+        .unwrap_or(false)
+            && map.remove_if_slot_list_empty(*pubkey)
     }
 
     /// Cleans and unrefs all older rooted entries for each pubkey in the accounts index.
@@ -2580,9 +2612,8 @@ mod tests {
         let slot2 = 2;
 
         let mut gc = ReclaimsWithNewestSlot::new();
-        // return true if we don't know anything about 'key_unknown'
-        // the item did not exist in the accounts index at all, so index is up to date
-        assert!(index.clean_rooted_entries(&key_unknown, &mut gc, None));
+        // an unknown key has no index entry, so nothing is removed
+        assert!(!index.clean_rooted_entries(&key_unknown, &mut gc, None));
 
         index.upsert_simple_test(&key, slot1, value);
 

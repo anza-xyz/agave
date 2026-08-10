@@ -17,12 +17,17 @@ Release channels have their own copy of this changelog:
 ## 4.3.0-Unreleased
 ### RPC
 #### Breaking
+* Failing to successfully establish a Bigtable connection will now result in a
+  fatal error when running with either `--enable-rpc-bigtable-ledger-storage` or
+  `--enable-bigtable-ledger-upload`. Previously, the error would be logged and
+  the process would continue without a Bigtable connection.
 #### Changes
 ### Validator
 #### Breaking
 * Loading a snapshot that contains an invalid vote account is now a hard error. Previously such
   accounts were silently dropped for compatibility with snapshots created before v2.1.0.
 * Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
+* Previously deprecated `--tpu-connection-pool-size` has been removed. The connection pool size is fixed at the previous default of 1.
 #### Deprecations
 * `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
   default). The flag is still accepted for backward compatibility.
@@ -40,6 +45,7 @@ still accepted for backwards compatibility but slated for full removal in the fu
 * External scheduler execution responses now report `PARTIAL_BATCH_CANCELLED` for
   `CommitCancelled` errors in non-all-or-nothing batches. All-or-nothing batches continue to use
   `ALL_OR_NOTHING_BATCH_FAILURE`.
+* Using the deprecated value `minimal` for `--accounts-index-limit` now defaults to 25GB.
 ### Geyser
 #### Deprecations
 * The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
@@ -55,6 +61,9 @@ still accepted for backwards compatibility but slated for full removal in the fu
   `GeyserPlugin::block_footer_notifications_enabled`; plugins can opt in to receive the complete
   versioned Alpenglow block footer, slot, and bank ID in entry order independently of entry
   notifications.
+* Added `GeyserPlugin::notify_entry_update_parent` and
+  `GeyserPlugin::notify_deshred_update_parent` so plugins can discard earlier notifications after
+  an UpdateParent marker.
 ### SDK
 #### Breaking
 * solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
@@ -90,6 +99,7 @@ still accepted for backwards compatibility but slated for full removal in the fu
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+* The default incremental snapshot interval is now 200 slots.
 ### CLI
 #### Breaking
 #### Changes

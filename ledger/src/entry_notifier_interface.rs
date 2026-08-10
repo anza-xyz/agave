@@ -1,8 +1,17 @@
 use {
+    agave_votor_messages::consensus_message::BlockId,
     solana_clock::{BankId, Slot},
     solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
     std::sync::Arc,
 };
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct EntryUpdateParentInfo {
+    pub slot: Slot,
+    pub cleared_bank_id: BankId,
+    pub parent_slot: Slot,
+    pub parent_block_id: BlockId,
+}
 
 pub trait EntryNotifier {
     fn notify_entry(
@@ -13,6 +22,9 @@ pub trait EntryNotifier {
         entry: &EntrySummary,
         starting_transaction_index: usize,
     );
+
+    /// Notify an Alpenglow UpdateParent marker on the entry stream.
+    fn notify_entry_update_parent(&self, _update_parent: &EntryUpdateParentInfo) {}
 
     /// Notify an Alpenglow block footer.
     ///

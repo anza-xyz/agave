@@ -137,8 +137,6 @@ pub struct StoreAccountsForFlushStats {
     pub write_accounts_us: u64,
     pub update_index_us: u64,
     pub handle_reclaims_us: u64,
-    pub mark_zero_lamport_single_ref_accounts_us: u64,
-    pub num_zero_lamport_single_ref_accounts_marked: u64,
     pub num_reclaims: u64,
     pub num_obsolete_slots_removed: u64,
     pub num_obsolete_bytes_removed: u64,
@@ -241,8 +239,7 @@ pub struct FlushStats {
     pub write_accounts_us: Saturating<u64>,
     pub update_index_us: Saturating<u64>,
     pub handle_reclaims_us: Saturating<u64>,
-    pub mark_zero_lamport_single_ref_accounts_us: Saturating<u64>,
-    pub num_zero_lamport_single_ref_accounts_marked: Saturating<u64>,
+    pub num_tombstones_marked: Saturating<u64>,
     pub num_reclaims: Saturating<u64>,
     pub num_obsolete_slots_removed: Saturating<u64>,
     pub num_obsolete_bytes_removed: Saturating<u64>,
@@ -258,10 +255,6 @@ impl FlushStats {
         self.write_accounts_us += Saturating(store_accounts_stats.write_accounts_us);
         self.update_index_us += Saturating(store_accounts_stats.update_index_us);
         self.handle_reclaims_us += Saturating(store_accounts_stats.handle_reclaims_us);
-        self.mark_zero_lamport_single_ref_accounts_us +=
-            Saturating(store_accounts_stats.mark_zero_lamport_single_ref_accounts_us);
-        self.num_zero_lamport_single_ref_accounts_marked +=
-            Saturating(store_accounts_stats.num_zero_lamport_single_ref_accounts_marked);
         self.num_reclaims += Saturating(store_accounts_stats.num_reclaims);
         self.num_obsolete_slots_removed +=
             Saturating(store_accounts_stats.num_obsolete_slots_removed);
@@ -279,10 +272,7 @@ impl FlushStats {
         self.write_accounts_us += other.write_accounts_us;
         self.update_index_us += other.update_index_us;
         self.handle_reclaims_us += other.handle_reclaims_us;
-        self.mark_zero_lamport_single_ref_accounts_us +=
-            other.mark_zero_lamport_single_ref_accounts_us;
-        self.num_zero_lamport_single_ref_accounts_marked +=
-            other.num_zero_lamport_single_ref_accounts_marked;
+        self.num_tombstones_marked += other.num_tombstones_marked;
         self.num_reclaims += other.num_reclaims;
         self.num_obsolete_slots_removed += other.num_obsolete_slots_removed;
         self.num_obsolete_bytes_removed += other.num_obsolete_bytes_removed;
@@ -302,6 +292,7 @@ pub struct CleanAccountsStats {
     pub remove_dead_accounts_shrink_us: AtomicU64,
     pub get_account_sizes_us: AtomicU64,
     pub slots_cleaned: AtomicU64,
+    pub num_accounts_removed_from_index: AtomicU64,
 }
 
 impl CleanAccountsStats {
@@ -396,10 +387,6 @@ pub struct ShrinkStats {
     pub num_ancient_slots_shrunk: AtomicU64,
     pub ancient_slots_added_to_shrink: AtomicU64,
     pub ancient_bytes_added_to_shrink: AtomicU64,
-    pub num_dead_slots_added_to_clean: AtomicU64,
-    pub num_slots_with_zero_lamport_accounts_added_to_shrink: AtomicU64,
-    pub marking_zero_dead_accounts_in_non_shrinkable_store: AtomicU64,
-    pub num_zero_lamport_single_ref_accounts_found: AtomicU64,
 }
 
 impl ShrinkStats {
@@ -582,30 +569,6 @@ impl ShrinkStats {
                 (
                     "initial_candidates_count",
                     self.initial_candidates_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_dead_slots_added_to_clean",
-                    self.num_dead_slots_added_to_clean
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_slots_with_zero_lamport_accounts_added_to_shrink",
-                    self.num_slots_with_zero_lamport_accounts_added_to_shrink
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "marking_zero_dead_accounts_in_non_shrinkable_store",
-                    self.marking_zero_dead_accounts_in_non_shrinkable_store
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_zero_lamport_single_ref_accounts_found",
-                    self.num_zero_lamport_single_ref_accounts_found
-                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
             );

@@ -161,6 +161,7 @@ impl AccountStorageEntry {
 
     /// Return true if offset is "new" and inserted successfully. Otherwise,
     /// return false if the offset exists already.
+    #[cfg(test)]
     pub(crate) fn insert_zero_lamport_single_ref_account_offset(&self, offset: usize) -> bool {
         let mut zero_lamport_single_ref_offsets =
             self.zero_lamport_single_ref_offsets.write().unwrap();

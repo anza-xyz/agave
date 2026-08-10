@@ -171,6 +171,10 @@ impl VoteTracker {
     fn progress_with_new_root_bank(&self, root_bank: &Bank) {
         self.purge_stale_state(root_bank);
     }
+
+    fn clear(&self) {
+        self.slot_vote_trackers.write().unwrap().clear();
+    }
 }
 
 #[derive(Default)]
@@ -455,9 +459,11 @@ impl ClusterInfoVoteListener {
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
     ) -> Self {
         let (verified_vote_transactions_sender, verified_vote_transactions_receiver) = unbounded();
+        let migration_status = bank_forks.read().unwrap().migration_status();
         let listen_thread = {
             let exit = exit.clone();
             let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+            let migration_status = migration_status.clone();
             Builder::new()
                 .name("solCiVoteLstnr".to_string())
                 .spawn(move || {
@@ -468,6 +474,7 @@ impl ClusterInfoVoteListener {
                         sharable_banks,
                         verified_packets_sender,
                         verified_vote_transactions_sender,
+                        migration_status,
                     );
                 })
                 .unwrap()
@@ -477,7 +484,6 @@ impl ClusterInfoVoteListener {
             .name("solCiProcVotes".to_string())
             .spawn(move || {
                 let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-                let migration_status = bank_forks.read().unwrap().migration_status();
                 let notifiers = ConfirmationNotifiers {
                     gossip_verified_vote_hash_sender,
                     verified_voter_slots_sender,
@@ -514,6 +520,7 @@ impl ClusterInfoVoteListener {
         sharable_banks: SharableBanks,
         verified_packets_sender: BankingPacketSender,
         verified_vote_transactions_sender: VerifiedVoteTransactionsSender,
+        migration_status: Arc<MigrationStatus>,
     ) -> Result<()> {
         #[derive(Default)]
         struct Stats {
@@ -526,13 +533,28 @@ impl ClusterInfoVoteListener {
         let mut last_report = Instant::now();
         let mut stats = Stats::default();
         while !exit.load(Ordering::Relaxed) {
+            if migration_status.is_alpenglow_enabled() {
+                // Keep this thread (and its senders) alive because BankingStage treats a
+                // disconnected gossip-vote channel as a shutdown signal. Tower votes are no
+                // longer useful after Alpenglow is enabled, so do not poll or verify them.
+                sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
+                continue;
+            }
             let votes = cluster_info.get_votes(&mut cursor);
             if !votes.is_empty() {
                 stats.received_count += votes.len();
                 let (vote_txs, packets) =
                     Self::verify_votes(votes, &mut gossip_sigverify_handle, &sharable_banks)?;
+                // Alpenglow can become enabled while signature verification is in flight.
+                // Discard that final batch instead of forwarding legacy votes.
+                if migration_status.is_alpenglow_enabled() {
+                    continue;
+                }
                 verified_vote_transactions_sender.send(vote_txs)?;
                 for packet_batch in packets {
+                    if migration_status.is_alpenglow_enabled() {
+                        break;
+                    }
                     // Sample backlog before the push.
                     stats.banking_channel_max_len = stats
                         .banking_channel_max_len
@@ -619,8 +641,9 @@ impl ClusterInfoVoteListener {
         blockstore: Arc<Blockstore>,
         notifiers: ConfirmationNotifiers,
     ) -> Result<()> {
-        let mut confirmation_verifier =
-            OptimisticConfirmationVerifier::new(sharable_banks.root().slot());
+        let mut confirmation_verifier = Some(OptimisticConfirmationVerifier::new(
+            sharable_banks.root().slot(),
+        ));
         let mut latest_vote_slot_per_validator = HashMap::new();
         let mut last_process_root = Instant::now();
         let mut vote_processing_time = Some(VoteProcessingTiming::default());
@@ -631,7 +654,14 @@ impl ClusterInfoVoteListener {
             }
 
             let root_bank = sharable_banks.root();
-            if last_process_root.elapsed().as_nanos() > root_bank.ns_per_slot {
+            let is_alpenglow_enabled = notifiers.migration_status.is_alpenglow_enabled();
+            if is_alpenglow_enabled {
+                // Drop the verifier's retained optimistic-confirmation state at the handoff.
+                confirmation_verifier = None;
+            } else if last_process_root.elapsed().as_nanos() > root_bank.ns_per_slot {
+                let confirmation_verifier = confirmation_verifier
+                    .as_mut()
+                    .expect("Alpenglow migration status cannot revert");
                 let unrooted_optimistic_slots = confirmation_verifier
                     .verify_for_unrooted_optimistic_slots(&root_bank, &blockstore);
                 // SlotVoteTracker's for all `slots` in `unrooted_optimistic_slots`
@@ -666,8 +696,10 @@ impl ClusterInfoVoteListener {
                                 .should_report_commitment_or_root(*slot)
                         })
                         .collect();
-                    confirmation_verifier
-                        .add_new_optimistic_confirmed_slots(confirmed_slots, &blockstore);
+                    if let Some(confirmation_verifier) = confirmation_verifier.as_mut() {
+                        confirmation_verifier
+                            .add_new_optimistic_confirmed_slots(confirmed_slots, &blockstore);
+                    }
                 }
                 Err(e) => match e {
                     Error::RecvTimeout(RecvTimeoutError::Disconnected) => {
@@ -695,6 +727,11 @@ impl ClusterInfoVoteListener {
         let mut sel = Select::new();
         sel.recv(gossip_vote_txs_receiver);
         sel.recv(replay_votes_receiver);
+        if notifiers.migration_status.is_alpenglow_enabled() {
+            vote_tracker.clear();
+            latest_vote_slot_per_validator.clear();
+            replay_vote_buffer.bank_votes.clear();
+        }
         let mut remaining_wait_time = Duration::from_millis(200);
         while remaining_wait_time > Duration::ZERO {
             let start = Instant::now();
@@ -704,6 +741,17 @@ impl ClusterInfoVoteListener {
             // hence the loop
             let _ = sel.ready_timeout(remaining_wait_time)?;
 
+            if notifiers.migration_status.is_alpenglow_enabled() {
+                // Replay can still have legacy vote notifications in flight when the migration
+                // completes. Keep draining the channels so their producers remain connected, but
+                // discard all Tower vote state and skip optimistic confirmation aggregation.
+                for _ in gossip_vote_txs_receiver.try_iter() {}
+                for _ in replay_votes_receiver.try_iter() {}
+                vote_tracker.clear();
+                latest_vote_slot_per_validator.clear();
+                replay_vote_buffer.bank_votes.clear();
+                return Ok(vec![]);
+            }
             // Should not early return from this point onwards until `process_votes()`
             // returns below to avoid missing any potential `optimistic_confirmed_slots`
             let gossip_vote_txs: Vec<_> = gossip_vote_txs_receiver.try_iter().flatten().collect();
@@ -739,6 +787,9 @@ impl ClusterInfoVoteListener {
         notifiers: &ConfirmationNotifiers,
         new_optimistic_confirmed_slots: &mut ThresholdConfirmedSlots,
     ) -> bool {
+        if notifiers.migration_status.is_alpenglow_enabled() {
+            return false;
+        }
         if last_vote_slot <= root_bank.slot() {
             return false;
         }
@@ -817,7 +868,7 @@ impl ClusterInfoVoteListener {
         is_gossip_vote: bool,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
     ) {
-        if vote.is_empty() {
+        if vote.is_empty() || notifiers.migration_status.is_alpenglow_enabled() {
             return;
         }
 
@@ -847,6 +898,10 @@ impl ClusterInfoVoteListener {
             notifiers,
             new_optimistic_confirmed_slots,
         );
+
+        if notifiers.migration_status.is_alpenglow_enabled() {
+            return;
+        }
 
         if !is_new_vote && !is_gossip_vote {
             // By now:
@@ -905,6 +960,10 @@ impl ClusterInfoVoteListener {
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
     ) -> ThresholdConfirmedSlots {
+        if notifiers.migration_status.is_alpenglow_enabled() {
+            return vec![];
+        }
+
         let mut diff: HashMap<Slot, HashMap<Pubkey, bool>> = HashMap::new();
         let mut new_optimistic_confirmed_slots = vec![];
 
@@ -1448,6 +1507,101 @@ mod tests {
     fn test_process_votes1() {
         run_test_process_votes(None);
         run_test_process_votes(Some(Hash::default()));
+    }
+
+    #[test]
+    fn test_alpenglow_disables_tower_vote_processing() {
+        let SetupComponents {
+            vote_tracker,
+            bank,
+            bank_forks,
+            validator_voting_keypairs,
+            subscriptions,
+        } = setup();
+        let migration_status = bank_forks.read().unwrap().migration_status();
+        let (votes_sender, votes_receiver) = bounded(1024);
+        let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (duplicate_confirmed_slot_sender, duplicate_confirmed_slot_receiver) = bounded(1024);
+        let notifiers = ConfirmationNotifiers {
+            gossip_verified_vote_hash_sender,
+            verified_voter_slots_sender,
+            rpc_subscriptions: Some(subscriptions),
+            bank_notification_sender: None,
+            duplicate_confirmed_slot_sender: Some(duplicate_confirmed_slot_sender),
+            migration_status: migration_status.clone(),
+        };
+        let mut replay_vote_buffer = VoteBuffer::new();
+        let mut latest_vote_slot_per_validator = HashMap::new();
+
+        // Establish that this pipeline is live before the migration completes.
+        send_vote_txs(
+            vec![1],
+            vec![],
+            &validator_voting_keypairs,
+            None,
+            &votes_sender,
+            &replay_votes_sender,
+        );
+        ClusterInfoVoteListener::listen_and_confirm_votes(
+            &votes_receiver,
+            &vote_tracker,
+            &bank,
+            &replay_votes_receiver,
+            &mut replay_vote_buffer,
+            &notifiers,
+            &mut None,
+            &mut latest_vote_slot_per_validator,
+        )
+        .unwrap();
+        assert!(vote_tracker.get_slot_vote_tracker(1).is_some());
+        assert!(!latest_vote_slot_per_validator.is_empty());
+        assert!(!gossip_verified_vote_hash_receiver.is_empty());
+        assert!(!verified_voter_slots_receiver.is_empty());
+        assert!(!duplicate_confirmed_slot_receiver.is_empty());
+        for _ in gossip_verified_vote_hash_receiver.try_iter() {}
+        for _ in verified_voter_slots_receiver.try_iter() {}
+        for _ in duplicate_confirmed_slot_receiver.try_iter() {}
+
+        // Any partial Tower vote state becomes irrelevant at the transition.
+        replay_vote_buffer.bank_votes.insert(
+            bank.bank_id(),
+            BankVoteBuffer::Invalid { slot: bank.slot() },
+        );
+        migration_status.enable_alpenglow_for_tests();
+
+        send_vote_txs(
+            vec![2],
+            vec![3],
+            &validator_voting_keypairs,
+            None,
+            &votes_sender,
+            &replay_votes_sender,
+        );
+        let confirmed_slots = ClusterInfoVoteListener::listen_and_confirm_votes(
+            &votes_receiver,
+            &vote_tracker,
+            &bank,
+            &replay_votes_receiver,
+            &mut replay_vote_buffer,
+            &notifiers,
+            &mut None,
+            &mut latest_vote_slot_per_validator,
+        )
+        .unwrap();
+
+        assert!(confirmed_slots.is_empty());
+        assert!(replay_vote_buffer.bank_votes.is_empty());
+        assert!(votes_receiver.is_empty());
+        assert!(replay_votes_receiver.is_empty());
+        assert!(vote_tracker.get_slot_vote_tracker(1).is_none());
+        assert!(vote_tracker.get_slot_vote_tracker(2).is_none());
+        assert!(vote_tracker.get_slot_vote_tracker(3).is_none());
+        assert!(latest_vote_slot_per_validator.is_empty());
+        assert!(gossip_verified_vote_hash_receiver.is_empty());
+        assert!(verified_voter_slots_receiver.is_empty());
+        assert!(duplicate_confirmed_slot_receiver.is_empty());
     }
 
     #[test]

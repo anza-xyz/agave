@@ -602,7 +602,7 @@ fn test_store_account_and_update_capitalization_accounts_data_size() {
 
     // test 2: change the account's data
     let data_size_delta = 42;
-    account.set_data(vec![0; data_size + data_size_delta]);
+    account.set_data_from_slice(&vec![0; data_size + data_size_delta]);
     let accounts_data_size_pre = bank.load_accounts_data_size();
     bank.store_account_and_update_capitalization(&address, &account);
     let accounts_data_size_post = bank.load_accounts_data_size();
@@ -5449,9 +5449,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "GgaWD5q3aFyK6cdZYxxwdyS2ypQnsMttwTuhdks439eT"
+                    "3fobpaKVfuL4ZDhZzkJioejGWPhGm3y4QpyTuCwhuhBJ"
                 } else {
-                    "AaXmmStgpHGz8uQ12RvtbUwYDYR4yq29aTKvWbSkaP1H"
+                    "55NPEy8zWbWwrGdiaVzVom51DgtXd28yczDar4TQ3VFK"
                 },
             );
         }
@@ -5460,9 +5460,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "7yoUV11msdHHFFXBKrdYu5UGhgbcpyLaRMpbwc9tF9B3"
+                    "7oK4pV3pTmXW8L3mdTCr8y23Y31ZoZt6gXFLTHnvZMz6"
                 } else {
-                    "7ELHxVoFeCequrCbSH74LFWqaFae35jPn97PqCYMApV2"
+                    "BLLDWnmQJbWBUQhxse1qGX67oGjua3ZKqzZ34HWbwB2r"
                 },
             );
             break;
@@ -5765,8 +5765,8 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     assert_eq!(
         bank2.hash().as_bytes(),
         &[
-            233, 55, 199, 160, 194, 251, 254, 70, 64, 2, 179, 214, 72, 202, 142, 29, 97, 226, 165,
-            246, 71, 91, 12, 129, 110, 141, 183, 247, 129, 3, 195, 252
+            12, 176, 206, 113, 152, 56, 194, 198, 221, 48, 6, 73, 209, 1, 12, 102, 54, 115, 16,
+            238, 71, 229, 42, 205, 114, 238, 167, 205, 19, 14, 42, 101
         ]
     );
 }
@@ -6465,13 +6465,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             .read()
             .unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 1);
-        assert_eq!(slot_versions[0].deployment_slot, bank.slot());
-        assert_eq!(slot_versions[0].effective_slot(), bank.slot());
-        assert!(matches!(
-            slot_versions[0].program,
-            ProgramCacheEntryType::Closed,
-        ));
+        assert!(slot_versions.is_empty());
     }
 
     // Test buffer invocation
@@ -6493,13 +6487,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             .read()
             .unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&buffer_address);
-        assert_eq!(slot_versions.len(), 1);
-        assert_eq!(slot_versions[0].deployment_slot, bank.slot());
-        assert_eq!(slot_versions[0].effective_slot(), bank.slot());
-        assert!(matches!(
-            slot_versions[0].program,
-            ProgramCacheEntryType::Closed,
-        ));
+        assert!(slot_versions.is_empty());
     }
 
     // Test successful deploy
@@ -7168,6 +7156,163 @@ fn test_rent_feature_gates_epoch_transition() {
             "rent sysvar should be updated after activation"
         );
     }
+}
+
+#[test]
+fn test_double_disinflation_rate_epoch_transition() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    let feature_id = feature_set::double_disinflation_rate::id();
+    assert!(
+        !bank.feature_set.is_active(&feature_id),
+        "feature should be inactive before activation"
+    );
+
+    // Advance an epoch so the re-anchor happens at a non-zero `year`.
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+
+    let old_inflation = *bank.inflation.read().unwrap();
+
+    let feature_account_balance =
+        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+    bank.store_account(
+        &feature_id,
+        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+    );
+
+    // Cross the epoch boundary to apply feature activation.
+    goto_end_of_slot(bank.clone());
+    let parent = bank;
+    let bank = new_from_parent_next_epoch(parent.clone(), &bank_forks, 1);
+    assert!(
+        bank.feature_set.is_active(&feature_id),
+        "feature should be active after epoch transition"
+    );
+
+    // The re-anchor must not leak through the fork-shared inflation lock: the
+    // parent keeps the pre-activation schedule, and a sibling boundary bank
+    // must anchor off the pre-activation schedule, not the first child's.
+    let parent_inflation = *parent.inflation.read().unwrap();
+    assert_eq!(
+        parent_inflation.taper.to_bits(),
+        old_inflation.taper.to_bits()
+    );
+    assert_eq!(
+        parent_inflation.initial.to_bits(),
+        old_inflation.initial.to_bits()
+    );
+    let sibling = Bank::new_from_parent(parent, SlotLeader::default(), bank.slot() + 1);
+    let sibling_inflation = *sibling.inflation.read().unwrap();
+    let bank_inflation = *bank.inflation.read().unwrap();
+    assert_eq!(
+        sibling_inflation.taper.to_bits(),
+        bank_inflation.taper.to_bits()
+    );
+    assert_eq!(
+        sibling_inflation.initial.to_bits(),
+        bank_inflation.initial.to_bits()
+    );
+
+    let year = bank.slot_in_year_for_inflation();
+    assert!(year > 0.0);
+    let taper = feature_set::double_disinflation_rate::TAPER;
+    let anchor_rate = old_inflation.total(year);
+    let inflation = *bank.inflation.read().unwrap();
+    assert_eq!(inflation.taper.to_bits(), taper.to_bits());
+    assert_eq!(
+        inflation.initial.to_bits(),
+        (anchor_rate / (1.0 - taper).powf(year)).to_bits(),
+        "initial should be re-anchored so the curve passes through the old rate"
+    );
+    assert_eq!(
+        inflation.terminal.to_bits(),
+        old_inflation.terminal.to_bits()
+    );
+    assert_eq!(
+        inflation.foundation.to_bits(),
+        old_inflation.foundation.to_bits()
+    );
+    assert_eq!(
+        inflation.foundation_term.to_bits(),
+        old_inflation.foundation_term.to_bits()
+    );
+
+    // The re-anchored curve matches the old rate at the activation boundary
+    // (up to f64 division/multiplication round-trip) and decays faster after.
+    assert!((inflation.total(year) - anchor_rate).abs() <= anchor_rate * f64::EPSILON);
+    assert!(inflation.total(year + 1.0) < old_inflation.total(year + 1.0));
+
+    // The re-anchored schedule survives crossing another epoch boundary.
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    let later_inflation = *bank.inflation.read().unwrap();
+    assert_eq!(later_inflation.taper.to_bits(), inflation.taper.to_bits());
+    assert_eq!(
+        later_inflation.initial.to_bits(),
+        inflation.initial.to_bits()
+    );
+}
+
+#[test]
+fn test_double_disinflation_re_anchor_conformance() {
+    let taper = feature_set::double_disinflation_rate::TAPER;
+    let old = Inflation::full();
+    for year in [0.5, 2.0, 5.5, 8.0] {
+        let anchor = old.total(year);
+        let mut re_anchored = old;
+        re_anchored.taper = taper;
+        re_anchored.initial = anchor / (1.0 - taper).powf(year);
+        // Continuous at the boundary (up to f64 divide/multiply round-trip),
+        // strictly faster decay beyond it, never below the terminal floor.
+        assert!((re_anchored.total(year) - anchor).abs() <= anchor * f64::EPSILON);
+        assert!(re_anchored.total(year + 1.0) < old.total(year + 1.0));
+        assert!(re_anchored.total(year + 1.0) >= old.terminal);
+    }
+
+    // Activation after the old schedule has already reached the terminal
+    // floor: the re-anchored curve must stay at the floor.
+    let year = 50.0;
+    let anchor = old.total(year);
+    assert_eq!(anchor.to_bits(), old.terminal.to_bits());
+    let mut re_anchored = old;
+    re_anchored.taper = taper;
+    re_anchored.initial = anchor / (1.0 - taper).powf(year);
+    assert!((re_anchored.total(year) - old.terminal).abs() <= old.terminal * f64::EPSILON);
+    assert_eq!(
+        re_anchored.total(year + 1.0).to_bits(),
+        old.terminal.to_bits()
+    );
+}
+
+#[test]
+fn test_double_disinflation_rate_active_at_genesis() {
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    let old_inflation = genesis_config.inflation;
+    activate_feature(
+        &mut genesis_config,
+        feature_set::double_disinflation_rate::id(),
+    );
+
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::double_disinflation_rate::id())
+    );
+
+    // The doubled taper applies from genesis; `year` is zero there, so the
+    // re-anchor leaves `initial` at the genesis rate.
+    let inflation = bank.inflation();
+    assert_eq!(
+        inflation.taper.to_bits(),
+        feature_set::double_disinflation_rate::TAPER.to_bits()
+    );
+    assert_eq!(inflation.initial.to_bits(), old_inflation.initial.to_bits());
+    assert_eq!(
+        inflation.terminal.to_bits(),
+        old_inflation.terminal.to_bits()
+    );
 }
 
 #[test]
@@ -9141,7 +9286,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
             .accounts_db
             .accounts_index
             .ref_count_from_storage(&key5.pubkey()),
-        expected_ref_count_for_keys_in_both_slot1_and_slot2,
+        expected_ref_count_for_cleaned_up_keys,
     );
     assert_eq!(
         bank2.rc.accounts.accounts_db.alive_account_count_in_slot(1),
@@ -11619,10 +11764,7 @@ fn test_create_zero_lamport_with_clean() {
         bank.freeze();
         bank.squash();
         bank.force_flush_accounts_cache();
-        // do clean and assert that it actually did its job
-        assert_eq!(6, bank.get_snapshot_storages(None).len());
         bank.clean_accounts();
-        assert_eq!(5, bank.get_snapshot_storages(None).len());
     });
 }
 

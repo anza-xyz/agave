@@ -1290,7 +1290,7 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
-    solana_pubkey::declare_id!("a1p3RiCfMmzm5jgCva97UUNwUiVLq5EJhtusRWHDBsp");
+    solana_pubkey::declare_id!("A1pENGLtPKvimJcQ8eNJ3cN6hMPLg1PWEyCvc7i5LFL8");
 }
 
 pub mod disable_zk_elgamal_proof_program {
@@ -1532,6 +1532,12 @@ pub mod alpenglow_fast_leader_handover {
 
 pub mod relax_fee_payer_constraint {
     solana_pubkey::declare_id!("FEEXbxUuKobtrt1qNK5pjtzbPQhsppBTrNNG74xu4mai");
+}
+
+pub mod double_disinflation_rate {
+    solana_pubkey::declare_id!("55oikhjJ2LUi1xdgJ17ueRyHFURZEw32asT3iAKfh7gg");
+    /// Taper (yearly disinflation rate) applied from activation onward.
+    pub const TAPER: f64 = 0.30;
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2615,6 +2621,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_fee_payer_constraint::id(),
             "SIMD-0290: Relax block constraint requiring valid fee-payer",
+        ),
+        (
+            double_disinflation_rate::id(),
+            "SIMD-0550: Double disinflation rate",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

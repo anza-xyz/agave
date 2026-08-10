@@ -111,6 +111,7 @@ wincode = { workspace = true }
 [dev-dependencies]
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-address-lookup-table-interface = { workspace = true }
 solana-client = { workspace = true }
 solana-cluster-type = { workspace = true }
@@ -120,7 +121,7 @@ solana-fee-structure = { workspace = true }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
 solana-nonce = { workspace = true }
-solana-nonce-account = { workspace = true }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-program-option = { workspace = true }
 solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api"] }
 solana-rent = { workspace = true }
@@ -133,7 +134,6 @@ solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { path = "../svm-log-collector", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true }
-spl-pod = { workspace = true }
 symlink = { workspace = true }
 test-case = { workspace = true }
 
