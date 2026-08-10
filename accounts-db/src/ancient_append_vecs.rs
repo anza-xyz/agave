@@ -1146,18 +1146,13 @@ mod tests {
     };
 
     fn get_sample_storages(
+        db: &AccountsDb,
         slots: usize,
         account_data_size: Option<u64>,
-    ) -> (
-        AccountsDb,
-        Vec<Arc<AccountStorageEntry>>,
-        Range<u64>,
-        Vec<SlotInfo>,
-    ) {
-        let db = AccountsDb::default_for_tests();
+    ) -> (Vec<Arc<AccountStorageEntry>>, Range<u64>, Vec<SlotInfo>) {
         let slot1 = 1;
         let alive = true;
-        create_storages_and_update_index(&db, slot1, slots, alive, account_data_size);
+        create_storages_and_update_index(db, slot1, slots, alive, account_data_size);
         let original_stores = (0..slots)
             .filter_map(|slot| db.storage.get_slot_storage_entry((slot as Slot) + slot1))
             .collect::<Vec<_>>();
@@ -1173,12 +1168,7 @@ mod tests {
                 is_high_slot,
             })
             .collect();
-        (
-            db,
-            original_stores,
-            slot1..(slot1 + slots as Slot),
-            slot_infos,
-        )
+        (original_stores, slot1..(slot1 + slots as Slot), slot_infos)
     }
 
     fn create_storages_and_update_index(
@@ -1287,7 +1277,8 @@ mod tests {
 
     #[test]
     fn test_write_packed_storages_empty() {
-        let (db, _storages, _slots, _infos) = get_sample_storages(0, None);
+        let db = AccountsDb::default_for_tests();
+        let (_storages, _slots, _infos) = get_sample_storages(&db, 0, None);
         let write_ancient_accounts =
             db.write_packed_storages(&AccountsToCombine::default(), Vec::default());
         assert!(write_ancient_accounts.shrinks_in_progress.is_empty());
@@ -1298,7 +1289,8 @@ mod tests {
         expected = "accounts_to_combine.target_slots_sorted.len() >= packed_contents.len()"
     )]
     fn test_write_packed_storages_too_few_slots() {
-        let (db, storages, slots, _infos) = get_sample_storages(1, None);
+        let db = AccountsDb::default_for_tests();
+        let (storages, slots, _infos) = get_sample_storages(&db, 1, None);
         let accounts_to_combine = AccountsToCombine::default();
         let offset = 0;
         let account = storages
@@ -1320,7 +1312,8 @@ mod tests {
 
     #[test]
     fn test_write_ancient_accounts_to_same_slot_multiple_refs_empty() {
-        let (db, _storages, _slots, _infos) = get_sample_storages(0, None);
+        let db = AccountsDb::default_for_tests();
+        let (_storages, _slots, _infos) = get_sample_storages(&db, 0, None);
         let mut write_ancient_accounts = WriteAncientAccounts::default();
         db.write_ancient_accounts_to_same_slot_multiple_refs(
             AccountsToCombine::default().accounts_keep_slots.values(),
@@ -1336,7 +1329,8 @@ mod tests {
                 (1, num_slots),
                 (get_ancient_append_vec_capacity(), 1.min(num_slots)),
             ] {
-                let (db, storages, slots, _infos) = get_sample_storages(num_slots, None);
+                let db = AccountsDb::default_for_tests();
+                let (storages, slots, _infos) = get_sample_storages(&db, num_slots, None);
                 let original_results = storages
                     .iter()
                     .map(|store| db.get_unique_accounts_from_storage(store))
@@ -1384,7 +1378,8 @@ mod tests {
                 (account_size * 2, num_slots * total_accounts_per_storage / 2),
                 (get_ancient_append_vec_capacity(), 1.min(num_slots)),
             ] {
-                let (db, storages, slots, _infos) = get_sample_storages(num_slots, None);
+                let db = AccountsDb::default_for_tests();
+                let (storages, slots, _infos) = get_sample_storages(&db, num_slots, None);
 
                 let account_template = storages
                     .first()
@@ -1491,7 +1486,8 @@ mod tests {
                 account_size * 2,
                 get_ancient_append_vec_capacity(),
             ] {
-                let (db, storages, slots, _infos) = get_sample_storages(num_slots, None);
+                let db = AccountsDb::default_for_tests();
+                let (storages, slots, _infos) = get_sample_storages(&db, num_slots, None);
 
                 let account_template = storages
                     .first()
@@ -1624,7 +1620,8 @@ mod tests {
         for in_shrink_candidate_slots in [false, true] {
             for all_slots_shrunk in [false, true] {
                 for num_slots in 0..3 {
-                    let (db, storages, slots, infos) = get_sample_storages(num_slots, None);
+                    let db = AccountsDb::default_for_tests();
+                    let (storages, slots, infos) = get_sample_storages(&db, num_slots, None);
                     let mut accounts_per_storage = infos
                         .iter()
                         .zip(
@@ -1703,8 +1700,9 @@ mod tests {
             for num_slots in 0..6 {
                 for unsorted_slots in [false, true] {
                     for two_refs in [false, true] {
-                        let (db, mut storages, _slots, mut infos) =
-                            get_sample_storages(num_slots, Some(data_size));
+                        let db = AccountsDb::default_for_tests();
+                        let (mut storages, _slots, mut infos) =
+                            get_sample_storages(&db, num_slots, Some(data_size));
 
                         infos.iter_mut().for_each(|a| {
                             a.alive_bytes += alive_bytes_per_slot;
@@ -1808,8 +1806,9 @@ mod tests {
                     for num_slots in 0..3 {
                         for unsorted_slots in [false, true] {
                             for two_refs in [false, true] {
-                                let (db, mut storages, slots, mut infos) =
-                                    get_sample_storages(num_slots, Some(data_size));
+                                let db = AccountsDb::default_for_tests();
+                                let (mut storages, slots, mut infos) =
+                                    get_sample_storages(&db, num_slots, Some(data_size));
                                 infos
                                     .iter_mut()
                                     .for_each(|a| a.alive_bytes += alive_bytes_per_account);
@@ -2011,9 +2010,10 @@ mod tests {
         // 1 with 2 refs (and the other ref is from a newer slot)
         // So, the other alive ref will cause the account with 2 refs to be put into many_refs_old_alive and then accounts_keep_slots
         for method in TestWriteMultipleRefs::iter() {
+            let db = AccountsDb::default_for_tests();
             let num_slots = 1;
             // creating 1 more sample slot/storage, but effectively act like 1 slot
-            let (db, mut storages, slots, infos) = get_sample_storages(num_slots + 1, None);
+            let (mut storages, slots, infos) = get_sample_storages(&db, num_slots + 1, None);
             let slots = slots.start..slots.start + 1;
             let storage = storages.first().unwrap().clone();
             let ignored_storage = storages.pop().unwrap();
@@ -2211,8 +2211,9 @@ mod tests {
         // 1 with 2 refs, with the idea that the other ref is from an older slot, so this one is the newer index entry
         // The result will be that the account, even though it has refcount > 1, can be moved to a newer slot.
         for method in TestWriteMultipleRefs::iter() {
+            let db = AccountsDb::default_for_tests();
             let num_slots = 1;
-            let (db, storages, slots, infos) = get_sample_storages(num_slots, None);
+            let (storages, slots, infos) = get_sample_storages(&db, num_slots, None);
             let original_results = storages
                 .iter()
                 .map(|store| db.get_unique_accounts_from_storage(store))
@@ -2363,7 +2364,8 @@ mod tests {
     fn test_get_unique_accounts_from_storage_for_combining_ancient_slots() {
         for num_slots in 0..3 {
             for reverse in [false, true] {
-                let (db, storages, slots, mut infos) = get_sample_storages(num_slots, None);
+                let db = AccountsDb::default_for_tests();
+                let (storages, slots, mut infos) = get_sample_storages(&db, num_slots, None);
                 let original_results = storages
                     .iter()
                     .map(|store| db.get_unique_accounts_from_storage(store))
@@ -3225,8 +3227,9 @@ mod tests {
                             // invalid combination when num_slots > 0, but required to hit num_slots=0, combine_into=0
                             continue;
                         }
-                        let (db, storages, slots, _infos) =
-                            get_sample_storages(num_slots, data_size);
+                        let db = AccountsDb::default_for_tests();
+                        let (storages, slots, _infos) =
+                            get_sample_storages(&db, num_slots, data_size);
 
                         let initial_accounts = get_all_accounts(&db, slots.clone());
 
@@ -3673,9 +3676,10 @@ mod tests {
 
     #[test]
     fn test_shrink_collect_alive_add() {
+        let db = AccountsDb::default_for_tests();
         let num_slots = 1;
         let data_size = None;
-        let (_db, storages, _slots, _infos) = get_sample_storages(num_slots, data_size);
+        let (storages, _slots, _infos) = get_sample_storages(&db, num_slots, data_size);
         let offset = 0;
 
         storages[0]
