@@ -1609,7 +1609,7 @@ impl AccountsDb {
         // then its tombstones must be retained for an incremental snapshot to propagate the deletion
         // (see `filter_zero_lamport_clean_for_incremental_snapshots`).
         dirty_stores.retain(|(slot, _dirty_store)| {
-            if self.can_purge_zero_lamport_single_ref_after_shrink(*slot)
+            if self.can_purge_zero_lamport_accounts(*slot)
                 && self
                     .storage
                     .get_slot_storage_entry(*slot)
@@ -2433,8 +2433,7 @@ impl AccountsDb {
         stats: &ShrinkStats,
         slot_to_shrink: Slot,
     ) -> LoadAccountsIndexForShrink<'a, T> {
-        let can_purge_zero_lamport_single_ref =
-            self.can_purge_zero_lamport_single_ref_after_shrink(slot_to_shrink);
+        let can_purge_zero_lamport_accounts = self.can_purge_zero_lamport_accounts(slot_to_shrink);
         let count = accounts.len();
         let mut alive_accounts = T::with_capacity(count, slot_to_shrink);
         let mut zero_lamport_single_ref_pubkeys = Vec::with_capacity(count);
@@ -2454,7 +2453,7 @@ impl AccountsDb {
                         // The lone instance of a zero-lamport account. A load of a zero-lamport
                         // account already reports "not found", so dropping its index entry is safe.
                         zero_lamport_single_ref_pubkeys.push(pubkey);
-                        if !can_purge_zero_lamport_single_ref {
+                        if !can_purge_zero_lamport_accounts {
                             // Newer than the latest full snapshot: keep the bytes in storage as a
                             // tombstone so an incremental snapshot can still propagate the deletion,
                             // rather than dropping it.
@@ -2590,15 +2589,14 @@ impl AccountsDb {
         let num_obsolete_filtered = total_starting_accounts - stored_accounts.len();
 
         // Filter and collect tombstones
-        let can_purge_zero_lamport_single_ref =
-            self.can_purge_zero_lamport_single_ref_after_shrink(slot);
+        let can_purge_zero_lamport_accounts = self.can_purge_zero_lamport_accounts(slot);
         let mut tombstones_to_carry_forward = Vec::new();
         let tombstone_offsets = store.tombstone_offsets_read_lock();
         if !tombstone_offsets.is_empty() {
             stored_accounts.retain(|account| {
                 if tombstone_offsets.contains(&account.index_info.offset()) {
                     // If we can't purge zero lamport accounts, they need to be rewritten after shrink
-                    if !can_purge_zero_lamport_single_ref {
+                    if !can_purge_zero_lamport_accounts {
                         tombstones_to_carry_forward.push(*account);
                     }
                     false
@@ -4993,8 +4991,8 @@ impl AccountsDb {
         alive_bytes >= total_bytes
     }
 
-    /// Can zero lamport single ref accounts in `slot` be purged?
-    fn can_purge_zero_lamport_single_ref_after_shrink(&self, slot: Slot) -> bool {
+    /// Can zero lamport accounts in `slot` be purged?
+    fn can_purge_zero_lamport_accounts(&self, slot: Slot) -> bool {
         self.latest_full_snapshot_slot()
             .is_none_or(|latest_full_snapshot_slot| slot <= latest_full_snapshot_slot)
     }
@@ -5002,10 +5000,10 @@ impl AccountsDb {
     /// Returns the expected alive bytes after shrinking `store`.
     pub(crate) fn alive_bytes_after_shrink(&self, store: &AccountStorageEntry) -> usize {
         // Obsolete accounts are already excluded from `store.alive_bytes()`.
-        // Zero-lamport single-ref accounts are counted as alive until shrink can purge them,
+        // Tombstones are counted as alive until shrink can purge them,
         // which is gated by the latest full snapshot slot.
-        if self.can_purge_zero_lamport_single_ref_after_shrink(store.slot()) {
-            store.alive_bytes_exclude_zero_lamport_single_ref_accounts()
+        if self.can_purge_zero_lamport_accounts(store.slot()) {
+            store.alive_bytes_exclude_zero_lamport_accounts()
         } else {
             store.alive_bytes()
         }
@@ -5133,7 +5131,7 @@ impl AccountsDb {
                     self.dirty_stores.insert(slot, store);
                     dead_slots.insert(slot);
                 } else if remaining_accounts == store.num_tombstones()
-                    && self.can_purge_zero_lamport_single_ref_after_shrink(slot)
+                    && self.can_purge_zero_lamport_accounts(slot)
                 {
                     // Every remaining account is a tombstone and the slot is older than
                     // the latest full snapshot slot, safe to remove

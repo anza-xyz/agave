@@ -175,11 +175,12 @@ impl AccountStorageEntry {
         num_tombstones > 0 && self.count() == num_tombstones
     }
 
-    /// Return the "alive_bytes" minus "zero_lamport_single_ref_accounts bytes".
-    pub(crate) fn alive_bytes_exclude_zero_lamport_single_ref_accounts(&self) -> usize {
+    /// Return the "alive_bytes" minus the bytes of this storage's tombstones
+    /// (zero-lamport accounts already purged from the index).
+    pub(crate) fn alive_bytes_exclude_zero_lamport_accounts(&self) -> usize {
         let zero_lamport_dead_bytes = self
             .accounts
-            .dead_bytes_due_to_zero_lamport_single_ref(self.num_tombstones());
+            .dead_bytes_due_to_zero_lamport_accounts(self.num_tombstones());
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 

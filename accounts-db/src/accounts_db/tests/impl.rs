@@ -4261,9 +4261,9 @@ fn test_alive_bytes() {
         .expect("must scan accounts storage");
 }
 
-// Test alive_bytes_exclude_zero_lamport_single_ref_accounts calculation
+// Test alive_bytes_exclude_zero_lamport_accounts calculation
 #[test]
-fn test_alive_bytes_exclude_zero_lamport_single_ref_accounts() {
+fn test_alive_bytes_exclude_zero_lamport_accounts() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot: Slot = 0;
     let num_keys = 10;
@@ -4294,11 +4294,8 @@ fn test_alive_bytes_exclude_zero_lamport_single_ref_accounts() {
     // assert the number of tombstones
     assert_eq!(storage.num_tombstones(), num_keys);
 
-    // assert the "alive_bytes_exclude_zero_lamport_single_ref_accounts"
-    assert_eq!(
-        storage.alive_bytes_exclude_zero_lamport_single_ref_accounts(),
-        0,
-    );
+    // assert the "alive_bytes_exclude_zero_lamport_accounts"
+    assert_eq!(storage.alive_bytes_exclude_zero_lamport_accounts(), 0,);
 }
 
 /// When the full snapshot advances past slots that still hold zero-lamport single-ref
