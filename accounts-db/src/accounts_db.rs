@@ -66,7 +66,7 @@ use {
     agave_fs::buffered_reader::RequiredLenBufFileRead,
     ahash::HashMapExt,
     bv::BitVec,
-    dashmap::{DashMap, DashSet},
+    dashmap::DashMap,
     log::*,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -810,7 +810,6 @@ struct CleanKeyTimings {
     collect_delta_keys_us: u64,
     delta_insert_us: u64,
     dirty_store_processing_us: u64,
-    delta_key_count: u64,
     dirty_pubkeys_count: u64,
     oldest_dirty_slot: Slot,
     zero_lamport_single_ref_slots_added_to_shrink_count: u64,
@@ -935,10 +934,6 @@ pub struct AccountsDb {
     /// such that potentially a 0-lamport account update could be present which
     /// means we can remove the account from the index entirely.
     dirty_stores: DashMap<Slot, Arc<AccountStorageEntry>, BuildNoHashHasher<Slot>>,
-
-    /// Zero-lamport accounts that are *not* purged during clean because they need to stay alive
-    /// for incremental snapshot support.
-    zero_lamport_accounts_to_purge_after_full_snapshot: DashSet<(Slot, Pubkey)>,
 
     /// Set by `set_latest_full_snapshot_slot` when the snapshot advances. Read and cleared by
     /// clean
@@ -1132,7 +1127,6 @@ impl AccountsDb {
             load_limit: AtomicU64::default(),
             is_bank_drop_callback_enabled: AtomicBool::default(),
             dirty_stores: DashMap::default(),
-            zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
             accounts_file_provider: accounts_db_config.accounts_file_provider,
             latest_full_snapshot_slot: SeqLock::new(None),
@@ -1522,36 +1516,14 @@ impl AccountsDb {
         collect_delta_keys.stop();
         timings.collect_delta_keys_us += collect_delta_keys.as_us();
 
-        timings.delta_key_count = Self::count_pubkeys(&candidates);
-
-        debug_assert!(
-            self.latest_full_snapshot_slot().is_some()
-                || self
-                    .zero_lamport_accounts_to_purge_after_full_snapshot
-                    .is_empty(),
-            "if snapshots are disabled, then zero_lamport_accounts_to_purge_later should always \
-             be empty"
-        );
-
         // Cleaning up zero lamport accounts is gated by a full snapshot because they need to be
-        // retained for incremental snapshots. Once a full snapshot occurs, drain the list and
-        // search for newly shrinkable storages.
+        // retained for incremental snapshots. Once a full snapshot occurs, sweep the newly-covered
+        // slots for tombstone-only storages to purge and newly shrinkable storages.
         if self
             .latest_full_snapshot_slot_advanced_since_clean
             .swap(false, Ordering::Acquire)
             && let Some(latest_full_snapshot_slot) = self.latest_full_snapshot_slot()
         {
-            self.zero_lamport_accounts_to_purge_after_full_snapshot
-                .retain(|(slot, pubkey)| {
-                    let is_candidate_for_clean = max_clean_root_inclusive
-                        .is_none_or(|max_clean_root_inclusive| max_clean_root_inclusive >= *slot)
-                        && latest_full_snapshot_slot >= *slot;
-                    if is_candidate_for_clean {
-                        insert_candidate(*pubkey);
-                    }
-                    !is_candidate_for_clean
-                });
-
             let last_swept_full_snapshot_slot =
                 self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
             let (added_to_shrink_count, sweep_us) = measure_us!(self.sweep_slots_after_snapshot(
@@ -1891,7 +1863,6 @@ impl AccountsDb {
             ("accounts_scan", accounts_scan.as_us(), i64),
             ("clean_old_rooted", clean_old_rooted.as_us(), i64),
             ("delta_insert_us", key_timings.delta_insert_us, i64),
-            ("delta_key_count", key_timings.delta_key_count, i64),
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
             (
                 "zero_lamport_single_ref_slots_added_to_shrink_count",
