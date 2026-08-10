@@ -1092,16 +1092,23 @@ impl ReplayStage {
                     );
                     let mut process_switch_bank_events_time =
                         Measure::start("process_switch_bank_events_time");
-                    Self::process_switch_bank_events(
-                        &my_pubkey,
-                        &latest_switch_request,
-                        &mut pending_switch,
-                        &blockstore,
-                        &bank_forks,
-                        &mut progress,
-                        &mut async_verification_freelist,
-                    )
-                    .expect("Blockstore operations must succeed");
+                    // BCL inserts its bank before publishing it to PoH, so check both states.
+                    let has_active_leader_bank =
+                        bank_forks.read().unwrap().banks().values().any(|bank| {
+                            !bank.is_frozen() && Self::leader_is_me(bank.leader_id(), &my_pubkey)
+                        }) || poh_shared_leader_state.load().working_bank().is_some();
+                    if !has_active_leader_bank {
+                        Self::process_switch_bank_events(
+                            &my_pubkey,
+                            &latest_switch_request,
+                            &mut pending_switch,
+                            &blockstore,
+                            &bank_forks,
+                            &mut progress,
+                            &mut async_verification_freelist,
+                        )
+                        .expect("Blockstore operations must succeed");
+                    }
                     process_switch_bank_events_time.stop();
                     replay_timing.process_switch_bank_events_elapsed_us +=
                         process_switch_bank_events_time.as_us();
