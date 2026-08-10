@@ -2398,11 +2398,21 @@ fn test_mark_slot_dead_if_not_full() {
     blockstore.insert_shreds(shreds, false).unwrap();
     assert!(blockstore.meta(full_slot).unwrap().unwrap().is_full());
 
+    let alternate_slot = 15;
+    let alternate_location = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+
     let mut shred_insertion_tracker = ShredInsertionTracker::new(1, blockstore.db.batch().unwrap());
 
     blockstore.mark_slot_dead_if_not_full(empty_slot, location, &mut shred_insertion_tracker);
     blockstore.mark_slot_dead_if_not_full(partial_slot, location, &mut shred_insertion_tracker);
     blockstore.mark_slot_dead_if_not_full(full_slot, location, &mut shred_insertion_tracker);
+    blockstore.mark_slot_dead_if_not_full(
+        alternate_slot,
+        alternate_location,
+        &mut shred_insertion_tracker,
+    );
     // Commit the write batch so state changes can be read back
     blockstore
         .write_batch(shred_insertion_tracker.write_batch)
@@ -2410,6 +2420,7 @@ fn test_mark_slot_dead_if_not_full() {
     assert!(blockstore.is_dead(empty_slot));
     assert!(blockstore.is_dead(partial_slot));
     assert!(!blockstore.is_dead(full_slot));
+    assert!(!blockstore.is_dead(alternate_slot));
 }
 
 #[test]

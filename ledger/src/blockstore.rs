@@ -1603,13 +1603,16 @@ impl Blockstore {
         self.perf_samples_cf.submit_rocksdb_cf_metrics();
     }
 
-    /// If the block is not full, mark the slot as dead
+    /// If the original block is not full, mark the slot as dead
     fn mark_slot_dead_if_not_full(
         &self,
         slot: Slot,
         location: BlockLocation,
         shred_insertion_tracker: &mut ShredInsertionTracker,
     ) {
+        if !matches!(location, BlockLocation::Original) {
+            return;
+        }
         let mark_slot_dead = shred_insertion_tracker
             .slot_meta_working_set
             .get(&(location, slot))
