@@ -1244,7 +1244,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         std::mem::take(&mut duplicates.duplicates_from_in_memory_only)
     }
 
-    /// Decide whether this bin needs flushing/eviction. Returns true if the caller should proceed.
+    /// Returns true when the bin's occupancy has crossed its configured thresholds and
+    /// the caller should reduce it.
     ///
     /// Fires on either of two conditions:
     /// - Free-entry headroom is below the configured overhead. Tombstones left by prior evictions
@@ -1255,7 +1256,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     ///   would not fire on its own.
     ///
     /// Returns false for bins still in initial growth (capacity below `high_water_mark`).
-    fn check_flush_trigger(&self) -> bool {
+    fn exceeds_thresholds(&self) -> bool {
         let (entries_in_bin, capacity) = {
             let map = self.map_internal.read().unwrap();
             (map.len(), map.capacity())
@@ -1320,7 +1321,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // from this point forward, we know iterate_for_age == true
         debug_assert!(iterate_for_age);
 
-        if !self.check_flush_trigger() {
+        if !self.exceeds_thresholds() {
             // Still mark as aged to avoid infinite scanning
             assert_eq!(current_age, self.storage.current_age());
             self.set_has_aged(current_age, can_advance_age);
@@ -1365,7 +1366,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// the hashmap to double in capacity.
     ///
     /// Only called in Threshold mode, where `capacity >= target_entries` is guaranteed
-    /// by the time eviction runs (`check_flush_trigger` gates on `high_water_mark`).
+    /// by the time eviction runs (`exceeds_thresholds` gates on `high_water_mark`).
     fn reallocate_to_clear_tombstones(&self) {
         let stats = self.stats();
         let m = Measure::start("reallocate_hashmap");
@@ -2661,10 +2662,10 @@ mod tests {
     }
 
     /// While the bin's hashmap is still in initial growth (capacity below `high_water_mark`),
-    /// the growth gate short-circuits check_flush_trigger to false even when the
+    /// the growth gate short-circuits exceeds_thresholds to false even when the
     /// low-free-entries check would otherwise fire.
     #[test]
-    fn test_check_flush_trigger_below_hwm_gate() {
+    fn test_exceeds_thresholds_below_hwm_gate() {
         // 56 entries fill hashbrown's raw=64 table exactly: capacity=56 (below HWM=100)
         // and free_entries=0 (below overhead=1, so low_free_entries would fire).
         let hwm = 100;
@@ -2693,15 +2694,15 @@ mod tests {
                 .should_evict_based_on_free_entries(free_entries)
         );
 
-        // But with the gate, check_flush_trigger returns false
-        assert!(!index.check_flush_trigger());
+        // But with the gate, exceeds_thresholds returns false
+        assert!(!index.exceeds_thresholds());
     }
 
-    /// Once capacity has cleared the low-water mark, check_flush_trigger must still return
+    /// Once capacity has cleared the low-water mark, exceeds_thresholds must still return
     /// false when the entry count is below the high-water mark and free-entry headroom exceeds
     /// the configured overhead.
     #[test]
-    fn test_check_flush_trigger_below_thresholds() {
+    fn test_exceeds_thresholds_below_thresholds() {
         // 60 entries push capacity to 112 (above LWM=50), len stays below HWM=100,
         // and free_entries (52) far exceeds overhead (1) — both conditions report false.
         let hwm = 100;
@@ -2718,13 +2719,13 @@ mod tests {
         }
         assert!(index.map_internal.read().unwrap().capacity() > lwm);
 
-        assert!(!index.check_flush_trigger());
+        assert!(!index.exceeds_thresholds());
     }
 
-    /// When the entry count crosses the high-water mark, check_flush_trigger returns true
+    /// When the entry count crosses the high-water mark, exceeds_thresholds returns true
     /// and the count-based trigger stat is incremented.
     #[test]
-    fn test_check_flush_trigger_high_count() {
+    fn test_exceeds_thresholds_high_count() {
         let hwm = 2;
         let lwm = 1;
         // high_water_mark=2: inserting 4 entries puts the bin past the count threshold.
@@ -2739,7 +2740,7 @@ mod tests {
             index.map_internal.write().unwrap().insert(pubkey, entry);
         }
 
-        assert!(index.check_flush_trigger());
+        assert!(index.exceeds_thresholds());
     }
 
     /// reallocate_to_clear_tombstones must rebuild the bin's hashmap so that all
