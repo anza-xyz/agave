@@ -1165,6 +1165,8 @@ impl Validator {
 
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        // Updated by Votor and shared with RPC health and block creation.
+        let highest_finalized = Arc::new(RwLock::new(None));
 
         let max_slots = Arc::new(MaxSlots::default());
 
@@ -1266,6 +1268,7 @@ impl Validator {
                 exit: exit.clone(),
                 override_health_check: rpc_override_health_check.clone(),
                 optimistically_confirmed_bank: optimistically_confirmed_bank.clone(),
+                highest_finalized: highest_finalized.clone(),
                 send_transaction_service_config: config.send_transaction_service_config.clone(),
                 max_slots: max_slots.clone(),
                 leader_schedule_cache: leader_schedule_cache.clone(),
@@ -1516,8 +1519,6 @@ impl Validator {
 
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let highest_parent_ready = Arc::new(RwLock::default());
-        // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
-        let highest_finalized = Arc::new(RwLock::new(None));
         // This channel growing > ~1 indicates problems, so bound channel at a
         // small (but highly overprovisioned) number for performance and easier
         // debug if things go off the rails.

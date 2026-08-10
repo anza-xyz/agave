@@ -500,6 +500,7 @@ impl JsonRpcRequestProcessor {
         let slot = bank.slot();
         let optimistically_confirmed_bank =
             Arc::new(RwLock::new(OptimisticallyConfirmedBank { bank }));
+        let migration_status = bank_forks.read().unwrap().migration_status();
         Self {
             config,
             snapshot_config: None,
@@ -514,6 +515,8 @@ impl JsonRpcRequestProcessor {
             health: Arc::new(RpcHealth::new(
                 Arc::clone(&optimistically_confirmed_bank),
                 blockstore,
+                Arc::default(),
+                migration_status,
                 0,
                 exit,
             )),
