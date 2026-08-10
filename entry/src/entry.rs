@@ -125,7 +125,7 @@ pub enum EntryType<Tx: TransactionWithMeta> {
     Tick(Hash),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 struct TxVerificationData {
     is_simple_vote: bool,
     signatures: SmallVec<[Signature; 2]>,
