@@ -194,3 +194,7 @@ lto = "thin"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+[patch.crates-io]
+librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3" }
+rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3" }
