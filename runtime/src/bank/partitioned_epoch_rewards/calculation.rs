@@ -1838,7 +1838,7 @@ mod tests {
                     &solana_vote_program::id(),
                 );
                 account
-                    .serialize_data(&VoteStateVersions::new_v4(vote_state))
+                    .set_state(&VoteStateVersions::new_v4(vote_state))
                     .unwrap();
                 bank.store_account(vote_address, &account);
             }
@@ -1854,9 +1854,7 @@ mod tests {
 
             let modify_vote_state = |modify_fn: &dyn Fn(&mut VoteStateV4)| {
                 let mut vote_account = bank.get_account(vote_address).unwrap();
-                let vote_state_versions = vote_account
-                    .deserialize_data::<VoteStateVersions>()
-                    .unwrap();
+                let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
                 let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
                     panic!("unexpected version");
                 };
@@ -1864,7 +1862,7 @@ mod tests {
                 modify_fn(&mut vote_state);
 
                 vote_account
-                    .serialize_data(&VoteStateVersions::V4(vote_state))
+                    .set_state(&VoteStateVersions::V4(vote_state))
                     .unwrap();
                 bank.store_account(vote_address, &vote_account);
             };
@@ -2727,10 +2725,8 @@ mod tests {
         assert_eq!(bank.epoch(), 1);
 
         let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
-        let VoteStateVersions::V4(mut vote_state) = vote_account
-            .deserialize_data::<VoteStateVersions>()
-            .unwrap()
-        else {
+        let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
+        let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
             panic!("unexpected vote state version");
         };
         let last_credits = vote_state
@@ -2742,7 +2738,7 @@ mod tests {
             .epoch_credits
             .push((bank.epoch(), last_credits + 1_000_000, last_credits));
         vote_account
-            .serialize_data(&VoteStateVersions::V4(vote_state))
+            .set_state(&VoteStateVersions::V4(vote_state))
             .unwrap();
         bank.store_account(&vote_pubkey, &vote_account);
 
@@ -2830,10 +2826,8 @@ mod tests {
 
         let vote_pubkey = validator_keypairs[0].vote_keypair.pubkey();
         let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
-        let VoteStateVersions::V4(mut vote_state) = vote_account
-            .deserialize_data::<VoteStateVersions>()
-            .unwrap()
-        else {
+        let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
+        let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
             panic!("unexpected vote state version");
         };
         let last_credits = vote_state
@@ -2845,7 +2839,7 @@ mod tests {
             .epoch_credits
             .push((bank.epoch(), last_credits + recorded_payout, last_credits));
         vote_account
-            .serialize_data(&VoteStateVersions::V4(vote_state))
+            .set_state(&VoteStateVersions::V4(vote_state))
             .unwrap();
         bank.store_account(&vote_pubkey, &vote_account);
 
@@ -4275,7 +4269,7 @@ mod tests {
                 &solana_vote_program::id(),
             );
             account
-                .serialize_data(&VoteStateVersions::new_v4(vote_state))
+                .set_state(&VoteStateVersions::new_v4(vote_state))
                 .unwrap();
             VoteAccount::try_from(account).unwrap()
         };

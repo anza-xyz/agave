@@ -97,7 +97,7 @@ shaq = { workspace = true }
 signal-hook = { workspace = true }
 slab = { workspace = true }
 smallvec = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bincode = { workspace = true }
@@ -198,7 +198,7 @@ bencher = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
 serial_test = { workspace = true }
-solana-account = { workspace = true, features = ["wincode"] }
+solana-account = { workspace = true, features = ["bincode", "wincode"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api", "svm-internal"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-compute-budget = { workspace = true }

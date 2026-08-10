@@ -44,7 +44,7 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
-    solana_account::ReadableAccount,
+    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -2079,10 +2079,7 @@ pub fn should_require_vote_history_file(
         return false;
     };
 
-    let Some(Ok(vote_state)) = bank
-        .get_account(vote_account)
-        .map(|acct| acct.deserialize_data())
-    else {
+    let Some(Ok(vote_state)) = bank.get_account(vote_account).map(|acct| acct.state()) else {
         // Must have a vote account
         return false;
     };
@@ -3218,7 +3215,7 @@ mod tests {
     fn test_should_require_vote_history_file() {
         use {
             agave_votor_messages::consensus_message::Block,
-            solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
+            solana_account::AccountSharedData,
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };
 

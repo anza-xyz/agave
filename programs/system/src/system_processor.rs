@@ -578,7 +578,10 @@ mod tests {
     };
     #[allow(deprecated)]
     use {
-        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        solana_account::{
+            Account, AccountSharedData, ReadableAccount, WritableAccount,
+            state_traits::StateMutWincode as _,
+        },
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction, error::InstructionError},
@@ -1975,10 +1978,8 @@ mod tests {
             &system_program::id(), // owner
         )
         .unwrap();
-        assert_eq!(
-            nonce_account.deserialize_data::<NonceVersions>().unwrap(),
-            versions
-        );
+        let stored: NonceVersions = nonce_account.state().unwrap();
+        assert_eq!(stored, versions);
         nonce_account
     }
 
@@ -2056,10 +2057,8 @@ mod tests {
         };
         let upgraded_nonce_account =
             NonceVersions::Current(Box::new(NonceState::Initialized(data)));
-        assert_eq!(
-            nonce_account.deserialize_data::<NonceVersions>().unwrap(),
-            upgraded_nonce_account
-        );
+        let stored: NonceVersions = nonce_account.state().unwrap();
+        assert_eq!(stored, upgraded_nonce_account);
         let accounts = process_instruction(
             &serialize(&SystemInstruction::UpgradeNonceAccount).unwrap(),
             vec![(nonce_address, nonce_account)],
@@ -2071,10 +2070,8 @@ mod tests {
             Err(InstructionError::InvalidArgument),
         );
         assert_eq!(accounts.len(), 1);
-        assert_eq!(
-            accounts[0].deserialize_data::<NonceVersions>().unwrap(),
-            upgraded_nonce_account
-        );
+        let stored: NonceVersions = accounts[0].state().unwrap();
+        assert_eq!(stored, upgraded_nonce_account);
     }
 
     #[test]
