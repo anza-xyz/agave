@@ -361,10 +361,8 @@ pub struct ShrinkStats {
     pub index_read_elapsed: AtomicU64,
     pub create_and_insert_store_elapsed: AtomicU64,
     pub write_accounts_us: AtomicU64,
-    pub mark_zero_lamport_single_ref_accounts_us: AtomicU64,
     pub update_index_us: AtomicU64,
     pub num_accounts_stored: AtomicU64,
-    pub num_zero_lamport_single_ref_accounts_marked: AtomicU64,
     pub remove_old_stores_shrink_us: AtomicU64,
     pub rewrite_elapsed: AtomicU64,
     pub tombstone_carry_forward_us: AtomicU64,
@@ -479,12 +477,6 @@ impl ShrinkStats {
                     i64
                 ),
                 (
-                    "mark_zero_lamport_single_ref_accounts_us",
-                    self.mark_zero_lamport_single_ref_accounts_us
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
                     "update_index_us",
                     self.update_index_us.swap(0, Ordering::Relaxed),
                     i64
@@ -492,12 +484,6 @@ impl ShrinkStats {
                 (
                     "num_accounts_stored",
                     self.num_accounts_stored.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_zero_lamport_single_ref_accounts_marked",
-                    self.num_zero_lamport_single_ref_accounts_marked
-                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -660,13 +646,6 @@ impl ShrinkAncientStats {
                 i64
             ),
             (
-                "mark_zero_lamport_single_ref_accounts_us",
-                self.shrink_stats
-                    .mark_zero_lamport_single_ref_accounts_us
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
                 "update_index_us",
                 self.shrink_stats.update_index_us.swap(0, Ordering::Relaxed),
                 i64
@@ -675,13 +654,6 @@ impl ShrinkAncientStats {
                 "num_accounts_stored",
                 self.shrink_stats
                     .num_accounts_stored
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_zero_lamport_single_ref_accounts_marked",
-                self.shrink_stats
-                    .num_zero_lamport_single_ref_accounts_marked
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
