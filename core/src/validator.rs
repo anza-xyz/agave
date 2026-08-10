@@ -346,8 +346,9 @@ pub struct ValidatorConfig {
     pub repair_validators: Option<HashSet<Pubkey>>, // None = repair from all
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
     /// Peers plugged into the votor peer_list regardless of stake, admitting their
-    /// inbound connections and pushing consensus messages to them. Set by
-    /// `--votor-peer-overrides`.
+    /// inbound connections and (while this node is staked) pushing consensus
+    /// messages to them. Staked peers are admitted unconditionally, so this is
+    /// only needed for peers that hold no stake. Set by `--votor-peer-overrides`.
     /// `None` resolves the address from gossip, `Some` pins it.
     pub votor_peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all

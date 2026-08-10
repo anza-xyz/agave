@@ -549,11 +549,10 @@ pub fn run_cluster_partition<C>(
     // alpenglow port override to SocketAddr which no one is listening on.
     let blackhole_socket = bind_to_localhost_unique().unwrap();
     let blackhole_addr: SocketAddr = blackhole_socket.local_addr().unwrap();
-    let new_override = HashMap::from_iter(
-        cluster_nodes
-            .iter()
-            .map(|node| (*node.pubkey(), Some(blackhole_addr))),
-    );
+    let new_override: HashMap<_, _> = cluster_nodes
+        .iter()
+        .map(|node| (*node.pubkey(), Some(blackhole_addr)))
+        .collect();
     alpenglow_port_override.store(Arc::new(new_override));
     sleep(partition_duration);
 

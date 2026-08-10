@@ -68,8 +68,9 @@ impl QuicDatagramEndpoint {
     /// own port.
     /// Received datagrams flow into `inbound_datagrams`, per-peer receive rate is
     /// capped by `max_datagrams_per_second_per_peer`.
-    /// `peer_list` carries desired peer set: inbound closes connections to
-    /// peers no longer in the set, outbound connects to peers in it.
+    /// `peer_list` carries the desired peer set: inbound admits those peers and
+    /// closes connections to peers no longer in the set, outbound connects to
+    /// peers in it as long as the peer_list enables pushing.
     /// `cancel` controls when the endpoint should terminate.
     pub fn spawn(
         runtime: &Handle,
@@ -387,7 +388,7 @@ pub fn stub_ban_channel_for_tests(capacity: usize) -> (BanSender, mpsc::Receiver
 mod tests {
     use {
         super::{BanSender, Datagram, QuicDatagramEndpoint},
-        crate::{METRICS_INTERVAL, PeerListSender, transport::MAX_IDLE_TIMEOUT},
+        crate::{METRICS_INTERVAL, PeerList, PeerListSender, transport::MAX_IDLE_TIMEOUT},
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
         solana_keypair::{Keypair, Signer},
@@ -450,8 +451,19 @@ mod tests {
         }
 
         fn set_peer_list(&self, map: HashMap<Pubkey, Option<SocketAddr>>) {
+            self.set_peer_list_with_push(map, true);
+        }
+
+        fn set_peer_list_with_push(
+            &self,
+            peers: HashMap<Pubkey, Option<SocketAddr>>,
+            push_enabled: bool,
+        ) {
             self.peer_list_sender
-                .send(Arc::new(map))
+                .send(Arc::new(PeerList {
+                    peers,
+                    push_enabled,
+                }))
                 .expect("peer_list receiver alive");
         }
 
@@ -482,7 +494,10 @@ mod tests {
             // Ingress channel size mirrors prod (`solana_core::tvu`):
             // `MAX_ALPENGLOW_PACKET_NUM`.
             let (ingress_sender, ingress_receiver) = bounded(INGRESS_CAP);
-            let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(peer_list));
+            let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(PeerList {
+                peers: peer_list,
+                push_enabled: true,
+            }));
             let (egress, endpoint) = QuicDatagramEndpoint::spawn(
                 rt.handle(),
                 &keypair,
@@ -668,6 +683,60 @@ mod tests {
                 > 0,
             "unadmitted peer B's handshake should have been rejected (unauthorized)"
         );
+    }
+
+    #[test]
+    fn test_unstaked_client_push_flag_gates_outbound_connections() {
+        let rt = make_runtime_for_tests();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+        let server = Node::spawn_node(
+            &rt,
+            Keypair::new(),
+            peer_list_with_unknown_addr(client_pubkey),
+            HIGH_PPS,
+        );
+        let client = Node::spawn_node(&rt, client_keypair, HashMap::new(), HIGH_PPS);
+        let peers = peer_list_of(server.pubkey(), server.addr);
+
+        client.set_peer_list_with_push(peers.clone(), false);
+        let while_disabled = Bytes::from_static(b"push-disabled");
+        assert_not_delivered(&client, &while_disabled, &server.ingress_receiver, 20);
+
+        // Same peer set, pushing enabled: the client now connects.
+        client.set_peer_list(peers.clone());
+        let while_enabled = Bytes::from_static(b"push-enabled");
+        send_until_received(&client, &while_enabled, &server.ingress_receiver, |d| {
+            (d.message == while_enabled).then_some(())
+        })
+        .expect("server never received a datagram once pushing was enabled");
+        drain_backlog(&server.ingress_receiver);
+
+        // Disabling it again tears the connection down.
+        client.set_peer_list_with_push(peers, false);
+        let after_disable = Bytes::from_static(b"push-disabled-again");
+        assert_not_delivered(&client, &after_disable, &server.ingress_receiver, 20);
+    }
+
+    #[test]
+    fn test_unstaked_server_admits_inbound_while_push_disabled() {
+        let rt = make_runtime_for_tests();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+        let server = Node::spawn_node(&rt, Keypair::new(), HashMap::new(), HIGH_PPS);
+        server.set_peer_list_with_push(peer_list_with_unknown_addr(client_pubkey), false);
+        let client = Node::spawn_node(
+            &rt,
+            client_keypair,
+            peer_list_of(server.pubkey(), server.addr),
+            HIGH_PPS,
+        );
+
+        let payload = Bytes::from_static(b"inbound-while-push-disabled");
+        send_until_received(&client, &payload, &server.ingress_receiver, |d| {
+            (d.peer_pubkey == client_pubkey && d.message == payload).then_some(())
+        })
+        .expect("a non-pushing server must still admit its peers' datagrams");
     }
 
     /// Banning a peer closes its connections and blocks subsequent ones.

@@ -466,7 +466,7 @@ impl InboundLoop {
         let peer_list = peer_list_receiver.borrow().clone();
         let mut closed_not_in_peer_list = 0u64;
         for (peer, entry) in peer_state.iter() {
-            if entry.connections.is_empty() || peer_list.contains_key(peer) {
+            if entry.connections.is_empty() || peer_list.peers.contains_key(peer) {
                 continue;
             }
             let closed = entry
@@ -541,7 +541,7 @@ impl InboundLoop {
             return;
         }
 
-        if !self.peer_list_receiver.borrow().contains_key(&peer) {
+        if !self.peer_list_receiver.borrow().peers.contains_key(&peer) {
             debug!("Not admitted peer {peer} attempted a connection from {remote_addr}, rejected");
             close_codes::NOT_ADMITTED.close(&connection);
             record_server_error(&Error::NotAdmitted(peer), &self.stats);

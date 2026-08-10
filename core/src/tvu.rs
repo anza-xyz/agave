@@ -43,7 +43,7 @@ use {
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
-    agave_votor_transport::endpoint::QuicDatagramEndpoint,
+    agave_votor_transport::{PeerList, endpoint::QuicDatagramEndpoint},
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
@@ -318,7 +318,10 @@ impl Tvu {
         // PeerListService populates the votor_peer_list channel immediately on startup,
         // so we can initialize the watch channel with a dummy value here.
         let (votor_peer_list_sender, votor_peer_list_receiver) =
-            watch::channel(Arc::new(HashMap::new()));
+            watch::channel(Arc::new(PeerList {
+                peers: HashMap::new(),
+                push_enabled: false,
+            }));
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let peer_list_service = PeerListService::new(
             cluster_info.clone(),

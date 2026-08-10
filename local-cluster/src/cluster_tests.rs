@@ -10,7 +10,10 @@ use {
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
     },
-    agave_votor_transport::endpoint::{Datagram, QuicDatagramEndpoint},
+    agave_votor_transport::{
+        PeerList,
+        endpoint::{Datagram, QuicDatagramEndpoint},
+    },
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -634,13 +637,16 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         .build()
         .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
-    // Admit every peer from `admitted_peers`. The None address keeps the listener's
-    // outbound loop from connecting to them. Leak the sender so the channel stays open.
-    let peer_list = admitted_peers
+    // Admit every peer from `admitted_peers`. Pushing is off, so the listener's
+    // outbound loop never connects to them.
+    let peers = admitted_peers
         .iter()
         .map(|pubkey| (*pubkey, None))
         .collect::<HashMap<_, _>>();
-    let (peer_list_sender, peer_list_receiver) = tokio::sync::watch::channel(Arc::new(peer_list));
+    let (peer_list_sender, peer_list_receiver) = tokio::sync::watch::channel(Arc::new(PeerList {
+        peers,
+        push_enabled: false,
+    }));
     // We want the sender to stay alive so the endpoint does not exit prematurely.
     Box::leak(Box::new(peer_list_sender));
     let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");

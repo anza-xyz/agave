@@ -15,12 +15,16 @@ use {
     tokio::sync::watch,
 };
 
-/// Snapshot of desired peers list. Peers we want to admit but cannot yet
-/// resolve to an address via gossip map to `None`.
-///
-/// Inbound admission uses membership only (the address is ignored).
+pub struct PeerList {
+    /// Peers with whom we are interested in communicating. Inbound admission
+    /// uses membership only, the address is only needed to push.
+    pub peers: HashMap<Pubkey, Option<SocketAddr>>,
+    /// Whether we open outbound connections.
+    pub push_enabled: bool,
+}
+
 /// Readers can clone the Arc and release the watch lock immediately.
-type PeerListSnapshot = Arc<HashMap<Pubkey, Option<SocketAddr>>>;
+type PeerListSnapshot = Arc<PeerList>;
 
 pub type PeerListSender = watch::Sender<PeerListSnapshot>;
 

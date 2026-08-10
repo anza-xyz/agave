@@ -1,7 +1,7 @@
 use {
     agave_bls_sigverify::bls_sigverifier::NUM_SLOTS_FOR_VERIFY,
     agave_votor_messages::reward_certificate::NUM_SLOTS_FOR_REWARD,
-    agave_votor_transport::PeerListSender,
+    agave_votor_transport::{PeerList, PeerListSender},
     arc_swap::ArcSwap,
     crossbeam_channel::{RecvTimeoutError, Sender, bounded},
     solana_gossip::cluster_info::ClusterInfo,
@@ -66,6 +66,10 @@ impl PeerListUpdater {
     ///
     /// Each peer's votor socket is resolved from gossip, unless an override pins it.
     /// Peers that have no address yet are added with `None`.
+    ///
+    /// Pushing is enabled only while this node is itself in the staked set: an
+    /// unstaked node still admits the set so it can follow consensus, but staked
+    /// peers would not admit it, so it must not dial out.
     pub fn refresh_peer_list(&self, cluster_info: &ClusterInfo, my_identity: &Pubkey) {
         let root = self.sharable_banks.root();
         let epoch_schedule = root.epoch_schedule();
@@ -98,31 +102,24 @@ impl PeerListUpdater {
             peers.extend(next.keys());
         }
 
+        let push_enabled = peers.contains(my_identity);
         let overrides = self.peer_overrides.load();
-
-        // Do not join the votor all2all mesh if this node is not marked as staked.
-        if !peers.contains(my_identity) {
-            peers.clear();
-            // An unstaked node without overrides has nobody to talk to.
-            if overrides.is_empty() {
-                // Empty peer_list means the transport neither connects nor admits peers.
-                self.peer_list_sender.send_replace(Arc::new(HashMap::new()));
-                return;
-            }
-        }
-
-        let peers = peers.iter().chain(overrides.keys());
-        let mut new_peer_list: HashMap<_, _> = cluster_info
-            .query_contact_infos(peers, |node| node.alpenglow())
+        let mut new_peers: HashMap<_, _> = cluster_info
+            .query_contact_infos(peers.iter().chain(overrides.keys()), |node| {
+                node.alpenglow()
+            })
             .into_iter()
             .map(|(pubkey, socket)| (pubkey, socket.flatten()))
             .collect();
         // An override that pins an address wins over whatever gossip resolved to.
         for (pubkey, socket) in overrides.iter().filter(|(_, socket)| socket.is_some()) {
-            new_peer_list.insert(*pubkey, *socket);
+            new_peers.insert(*pubkey, *socket);
         }
         // Publish the latest version - this neither blocks nor fails.
-        self.peer_list_sender.send_replace(Arc::new(new_peer_list));
+        self.peer_list_sender.send_replace(Arc::new(PeerList {
+            peers: new_peers,
+            push_enabled,
+        }));
     }
 }
 
@@ -333,12 +330,22 @@ mod tests {
         )
     }
 
-    /// An unstaked node publishes an empty peer_list, so the transport is idle.
+    /// A channel seeded the way `tvu` does it, before the first refresh lands.
+    fn empty_peer_list_channel() -> (PeerListSender, watch::Receiver<Arc<PeerList>>) {
+        watch::channel(Arc::new(PeerList {
+            peers: HashMap::new(),
+            push_enabled: false,
+        }))
+    }
+
+    /// An unstaked node admits the whole staked set but keeps its client off.
     #[test]
-    fn test_unstaked_peer_list_remains_empty() {
+    fn test_unstaked_node_admits_staked_set_without_pushing() {
         let slot_num = 12345000;
+        let num_nodes = 10;
         // A fully-staked set, none of whose identities is the local node below.
-        let (bank_forks, _, _) = create_bank_forks_and_cluster_info(10, 0, slot_num);
+        let (bank_forks, _, node_pubkeys) =
+            create_bank_forks_and_cluster_info(num_nodes, 0, slot_num);
 
         // Identity that is not staked.
         let unstaked_kp = Keypair::new();
@@ -348,10 +355,7 @@ mod tests {
             SocketAddrSpace::Unspecified,
         );
 
-        let (sender, receiver) = watch::channel(Arc::new(HashMap::from([(
-            Pubkey::new_unique(),
-            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8000)),
-        )])));
+        let (sender, receiver) = empty_peer_list_channel();
         let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             sender,
@@ -360,9 +364,15 @@ mod tests {
 
         svc.refresh_peer_list(&cluster_info, &cluster_info.id());
 
+        let snapshot = receiver.borrow().clone();
+        assert_eq!(
+            snapshot.peers.keys().copied().collect::<HashSet<_>>(),
+            node_pubkeys.iter().copied().collect::<HashSet<_>>(),
+            "an unstaked node admits the entire staked set"
+        );
         assert!(
-            receiver.borrow().is_empty(),
-            "unstaked node must publish an empty peer_list"
+            !snapshot.push_enabled,
+            "an unstaked node must not push anything"
         );
     }
 
@@ -375,7 +385,7 @@ mod tests {
         let (bank_forks, cluster_info, node_pubkeys) =
             create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
 
-        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
         let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
@@ -385,17 +395,21 @@ mod tests {
         let unstaked = node_pubkeys[0];
         svc.refresh_peer_list(&cluster_info, &unstaked);
         assert!(
-            peerlist_receiver.borrow().is_empty(),
-            "unstaked node must publish an empty peer_list"
+            !peerlist_receiver.borrow().push_enabled,
+            "an unstaked identity must not push"
         );
 
-        // After assuming a staked identity: the peer_list should be populated immediately
+        // After assuming a staked identity: pushing is enabled immediately
         let staked = node_pubkeys[num_zero_stake_nodes];
         svc.refresh_peer_list(&cluster_info, &staked);
         let snapshot = peerlist_receiver.borrow().clone();
-        assert_eq!(snapshot.len(), num_nodes - num_zero_stake_nodes);
         assert!(
-            snapshot.values().all(|addr| addr.is_some()),
+            snapshot.push_enabled,
+            "a staked identity joins the mesh right away"
+        );
+        assert_eq!(snapshot.peers.len(), num_nodes - num_zero_stake_nodes);
+        assert!(
+            snapshot.peers.values().all(|addr| addr.is_some()),
             "every staked peer resolves to its gossip socket"
         );
     }
@@ -410,8 +424,8 @@ mod tests {
         ))
     }
 
-    /// The RPC-node side: an unstaked node listing staked identities admits exactly
-    /// those, and does not pull in the staked set.
+    /// The RPC-node side: an unstaked node admits the staked set plus its
+    /// overrides, and still does not push.
     #[test]
     fn test_overrides_admit_peers_on_unstaked_node() {
         let slot_num = 123456789;
@@ -421,29 +435,36 @@ mod tests {
         let (bank_forks, cluster_info, node_pubkeys) =
             create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
 
-        let admitted = HashSet::from([
-            node_pubkeys[num_zero_stake_nodes],
-            node_pubkeys[num_zero_stake_nodes + 1],
-        ]);
-        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        // A zero-stake peer, which only an override can admit.
+        let overridden = node_pubkeys[1];
+        let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
         let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
-            gossip_resolved_overrides(admitted.iter().copied()),
+            gossip_resolved_overrides([overridden]),
         );
 
         let unstaked = node_pubkeys[0];
         svc.refresh_peer_list(&cluster_info, &unstaked);
 
         let snapshot = peerlist_receiver.borrow().clone();
+        let expected: HashSet<_> = node_pubkeys[num_zero_stake_nodes..]
+            .iter()
+            .copied()
+            .chain([overridden])
+            .collect();
         assert_eq!(
-            snapshot.keys().copied().collect::<HashSet<_>>(),
-            admitted,
-            "an unstaked node admits its overrides and nothing else"
+            snapshot.peers.keys().copied().collect::<HashSet<_>>(),
+            expected,
+            "an unstaked node admits the staked set plus its overrides"
         );
         assert!(
-            snapshot.values().all(|addr| addr.is_some()),
-            "overridden peers resolve to their gossip sockets"
+            snapshot.peers.values().all(|addr| addr.is_some()),
+            "every admitted peer resolves to its gossip socket"
+        );
+        assert!(
+            !snapshot.push_enabled,
+            "overrides do not make an unstaked node push"
         );
     }
 
@@ -468,7 +489,7 @@ mod tests {
             cluster_info.id(),
             "redundant_peer must not be self"
         );
-        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
         let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
@@ -479,13 +500,22 @@ mod tests {
 
         let snapshot = peerlist_receiver.borrow().clone();
         assert_eq!(
-            snapshot.len(),
+            snapshot.peers.len(),
             num_nodes - num_zero_stake_nodes + 1,
             "the staked set gains exactly the one unstaked override"
         );
         assert!(
-            snapshot.get(&unstaked_peer).copied().flatten().is_some(),
+            snapshot
+                .peers
+                .get(&unstaked_peer)
+                .copied()
+                .flatten()
+                .is_some(),
             "an unstaked override is admitted and resolves to its gossip socket"
+        );
+        assert!(
+            snapshot.push_enabled,
+            "a staked node pushes to the peers it admits"
         );
     }
 
@@ -496,7 +526,7 @@ mod tests {
             create_bank_forks_and_cluster_info(10, 2, slot_num);
 
         let absent = Pubkey::new_unique();
-        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
         let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
@@ -507,7 +537,7 @@ mod tests {
 
         let snapshot = peerlist_receiver.borrow().clone();
         assert_eq!(
-            snapshot.get(&absent),
+            snapshot.peers.get(&absent),
             Some(&None),
             "an override absent from gossip is desired but has no address yet"
         );
@@ -522,7 +552,7 @@ mod tests {
 
         let staked_peer = node_pubkeys[num_zero_stake_nodes + 1];
         let pinned = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 65001);
-        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
         let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
@@ -536,7 +566,7 @@ mod tests {
 
         let snapshot = peerlist_receiver.borrow().clone();
         assert_eq!(
-            snapshot.get(&staked_peer),
+            snapshot.peers.get(&staked_peer),
             Some(&Some(pinned)),
             "a pinned address replaces the peer's gossip socket"
         );
