@@ -12,7 +12,7 @@ use solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT;
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
-    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
+    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
@@ -24,12 +24,12 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
     },
-    solana_message::{inner_instruction::InnerInstruction, Message},
+    solana_message::{Message, inner_instruction::InnerInstruction},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -37,9 +37,8 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            bootstrap_validator_stake_lamports, create_genesis_config,
+            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
-            GenesisConfigInfo,
         },
         loader_utils::{create_program, load_upgradeable_buffer},
     },
@@ -57,7 +56,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -86,6 +85,7 @@ use {
 };
 #[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 use {
+    solana_clock::Clock,
     solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
     solana_runtime::loader_utils::load_upgradeable_program_and_advance_slot,
     solana_svm::conformance::{
@@ -93,6 +93,7 @@ use {
         setup::sysvar_cache_from_accounts,
         txn::{context::TxnContext, harness::execute_txn},
     },
+    solana_sysvar::SysvarSerialize,
 };
 
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
@@ -233,6 +234,16 @@ fn bank_with_feature_deactivated(
         .unwrap()
         .insert(bank)
         .clone_without_scheduler()
+}
+
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
+fn sysvar_account<T: SysvarSerialize>(sysvar: &T) -> Account {
+    Account {
+        lamports: 1,
+        data: bincode::serialize(sysvar).unwrap(),
+        owner: sysvar::id(),
+        ..Account::default()
+    }
 }
 
 #[cfg(feature = "sbf_rust")]
@@ -767,17 +778,21 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == "Program data: AQID BAUG"));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == "Program data: AQID BAUG")
+        );
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program return: {} CAFE", program_id))
+        );
     }
 }
 
@@ -2482,32 +2497,13 @@ fn test_program_sbf_upgrade() {
             authority_keypair.pubkey(),
             Account::new(0, 0, &system_program::id()),
         ),
-        (
-            rent::id(),
-            Account {
-                lamports: 1,
-                data: bincode::serialize(&Rent::free()).unwrap(),
-                owner: sysvar::id(),
-                executable: false,
-                rent_epoch: 0,
-            },
-        ),
+        (rent::id(), sysvar_account(&Rent::free())),
         (
             clock::id(),
-            Account {
-                lamports: 1,
-                data: bincode::serialize(&solana_clock::Clock {
-                    slot: UPGRADE_SLOT,
-                    epoch_start_timestamp: 0,
-                    epoch: 0,
-                    leader_schedule_epoch: 0,
-                    unix_timestamp: 0,
-                })
-                .unwrap(),
-                owner: sysvar::id(),
-                executable: false,
-                rent_epoch: 0,
-            },
+            sysvar_account(&Clock {
+                slot: UPGRADE_SLOT,
+                ..Clock::default()
+            }),
         ),
         keyed_account_for_bpf_loader_upgradeable_program(),
     ]);
@@ -3924,9 +3920,11 @@ fn test_program_sbf_processed_inner_instruction() {
         &[instruction2, instruction1, instruction0],
         Some(&mint_keypair.pubkey()),
     );
-    assert!(bank_client
-        .send_and_confirm_message(&[&mint_keypair], message)
-        .is_ok());
+    assert!(
+        bank_client
+            .send_and_confirm_message(&[&mint_keypair], message)
+            .is_ok()
+    );
 }
 
 #[test]
