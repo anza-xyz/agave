@@ -155,7 +155,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     assert_eq!(append_vec.accounts_count(), 1);
     assert_eq!(append_vec.count(), 1);
     assert_eq!(result.accounts_data_len, 0);
-    assert_eq!(0, append_vec.num_zero_lamport_single_ref_accounts());
+    assert_eq!(0, append_vec.num_tombstones());
     assert_eq!(
         db.uncleaned_pubkeys.get(&slot0).unwrap().value(),
         &vec![pubkey]
@@ -1412,7 +1412,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         DEFAULT_FILE_SIZE,
         accounts_db.accounts_file_provider,
     ));
-    // store an obsolete account; it should not be marked ZLSR
+    // store an obsolete account; shrink drops it entirely
     append_single_account_with_default_hash(
         &storage1,
         &obsolete_pubkey,
@@ -1420,7 +1420,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         true,
         Some(&accounts_db.accounts_index),
     );
-    // store an obsolete zero lamport account; it should not be marked ZLSR
+    // store an obsolete zero lamport account; shrink drops it rather than tombstoning it
     append_single_account_with_default_hash(
         &storage1,
         &obsolete_zero_lamport_pubkey,
@@ -1436,7 +1436,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         true,
         Some(&accounts_db.accounts_index),
     );
-    // store a zero lamport multi ref account; it should not be marked ZLSR
+    // store a zero lamport multi ref account; multi ref means it stays alive, not tombstoned
     append_single_account_with_default_hash(
         &storage1,
         &zero_lamport_multi_ref_pubkey,
@@ -1444,7 +1444,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         true,
         Some(&accounts_db.accounts_index),
     );
-    // store an alive account; it should not be marked ZLSR
+    // store an alive account; it stays alive
     append_single_account_with_default_hash(
         &storage1,
         &alive_pubkey,
@@ -1456,7 +1456,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
     accounts_db.add_root(slot1);
 
     // we manually created the storage, so nothing got marked
-    assert_eq!(storage1.num_zero_lamport_single_ref_accounts(), 0);
+    assert_eq!(storage1.num_tombstones(), 0);
 
     // store the multi ref account again, in slot 2, so it becomes multi ref
     let slot2 = slot1 + 1;
@@ -1465,7 +1465,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         [(&zero_lamport_multi_ref_pubkey, &closed_account)].as_slice(),
     ));
     accounts_db.add_root(slot2);
-    // flush without clean so the ZLMR account isn't marked obsolete in slot 1
+    // flush without clean so the multi reference account isn't marked obsolete in slot 1
     accounts_db.flush_rooted_accounts_cache_without_clean();
 
     // mark the obsolete accounts as obsolete
@@ -1504,8 +1504,6 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
 
     // it is recorded on the new storage's tombstone list
     assert_eq!(new_storage1.num_tombstones(), 1);
-    // the combined single-ref + tombstone count still reflects the one removable account
-    assert_eq!(new_storage1.num_zero_lamport_single_ref_accounts(), 1);
 }
 
 /// `shrink_collect` must recognize tombstone offsets already recorded on a storage (carried
@@ -1563,7 +1561,7 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
         })
         .unwrap();
     storage.batch_insert_tombstone_offsets([tombstone_offset.unwrap()]);
-    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 1);
+    assert_eq!(storage.num_tombstones(), 1);
 
     // Newer than the latest full snapshot: the tombstone must be carried forward, not dropped and
     // not mis-routed into the alive set.
@@ -1784,15 +1782,12 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
     accounts_db.add_root_and_flush_write_cache(slot);
 
     // We must set the latest full snapshot slot to `slot` or greater
-    // to ensure that ZLSR accounts are treated as dead for `shrink`.
+    // to ensure that tombstones are treated as dead for `shrink`.
     accounts_db.set_latest_full_snapshot_slot(slot);
 
     let storage = accounts_db.get_storage_for_slot(slot).unwrap();
 
-    assert_eq!(
-        storage.num_zero_lamport_single_ref_accounts(),
-        dead_pubkeys.len(),
-    );
+    assert_eq!(storage.num_tombstones(), dead_pubkeys.len());
 
     let alive_bytes_before_shrink = storage.alive_bytes();
     let expected_alive_bytes_after_shrink = accounts_db.alive_bytes_after_shrink(&storage);
@@ -4296,8 +4291,8 @@ fn test_alive_bytes_exclude_zero_lamport_single_ref_accounts() {
     let alive_bytes = storage.alive_bytes();
     assert!(alive_bytes > 0);
 
-    // assert the number of zlsr accounts
-    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), num_keys);
+    // assert the number of tombstones
+    assert_eq!(storage.num_tombstones(), num_keys);
 
     // assert the "alive_bytes_exclude_zero_lamport_single_ref_accounts"
     assert_eq!(
@@ -4878,11 +4873,7 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
     // alive account, it is not completely dead, so clean won't drop it. Instead it is a candidate
     // for next round shrinking.
     assert_eq!(db.accounts_index.ref_count_from_storage(&account_key1), 0);
-    assert_eq!(
-        db.get_and_assert_single_storage(1)
-            .num_zero_lamport_single_ref_accounts(),
-        1
-    );
+    assert_eq!(db.get_and_assert_single_storage(1).num_tombstones(), 1);
     assert!(db.shrink_candidate_slots.lock().unwrap().contains(&1));
 }
 

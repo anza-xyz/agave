@@ -142,13 +142,6 @@ impl AccountStorageEntry {
         obsolete_bytes
     }
 
-    /// Number of dead zero-lamport accounts in the storage, counting both in-index single-ref
-    /// entries (`zero_lamport_single_ref_offsets`) and tombstones removed from the index
-    /// (`tombstone_offsets`). Used for shrink-productivity accounting.
-    pub(crate) fn num_zero_lamport_single_ref_accounts(&self) -> usize {
-        self.num_tombstones()
-    }
-
     /// Batch-insert tombstone offsets, taking the offsets lock once.
     /// Returns the number of offsets inserted.
     pub(crate) fn batch_insert_tombstone_offsets(
@@ -186,7 +179,7 @@ impl AccountStorageEntry {
     pub(crate) fn alive_bytes_exclude_zero_lamport_single_ref_accounts(&self) -> usize {
         let zero_lamport_dead_bytes = self
             .accounts
-            .dead_bytes_due_to_zero_lamport_single_ref(self.num_zero_lamport_single_ref_accounts());
+            .dead_bytes_due_to_zero_lamport_single_ref(self.num_tombstones());
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 
