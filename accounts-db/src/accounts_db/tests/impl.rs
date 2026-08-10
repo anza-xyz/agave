@@ -3087,78 +3087,80 @@ fn test_select_candidates_by_total_usage_all_clean() {
     assert_eq!(0, next_candidates.len());
 }
 
-/// Ensure selecting shrink candidates respects zero-lamport single-ref accounts.
+/// Ensure selecting shrink candidates respects tombstones.
 #[test]
-fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts() {
+fn test_select_candidates_by_total_usage_with_tombstones() {
     let temp_dir = TempDir::new().unwrap();
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let mut shrink_candidates = ShrinkCandidates::default();
 
     let file_size = 10_000;
-    let num_zero_lamport_single_ref_accounts = 4;
+    let num_tombstones = 4;
     let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
     let accounts_to_store: Vec<_> =
         iter::repeat_with(|| (Pubkey::new_unique(), closed_account.clone()))
-            .take(num_zero_lamport_single_ref_accounts)
+            .take(num_tombstones)
             .collect();
 
-    let slot_with_zlsr = 11;
-    let store_with_zlsr = Arc::new(AccountStorageEntry::new(
+    let slot_with_tombstones = 11;
+    let store_with_tombstones = Arc::new(AccountStorageEntry::new(
         temp_dir.path(),
-        slot_with_zlsr,
-        slot_with_zlsr as AccountsFileId,
+        slot_with_tombstones,
+        slot_with_tombstones as AccountsFileId,
         file_size,
         accounts_db.accounts_file_provider,
     ));
-    let stored_accounts_info = store_with_zlsr
+    let stored_accounts_info = store_with_tombstones
         .accounts
-        .write_accounts(&(slot_with_zlsr, accounts_to_store.as_slice()))
+        .write_accounts(&(slot_with_tombstones, accounts_to_store.as_slice()))
         .unwrap();
-    store_with_zlsr.batch_insert_zero_lamport_single_ref_account_offsets(
-        &stored_accounts_info.offsets[..num_zero_lamport_single_ref_accounts],
+    store_with_tombstones.batch_insert_tombstone_offsets(stored_accounts_info.offsets);
+    store_with_tombstones.num_alive_bytes.store(
+        store_with_tombstones.written_bytes() as usize,
+        Ordering::Release,
     );
-    store_with_zlsr
-        .num_alive_bytes
-        .store(store_with_zlsr.written_bytes() as usize, Ordering::Release);
-    accounts_db.storage.insert(Arc::clone(&store_with_zlsr));
-    shrink_candidates.insert(slot_with_zlsr);
+    accounts_db
+        .storage
+        .insert(Arc::clone(&store_with_tombstones));
+    shrink_candidates.insert(slot_with_tombstones);
 
-    let slot_no_zlsr = 22;
-    let store_no_zlsr = Arc::new(AccountStorageEntry::new(
+    let slot_no_tombstones = 22;
+    let store_no_tombstones = Arc::new(AccountStorageEntry::new(
         temp_dir.path(),
-        slot_no_zlsr,
-        slot_no_zlsr as AccountsFileId,
+        slot_no_tombstones,
+        slot_no_tombstones as AccountsFileId,
         file_size,
         accounts_db.accounts_file_provider,
     ));
-    store_no_zlsr
+    store_no_tombstones
         .accounts
-        .write_accounts(&(slot_with_zlsr, accounts_to_store.as_slice()))
+        .write_accounts(&(slot_with_tombstones, accounts_to_store.as_slice()))
         .unwrap();
-    store_no_zlsr
-        .num_alive_bytes
-        .store(store_no_zlsr.written_bytes() as usize, Ordering::Release);
-    accounts_db.storage.insert(Arc::clone(&store_no_zlsr));
-    shrink_candidates.insert(slot_no_zlsr);
+    store_no_tombstones.num_alive_bytes.store(
+        store_no_tombstones.written_bytes() as usize,
+        Ordering::Release,
+    );
+    accounts_db.storage.insert(Arc::clone(&store_no_tombstones));
+    shrink_candidates.insert(slot_no_tombstones);
 
     // test case: The latest full snapshot slot is *older* than
-    // the store with zero lamport single ref accounts.
-    // Ensure shrink will see ZLSR accounts as *alive*.
+    // the store with tombstones.
+    // Ensure shrink will see tombstones as *alive*.
     {
-        accounts_db.set_latest_full_snapshot_slot(slot_with_zlsr - 1);
+        accounts_db.set_latest_full_snapshot_slot(slot_with_tombstones - 1);
 
-        // Bytes from ZLSR accounts are alive, and will stay alive after shrink.
+        // Bytes from tombstones are alive, and will stay alive after shrink.
         assert_eq!(
-            accounts_db.alive_bytes_after_shrink(&store_with_zlsr),
-            store_with_zlsr.alive_bytes(),
+            accounts_db.alive_bytes_after_shrink(&store_with_tombstones),
+            store_with_tombstones.alive_bytes(),
         );
-        assert!(!accounts_db.is_candidate_for_shrink(&store_with_zlsr));
-        assert!(!accounts_db.is_shrinking_productive(&store_with_zlsr));
+        assert!(!accounts_db.is_candidate_for_shrink(&store_with_tombstones));
+        assert!(!accounts_db.is_shrinking_productive(&store_with_tombstones));
 
-        // Stores without ZLSR accounts use the raw alive bytes.
+        // Stores without tombstones use the raw alive bytes.
         assert_eq!(
-            accounts_db.alive_bytes_after_shrink(&store_no_zlsr),
-            store_no_zlsr.alive_bytes(),
+            accounts_db.alive_bytes_after_shrink(&store_no_tombstones),
+            store_no_tombstones.alive_bytes(),
         );
 
         let (selected_candidates, next_candidates) = accounts_db
@@ -3170,27 +3172,34 @@ fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts()
     }
 
     // test case: The latest full snapshot slot is either:
-    // * newer than the store with ZLSR accounts
-    // * the same as the store with ZLSR accounts
+    // * newer than the store with tombstones
+    // * the same as the store with tombstones
     // * unset
-    // Ensure shrink will see ZLSR accounts as *dead*.
+    // Ensure shrink will see tombstones as *dead*.
     {
-        for latest_full_snapshot_slot in [Some(slot_with_zlsr + 1), Some(slot_with_zlsr), None] {
+        for latest_full_snapshot_slot in [
+            Some(slot_with_tombstones + 1),
+            Some(slot_with_tombstones),
+            None,
+        ] {
             *accounts_db.latest_full_snapshot_slot.lock_write() = latest_full_snapshot_slot;
 
-            // Bytes from ZLSR accounts are alive, but would be dead after shrink.
+            // Bytes from tombstones are alive, but would be dead after shrink.
             assert_eq!(
-                store_with_zlsr.alive_bytes() as u64,
-                store_with_zlsr.written_bytes(),
+                store_with_tombstones.alive_bytes() as u64,
+                store_with_tombstones.written_bytes(),
             );
-            assert_eq!(accounts_db.alive_bytes_after_shrink(&store_with_zlsr), 0);
-            assert!(accounts_db.is_candidate_for_shrink(&store_with_zlsr));
-            assert!(accounts_db.is_shrinking_productive(&store_with_zlsr));
-
-            // Stores without ZLSR accounts use the raw alive bytes.
             assert_eq!(
-                accounts_db.alive_bytes_after_shrink(&store_no_zlsr),
-                store_no_zlsr.alive_bytes(),
+                accounts_db.alive_bytes_after_shrink(&store_with_tombstones),
+                0
+            );
+            assert!(accounts_db.is_candidate_for_shrink(&store_with_tombstones));
+            assert!(accounts_db.is_shrinking_productive(&store_with_tombstones));
+
+            // Stores without tombstones use the raw alive bytes.
+            assert_eq!(
+                accounts_db.alive_bytes_after_shrink(&store_no_tombstones),
+                store_no_tombstones.alive_bytes(),
             );
 
             let (selected_candidates, next_candidates) = accounts_db
@@ -3199,9 +3208,9 @@ fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts()
                     DEFAULT_ACCOUNTS_SHRINK_RATIO,
                 );
 
-            // slot 11 with the ZLSR accounts *is* selected for shrink
+            // slot 11 with the tombstones *is* selected for shrink
             assert_eq!(1, selected_candidates.len());
-            assert!(selected_candidates.contains_key(&slot_with_zlsr));
+            assert!(selected_candidates.contains_key(&slot_with_tombstones));
 
             // slot 22 is above the shrink ratio, so ensure it is not a candidate
             assert!(next_candidates.is_empty());
@@ -6734,42 +6743,6 @@ fn test_mark_obsolete_accounts_at_startup_multiple_bins() {
     // Ensure that stats were accumulated correctly
     assert_eq!(obsolete_stats.accounts_marked_obsolete, 2);
     assert_eq!(obsolete_stats.slots_removed, 1);
-}
-
-#[test]
-fn test_batch_insert_zero_lamport_single_ref_account_offsets() {
-    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let storage = accounts.create_store(1, 100);
-
-    // Test inserting new offsets
-    let offsets1 = vec![10, 20, 30];
-    let count1 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets1);
-    assert_eq!(count1, 3, "Should insert all 3 new offsets");
-    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 3);
-
-    // Test inserting some duplicate and some new offsets
-    let offsets2 = vec![20, 30, 40, 50]; // 20,30 are duplicates, 40,50 are new
-    let count2 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets2);
-    assert_eq!(count2, 2, "Should insert only 2 new offsets (40, 50)");
-    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 5);
-
-    // Test inserting all duplicates
-    let offsets3 = vec![10, 20];
-    let count3 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets3);
-    assert_eq!(count3, 0, "Should not insert any duplicates");
-    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 5);
-
-    // Test inserting empty slice
-    let empty_offsets: Vec<usize> = vec![];
-    let count4 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&empty_offsets);
-    assert_eq!(count4, 0, "Should handle empty slice");
-    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 5);
-
-    // Test inserting large batch with mixed duplicates
-    let offsets5 = vec![10, 60, 20, 70, 30, 80, 40]; // 10,20,30,40 duplicates, 60,70,80 new
-    let count5 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets5);
-    assert_eq!(count5, 3, "Should insert only 3 new offsets (60, 70, 80)");
-    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 8);
 }
 
 #[test]

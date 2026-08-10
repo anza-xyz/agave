@@ -168,24 +168,6 @@ impl AccountStorageEntry {
         zero_lamport_single_ref_offsets.insert(offset)
     }
 
-    /// Insert offsets into the zero lamport single ref account offset set.
-    /// Return the number of new offsets that were inserted.
-    #[cfg(test)]
-    pub(crate) fn batch_insert_zero_lamport_single_ref_account_offsets(
-        &self,
-        offsets: &[Offset],
-    ) -> u64 {
-        let mut zero_lamport_single_ref_offsets =
-            self.zero_lamport_single_ref_offsets.write().unwrap();
-        let mut count = 0;
-        for offset in offsets {
-            if zero_lamport_single_ref_offsets.insert(*offset) {
-                count += 1;
-            }
-        }
-        count
-    }
-
     /// Number of dead zero-lamport accounts in the storage, counting both in-index single-ref
     /// entries (`zero_lamport_single_ref_offsets`) and tombstones removed from the index
     /// (`tombstone_offsets`). Used for shrink-productivity accounting.
