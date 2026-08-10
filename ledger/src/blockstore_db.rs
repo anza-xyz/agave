@@ -929,6 +929,19 @@ where
         self.get_raw(key)
     }
 
+    pub(crate) fn get_with_pinnable_slice<'db>(
+        &'db self,
+        index: C::Index,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+    ) -> Result<Option<C::Type>> {
+        if !self.get_slice_into(index, pinnable_slice)? {
+            return Ok(None);
+        }
+        let result = C::deserialize(pinnable_slice.as_ref()).map(Some);
+        pinnable_slice.reset();
+        result
+    }
+
     pub fn get_raw<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<C::Type>> {
         let mut result = Ok(None);
         let is_perf_enabled = maybe_enable_rocksdb_perf(
