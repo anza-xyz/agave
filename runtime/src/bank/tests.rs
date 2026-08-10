@@ -5437,9 +5437,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "2QrCteCh1PA4toLPj6sDJTipCzQJg6AnAEHnQRuabZGU"
+                    "G1rANcscD2mdoaAwdXn29ERibx3o7Ks1Nk7h1C6Sfhk2"
                 } else {
-                    "5wEEfpCoZz5MpLXhTYTePKMGiBVLzzLwcAecPagTgbN5"
+                    "6gnFRPMgyQ1fj2xLKoQFwHqMCQ6HPPYLG7TUZFmuCen9"
                 },
             );
         }
@@ -5449,9 +5449,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "3fobpaKVfuL4ZDhZzkJioejGWPhGm3y4QpyTuCwhuhBJ"
+                    "GGJNQQv8iVqr2qfeLpUtgFVMjTWPiSXUBwE6SzRNRiqX"
                 } else {
-                    "55NPEy8zWbWwrGdiaVzVom51DgtXd28yczDar4TQ3VFK"
+                    "2SeoDNxK19FqNQFQgsfYZkRsCpvyAQYANkifuCtvXDtf"
                 },
             );
         }
@@ -5460,9 +5460,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "7oK4pV3pTmXW8L3mdTCr8y23Y31ZoZt6gXFLTHnvZMz6"
+                    "pPMYHdcq9eTJcJEwNnAupggSwgrfbHqL8eaD6LsXT6Q"
                 } else {
-                    "BLLDWnmQJbWBUQhxse1qGX67oGjua3ZKqzZ34HWbwB2r"
+                    "HXKPk3qZVsQ1TdefvfhTi4hcMMAXVyVdCLW8hUwDc7iU"
                 },
             );
             break;
@@ -5765,8 +5765,8 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     assert_eq!(
         bank2.hash().as_bytes(),
         &[
-            12, 176, 206, 113, 152, 56, 194, 198, 221, 48, 6, 73, 209, 1, 12, 102, 54, 115, 16,
-            238, 71, 229, 42, 205, 114, 238, 167, 205, 19, 14, 42, 101
+            93, 121, 219, 248, 56, 199, 240, 90, 102, 118, 226, 197, 72, 77, 171, 85, 169, 230, 25,
+            25, 138, 146, 93, 197, 57, 27, 26, 228, 224, 145, 124, 159
         ]
     );
 }
@@ -13186,7 +13186,7 @@ fn test_new_for_block_tests_with_vote_account() {
         &vote_pubkey,
         0,
         &vote_pubkey,
-        0,
+        10_000,
         &node_pubkey,
         1,
     );

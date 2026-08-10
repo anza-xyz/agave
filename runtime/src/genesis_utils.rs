@@ -429,7 +429,7 @@ pub(crate) fn create_validator(
         &vote_pubkey,
         0,
         &vote_pubkey,
-        0,
+        10_000,
         &node_pubkey,
         vote_lamports,
     );
