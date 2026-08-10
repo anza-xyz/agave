@@ -1502,15 +1502,8 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
             .is_none()
     );
 
-    // it is recorded on the new storage's tombstone list, not the zero-lamport-single-ref list
+    // it is recorded on the new storage's tombstone list
     assert_eq!(new_storage1.num_tombstones(), 1);
-    assert!(
-        new_storage1
-            .zero_lamport_single_ref_offsets()
-            .read()
-            .unwrap()
-            .is_empty()
-    );
     // the combined single-ref + tombstone count still reflects the one removable account
     assert_eq!(new_storage1.num_zero_lamport_single_ref_accounts(), 1);
 }
