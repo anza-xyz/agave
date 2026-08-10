@@ -19,7 +19,10 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::{BTreeSet, HashMap},
+        sync::Arc,
+    },
 };
 
 pub(crate) type ParentReady = (Slot, Block);
@@ -61,7 +64,19 @@ struct ParentReadyStatus {
     notar_fallbacks: Vec<Block>,
     /// The parent blocks that achieve parent ready in this slot,
     /// Theses blocks are all potential parents choosable in this slot
-    parents_ready: Vec<Block>,
+    /// Membership is tested on every insertion, and this grows with the length
+    /// of a finalization stall (it is only cleared when the root advances), so
+    /// this is a set rather than a `Vec`: a linear `contains` scan makes the
+    /// per-certificate cost grow with the size of the structure. `BTreeSet`
+    /// gives O(log n) membership and O(log n) access to the lowest-slot parent
+    /// for block production, instead of O(n) for both.
+    ///
+    /// Note this iterates in sorted `Block` order rather than insertion order,
+    /// so `ParentReady` events for a slot are emitted lowest-slot-first. Every
+    /// entry is an equally valid parent, and the previous insertion order was
+    /// certificate-arrival order, i.e. network-timing dependent; sorted order
+    /// is deterministic across nodes.
+    parents_ready: BTreeSet<Block>,
 }
 
 impl ParentReadyTracker {
@@ -79,7 +94,7 @@ impl ParentReadyTracker {
             ParentReadyStatus {
                 skip: false,
                 notar_fallbacks: vec![parent_block],
-                parents_ready: vec![],
+                parents_ready: BTreeSet::new(),
             },
         );
         // Intermediate blocks have skips
@@ -89,7 +104,7 @@ impl ParentReadyTracker {
                 ParentReadyStatus {
                     skip: true,
                     notar_fallbacks: vec![],
-                    parents_ready: vec![parent_block],
+                    parents_ready: BTreeSet::from([parent_block]),
                 },
             );
         }
@@ -99,7 +114,7 @@ impl ParentReadyTracker {
             ParentReadyStatus {
                 skip: false,
                 notar_fallbacks: vec![],
-                parents_ready: vec![parent_block],
+                parents_ready: BTreeSet::from([parent_block]),
             },
         );
 
@@ -152,9 +167,7 @@ impl ParentReadyTracker {
                 self.cluster_info.0.id()
             );
             let status = self.slot_statuses.entry(s).or_default();
-            if !status.parents_ready.contains(&block) {
-                status.parents_ready.push(block);
-
+            if status.parents_ready.insert(block) {
                 // Only notify for parent ready on first leader slots
                 if s.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot) {
                     events.push(VotorEvent::ParentReady {
@@ -221,11 +234,10 @@ impl ParentReadyTracker {
             );
             let status = self.slot_statuses.entry(s).or_default();
             for &block in &potential_parents {
-                if status.parents_ready.contains(&block) {
+                if !status.parents_ready.insert(block) {
                     // We already have this parent ready
                     continue;
                 }
-                status.parents_ready.push(block);
                 // Only notify for parent ready on first leader slots
                 if s.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot) {
                     events.push(VotorEvent::ParentReady {
@@ -257,7 +269,7 @@ impl ParentReadyTracker {
         match self
             .slot_statuses
             .get(&slot)
-            .and_then(|ss| ss.parents_ready.iter().min().copied())
+            .and_then(|ss| ss.parents_ready.first().copied())
         {
             Some(parent) => BlockProductionParent::Parent(parent),
             None => BlockProductionParent::ParentNotReady,
