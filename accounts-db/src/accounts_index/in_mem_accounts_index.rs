@@ -1351,7 +1351,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         let m = Measure::start("evict");
         self.evict_from_cache(&candidates_to_evict.0, current_age, ages_to_scan);
-        Self::update_time_stat(&self.stats().flush_evict_us, m);
+        Self::update_time_stat(&self.stats().evict_us, m);
 
         if iterate_for_age {
             // completed iteration of the buckets at the current age
