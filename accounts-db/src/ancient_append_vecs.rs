@@ -2413,32 +2413,6 @@ mod tests {
         }
     }
 
-    fn get_one_packed_ancient_append_vec_and_others(
-        alive: bool,
-        num_normal_slots: usize,
-    ) -> (AccountsDb, Slot) {
-        let db = AccountsDb::default_for_tests();
-        let slot1 = 1;
-        create_storages_and_update_index(&db, slot1, num_normal_slots + 1, alive, None);
-        let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
-        let created_accounts = db.get_unique_accounts_from_storage(&storage);
-
-        db.combine_ancient_slots_packed(vec![slot1], false);
-        assert!(db.storage.get_slot_storage_entry(slot1).is_some());
-        let after_store = db.storage.get_slot_storage_entry(slot1).unwrap();
-        let GetUniqueAccountsResult {
-            stored_accounts: after_stored_accounts,
-            written_bytes: after_written_bytes,
-            ..
-        } = db.get_unique_accounts_from_storage(&after_store);
-        assert_eq!(created_accounts.written_bytes, after_written_bytes);
-        assert_eq!(created_accounts.stored_accounts.len(), 1);
-        // always 1 account: either we leave the append vec alone if it is all dead
-        // or we create a new one and copy into it if account is alive
-        assert_eq!(after_stored_accounts.len(), 1);
-        (db, slot1)
-    }
-
     fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry, should_shrink: bool) {
         assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
@@ -3561,7 +3535,26 @@ mod tests {
     #[test]
     fn test_combine_packed_ancient_slots_simple() {
         for alive in [false, true] {
-            _ = get_one_packed_ancient_append_vec_and_others(alive, 0);
+            let db = AccountsDb::default_for_tests();
+            let slot1 = 1;
+            let num_normal_slots = 0;
+            create_storages_and_update_index(&db, slot1, num_normal_slots + 1, alive, None);
+            let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
+            let created_accounts = db.get_unique_accounts_from_storage(&storage);
+
+            db.combine_ancient_slots_packed(vec![slot1], false);
+            assert!(db.storage.get_slot_storage_entry(slot1).is_some());
+            let after_store = db.storage.get_slot_storage_entry(slot1).unwrap();
+            let GetUniqueAccountsResult {
+                stored_accounts: after_stored_accounts,
+                written_bytes: after_written_bytes,
+                ..
+            } = db.get_unique_accounts_from_storage(&after_store);
+            assert_eq!(created_accounts.written_bytes, after_written_bytes);
+            assert_eq!(created_accounts.stored_accounts.len(), 1);
+            // always 1 account: either we leave the append vec alone if it is all dead
+            // or we create a new one and copy into it if account is alive
+            assert_eq!(after_stored_accounts.len(), 1);
         }
     }
 
