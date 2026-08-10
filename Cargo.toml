@@ -440,7 +440,7 @@ solana-packet = "4.3.0"
 solana-perf = { path = "perf", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-poh-config = "3.1.0"
-solana-poseidon = "4.0.0"
+solana-poseidon = "5.0.0"
 solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
 solana-program = { version = "4.0.0", default-features = false }
