@@ -2494,11 +2494,16 @@ impl Bank {
     /// bank's footer.
     fn update_clock_slot_for_alpenglow(&self) {
         let clock = self.clock();
+        let epoch_start_timestamp = match (self.slot, self.parent()) {
+            (0, _) => self.unix_timestamp_from_genesis(),
+            (_, Some(parent)) if parent.epoch() != self.epoch() => clock.unix_timestamp,
+            _ => clock.epoch_start_timestamp,
+        };
         let clock = sysvar::clock::Clock {
             slot: self.slot,
             epoch: self.epoch_schedule().get_epoch(self.slot),
             leader_schedule_epoch: self.epoch_schedule().get_leader_schedule_epoch(self.slot),
-            epoch_start_timestamp: clock.epoch_start_timestamp,
+            epoch_start_timestamp,
             unix_timestamp: clock.unix_timestamp,
         };
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
