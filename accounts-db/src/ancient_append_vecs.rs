@@ -1124,10 +1124,10 @@ mod tests {
         crate::{
             account_info::{AccountInfo, StorageLocation},
             accounts_db::{
-                ShrinkCollectRefs,
+                AccountsDbConfig, ShrinkCollectRefs,
                 tests::{
-                    append_single_account_with_default_hash, compare_all_accounts,
-                    get_account_from_account_from_storage, get_all_accounts,
+                    ACCOUNTS_DB_CONFIG_APPEND_VEC, append_single_account_with_default_hash,
+                    compare_all_accounts, get_account_from_account_from_storage, get_all_accounts,
                     remove_account_for_tests,
                 },
             },
@@ -1143,6 +1143,7 @@ mod tests {
         std::{collections::HashSet, ops::Range},
         strum::IntoEnumIterator,
         strum_macros::EnumIter,
+        test_case::test_case,
     };
 
     fn get_sample_storages(
@@ -1275,21 +1276,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_write_packed_storages_empty() {
-        let db = AccountsDb::default_for_tests();
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_write_packed_storages_empty(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let (_storages, _slots, _infos) = get_sample_storages(&db, 0, None);
         let write_ancient_accounts =
             db.write_packed_storages(&AccountsToCombine::default(), Vec::default());
         assert!(write_ancient_accounts.shrinks_in_progress.is_empty());
     }
 
-    #[test]
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
     #[should_panic(
         expected = "accounts_to_combine.target_slots_sorted.len() >= packed_contents.len()"
     )]
-    fn test_write_packed_storages_too_few_slots() {
-        let db = AccountsDb::default_for_tests();
+    fn test_write_packed_storages_too_few_slots(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let (storages, slots, _infos) = get_sample_storages(&db, 1, None);
         let accounts_to_combine = AccountsToCombine::default();
         let offset = 0;
@@ -1310,9 +1311,11 @@ mod tests {
         db.write_packed_storages(&accounts_to_combine, packed_contents);
     }
 
-    #[test]
-    fn test_write_ancient_accounts_to_same_slot_multiple_refs_empty() {
-        let db = AccountsDb::default_for_tests();
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_write_ancient_accounts_to_same_slot_multiple_refs_empty(
+        accounts_db_config: AccountsDbConfig,
+    ) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let (_storages, _slots, _infos) = get_sample_storages(&db, 0, None);
         let mut write_ancient_accounts = WriteAncientAccounts::default();
         db.write_ancient_accounts_to_same_slot_multiple_refs(
@@ -1322,14 +1325,15 @@ mod tests {
         assert!(write_ancient_accounts.shrinks_in_progress.is_empty());
     }
 
-    #[test]
-    fn test_pack_ancient_storages_one_account_per_storage() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_pack_ancient_storages_one_account_per_storage(accounts_db_config: AccountsDbConfig) {
         for num_slots in 0..4 {
             for (ideal_size, expected_storages) in [
                 (1, num_slots),
                 (get_ancient_append_vec_capacity(), 1.min(num_slots)),
             ] {
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let (storages, slots, _infos) = get_sample_storages(&db, num_slots, None);
                 let original_results = storages
                     .iter()
@@ -1361,8 +1365,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_pack_ancient_storages_one_partial() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_pack_ancient_storages_one_partial(accounts_db_config: AccountsDbConfig) {
         // n slots
         // m accounts per slot
         // divide into different ideal sizes so that we combine multiple slots sometimes and combine partial slots
@@ -1378,7 +1382,8 @@ mod tests {
                 (account_size * 2, num_slots * total_accounts_per_storage / 2),
                 (get_ancient_append_vec_capacity(), 1.min(num_slots)),
             ] {
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let (storages, slots, _infos) = get_sample_storages(&db, num_slots, None);
 
                 let account_template = storages
@@ -1467,8 +1472,8 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
-    #[test]
-    fn test_pack_ancient_storages_varying() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_pack_ancient_storages_varying(accounts_db_config: AccountsDbConfig) {
         // n slots
         // different number of accounts in each slot
         // each account has different size
@@ -1486,7 +1491,8 @@ mod tests {
                 account_size * 2,
                 get_ancient_append_vec_capacity(),
             ] {
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let (storages, slots, _infos) = get_sample_storages(&db, num_slots, None);
 
                 let account_template = storages
@@ -1610,8 +1616,8 @@ mod tests {
         PackedStorages,
     }
 
-    #[test]
-    fn test_finish_combine_ancient_slots_packed_internal() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_finish_combine_ancient_slots_packed_internal(accounts_db_config: AccountsDbConfig) {
         // n storages
         // 1 account each
         // all accounts have 1 ref
@@ -1620,7 +1626,10 @@ mod tests {
         for in_shrink_candidate_slots in [false, true] {
             for all_slots_shrunk in [false, true] {
                 for num_slots in 0..3 {
-                    let db = AccountsDb::default_for_tests();
+                    let db = AccountsDb::new_for_tests_with_config(
+                        Vec::new(),
+                        accounts_db_config.clone(),
+                    );
                     let (storages, slots, infos) = get_sample_storages(&db, num_slots, None);
                     let mut accounts_per_storage = infos
                         .iter()
@@ -1683,8 +1692,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calc_accounts_to_combine_many_refs() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_accounts_to_combine_many_refs(accounts_db_config: AccountsDbConfig) {
         // n storages
         // 1 account each
         // all accounts have 1 ref or all accounts have 2 refs
@@ -1700,7 +1709,10 @@ mod tests {
             for num_slots in 0..6 {
                 for unsorted_slots in [false, true] {
                     for two_refs in [false, true] {
-                        let db = AccountsDb::default_for_tests();
+                        let db = AccountsDb::new_for_tests_with_config(
+                            Vec::new(),
+                            accounts_db_config.clone(),
+                        );
                         let (mut storages, _slots, mut infos) =
                             get_sample_storages(&db, num_slots, Some(data_size));
 
@@ -1786,8 +1798,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calc_accounts_to_combine_simple() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_accounts_to_combine_simple(accounts_db_config: AccountsDbConfig) {
         // n storages
         // 1 account each
         // all accounts have 1 ref or all accounts have 2 refs
@@ -1806,7 +1818,10 @@ mod tests {
                     for num_slots in 0..3 {
                         for unsorted_slots in [false, true] {
                             for two_refs in [false, true] {
-                                let db = AccountsDb::default_for_tests();
+                                let db = AccountsDb::new_for_tests_with_config(
+                                    Vec::new(),
+                                    accounts_db_config.clone(),
+                                );
                                 let (mut storages, slots, mut infos) =
                                     get_sample_storages(&db, num_slots, Some(data_size));
                                 infos
@@ -2002,15 +2017,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calc_accounts_to_combine_older_dup() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_accounts_to_combine_older_dup(accounts_db_config: AccountsDbConfig) {
         // looking at 1 storage
         // with 2 accounts
         // 1 with 1 ref
         // 1 with 2 refs (and the other ref is from a newer slot)
         // So, the other alive ref will cause the account with 2 refs to be put into many_refs_old_alive and then accounts_keep_slots
         for method in TestWriteMultipleRefs::iter() {
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let num_slots = 1;
             // creating 1 more sample slot/storage, but effectively act like 1 slot
             let (mut storages, slots, infos) = get_sample_storages(&db, num_slots + 1, None);
@@ -2203,15 +2218,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calc_accounts_to_combine_opposite() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_accounts_to_combine_opposite(accounts_db_config: AccountsDbConfig) {
         // 1 storage
         // 2 accounts
         // 1 with 1 ref
         // 1 with 2 refs, with the idea that the other ref is from an older slot, so this one is the newer index entry
         // The result will be that the account, even though it has refcount > 1, can be moved to a newer slot.
         for method in TestWriteMultipleRefs::iter() {
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let num_slots = 1;
             let (storages, slots, infos) = get_sample_storages(&db, num_slots, None);
             let original_results = storages
@@ -2360,11 +2375,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_get_unique_accounts_from_storage_for_combining_ancient_slots() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_get_unique_accounts_from_storage_for_combining_ancient_slots(
+        accounts_db_config: AccountsDbConfig,
+    ) {
         for num_slots in 0..3 {
             for reverse in [false, true] {
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let (storages, slots, mut infos) = get_sample_storages(&db, num_slots, None);
                 let original_results = storages
                     .iter()
@@ -2430,15 +2448,16 @@ mod tests {
         Add,
     }
 
-    #[test]
-    fn test_calc_ancient_slot_info_one_alive_only() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_ancient_slot_info_one_alive_only(accounts_db_config: AccountsDbConfig) {
         let can_randomly_shrink = false;
         let alive = true;
         let slots = 1;
         for method in TestCollectInfo::iter() {
             // 1_040_000 is big enough relative to page size to cause shrink ratio to be triggered
             for data_size in [None, Some(1_040_000)] {
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let slot1 = 1;
                 create_storages_and_update_index(&db, slot1, slots, alive, data_size);
                 let mut infos = AncientSlotInfos::default();
@@ -2501,13 +2520,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calc_ancient_slot_info_one_dead() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_ancient_slot_info_one_dead(accounts_db_config: AccountsDbConfig) {
         let can_randomly_shrink = false;
         let alive = false;
         let slots = 1;
         for call_add in [false, true] {
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let slot1 = 1;
             create_storages_and_update_index(&db, slot1, slots, alive, None);
             let mut infos = AncientSlotInfos::default();
@@ -2542,8 +2561,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calc_ancient_slot_info_several() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_ancient_slot_info_several(accounts_db_config: AccountsDbConfig) {
         let can_randomly_shrink = false;
         let tuning = PackedAncientStorageTuning {
             percent_of_alive_shrunk_data: 100,
@@ -2557,7 +2576,10 @@ mod tests {
             for slots in 0..4 {
                 // 1_040_000 is big enough relative to page size to cause shrink ratio to be triggered
                 for data_size in [None, Some(1_040_000)] {
-                    let db = AccountsDb::default_for_tests();
+                    let db = AccountsDb::new_for_tests_with_config(
+                        Vec::new(),
+                        accounts_db_config.clone(),
+                    );
                     let slot1 = 1;
                     create_storages_and_update_index(&db, slot1, slots, alive, data_size);
                     let slot_vec = (slot1..(slot1 + slots as Slot)).collect::<Vec<_>>();
@@ -2610,8 +2632,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calc_ancient_slot_info_one_alive_one_dead() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_ancient_slot_info_one_alive_one_dead(accounts_db_config: AccountsDbConfig) {
         let can_randomly_shrink = false;
         let tuning = PackedAncientStorageTuning {
             ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
@@ -2624,7 +2646,10 @@ mod tests {
                 let slots = 2;
                 // 1_040_000 is big enough relative to page size to cause shrink ratio to be triggered
                 for data_size in [None, Some(1_040_000)] {
-                    let db = AccountsDb::default_for_tests();
+                    let db = AccountsDb::new_for_tests_with_config(
+                        Vec::new(),
+                        accounts_db_config.clone(),
+                    );
                     let slot1 = 1;
                     let alive = true;
                     create_storages_and_update_index(&db, slot1, slots, alive, data_size);
@@ -2730,11 +2755,12 @@ mod tests {
         FilterBySmallestCapacity,
     }
 
-    #[test]
-    fn test_filter_by_smallest_capacity_empty() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_filter_by_smallest_capacity_empty(accounts_db_config: AccountsDbConfig) {
         for method in TestSmallestCapacity::iter() {
             for max_storages in 1..3 {
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 // requesting N max storage, has 1 storage, N >= 1 so nothing to do
                 let ideal_storage_size_large = get_ancient_append_vec_capacity();
                 let mut infos = create_test_infos(&db, 1);
@@ -2760,8 +2786,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_filter_by_smallest_capacity_sort() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_filter_by_smallest_capacity_sort(accounts_db_config: AccountsDbConfig) {
         // max is 6
         // 7 storages
         // storage[last] is big enough to cause us to need another storage
@@ -2770,7 +2796,8 @@ mod tests {
         for method in TestSmallestCapacity::iter() {
             let ideal_storage_size_large = get_ancient_append_vec_capacity();
             for reorder in [false, true] {
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let mut infos = create_test_infos(&db, 7);
                 infos
                     .all_infos
@@ -2824,9 +2851,9 @@ mod tests {
     ///
     /// If we have *more* high slots than max resulting storages set in the tuning parameters,
     /// we should still have all the high slots after calling `filter_by_smallest_capacity().
-    #[test]
-    fn test_filter_by_smallest_capacity_high_slot_more() {
-        let db = AccountsDb::default_for_tests();
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_filter_by_smallest_capacity_high_slot_more(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let tuning = default_tuning();
 
         // Ensure we have more storages with high slots than the 'max resulting storages'.
@@ -2870,9 +2897,9 @@ mod tests {
     ///
     /// If we have *less* high slots than max resulting storages set in the tuning parameters,
     /// we should still have all the high slots after calling `filter_by_smallest_capacity().
-    #[test]
-    fn test_filter_by_smallest_capacity_high_slot_less() {
-        let db = AccountsDb::default_for_tests();
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_filter_by_smallest_capacity_high_slot_less(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let tuning = default_tuning();
 
         // Ensure we have less storages with high slots than the 'max resulting storages'.
@@ -2927,11 +2954,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_truncate_to_max_storages() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_truncate_to_max_storages(accounts_db_config: AccountsDbConfig) {
         for filter in [false, true] {
             let ideal_storage_size_large = get_ancient_append_vec_capacity();
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let mut infos = create_test_infos(&db, 1);
             let max_storages = 1;
             // 1 storage, 1 max, but 1 storage does not fill the entire new combined storage, so truncate nothing
@@ -2943,7 +2970,7 @@ mod tests {
             test(filter, &mut infos, &tuning);
             assert_eq!(infos.all_infos.len(), usize::from(!filter));
 
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let mut infos = create_test_infos(&db, 1);
             let max_storages = 1;
             let tuning = PackedAncientStorageTuning {
@@ -2956,7 +2983,7 @@ mod tests {
             test(filter, &mut infos, &tuning);
             assert_eq!(infos.all_infos.len(), usize::from(!filter));
 
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let mut infos = create_test_infos(&db, 1);
             let max_storages = 2;
             let tuning = PackedAncientStorageTuning {
@@ -2981,7 +3008,7 @@ mod tests {
                 );
             }
 
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let mut infos = create_test_infos(&db, 1);
             infos.all_infos[0].alive_bytes = ideal_storage_size_large + 1;
             let max_storages = 2;
@@ -3011,7 +3038,8 @@ mod tests {
                     ideal_storage_size: NonZeroU64::new(ideal_storage_size).unwrap(),
                     ..default_tuning()
                 };
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let mut infos = create_test_infos(&db, 2);
                 test(filter, &mut infos, &tuning);
                 assert_eq!(infos.all_infos.len(), 2);
@@ -3022,7 +3050,7 @@ mod tests {
             // storage[4] is big enough to cause us to need another storage
             // so, storage[0..=2] can be combined into 1, resulting in 3 remaining storages, which is
             // the goal, so we only have to combine the first 3 to hit the goal
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let mut infos = create_test_infos(&db, 5);
             infos.all_infos[4].alive_bytes = ideal_storage_size_large;
             let max_storages = 4;
@@ -3044,8 +3072,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calc_ancient_slot_info_one_shrink_one_not() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_calc_ancient_slot_info_one_shrink_one_not(accounts_db_config: AccountsDbConfig) {
         let can_randomly_shrink = false;
         let mut tuning = PackedAncientStorageTuning {
             percent_of_alive_shrunk_data: 100,
@@ -3064,7 +3092,8 @@ mod tests {
                     .iter()
                     .map(|shrink| (!shrink).then_some(1_040_000))
                     .collect::<Vec<_>>();
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let slot1 = 1;
                 let alive = true;
                 create_storages_and_update_index(&db, slot1, 1, alive, data_sizes[1]);
@@ -3152,9 +3181,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_clear_should_shrink_after_cutoff_empty() {
-        let db = AccountsDb::default_for_tests();
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_clear_should_shrink_after_cutoff_empty(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let mut infos = create_test_infos(&db, 2);
         for count in 0..2 {
             for i in 0..count {
@@ -3201,8 +3230,8 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
-    #[test]
-    fn test_write_ancient_accounts() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_write_ancient_accounts(accounts_db_config: AccountsDbConfig) {
         for data_size in [None, Some(10_000_000)] {
             for method in TestWriteAncient::iter() {
                 for num_slots in 0..4 {
@@ -3211,7 +3240,10 @@ mod tests {
                             // invalid combination when num_slots > 0, but required to hit num_slots=0, combine_into=0
                             continue;
                         }
-                        let db = AccountsDb::default_for_tests();
+                        let db = AccountsDb::new_for_tests_with_config(
+                            Vec::new(),
+                            accounts_db_config.clone(),
+                        );
                         let (storages, slots, _infos) =
                             get_sample_storages(&db, num_slots, data_size);
 
@@ -3330,14 +3362,17 @@ mod tests {
         ChooseStoragesToShrink,
     }
 
-    #[test]
-    fn test_clear_should_shrink_after_cutoff_simple() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_clear_should_shrink_after_cutoff_simple(accounts_db_config: AccountsDbConfig) {
         for swap in [false, true] {
             for method in TestShouldShrink::iter() {
                 for (percent_of_alive_shrunk_data, mut expected_infos) in
                     [(0, 0), (9, 1), (10, 1), (89, 2), (90, 2), (91, 2), (100, 2)]
                 {
-                    let db = AccountsDb::default_for_tests();
+                    let db = AccountsDb::new_for_tests_with_config(
+                        Vec::new(),
+                        accounts_db_config.clone(),
+                    );
                     let mut infos = create_test_infos(&db, 2);
                     infos
                         .all_infos
@@ -3416,9 +3451,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_sort_shrink_indexes_by_bytes_saved() {
-        let db = AccountsDb::default_for_tests();
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_sort_shrink_indexes_by_bytes_saved(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let slot1 = 1;
         let alive = true;
         create_storages_and_update_index(&db, slot1, 1, alive, None);
@@ -3458,13 +3493,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_combine_ancient_slots_packed_internal() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_combine_ancient_slots_packed_internal(accounts_db_config: AccountsDbConfig) {
         let can_randomly_shrink = false;
         let alive = true;
         for num_slots in 0..4 {
             for max_ancient_slots in 0..4 {
-                let db = AccountsDb::default_for_tests();
+                let db =
+                    AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
                 let slot1 = 1;
                 create_storages_and_update_index(&db, slot1, num_slots, alive, None);
                 let original_stores = (0..num_slots)
@@ -3546,10 +3582,10 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn test_combine_packed_ancient_slots_simple() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_combine_packed_ancient_slots_simple(accounts_db_config: AccountsDbConfig) {
         for alive in [false, true] {
-            let db = AccountsDb::default_for_tests();
+            let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config.clone());
             let slot1 = 1;
             let num_normal_slots = 0;
             create_storages_and_update_index(&db, slot1, num_normal_slots + 1, alive, None);
@@ -3587,14 +3623,14 @@ mod tests {
         db.combine_ancient_slots_packed_internal(sorted_slots, tuning, &mut stats_sub);
     }
 
-    #[test]
-    fn test_shrink_packed_ancient() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_shrink_packed_ancient(accounts_db_config: AccountsDbConfig) {
         // NOTE: The recycler has been removed.  Creating this many extra storages is no longer
         // necessary, but also does no harm either.
         const MAX_RECYCLE_STORES: usize = 1000;
         // When we pack ancient append vecs, the packed append vecs are recycled first if possible. This means they aren't dropped directly.
         // This test tests that we are releasing Arc refcounts for storages when we pack them into ancient append vecs.
-        let db = AccountsDb::default_for_tests();
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let initial_slot = 0;
         // create append vecs that we'll fill the recycler with when we pack them into 1 packed append vec
         create_storages_and_update_index(&db, initial_slot, MAX_RECYCLE_STORES, true, None);
@@ -3678,9 +3714,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_shrink_collect_alive_add() {
-        let db = AccountsDb::default_for_tests();
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_shrink_collect_alive_add(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let num_slots = 1;
         let data_size = None;
         let (storages, _slots, _infos) = get_sample_storages(&db, num_slots, data_size);
@@ -3866,8 +3902,8 @@ mod tests {
     /// The purpose of this test is to ensure the correct control flow
     /// of calculating and using the value of the tuning parameter
     /// `ideal_storage_size`.
-    #[test]
-    fn test_ideal_storage_size_updated_before_used() {
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    fn test_ideal_storage_size_updated_before_used(accounts_db_config: AccountsDbConfig) {
         let mut tuning = PackedAncientStorageTuning {
             percent_of_alive_shrunk_data: 100,
             max_ancient_slots: 100,
@@ -3875,7 +3911,7 @@ mod tests {
         };
         let data_size = 1_000_000;
         let num_slots = tuning.max_ancient_slots;
-        let db = AccountsDb::default_for_tests();
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let slot1 = 1;
         let alive = true;
         create_storages_and_update_index(&db, slot1, num_slots, alive, Some(data_size));

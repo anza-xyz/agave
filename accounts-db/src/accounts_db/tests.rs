@@ -9,6 +9,7 @@ use {
 
 mod append_vec;
 
+pub use append_vec::DEFAULT_ACCOUNTS_DB_CONFIG as ACCOUNTS_DB_CONFIG_APPEND_VEC;
 // re-export these fns that live in impl.rs because ancient append vec tests use them...
 pub(crate) use append_vec::r#impl::{
     append_single_account_with_default_hash, compare_all_accounts,
