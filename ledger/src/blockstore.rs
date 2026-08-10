@@ -916,6 +916,12 @@ impl Blockstore {
         }
     }
 
+    /// Force flush the contents of memtables (memory) to SST's (disk)
+    #[cfg(test)]
+    pub(crate) fn flush(&self) -> Result<()> {
+        self.db.flush_all_columns()
+    }
+
     /// Deletes the blockstore at the specified path.
     ///
     /// Note that if the `ledger_path` has multiple rocksdb instances, this

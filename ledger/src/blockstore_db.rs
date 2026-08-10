@@ -330,6 +330,16 @@ impl Rocks {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn flush_all_columns(&self) -> Result<()> {
+        // Block until the flushes are complete
+        let mut flush_options = rocksdb::FlushOptions::new();
+        flush_options.set_wait(true);
+
+        let all_cfs = Rocks::columns().map(|cf_name| self.cf_handle(cf_name));
+        Ok(self.db.flush_cfs_opt(&all_cfs, &flush_options)?)
+    }
+
     pub(crate) fn destroy(path: &Path) -> Result<()> {
         DB::destroy(&Options::default(), path)?;
 
