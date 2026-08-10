@@ -550,8 +550,8 @@ impl StreamerStats {
 
 /// Default bounds for the randomized interval between checks that a staked
 /// connection's peer still retains sufficient stake.
-pub const DEFAULT_MIN_STAKE_REVALIDATION_INTERVAL: Duration = Duration::from_secs(60 * 60);
-pub const DEFAULT_MAX_STAKE_REVALIDATION_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
+pub const DEFAULT_STAKE_REVALIDATION_INTERVAL: RangeInclusive<Duration> =
+    Duration::from_secs(60 * 60)..=Duration::from_secs(2 * 60 * 60);
 
 #[derive(Clone)]
 pub struct QuicStreamerConfig {
@@ -588,8 +588,7 @@ impl Default for QuicStreamerConfig {
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
             stream_receive_window_size: PACKET_DATA_SIZE as u32,
             max_stream_data_bytes: PACKET_DATA_SIZE as u32,
-            stake_revalidation_interval: DEFAULT_MIN_STAKE_REVALIDATION_INTERVAL
-                ..=DEFAULT_MAX_STAKE_REVALIDATION_INTERVAL,
+            stake_revalidation_interval: DEFAULT_STAKE_REVALIDATION_INTERVAL,
         }
     }
 }

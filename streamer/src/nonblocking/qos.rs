@@ -139,21 +139,33 @@ mod tests {
             remote_pubkey: None,
         };
 
-        // Stake unchanged.
-        assert!(has_sufficient_stake(&context, &staked_nodes));
-        // Stake increases never evict.
+        assert!(
+            has_sufficient_stake(&context, &staked_nodes),
+            "unchanged stake should keep the connection"
+        );
         set_stakes(&staked_nodes, HashMap::from([(pubkey, 1_000)]));
-        assert!(has_sufficient_stake(&context, &staked_nodes));
-        // Reduction down to exactly half of the cached stake is tolerated.
+        assert!(
+            has_sufficient_stake(&context, &staked_nodes),
+            "increased stake should keep the connection"
+        );
         set_stakes(&staked_nodes, HashMap::from([(pubkey, 50)]));
-        assert!(has_sufficient_stake(&context, &staked_nodes));
-        // Reduction below half of the cached stake evicts.
+        assert!(
+            has_sufficient_stake(&context, &staked_nodes),
+            "stake at half of the cached value should keep the connection"
+        );
         set_stakes(&staked_nodes, HashMap::from([(pubkey, 49)]));
-        assert!(!has_sufficient_stake(&context, &staked_nodes));
-        // Full de-staking evicts.
+        assert!(
+            !has_sufficient_stake(&context, &staked_nodes),
+            "stake below half of the cached value should evict the connection"
+        );
         set_stakes(&staked_nodes, HashMap::new());
-        assert!(!has_sufficient_stake(&context, &staked_nodes));
-        // Unstaked connections are never evicted by this check.
-        assert!(has_sufficient_stake(&unstaked_context, &staked_nodes));
+        assert!(
+            !has_sufficient_stake(&context, &staked_nodes),
+            "full de-staking should evict the connection"
+        );
+        assert!(
+            has_sufficient_stake(&unstaked_context, &staked_nodes),
+            "unstaked connections should not be evicted by stake revalidation"
+        );
     }
 }
