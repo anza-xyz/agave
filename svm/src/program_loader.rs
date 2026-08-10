@@ -240,7 +240,6 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
     callbacks: &CB,
     program_cache_for_tx_batch: &ProgramCacheForTxBatch,
     keys: impl Iterator<Item = &'a Pubkey>,
-    check_program_deployment_slot: bool,
 ) -> Vec<ProgramToLoad<'a>> {
     let mut result = Vec::new();
     for account_key in keys {
@@ -276,15 +275,10 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
             else {
                 continue;
             };
-            let match_criteria = if check_program_deployment_slot {
-                ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(deployment_slot)
-            } else {
-                ProgramCacheMatchCriteria::NoCriteria
-            };
             result.push(ProgramToLoad {
                 program_id: account_key,
                 loader,
-                match_criteria,
+                match_criteria: ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(deployment_slot),
                 last_modification_slot,
             });
         }
@@ -896,31 +890,6 @@ mod tests {
             &mock_bank,
             &loaded_programs_for_tx_batch,
             sanitized_tx.account_keys().iter(),
-            false,
-        );
-        assert_eq!(
-            missing_programs,
-            &[
-                ProgramToLoad {
-                    program_id: &program_ids[1],
-                    loader: ProgramCacheEntryOwner::LoaderV2,
-                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
-                    last_modification_slot: 0,
-                },
-                ProgramToLoad {
-                    program_id: &program_ids[2],
-                    loader: ProgramCacheEntryOwner::LoaderV3,
-                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
-                    last_modification_slot: 0,
-                },
-            ]
-        );
-
-        let missing_programs = filter_executable_program_accounts(
-            &mock_bank,
-            &loaded_programs_for_tx_batch,
-            sanitized_tx.account_keys().iter(),
-            true,
         );
         assert_eq!(
             missing_programs,
