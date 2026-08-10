@@ -86,12 +86,10 @@ use {
 #[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 use {
     solana_clock::Clock,
-    solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
     solana_runtime::loader_utils::load_upgradeable_program_and_advance_slot,
     solana_svm::conformance::{
         programs::keyed_account_for_bpf_loader_upgradeable_program,
         setup::sysvar_cache_from_accounts,
-        txn::{context::TxnContext, harness::execute_txn},
     },
     solana_sysvar::SysvarSerialize,
 };
@@ -2481,10 +2479,10 @@ fn test_program_sbf_upgrade() {
     let mint_keypair = Keypair::new();
     let authority_keypair = Keypair::new();
 
-    let mut transaction_accounts =
+    let mut accounts =
         upgradeable_program_accounts(&program_id, &program_elf, Some(authority_keypair.pubkey()));
 
-    transaction_accounts.extend([
+    accounts.extend([
         (
             new_authority_keypair.pubkey(),
             Account::new(0, 0, &system_program::id()),
@@ -2510,56 +2508,32 @@ fn test_program_sbf_upgrade() {
 
     program_cache.set_slot_for_tests(UPGRADE_SLOT);
     let sysvar_cache = default_sysvar_cache();
-    let execute_transaction = |accounts: Vec<(Pubkey, Account)>,
-                               instructions: &[Instruction],
-                               program_cache: &mut ProgramCacheForTxBatch,
-                               sysvar_cache: &SysvarCache| {
-        let sanitized_message = SanitizedMessage::try_from_legacy_message(
-            Message::new(instructions, Some(&mint_keypair.pubkey())),
-            &ReservedAccountKeys::empty_key_set(),
-        )
-        .unwrap();
-        let context = TxnContext::new_with_default_budget(
-            feature_set.clone(),
-            accounts,
-            sanitized_message,
-            None,
-        );
-        execute_txn(&context, program_cache, sysvar_cache)
-    };
 
     // Call upgradeable program
     let instruction_accounts = vec![AccountMeta::new(clock::id(), false)];
     let instruction = Instruction::new_with_bytes(program_id, &[0], instruction_accounts.clone());
-    assert_eq!(
-        execute_transaction(
-            transaction_accounts.clone(),
-            &[instruction],
-            &mut program_cache,
-            &sysvar_cache,
-        )
-        .status,
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::Custom(42),
-        )),
+    let context = InstrContext::new_with_default_budget(
+        feature_set.runtime_features(),
+        accounts.clone(),
+        instruction,
     );
+    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.result, Some(InstructionError::Custom(42)));
 
     // Set authority
-    let set_authority_instruction = loader_v3_instruction::set_upgrade_authority(
+    let instruction = loader_v3_instruction::set_upgrade_authority(
         &program_id,
         &authority_keypair.pubkey(),
         Some(&new_authority_keypair.pubkey()),
     );
-
-    let effects = execute_transaction(
-        transaction_accounts.clone(),
-        &[set_authority_instruction],
-        &mut program_cache,
-        &sysvar_cache,
+    let context = InstrContext::new_with_default_budget(
+        feature_set.runtime_features(),
+        accounts,
+        instruction,
     );
-    assert_eq!(effects.status, Ok(()));
-    transaction_accounts = effects.resulting_accounts;
+    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.result, None);
+    accounts = effects.resulting_accounts;
 
     // Upgrade program
     let upgraded_program_elf = load_program_elf("solana_sbf_rust_upgraded");
@@ -2570,7 +2544,7 @@ fn test_program_sbf_upgrade() {
     buffer_data.extend_from_slice(&upgraded_program_elf);
 
     let buffer_keypair = Keypair::new();
-    transaction_accounts.push((
+    accounts.push((
         buffer_keypair.pubkey(),
         Account {
             lamports: 1,
@@ -2580,23 +2554,22 @@ fn test_program_sbf_upgrade() {
             rent_epoch: 0,
         },
     ));
-    let sysvar_cache = sysvar_cache_from_accounts(&transaction_accounts);
+    let sysvar_cache = sysvar_cache_from_accounts(&accounts);
 
-    let upgrade_instruction = loader_v3_instruction::upgrade(
+    let instruction = loader_v3_instruction::upgrade(
         &program_id,
         &buffer_keypair.pubkey(),
         &new_authority_keypair.pubkey(),
         &mint_keypair.pubkey(),
     );
-
-    let effects = execute_transaction(
-        transaction_accounts.clone(),
-        &[upgrade_instruction],
-        &mut program_cache,
-        &sysvar_cache,
+    let context = InstrContext::new_with_default_budget(
+        feature_set.runtime_features(),
+        accounts,
+        instruction,
     );
-    assert_eq!(effects.status, Ok(()));
-    transaction_accounts = effects.resulting_accounts;
+    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.result, None);
+    accounts = effects.resulting_accounts;
 
     let modified_programs = program_cache.drain_modified_entries();
     assert!(modified_programs.contains_key(&program_id));
@@ -2610,33 +2583,17 @@ fn test_program_sbf_upgrade() {
         &upgraded_program_elf,
         &feature_set.runtime_features(),
     );
-
-    let clock_account = &mut transaction_accounts[6];
-    clock_account.1.data = bincode::serialize(&solana_clock::Clock {
-        slot: UPGRADE_EFFECTIVE_SLOT,
-        ..solana_clock::Clock::default()
-    })
-    .unwrap();
-    let sysvar_cache = sysvar_cache_from_accounts(&transaction_accounts);
+    let sysvar_cache = sysvar_cache_from_accounts(&accounts);
 
     // Call upgraded program
-    let effects = execute_transaction(
-        transaction_accounts,
-        &[Instruction::new_with_bytes(
-            program_id,
-            &[1],
-            instruction_accounts,
-        )],
-        &mut program_cache,
-        &sysvar_cache,
+    let instruction = Instruction::new_with_bytes(program_id, &[1], instruction_accounts);
+    let context = InstrContext::new_with_default_budget(
+        feature_set.runtime_features(),
+        accounts,
+        instruction,
     );
-    assert_eq!(
-        effects.status,
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::Custom(43),
-        )),
-    );
+    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.result, Some(InstructionError::Custom(43)));
 }
 
 #[test]
