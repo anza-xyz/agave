@@ -1314,7 +1314,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         debug_assert!(!startup);
 
         if !iterate_for_age {
-            // no need to age, so no need to flush this bucket
+            // no need to age, so no need to scan this bucket
             return;
         }
 
@@ -1346,7 +1346,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         Self::update_stat(&self.stats().buckets_scanned, 1);
 
-        // scan in-mem map for candidates to flush/evict
+        // scan in-mem map for candidates to evict
         let candidates_to_evict = self.evict_scan(current_age, flush_guard, ages_to_scan);
 
         let m = Measure::start("evict");
@@ -1475,7 +1475,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     }
 }
 
-/// State of reservoir sampling algorithm for flush/eviction candidates.
+/// State of reservoir sampling algorithm for eviction candidates.
 #[derive(Debug)]
 struct ReservoirState {
     samples: Vec<Pubkey>,
@@ -1730,7 +1730,7 @@ mod tests {
         assert!(accounts_index.load_from_disk(&pubkey_dirty_new).is_none());
         assert!(accounts_index.load_from_disk(&pubkey_dirty_old).is_none());
 
-        // A clean entry that is *not* in the flush/eviction window.
+        // A clean entry that is *not* in the eviction window.
         // This entry should *not* be eligible for eviction.
         let entry_clean_new = AccountMapEntry::new(
             SlotList::from([(slot, info)]),
@@ -1739,7 +1739,7 @@ mod tests {
         );
         assert!(!entry_clean_new.dirty());
 
-        // A clean entry that *is* in the flush/eviction window.
+        // A clean entry that *is* in the eviction window.
         // This entry *should* be eligible for eviction.
         let entry_clean_old = AccountMapEntry::new(
             SlotList::from([(slot + 1, info + 1)]),
@@ -1749,8 +1749,8 @@ mod tests {
         entry_clean_old.set_age(accounts_index.storage.current_age());
         assert!(!entry_clean_old.dirty());
 
-        // A dirty entry that is *not* in the flush/eviction window.
-        // This entry should *not* be eligible for flush.
+        // A dirty entry that is *not* in the eviction window.
+        // This entry should *not* be eligible for eviction.
         let entry_dirty_new = AccountMapEntry::new(
             SlotList::from([(slot + 2, info + 2)]),
             1,
@@ -1758,8 +1758,8 @@ mod tests {
         );
         assert!(entry_dirty_new.dirty());
 
-        // A dirty entry that *is* in the flush/eviction window.
-        // This entry *should* be eligible for flush.
+        // A dirty entry that *is* in the eviction window.
+        // The caller asserts the outcome for this entry.
         let entry_dirty_old = AccountMapEntry::new(
             SlotList::from([(slot + 3, info + 3)]),
             1,
@@ -1845,7 +1845,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gather_possible_flush_and_evict_candidates_with_max_evictions() {
+    fn test_gather_possible_evict_candidates_with_max_evictions() {
         let ref_count = 1;
         let current_age = 100;
         let ages_to_scan = 0;
@@ -1894,7 +1894,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gather_possible_evict_candidates_no_flush() {
+    fn test_gather_possible_evict_candidates_skips_dirty() {
         let accounts_index = new_disk_buckets_for_test::<u64>();
         let current_age = accounts_index.storage.current_age();
         let ages_to_scan = accounts_index.num_ages_to_distribute_scans;
