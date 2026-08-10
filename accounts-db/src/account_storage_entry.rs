@@ -159,15 +159,6 @@ impl AccountStorageEntry {
         obsolete_bytes
     }
 
-    /// Return true if offset is "new" and inserted successfully. Otherwise,
-    /// return false if the offset exists already.
-    #[cfg(test)]
-    pub(crate) fn insert_zero_lamport_single_ref_account_offset(&self, offset: usize) -> bool {
-        let mut zero_lamport_single_ref_offsets =
-            self.zero_lamport_single_ref_offsets.write().unwrap();
-        zero_lamport_single_ref_offsets.insert(offset)
-    }
-
     /// Number of dead zero-lamport accounts in the storage, counting both in-index single-ref
     /// entries (`zero_lamport_single_ref_offsets`) and tombstones removed from the index
     /// (`tombstone_offsets`). Used for shrink-productivity accounting.
