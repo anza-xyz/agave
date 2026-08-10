@@ -387,19 +387,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
     }
 
-    pub fn get_entries_up_to_inclusive(
-        &self,
-        slot_list: &[SlotListItem<T>],
-        max_inclusive: Option<Slot>,
-    ) -> SlotList<T> {
-        let max_inclusive = max_inclusive.unwrap_or(Slot::MAX);
-        slot_list
-            .iter()
-            .filter(|(slot, _)| *slot <= max_inclusive)
-            .cloned()
-            .collect()
-    }
-
     /// Removes `slots_to_purge` from the slot list of `pubkey`, pushing removed entries into
     /// `reclaims` and unreffing each removed entry under the same lock.
     ///

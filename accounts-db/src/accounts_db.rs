@@ -47,7 +47,7 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
-            ReclaimsWithNewestSlot, RefCount, ScanFilter, SlotList, Startup, UpsertReclaim,
+            ReclaimsWithNewestSlot, RefCount, ScanFilter, Startup, UpsertReclaim,
             in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
@@ -834,8 +834,6 @@ pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<Path
 
 #[derive(Default, Debug)]
 struct CleaningInfo {
-    slot_list: SlotList<AccountInfo>,
-    ref_count: RefCount,
     /// Indicates if this account might have a zero lamport index entry.
     /// If false, the account *shall* not have zero lamport index entries.
     /// If true, the account *might* have zero lamport index entries.
@@ -1807,7 +1805,7 @@ impl AccountsDb {
                         iter::once(candidate_pubkey),
                         |_candidate_pubkey, slot_list_and_ref_count| {
                             let mut useless = true;
-                            if let Some((slot_list, ref_count)) = slot_list_and_ref_count {
+                            if let Some((slot_list, _)) = slot_list_and_ref_count {
                                 // find the highest rooted slot in the slot list
                                 let index_in_slot_list = self.accounts_index.latest_slot(
                                     None,
@@ -1822,14 +1820,6 @@ impl AccountsDb {
                                         if account_info.is_zero_lamport() {
                                             useless = false;
                                             // The latest one is zero lamports. We may be able to purge it.
-                                            // Add all the rooted entries that contain this pubkey.
-                                            // We know the highest rooted entry is zero lamports.
-                                            candidate_info.slot_list =
-                                                self.accounts_index.get_entries_up_to_inclusive(
-                                                    slot_list,
-                                                    max_clean_root_inclusive,
-                                                );
-                                            candidate_info.ref_count = ref_count;
                                             // Even if the slot list length is 1, this may be
                                             // reclaimable as it is a zero lamport account
                                             should_collect_reclaims = true;
