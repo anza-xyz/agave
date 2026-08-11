@@ -170,7 +170,7 @@ solana-vote-interface = "6.1.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.3.0-alpha.3" }
 test-case = "3.3.1"
 thiserror = "2.0"
-wincode = { version = "0.6.0", default-features = false }
+wincode = { version = "0.6.1", default-features = false }
 
 [features]
 sbf_c = []

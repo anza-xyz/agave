@@ -154,7 +154,7 @@ solana-vote-program = { path = "../programs/vote", version = "=4.3.0-alpha.3", d
 tempfile = "3.23.0"
 thiserror = "2.0.17"
 tokio = "1.48.0"
-wincode = { version = "0.6.0", features = ["derive"] }
+wincode = { version = "0.6.1", features = ["derive"] }
 
 [profile.dev]
 debug = "line-tables-only"
