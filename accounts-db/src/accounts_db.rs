@@ -808,7 +808,6 @@ impl ReadableAccount for LoadedAccount<'_> {
 #[derive(Default)]
 struct CleanKeyTimings {
     collect_delta_keys_us: u64,
-    delta_insert_us: u64,
     dirty_store_processing_us: u64,
     dirty_pubkeys_count: u64,
     oldest_dirty_slot: Slot,
@@ -1862,7 +1861,6 @@ impl AccountsDb {
             ("construct_candidates_us", measure_construct_candidates.as_us(), i64),
             ("accounts_scan", accounts_scan.as_us(), i64),
             ("clean_old_rooted", clean_old_rooted.as_us(), i64),
-            ("delta_insert_us", key_timings.delta_insert_us, i64),
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
             (
                 "zero_lamport_single_ref_slots_added_to_shrink_count",
