@@ -1484,7 +1484,11 @@ mod tests {
 
     impl BankForksController for TestBankForksController {
         fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError> {
-            Ok(self.bank_forks.write().unwrap().insert(bank))
+            Ok(self
+                .bank_forks
+                .write()
+                .unwrap()
+                .insert_for_block_production(bank))
         }
 
         fn enqueue_set_root(&self, new_root: Block) {

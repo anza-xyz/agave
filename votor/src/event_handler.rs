@@ -1072,7 +1072,7 @@ mod tests {
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
-            installed_scheduler_pool::BankWithScheduler,
+            installed_scheduler_pool::{BankWithScheduler, DropBankRequest},
         },
         solana_streamer::evicting_sender::EvictingSender,
         std::{
@@ -1096,7 +1096,7 @@ mod tests {
         timer_manager: Arc<PlRwLock<TimerManager>>,
         leader_window_info_receiver: Receiver<LeaderWindowInfo>,
         highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
-        drop_bank_receiver: Receiver<Vec<BankWithScheduler>>,
+        drop_bank_receiver: Receiver<DropBankRequest>,
         cluster_info: Arc<ClusterInfo>,
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
         #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
@@ -1116,12 +1116,16 @@ mod tests {
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+        drop_bank_sender: Sender<DropBankRequest>,
     }
 
     impl BankForksController for DirectBankForksController {
         fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError> {
-            Ok(self.bank_forks.write().unwrap().insert(bank))
+            Ok(self
+                .bank_forks
+                .write()
+                .unwrap()
+                .insert_for_block_production(bank))
         }
 
         fn enqueue_set_root(&self, new_root: Block) {
@@ -2131,7 +2135,15 @@ mod tests {
             true,
         );
         // Listen on drop bank receiver, it should get bank 0
-        let dropped_banks = test_context.drop_bank_receiver.try_recv().unwrap();
+        let DropBankRequest::DropBanks {
+            banks: dropped_banks,
+            new_root,
+            ..
+        } = test_context.drop_bank_receiver.try_recv().unwrap()
+        else {
+            panic!("expected dropped banks request");
+        };
+        assert_eq!(new_root, 1);
         assert_eq!(dropped_banks.len(), 1);
         assert_eq!(dropped_banks[0].slot(), 0);
         // The bank forks root should be updated to 1

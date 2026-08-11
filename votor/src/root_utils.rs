@@ -18,7 +18,7 @@ use {
     },
     solana_runtime::{
         bank_forks::BankForks, bank_forks_controller::BankForksController,
-        installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
+        installed_scheduler_pool::DropBankRequest, snapshot_controller::SnapshotController,
     },
     solana_time_utils::timestamp,
     std::{
@@ -114,7 +114,7 @@ pub fn check_and_handle_new_root<CB>(
     snapshot_controller: Option<&SnapshotController>,
     highest_super_majority_root: Option<Slot>,
     bank_notification_sender: &Option<BankNotificationSenderConfig>,
-    drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
+    drop_bank_sender: &Sender<DropBankRequest>,
     blockstore: &Blockstore,
     leader_schedule_cache: &Arc<LeaderScheduleCache>,
     bank_forks: &RwLock<BankForks>,
@@ -210,7 +210,7 @@ pub fn set_bank_forks_root<CB>(
     bank_forks: &RwLock<BankForks>,
     snapshot_controller: Option<&SnapshotController>,
     highest_super_majority_root: Option<Slot>,
-    drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
+    drop_bank_sender: &Sender<DropBankRequest>,
     callback: CB,
 ) where
     CB: FnOnce(&BankForks),
@@ -227,20 +227,20 @@ pub fn set_bank_forks_root<CB>(
     }
 
     bank_forks.read().unwrap().prune_program_cache(new_root);
-    let removed_banks = bank_forks.write().unwrap().set_root(
-        new_root,
-        snapshot_controller,
-        highest_super_majority_root,
-    );
+    let mut w_bank_forks = bank_forks.write().unwrap();
+    let removed_banks =
+        w_bank_forks.set_root(new_root, snapshot_controller, highest_super_majority_root);
 
-    if let Err(channel_name) = nonblocking_send(
-        my_pubkey,
-        drop_bank_sender,
-        removed_banks,
-        "drop_bank_sender",
-    ) {
-        info!("{my_pubkey} channel {channel_name} disconnected");
-    }
+    // Enqueue under the write lock so observers cannot race ahead of FIFO retirement ordering.
+    let send_result = drop_bank_sender.try_send(DropBankRequest::DropBanks {
+        banks: removed_banks,
+        new_root,
+    });
+    drop(w_bank_forks);
+    assert!(
+        send_result.is_ok(),
+        "{my_pubkey}: DropBankService must be running and non-full while BankForks can prune banks"
+    );
     let r_bank_forks = bank_forks.read().unwrap();
     callback(&r_bank_forks);
 }

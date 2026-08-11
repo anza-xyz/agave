@@ -8,6 +8,7 @@ use {
             tower_storage::{FileTowerStorage, NullTowerStorage},
             tree_diff::TreeDiff,
         },
+        drop_bank_service::DropBankService,
         replay_stage::ReplayStage,
         vote_simulator::{self, VoteSimulator},
     },
@@ -21,7 +22,7 @@ use {
     },
     crossbeam_channel::bounded,
     itertools::Itertools,
-    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
     solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_client::connection_cache::ConnectionCache,
@@ -173,8 +174,18 @@ impl ProcessActiveBanksContext {
     }
 }
 
+fn test_drop_bank_service() -> (Sender<DropBankRequest>, DropBankService) {
+    let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
+    (drop_bank_sender, DropBankService::new(drop_bank_receiver))
+}
+
 fn post_migration_status_for_tests() -> MigrationStatus {
     let migration_status = MigrationStatus::default();
+    enable_post_migration_status_for_tests(&migration_status);
+    migration_status
+}
+
+fn enable_post_migration_status_for_tests(migration_status: &MigrationStatus) {
     migration_status.record_feature_activation(0);
     let genesis_block = Block {
         slot: 0,
@@ -190,7 +201,6 @@ fn post_migration_status_for_tests() -> MigrationStatus {
     migration_status.set_genesis_block(genesis_block);
     migration_status.set_genesis_certificate(genesis_certificate);
     migration_status.enable_alpenglow_during_startup();
-    migration_status
 }
 
 fn cluster_info_for_tests() -> ClusterInfo {
@@ -263,6 +273,34 @@ fn insert_update_parent_slot(
         block_header_parent_slot,
         update_parent,
         replay_fec_set_index,
+    ));
+    blockstore.insert_shreds(shreds, true).unwrap();
+}
+
+fn insert_headerless_update_parent_slot(blockstore: &Blockstore, slot: Slot, parent_slot: Slot) {
+    let footer_marker = || {
+        VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+            bank_hash: Hash::new_unique(),
+            block_producer_time_nanos: 0,
+            block_user_agent: vec![],
+            block_final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        })
+    };
+    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
+        new_parent_slot: parent_slot,
+        new_parent_block_id: Hash::default(),
+    });
+
+    let mut shreds = block_marker_shreds(slot, parent_slot, footer_marker(), 0);
+    shreds.extend(block_marker_shreds(slot, parent_slot, update_parent, 32));
+    shreds.extend(block_marker_shreds_with_last(
+        slot,
+        parent_slot,
+        footer_marker(),
+        64,
+        true,
     ));
     blockstore.insert_shreds(shreds, true).unwrap();
 }
@@ -413,6 +451,7 @@ pub fn replay_blockstore_components(
 
 #[test]
 fn test_child_slots_of_same_parent() {
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let ReplayBlockstoreComponents {
         blockstore,
         validator_node_to_vote_keys,
@@ -478,6 +517,7 @@ fn test_child_slots_of_same_parent() {
             slot_status_notifier: &None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            drop_bank_sender: &drop_bank_sender,
         },
         &mut progress,
         &mut replay_timing,
@@ -510,6 +550,7 @@ fn test_child_slots_of_same_parent() {
             slot_status_notifier: &None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            drop_bank_sender: &drop_bank_sender,
         },
         &mut progress,
         &mut replay_timing,
@@ -730,6 +771,104 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     );
     assert_eq!(bank_forks.read().unwrap().root(), 1);
     assert!(blockstore.is_root(1));
+}
+
+#[test]
+fn test_set_bank_forks_root_fails_if_retirement_service_disconnected() {
+    let genesis_config = create_genesis_config(10_000).genesis_config;
+    let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    let new_root = 1;
+    let new_root_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), new_root);
+    new_root_bank.freeze();
+    bank_forks.write().unwrap().insert(new_root_bank);
+
+    let (drop_bank_sender, drop_bank_receiver) = bounded(1);
+    drop(drop_bank_receiver);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        root_utils::set_bank_forks_root(
+            &Pubkey::new_unique(),
+            new_root,
+            &bank_forks,
+            None,
+            None,
+            &drop_bank_sender,
+            |_| {},
+        );
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(bank_forks.read().unwrap().root(), new_root);
+    assert!(bank_forks.try_write().is_ok());
+}
+
+#[test]
+fn test_process_insert_bank_command_rejects_stale_parent_generation() {
+    let (mut vote_simulator, blockstore) = setup_forks_from_tree(tr(0), 1, None);
+    let bank_forks = vote_simulator.bank_forks.clone();
+    enable_post_migration_status_for_tests(bank_forks.read().unwrap().migration_status().as_ref());
+    let root_bank = bank_forks.read().unwrap().root_bank();
+
+    let parent_slot = 1;
+    let old_parent = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), parent_slot);
+    let old_parent = bank_forks.write().unwrap().insert(old_parent);
+    let old_parent = old_parent.clone_without_scheduler();
+    let child_slot = 2;
+    let child = Bank::new_from_parent(old_parent.clone(), SlotLeader::default(), child_slot);
+
+    let removed_parent = bank_forks.write().unwrap().remove(parent_slot).unwrap();
+    drop(removed_parent);
+    let replacement_parent = Bank::new_from_parent(root_bank, SlotLeader::default(), parent_slot);
+    let replacement_parent = bank_forks
+        .write()
+        .unwrap()
+        .insert(replacement_parent)
+        .clone_without_scheduler();
+    assert_ne!(old_parent.bank_id(), replacement_parent.bank_id());
+
+    let blockstore = Arc::new(blockstore);
+    let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
+        &bank_forks.read().unwrap().root_bank(),
+    ));
+    let (drop_bank_sender, _drop_bank_receiver) = bounded(1);
+    let context = ProcessBankForksContext {
+        bank_forks: bank_forks.clone(),
+        blockstore,
+        snapshot_controller: None,
+        bank_notification_sender: None,
+        rpc_subscriptions: None,
+        drop_bank_sender,
+        leader_schedule_cache,
+    };
+    let (response_sender, response_receiver) = bounded(1);
+    ReplayStage::process_bank_forks_command(
+        BankForksCommand::InsertBank {
+            bank: Box::new(child),
+            response_sender,
+        },
+        &context,
+        &mut vote_simulator.progress,
+        &mut Vec::new(),
+    );
+
+    assert!(response_receiver.recv().unwrap().is_none());
+    assert!(bank_forks.read().unwrap().get(child_slot).is_none());
+
+    // If BCL exits after enqueueing a valid bank but before receiving the response, Replay must
+    // remove the unpublished producer instead of leaving it to block all future switches.
+    let child = Bank::new_from_parent(replacement_parent, SlotLeader::default(), child_slot);
+    let (response_sender, response_receiver) = bounded(1);
+    drop(response_receiver);
+    ReplayStage::process_bank_forks_command(
+        BankForksCommand::InsertBank {
+            bank: Box::new(child),
+            response_sender,
+        },
+        &context,
+        &mut vote_simulator.progress,
+        &mut Vec::new(),
+    );
+    assert!(bank_forks.read().unwrap().get(child_slot).is_none());
 }
 
 #[test]
@@ -2992,6 +3131,7 @@ fn test_purge_unconfirmed_duplicate_slot() {
 
 #[test]
 fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let ReplayBlockstoreComponents {
         blockstore,
         validator_node_to_vote_keys,
@@ -3084,6 +3224,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             slot_status_notifier: &None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            drop_bank_sender: &drop_bank_sender,
         },
         &mut progress,
         &mut replay_timing,
@@ -3117,6 +3258,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             slot_status_notifier: &None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            drop_bank_sender: &drop_bank_sender,
         },
         &mut progress,
         &mut replay_timing,
@@ -3151,6 +3293,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             slot_status_notifier: &None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            drop_bank_sender: &drop_bank_sender,
         },
         &mut progress,
         &mut replay_timing,
@@ -3184,6 +3327,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             slot_status_notifier: &None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            drop_bank_sender: &drop_bank_sender,
         },
         &mut progress,
         &mut replay_timing,
@@ -3244,6 +3388,7 @@ fn test_update_parent_restart() {
     let cleared_bank_id = bank_forks.read().unwrap().get(4).unwrap().bank_id();
     let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
     let (entry_notification_sender, entry_notification_receiver) = bounded(1);
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3255,6 +3400,7 @@ fn test_update_parent_restart() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         Some(&entry_notification_sender),
+        &drop_bank_sender,
     );
 
     assert!(progress.get(&4).is_none()); // cleared: 5 < 32
@@ -3282,7 +3428,324 @@ fn test_update_parent_restart() {
 }
 
 #[test]
+fn test_update_parent_restart_clears_removed_bank_state() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+    let slot = 4;
+    let old_account = Pubkey::new_unique();
+
+    let bank = Bank::new_from_parent(
+        bank_forks.read().unwrap().root_bank(),
+        SlotLeader::default(),
+        slot,
+    );
+    bank.store_account(
+        &old_account,
+        &AccountSharedData::new(1, 0, &Pubkey::default()),
+    );
+    bank_forks.write().unwrap().insert(bank);
+    let old_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    let replay_progress = ForkProgress::new(Hash::default(), Some(0), None, 0, 0, None);
+    replay_progress.replay_progress.write().unwrap().num_shreds = 5;
+    progress.insert(slot, replay_progress);
+    assert_eq!(old_bank.get_balance(&old_account), 1);
+
+    let (drop_bank_sender, drop_bank_service) = test_drop_bank_service();
+    let removed_bank = bank_forks.write().unwrap().remove(slot).unwrap();
+    drop_bank_sender
+        .send(DropBankRequest::DropBanks {
+            banks: vec![removed_bank],
+            new_root: bank_forks.read().unwrap().root(),
+        })
+        .unwrap();
+
+    insert_update_parent_slot(
+        &blockstore,
+        slot,
+        3, // optimistic block-header parent
+        0, // UpdateParent parent
+        Hash::new_unique(),
+        32,
+    );
+    let (tx, rx) = bounded(1);
+    tx.send(UpdateParentSignal { slot }).unwrap();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1);
+    handle_update_parent_interrupts(
+        &Pubkey::new_unique(),
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut Vec::new(),
+        &rx,
+        &replay_vote_sender,
+        &post_migration_status_for_tests(),
+        None,
+        &drop_bank_sender,
+    );
+
+    assert!(progress.get(&slot).is_none());
+    assert_eq!(old_bank.get_balance(&old_account), 0);
+    let replacement_bank = Bank::new_from_parent(
+        bank_forks.read().unwrap().root_bank(),
+        SlotLeader::default(),
+        slot,
+    );
+    assert_eq!(replacement_bank.get_balance(&old_account), 0);
+    let replacement_account = Pubkey::new_unique();
+    replacement_bank.store_account(
+        &replacement_account,
+        &AccountSharedData::new(2, 0, &Pubkey::default()),
+    );
+
+    drop(old_bank);
+    assert_eq!(replacement_bank.get_balance(&replacement_account), 2);
+    drop(drop_bank_sender);
+    drop_bank_service.join().unwrap();
+}
+
+#[test]
+fn test_update_parent_restart_defers_removed_producer_bank() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        leader_schedule_cache,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+    let slot = 4;
+    let old_account = Pubkey::new_unique();
+
+    let producer_bank = Bank::new_from_parent(
+        bank_forks.read().unwrap().root_bank(),
+        SlotLeader::default(),
+        slot,
+    );
+    producer_bank.store_account(
+        &old_account,
+        &AccountSharedData::new(1, 0, &Pubkey::default()),
+    );
+    let producer_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_for_block_production(producer_bank);
+    let old_bank_id = producer_bank.bank_id();
+    let producer_bank = producer_bank.clone_without_scheduler();
+    let replay_progress = ForkProgress::new(Hash::default(), Some(0), None, 0, 0, None);
+    replay_progress.replay_progress.write().unwrap().num_shreds = 5;
+    progress.insert(slot, replay_progress);
+
+    let (drop_bank_sender, drop_bank_service) = test_drop_bank_service();
+    let removed_bank = bank_forks.write().unwrap().remove(slot).unwrap();
+    drop_bank_sender
+        .send(DropBankRequest::DropBanks {
+            banks: vec![removed_bank],
+            new_root: bank_forks.read().unwrap().root(),
+        })
+        .unwrap();
+    insert_update_parent_slot(&blockstore, slot, 3, 0, Hash::new_unique(), 32);
+
+    let (signal_sender, signal_receiver) = bounded(1);
+    signal_sender.send(UpdateParentSignal { slot }).unwrap();
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1);
+    let migration_status = post_migration_status_for_tests();
+    handle_update_parent_interrupts(
+        &Pubkey::new_unique(),
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut Vec::new(),
+        &signal_receiver,
+        &replay_vote_sender,
+        &migration_status,
+        None,
+        &drop_bank_sender,
+    );
+
+    // The removed producer is still live, so only stale replay bookkeeping is cleared. This lets
+    // generation retry without force-retiring account state while BankingStage can still commit.
+    assert!(!progress.contains_key(&slot));
+    assert_eq!(producer_bank.get_balance(&old_account), 1);
+    let my_pubkey = Pubkey::new_unique();
+    let mut replay_timing = ReplayLoopTiming::default();
+    ReplayStage::generate_new_bank_forks(
+        NewBankForksContext {
+            blockstore: &blockstore,
+            bank_forks: &bank_forks,
+            leader_schedule_cache: &leader_schedule_cache,
+            rpc_subscriptions: None,
+            slot_status_notifier: &None,
+            migration_status: &migration_status,
+            my_pubkey: &my_pubkey,
+            drop_bank_sender: &drop_bank_sender,
+        },
+        &mut progress,
+        &mut replay_timing,
+    );
+    assert!(bank_forks.read().unwrap().get(slot).is_none());
+    assert_eq!(producer_bank.get_balance(&old_account), 1);
+
+    producer_bank.freeze();
+    ReplayStage::generate_new_bank_forks(
+        NewBankForksContext {
+            blockstore: &blockstore,
+            bank_forks: &bank_forks,
+            leader_schedule_cache: &leader_schedule_cache,
+            rpc_subscriptions: None,
+            slot_status_notifier: &None,
+            migration_status: &migration_status,
+            my_pubkey: &my_pubkey,
+            drop_bank_sender: &drop_bank_sender,
+        },
+        &mut progress,
+        &mut replay_timing,
+    );
+
+    let replacement_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    assert_ne!(replacement_bank.bank_id(), old_bank_id);
+    assert_eq!(producer_bank.get_balance(&old_account), 0);
+    assert_eq!(replacement_bank.get_balance(&old_account), 0);
+    assert_eq!(
+        progress[&slot].replay_progress.read().unwrap().num_shreds,
+        32
+    );
+
+    drop(replacement_bank);
+    drop(producer_bank);
+    drop(drop_bank_sender);
+    drop_bank_service.join().unwrap();
+}
+
+#[test]
 fn test_headerless_update_parent() {
+    let (drop_bank_sender, drop_bank_service) = test_drop_bank_service();
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        leader_schedule_cache,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        node_pubkeys,
+        validator_keypairs,
+        ..
+    } = vote_simulator;
+    let my_pubkey = Pubkey::new_unique();
+    let slot = 4;
+    let migration_status = post_migration_status_for_tests();
+    let stale_account = Pubkey::new_unique();
+
+    insert_headerless_update_parent_slot(&blockstore, slot, 0);
+    let slot_meta = blockstore.meta(slot).unwrap().unwrap();
+    assert!(blockstore.is_full(slot), "{slot_meta:?}");
+    assert!(slot_meta.has_update_parent());
+
+    // Model an old slot generation that set_root() already removed before UpdateParent replay
+    // discovers the replacement. Keep an external Arc alive so the old Bank::drop callback runs
+    // only after the replacement has written its own state.
+    let old_bank = Bank::new_from_parent(
+        bank_forks.read().unwrap().root_bank(),
+        SlotLeader::default(),
+        slot,
+    );
+    old_bank.store_account(
+        &stale_account,
+        &AccountSharedData::new(1, 0, &Pubkey::default()),
+    );
+    let funded_validator = node_pubkeys[0];
+    let stale_signature = old_bank
+        .transfer(
+            1,
+            &validator_keypairs
+                .get(&funded_validator)
+                .unwrap()
+                .node_keypair,
+            &Pubkey::new_unique(),
+        )
+        .unwrap();
+    bank_forks.write().unwrap().insert(old_bank);
+    let old_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    assert_eq!(old_bank.get_balance(&stale_account), 1);
+    assert!(old_bank.get_signature_status(&stale_signature).is_some());
+    assert!(!progress.contains_key(&slot));
+
+    let removed_bank = bank_forks.write().unwrap().remove(slot).unwrap();
+    assert!(!removed_bank.is_transaction_producer());
+    drop_bank_sender
+        .send(DropBankRequest::DropBanks {
+            banks: vec![removed_bank],
+            new_root: bank_forks.read().unwrap().root(),
+        })
+        .unwrap();
+    assert!(bank_forks.read().unwrap().get(slot).is_none());
+
+    let mut replay_timing = ReplayLoopTiming::default();
+    ReplayStage::generate_new_bank_forks(
+        NewBankForksContext {
+            blockstore: &blockstore,
+            bank_forks: &bank_forks,
+            leader_schedule_cache: &leader_schedule_cache,
+            rpc_subscriptions: None,
+            slot_status_notifier: &None,
+            migration_status: &migration_status,
+            my_pubkey: &my_pubkey,
+            drop_bank_sender: &drop_bank_sender,
+        },
+        &mut progress,
+        &mut replay_timing,
+    );
+
+    let replacement_bank = bank_forks.read().unwrap().get(slot).expect(
+        "headerless UpdateParent should fence retirement and create a replay bank from the marker",
+    );
+    assert_ne!(replacement_bank.bank_id(), old_bank.bank_id());
+    assert_eq!(old_bank.get_balance(&stale_account), 0);
+    assert!(old_bank.get_signature_status(&stale_signature).is_none());
+    assert_eq!(replacement_bank.get_balance(&stale_account), 0);
+    assert!(
+        replacement_bank
+            .get_signature_status(&stale_signature)
+            .is_none()
+    );
+    assert_eq!(
+        progress
+            .get(&slot)
+            .unwrap()
+            .replay_progress
+            .read()
+            .unwrap()
+            .num_shreds,
+        32
+    );
+
+    let replacement_account = Pubkey::new_unique();
+    replacement_bank.store_account(
+        &replacement_account,
+        &AccountSharedData::new(2, 0, &Pubkey::default()),
+    );
+    drop(old_bank);
+    assert_eq!(replacement_bank.get_balance(&replacement_account), 2);
+
+    drop(drop_bank_sender);
+    drop_bank_service.join().unwrap();
+}
+
+#[test]
+fn test_headerless_update_parent_defers_pending_producer_bank() {
+    let (drop_bank_sender, drop_bank_service) = test_drop_bank_service();
     let ReplayBlockstoreComponents {
         blockstore,
         vote_simulator,
@@ -3298,35 +3761,27 @@ fn test_headerless_update_parent() {
     let slot = 4;
     let migration_status = post_migration_status_for_tests();
 
-    let footer_marker = || {
-        VersionedBlockMarker::from_block_footer(BlockFooterV1 {
-            bank_hash: Hash::new_unique(),
-            block_producer_time_nanos: 0,
-            block_user_agent: vec![],
-            block_final_cert: None,
-            skip_reward_cert: None,
-            notar_reward_cert: None,
-        })
-    };
-    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
-        new_parent_slot: 0,
-        new_parent_block_id: Hash::default(),
-    });
+    insert_headerless_update_parent_slot(&blockstore, slot, 0);
 
-    let mut shreds = block_marker_shreds(slot, 0, footer_marker(), 0);
-    shreds.extend(block_marker_shreds(slot, 0, update_parent, 32));
-    shreds.extend(block_marker_shreds_with_last(
+    let producer_bank = Bank::new_from_parent(
+        bank_forks.read().unwrap().root_bank(),
+        SlotLeader::default(),
         slot,
-        0,
-        footer_marker(),
-        64,
-        true,
-    ));
-    blockstore.insert_shreds(shreds, true).unwrap();
-    let slot_meta = blockstore.meta(slot).unwrap().unwrap();
-    assert!(blockstore.is_full(slot), "{slot_meta:?}");
-    assert!(slot_meta.has_update_parent());
-    assert!(bank_forks.read().unwrap().get(slot).is_none());
+    );
+    let producer_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_for_block_production(producer_bank);
+    let old_bank_id = producer_bank.bank_id();
+    let producer_bank = producer_bank.clone_without_scheduler();
+    let removed_bank = bank_forks.write().unwrap().remove(slot).unwrap();
+    assert!(removed_bank.is_transaction_producer());
+    drop_bank_sender
+        .send(DropBankRequest::DropBanks {
+            banks: vec![removed_bank],
+            new_root: bank_forks.read().unwrap().root(),
+        })
+        .unwrap();
 
     let mut replay_timing = ReplayLoopTiming::default();
     ReplayStage::generate_new_bank_forks(
@@ -3338,25 +3793,150 @@ fn test_headerless_update_parent() {
             slot_status_notifier: &None,
             migration_status: &migration_status,
             my_pubkey: &my_pubkey,
+            drop_bank_sender: &drop_bank_sender,
         },
         &mut progress,
         &mut replay_timing,
     );
 
-    assert!(
-        bank_forks.read().unwrap().get(slot).is_some(),
-        "headerless UpdateParent should create a replay bank from the marker"
+    assert!(bank_forks.read().unwrap().get(slot).is_none());
+    assert!(!progress.contains_key(&slot));
+
+    // Once producer ingress stops, the next production retry uses Barrier to retire the old
+    // generation and create its replacement.
+    producer_bank.freeze();
+    ReplayStage::generate_new_bank_forks(
+        NewBankForksContext {
+            blockstore: &blockstore,
+            bank_forks: &bank_forks,
+            leader_schedule_cache: &leader_schedule_cache,
+            rpc_subscriptions: None,
+            slot_status_notifier: &None,
+            migration_status: &migration_status,
+            my_pubkey: &my_pubkey,
+            drop_bank_sender: &drop_bank_sender,
+        },
+        &mut progress,
+        &mut replay_timing,
     );
+    let replacement_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    assert_ne!(replacement_bank.bank_id(), old_bank_id);
     assert_eq!(
-        progress
-            .get(&slot)
-            .unwrap()
-            .replay_progress
-            .read()
-            .unwrap()
-            .num_shreds,
+        progress[&slot].replay_progress.read().unwrap().num_shreds,
         32
     );
+    drop(replacement_bank);
+    drop(producer_bank);
+    drop(drop_bank_sender);
+    drop_bank_service.join().unwrap();
+}
+
+#[test]
+fn test_switch_bank_defers_missing_pending_producer_bank() {
+    let (drop_bank_sender, drop_bank_service) = test_drop_bank_service();
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+    let slot = 4;
+    let protected_account = Pubkey::new_unique();
+
+    // A dead original block is already present, but its replay Bank was removed by set_root()
+    // while a marked producer generation can still receive transactions.
+    insert_headerless_update_parent_slot(&blockstore, slot, 0);
+    let block_id = blockstore
+        .get_double_merkle_root(slot, BlockLocation::Original)
+        .unwrap()
+        .unwrap();
+    blockstore.set_dead_slot(slot).unwrap();
+
+    let producer_bank = Bank::new_from_parent(
+        bank_forks.read().unwrap().root_bank(),
+        SlotLeader::default(),
+        slot,
+    );
+    producer_bank.store_account(
+        &protected_account,
+        &AccountSharedData::new(1, 0, &Pubkey::default()),
+    );
+    let producer_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_for_block_production(producer_bank);
+    let producer_bank = producer_bank.clone_without_scheduler();
+    let removed_bank = bank_forks.write().unwrap().remove(slot).unwrap();
+    drop_bank_sender
+        .send(DropBankRequest::DropBanks {
+            banks: vec![removed_bank],
+            new_root: bank_forks.read().unwrap().root(),
+        })
+        .unwrap();
+
+    let event = SwitchBankEvent::Switch {
+        block: Block { slot, block_id },
+    };
+    let latest_switch_request = LatestSwitchRequest::default();
+    assert_eq!(latest_switch_request.try_advance(event), None);
+    let mut pending_switch = None;
+    let mut async_verification_freelist = Vec::new();
+    ReplayStage::process_switch_bank_events(
+        &Pubkey::new_unique(),
+        &latest_switch_request,
+        &mut pending_switch,
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut async_verification_freelist,
+        &drop_bank_sender,
+    )
+    .unwrap();
+
+    // Barrier observes the removed producer and defers without force-retiring it or mutating the
+    // original block. In particular, the dead marker must remain until producer ingress stops.
+    assert_eq!(pending_switch, Some(event));
+    assert!(blockstore.is_dead(slot));
+    assert_eq!(
+        blockstore
+            .get_double_merkle_root(slot, BlockLocation::Original)
+            .unwrap(),
+        Some(block_id)
+    );
+    assert_eq!(producer_bank.get_balance(&protected_account), 1);
+
+    // Once the producer is quiescent, targeted retirement is safe and the same pending switch can
+    // complete. Because the requested block is already in Original, completion clears its dead
+    // marker instead of moving an alternate column.
+    producer_bank.freeze();
+    ReplayStage::process_switch_bank_events(
+        &Pubkey::new_unique(),
+        &latest_switch_request,
+        &mut pending_switch,
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut async_verification_freelist,
+        &drop_bank_sender,
+    )
+    .unwrap();
+    assert_eq!(producer_bank.get_balance(&protected_account), 0);
+    assert_eq!(pending_switch, None);
+    assert!(!blockstore.is_dead(slot));
+    assert_eq!(
+        blockstore
+            .get_double_merkle_root(slot, BlockLocation::Original)
+            .unwrap(),
+        Some(block_id)
+    );
+
+    drop(producer_bank);
+    drop(drop_bank_sender);
+    drop_bank_service.join().unwrap();
 }
 
 #[test]
@@ -3388,6 +3968,7 @@ fn test_update_parent_tower_gated() {
     tx.send(UpdateParentSignal { slot }).unwrap();
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3399,6 +3980,7 @@ fn test_update_parent_tower_gated() {
         &replay_vote_sender,
         &MigrationStatus::default(),
         None,
+        &drop_bank_sender,
     );
 
     assert!(progress.get(&slot).is_some());
@@ -3433,6 +4015,7 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
     tx.send(UpdateParentSignal { slot }).unwrap();
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3444,6 +4027,7 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         None,
+        &drop_bank_sender,
     );
 
     assert!(progress.get(&slot).is_some());
@@ -3481,6 +4065,7 @@ fn test_update_parent_keeps_hard() {
     tx.send(UpdateParentSignal { slot }).unwrap();
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3492,6 +4077,7 @@ fn test_update_parent_keeps_hard() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         None,
+        &drop_bank_sender,
     );
 
     assert!(blockstore.is_dead(slot));
@@ -3694,6 +4280,7 @@ fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bo
         Some(&expected_reason)
     );
 
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
@@ -3706,6 +4293,7 @@ fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bo
         &replay_vote_sender,
         &migration_status,
         None,
+        &drop_bank_sender,
     );
 
     assert!(!blockstore.is_dead(slot));
@@ -3804,6 +4392,7 @@ fn test_soft_dead_restarts() {
     progress.insert(slot, p);
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
@@ -3816,6 +4405,7 @@ fn test_soft_dead_restarts() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         None,
+        &drop_bank_sender,
     );
 
     assert!(!blockstore.is_dead(slot));
@@ -3848,6 +4438,7 @@ fn test_full_soft_dead_hardens() {
     progress.insert(slot, p);
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
@@ -3860,6 +4451,7 @@ fn test_full_soft_dead_hardens() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         None,
+        &drop_bank_sender,
     );
 
     assert!(blockstore.is_dead(slot));
@@ -3967,6 +4559,7 @@ fn test_latest_parent_coalesces() {
 
 #[test]
 fn test_skip_own_update_full() {
+    let (drop_bank_sender, _drop_bank_service) = test_drop_bank_service();
     let (vote_simulator, blockstore) = setup_forks_from_tree(tr(0), 1, None::<GenerateVotes>);
     let VoteSimulator {
         bank_forks,
@@ -4011,6 +4604,7 @@ fn test_skip_own_update_full() {
             slot_status_notifier: &None,
             migration_status: &migration_status,
             my_pubkey: &my_pubkey,
+            drop_bank_sender: &drop_bank_sender,
         },
         &mut progress,
         &mut replay_timing,

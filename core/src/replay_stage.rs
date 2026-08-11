@@ -47,7 +47,7 @@ use {
         migration::{GENESIS_VOTE_REFRESH, MigrationStatus},
         vote::Vote,
     },
-    crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, select},
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, TrySendError, bounded, select},
     itertools::Itertools,
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
@@ -88,7 +88,7 @@ use {
         bank_forks_controller::{BankForksCommand, BankForksCommandReceiver, SetRootCommand},
         block_component_processor::BlockComponentProcessorError,
         commitment::BlockCommitmentCache,
-        installed_scheduler_pool::BankWithScheduler,
+        installed_scheduler_pool::{BankWithScheduler, DropBankRequest},
         leader_schedule_utils::first_of_consecutive_leader_slots,
         snapshot_controller::SnapshotController,
         transaction_execution::TransactionStatusSender,
@@ -273,7 +273,7 @@ struct ProcessBankForksContext {
     snapshot_controller: Option<Arc<SnapshotController>>,
     bank_notification_sender: Option<BankNotificationSenderConfig>,
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
-    drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    drop_bank_sender: Sender<DropBankRequest>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
 }
 
@@ -329,6 +329,8 @@ struct NewBankForksContext<'a> {
     migration_status: &'a MigrationStatus,
     /// This validator's identity, used to leave live own-leader banks to BCL.
     my_pubkey: &'a Pubkey,
+    /// Ordered bank-retirement service used to fence same-slot recreation.
+    drop_bank_sender: &'a Sender<DropBankRequest>,
 }
 
 struct LastVoteRefreshTime {
@@ -457,7 +459,7 @@ pub struct ReplaySenders {
     pub cost_update_sender: Sender<CostUpdate>,
     pub voting_sender: Sender<VoteOp>,
     pub bls_sender: Sender<BLSOp>,
-    pub drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    pub drop_bank_sender: Sender<DropBankRequest>,
     pub block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     pub dumped_slots_sender: Sender<Vec<(u64, Hash)>>,
     pub votor_event_sender: VotorEventSender,
@@ -975,6 +977,7 @@ impl ReplayStage {
                     &replay_vote_sender,
                     migration_status.as_ref(),
                     entry_notification_sender.as_ref(),
+                    &drop_bank_sender,
                 );
 
                 let mut generate_new_bank_forks_time =
@@ -988,6 +991,7 @@ impl ReplayStage {
                         slot_status_notifier: &slot_status_notifier,
                         migration_status: migration_status.as_ref(),
                         my_pubkey: &my_pubkey,
+                        drop_bank_sender: &drop_bank_sender,
                     },
                     &mut progress,
                     &mut replay_timing,
@@ -1078,6 +1082,7 @@ impl ReplayStage {
                         &replay_vote_sender,
                         migration_status.as_ref(),
                         entry_notification_sender.as_ref(),
+                        &drop_bank_sender,
                     );
                     Self::alpenglow_handle_newly_frozen_banks(
                         &new_frozen_slots,
@@ -1095,7 +1100,9 @@ impl ReplayStage {
                     // BCL inserts its bank before publishing it to PoH, so check both states.
                     let has_active_leader_bank =
                         bank_forks.read().unwrap().banks().values().any(|bank| {
-                            !bank.is_frozen() && Self::leader_is_me(bank.leader_id(), &my_pubkey)
+                            !bank.is_frozen()
+                                && (bank.is_transaction_producer()
+                                    || Self::leader_is_me(bank.leader_id(), &my_pubkey))
                         }) || poh_shared_leader_state.load().working_bank().is_some();
                     if !has_active_leader_bank {
                         Self::process_switch_bank_events(
@@ -1106,6 +1113,7 @@ impl ReplayStage {
                             &bank_forks,
                             &mut progress,
                             &mut async_verification_freelist,
+                            &drop_bank_sender,
                         )
                         .expect("Blockstore operations must succeed");
                     }
@@ -2433,6 +2441,7 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+        drop_bank_sender: &Sender<DropBankRequest>,
     ) -> Result<(), BlockstoreError> {
         let root = bank_forks.read().unwrap().root();
 
@@ -2529,7 +2538,20 @@ impl ReplayStage {
         let slots_to_clear = blocks_to_switch
             .iter()
             .map(|(slot, _)| *slot)
-            .chain(original_dead_slots_to_clear.iter().copied());
+            .chain(original_dead_slots_to_clear.iter().copied())
+            .collect::<Vec<_>>();
+
+        // A set-root request can remove a just-inserted BCL bank before BCL publishes it to PoH.
+        // In that window neither BankForks nor shared leader state exposes the producer, but the
+        // retirement service still owns its marked generation. Defer the switch until BCL has
+        // stopped ingress and cleared it.
+        if Self::has_pending_bank_retirement(drop_bank_sender, slots_to_clear.clone()) {
+            trace!(
+                "{my_pubkey}: deferring switch to {block:?} while a targeted producer bank is \
+                 still active"
+            );
+            return Ok(());
+        }
 
         info!("{my_pubkey}: Clearing banks for switching: {slots_to_clear:?}");
         Self::clear_slots(
@@ -2558,6 +2580,31 @@ impl ReplayStage {
         Ok(())
     }
 
+    fn flush_drop_bank_service(drop_bank_sender: &Sender<DropBankRequest>, slots: Vec<Slot>) {
+        let (ack_sender, ack_receiver) = bounded(1);
+        drop_bank_sender
+            .send(DropBankRequest::Flush { slots, ack_sender })
+            .expect("DropBankService must be running while replay can resurrect banks");
+        ack_receiver
+            .recv()
+            .expect("DropBankService must acknowledge retirement before bank resurrection");
+    }
+
+    /// Wait until all preceding root-pruning requests have been handled and report whether a
+    /// live local producer still protects account state at one of `slots` or its descendants.
+    fn has_pending_bank_retirement(
+        drop_bank_sender: &Sender<DropBankRequest>,
+        slots: Vec<Slot>,
+    ) -> bool {
+        let (ack_sender, ack_receiver) = bounded(1);
+        drop_bank_sender
+            .send(DropBankRequest::Barrier { slots, ack_sender })
+            .expect("DropBankService must be running while replay can resurrect banks");
+        ack_receiver
+            .recv()
+            .expect("DropBankService must acknowledge before bank resurrection")
+    }
+
     /// Clear the requested slots and their descendants from progress, bank forks, and shared
     /// caches. Requested slots are purged from shared caches even if their banks no longer exist.
     fn clear_slots(
@@ -2574,14 +2621,7 @@ impl ReplayStage {
 
         // Wait for async verify to complete
         for slot in &slots_to_purge {
-            if let Some(replay_progress) = progress.remove(slot) {
-                let mut w_replay_progress = replay_progress.replay_progress.write().unwrap();
-                let _ = w_replay_progress.wait_for_all_verification_results(&mut 0, &mut 0);
-                Self::recycle_async_verification(
-                    async_verification_freelist,
-                    w_replay_progress.take_async_verification(),
-                );
-            }
+            Self::clear_slot_progress(*slot, progress, async_verification_freelist);
         }
 
         // Wait for any in progress execution
@@ -2608,7 +2648,6 @@ impl ReplayStage {
                 w_bank_forks.dump_slots(bank_slots_to_clear.iter(), false);
             (root_bank, slot_bank_ids_to_purge, removed_banks)
         };
-
         // Clear the accounts for these slots so that any ongoing RPC scans fail.
         // These have to be atomically cleared together in the same batch, in order
         // to prevent RPC from seeing inconsistent results in scans.
@@ -2628,6 +2667,21 @@ impl ReplayStage {
         for slot in slots_to_purge {
             root_bank.clear_slot_signatures(slot);
             root_bank.prune_program_cache_by_deployment_slot(slot);
+        }
+    }
+
+    fn clear_slot_progress(
+        slot: Slot,
+        progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+    ) {
+        if let Some(replay_progress) = progress.remove(&slot) {
+            let mut w_replay_progress = replay_progress.replay_progress.write().unwrap();
+            let _ = w_replay_progress.wait_for_all_verification_results(&mut 0, &mut 0);
+            Self::recycle_async_verification(
+                async_verification_freelist,
+                w_replay_progress.take_async_verification(),
+            );
         }
     }
 
@@ -3082,7 +3136,7 @@ impl ReplayStage {
         has_new_vote_been_rooted: &mut bool,
         replay_timing: &mut ReplayLoopTiming,
         voting_sender: &Sender<VoteOp>,
-        drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
+        drop_bank_sender: &Sender<DropBankRequest>,
         wait_to_vote_slot: Option<Slot>,
         migration_status: &MigrationStatus,
         tbft_structs: &mut TowerBFTStructures,
@@ -5080,7 +5134,7 @@ impl ReplayStage {
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         has_new_vote_been_rooted: &mut bool,
         tracked_vote_transactions: &mut Vec<TrackedVoteTransaction>,
-        drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
+        drop_bank_sender: &Sender<DropBankRequest>,
         tbft_structs: &mut TowerBFTStructures,
     ) {
         root_utils::check_and_handle_new_root(
@@ -5171,7 +5225,7 @@ impl ReplayStage {
         highest_super_majority_root: Option<Slot>,
         has_new_vote_been_rooted: &mut bool,
         tracked_vote_transactions: &mut Vec<TrackedVoteTransaction>,
-        drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
+        drop_bank_sender: &Sender<DropBankRequest>,
         tbft_structs: &mut TowerBFTStructures,
     ) {
         root_utils::set_bank_forks_root(
@@ -5270,25 +5324,46 @@ impl ReplayStage {
                 response_sender,
             } => {
                 // Check that the bank is still valid to be inserted
-                let bank = {
+                let inserted_bank = {
                     let mut bank_forks = context.bank_forks.write().unwrap();
-                    if bank_forks.get(bank.slot()).is_none()
-                        && bank_forks.get(bank.parent_slot()).is_some()
+                    let parent_matches = bank
+                        .parent()
+                        .zip(bank_forks.get(bank.parent_slot()))
+                        .is_some_and(|(expected, current)| expected.bank_id() == current.bank_id());
+                    if bank.slot() > bank_forks.root()
+                        && bank_forks.get(bank.slot()).is_none()
+                        && parent_matches
                     {
-                        Some(bank_forks.insert(*bank))
+                        Some(bank_forks.insert_for_block_production(*bank))
                     } else {
                         None
                     }
                 };
 
-                response_sender.send(bank).unwrap_or_else(|_| {
-                    warn!("bank forks controller insert-bank response receiver dropped")
-                });
+                if let Err(SendError(inserted_bank)) = response_sender.send(inserted_bank) {
+                    warn!("bank forks controller insert-bank response receiver dropped");
+                    // The caller never received or published this bank, so it cannot have live
+                    // transaction ingress. Do not leave an unfrozen producer blocking future
+                    // UpdateParent or SwitchBank work.
+                    if let Some(inserted_bank) = inserted_bank {
+                        Self::clear_slots(
+                            [inserted_bank.slot()],
+                            &context.bank_forks,
+                            progress,
+                            async_verification_freelist,
+                        );
+                    }
+                }
             }
             BankForksCommand::ClearBank {
                 slot,
                 response_sender,
             } => {
+                if context.bank_forks.read().unwrap().get(slot).is_none() {
+                    // Root pruning removed this producer before BCL stopped ingress. Its ordered
+                    // DropBanks request must retire before BCL can reuse the numeric slot.
+                    Self::flush_drop_bank_service(&context.drop_bank_sender, vec![slot]);
+                }
                 Self::clear_slots(
                     [slot],
                     &context.bank_forks,
@@ -5315,6 +5390,7 @@ impl ReplayStage {
             slot_status_notifier,
             migration_status,
             my_pubkey,
+            drop_bank_sender,
         } = ctx;
 
         // Find the next slot that chains to the old slot
@@ -5389,7 +5465,26 @@ impl ReplayStage {
                     migration_status,
                 ) {
                     ChildBankReplayStart::FromStart => None,
-                    ChildBankReplayStart::FromUpdateParent(num_shreds) => Some(num_shreds),
+                    ChildBankReplayStart::FromUpdateParent(num_shreds) => {
+                        // `set_root()` may already have removed an older Bank at this numeric
+                        // slot. Fence its ordered retirement before constructing the replacement.
+                        // A still-active local producer protects its whole ancestor chain; defer
+                        // until BCL stops ingress and clears that generation.
+                        if Self::has_pending_bank_retirement(drop_bank_sender, vec![child_slot]) {
+                            trace!(
+                                "deferring UpdateParent replay for slot {child_slot} while its \
+                                 old bank generation is still active"
+                            );
+                            continue;
+                        }
+
+                        // AccountsDb retirement is fenced above. The status and program caches
+                        // are slot keyed as well, so clear their old generation immediately before
+                        // publishing the replacement Bank.
+                        parent_bank.clear_slot_signatures(child_slot);
+                        parent_bank.prune_program_cache_by_deployment_slot(child_slot);
+                        Some(num_shreds)
+                    }
                     ChildBankReplayStart::Defer => continue,
                 };
 

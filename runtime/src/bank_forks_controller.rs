@@ -358,7 +358,7 @@ mod tests {
                     } => {
                         let bank = {
                             let mut bank_forks = replay_bank_forks.write().unwrap();
-                            bank_forks.insert(*bank)
+                            bank_forks.insert_for_block_production(*bank)
                         };
                         response_sender.send(Some(bank)).unwrap();
                     }

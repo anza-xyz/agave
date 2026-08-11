@@ -35,7 +35,6 @@ use {
         transaction_execution::TransactionStatusSender, vote_sender_types::ReplayVoteSender,
     },
     solana_time_utils::AtomicInterval,
-    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         collections::HashSet,
         num::{NonZeroU64, NonZeroUsize},
@@ -805,7 +804,7 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     let tpu_bank = bank_forks
         .write()
         .unwrap()
-        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
+        .insert_for_block_production(tpu_bank);
     let tpu_bank_for_poh = tpu_bank.clone_with_scheduler();
     let set_bank_res = poh_controller.set_bank(tpu_bank_for_poh);
     if set_bank_res.is_err() {

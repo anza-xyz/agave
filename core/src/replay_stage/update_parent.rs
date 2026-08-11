@@ -13,6 +13,7 @@ use {
         repair::cluster_slot_state_verifier::{DuplicateSlotsToRepair, PurgeRepairSlotCounter},
     },
     agave_votor_messages::migration::MigrationStatus,
+    crossbeam_channel::Sender,
     solana_clock::Slot,
     solana_entry::block_component::VersionedUpdateParent,
     solana_ledger::{
@@ -24,8 +25,8 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, leader_schedule_utils::leader_slot_index,
-        vote_sender_types::ReplayVoteSender,
+        bank::Bank, bank_forks::BankForks, installed_scheduler_pool::DropBankRequest,
+        leader_schedule_utils::leader_slot_index, vote_sender_types::ReplayVoteSender,
     },
     std::sync::{Arc, RwLock},
 };
@@ -124,34 +125,44 @@ fn try_restart_slot_from_update_parent(
     migration_status: &MigrationStatus,
     source: &str,
     entry_notification_sender: Option<&EntryNotifierSender>,
-) -> bool {
+    drop_bank_sender: &Sender<DropBankRequest>,
+) {
     if !migration_status.should_allow_block_markers(slot) {
-        return false;
+        return;
     }
     if blockstore.is_dead(slot) {
-        return false;
+        return;
     }
     let Some(slot_meta) = blockstore.meta(slot).expect("Blockstore should not fail") else {
-        return false;
+        return;
     };
     let Some(replay_fec_set_index) =
         update_parent_replay_offset(slot, &slot_meta, bank_forks.read().unwrap().root())
     else {
-        return false;
+        return;
     };
 
     // Skip if neither replay bank nor progress exists. If progress exists
     // without a bank, clear it as stale state so the next replay iteration
     // can recreate the bank from the updated SlotMeta.
-    let bank = bank_forks.read().unwrap().get(slot);
+    let bank = {
+        let bank = bank_forks.read().unwrap().get_with_scheduler(slot);
+        if bank
+            .as_ref()
+            .is_some_and(|bank| bank.is_transaction_producer() && !bank.is_frozen())
+        {
+            return;
+        }
+        bank.map(|bank| bank.clone_without_scheduler())
+    };
     if bank.is_none() && !progress.contains_key(&slot) {
-        return false;
+        return;
     }
     if bank.as_ref().is_some_and(|bank| {
         ReplayStage::leader_is_me(bank.leader_id(), my_pubkey)
             || !bank.feature_set.snapshot().alpenglow_fast_leader_handover
     }) {
-        return false;
+        return;
     }
     let dead_reason = progress
         .get(&slot)
@@ -163,7 +174,7 @@ fn try_restart_slot_from_update_parent(
                 | DeadSlotReason::ReplayFailureAtUpdateParent(_)
         )
     }) {
-        return false;
+        return;
     }
 
     // Check if we've already replayed past the UpdateParent marker.
@@ -180,7 +191,19 @@ fn try_restart_slot_from_update_parent(
     if current_num_shreds > replay_fec_set_index
         || (current_num_shreds == replay_fec_set_index && !failed_at_replay_fec_set_index)
     {
-        return false;
+        return;
+    }
+
+    // `set_root()` may already have removed this bank from BankForks while a local producer still
+    // owns the old generation. Fence retirement before recreating the numeric slot.
+    if ReplayStage::has_pending_bank_retirement(drop_bank_sender, vec![slot]) {
+        if bank.is_none() {
+            // This progress entry describes the removed generation. Clear only replay bookkeeping
+            // so generate_new_bank_forks can retry; the producer and its account state must remain
+            // intact until a later Barrier observes that ingress has quiesced.
+            ReplayStage::clear_slot_progress(slot, progress, async_verification_freelist);
+        }
+        return;
     }
 
     // Clear and let generate_new_bank_forks restart from replay_fec_set_index.
@@ -206,7 +229,6 @@ fn try_restart_slot_from_update_parent(
             },
         );
     }
-    true
 }
 
 /// Revisit soft-dead slots as more shreds arrive.
@@ -226,6 +248,7 @@ pub(super) fn process_soft_dead_slots(
     replay_vote_sender: &ReplayVoteSender,
     migration_status: &MigrationStatus,
     entry_notification_sender: Option<&EntryNotifierSender>,
+    drop_bank_sender: &Sender<DropBankRequest>,
 ) {
     let soft_dead_slots = progress
         .iter()
@@ -267,6 +290,7 @@ pub(super) fn process_soft_dead_slots(
                 migration_status,
                 "soft-dead scan",
                 entry_notification_sender,
+                drop_bank_sender,
             );
             continue;
         }
@@ -304,6 +328,7 @@ pub(super) fn process_soft_dead_slots(
 /// Handles UpdateParent signals by clearing slot state so replay restarts from
 /// the new parent. Skips live own-leader banks, slots replay has not started,
 /// and slots that already replayed past the UpdateParent marker.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_update_parent_interrupts(
     my_pubkey: &Pubkey,
     blockstore: &Blockstore,
@@ -314,6 +339,7 @@ pub(super) fn handle_update_parent_interrupts(
     replay_vote_sender: &ReplayVoteSender,
     migration_status: &MigrationStatus,
     entry_notification_sender: Option<&EntryNotifierSender>,
+    drop_bank_sender: &Sender<DropBankRequest>,
 ) {
     while let Ok(signal) = update_parent_receiver.try_recv() {
         try_restart_slot_from_update_parent(
@@ -327,6 +353,7 @@ pub(super) fn handle_update_parent_interrupts(
             migration_status,
             "UpdateParent signal",
             entry_notification_sender,
+            drop_bank_sender,
         );
     }
 }

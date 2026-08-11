@@ -22,6 +22,7 @@
 
 use {
     crate::bank::Bank,
+    crossbeam_channel::Sender,
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -369,8 +370,38 @@ pub struct BankWithScheduler {
 pub struct BankWithSchedulerInner {
     bank: Arc<Bank>,
     scheduler: InstalledSchedulerRwLock,
+    is_transaction_producer: bool,
 }
 pub type InstalledSchedulerRwLock = RwLock<SchedulerStatus>;
+
+/// Ordered requests serviced by `DropBankService`.
+///
+/// `Flush` is a targeted FIFO barrier: its acknowledgement is sent only after matching pending
+/// banks have retired their account state and released their service-owned references. `Barrier`
+/// reports whether a targeted bank remains in a producer-protected retirement group after all
+/// preceding requests have been handled.
+#[derive(Debug)]
+pub enum DropBankRequest {
+    /// Transfers banks removed by `BankForks::set_root()` to the retirement service.
+    DropBanks {
+        banks: Vec<BankWithScheduler>,
+        new_root: Slot,
+    },
+    /// Retires pending banks at these slots or on forks descending from them.
+    ///
+    /// Callers must stop new transaction ingress for the targeted banks before sending this
+    /// request. The service waits for work already in flight, but cannot prevent new commits.
+    Flush {
+        slots: Vec<Slot>,
+        ack_sender: Sender<()>,
+    },
+    /// A FIFO barrier that reports whether a bank remains pending at one of these slots or on a
+    /// fork descending from one of them.
+    Barrier {
+        slots: Vec<Slot>,
+        ack_sender: Sender<bool>,
+    },
+}
 
 impl BankWithScheduler {
     /// Creates a new `BankWithScheduler` from bank and its associated scheduler.
@@ -381,6 +412,14 @@ impl BankWithScheduler {
     /// preallocation.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(bank: Arc<Bank>, scheduler: Option<InstalledSchedulerBox>) -> Self {
+        Self::new_with_transaction_producer(bank, scheduler, false)
+    }
+
+    pub(crate) fn new_with_transaction_producer(
+        bank: Arc<Bank>,
+        scheduler: Option<InstalledSchedulerBox>,
+        is_transaction_producer: bool,
+    ) -> Self {
         // Avoid the fatal situation in which bank is being associated with a scheduler associated
         // to a different bank!
         if let Some(bank_in_context) = scheduler
@@ -394,6 +433,7 @@ impl BankWithScheduler {
             inner: Arc::new(BankWithSchedulerInner {
                 bank,
                 scheduler: RwLock::new(SchedulerStatus::new(scheduler)),
+                is_transaction_producer,
             }),
         }
     }
@@ -410,6 +450,10 @@ impl BankWithScheduler {
 
     pub fn clone_without_scheduler(&self) -> Arc<Bank> {
         self.inner.bank.clone()
+    }
+
+    pub fn is_transaction_producer(&self) -> bool {
+        self.inner.is_transaction_producer
     }
 
     pub fn register_tick(&self, hash: &Hash) {

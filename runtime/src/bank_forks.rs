@@ -298,17 +298,38 @@ impl BankForks {
         self.insert_with_scheduling_mode(SchedulingMode::BlockVerification, bank)
     }
 
-    pub fn insert_with_scheduling_mode(
+    /// Inserts a bank that will be published to transaction-ingress paths.
+    ///
+    /// Its producer role is fixed before the bank becomes visible through BankForks or
+    /// SharableBanks, allowing root pruning to preserve its account-state dependencies.
+    pub fn insert_for_block_production(&mut self, bank: Bank) -> BankWithScheduler {
+        self.insert_with_scheduling_mode(SchedulingMode::BlockProduction, bank)
+    }
+
+    fn insert_with_scheduling_mode(
         &mut self,
         mode: SchedulingMode,
         bank: Bank,
     ) -> BankWithScheduler {
         let bank = Arc::new(bank);
-        let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
-            Self::install_scheduler_into_bank(scheduler_pool, mode, bank)
-        } else {
-            BankWithScheduler::new_without_scheduler(bank)
-        };
+        let is_transaction_producer = matches!(mode, SchedulingMode::BlockProduction);
+        let scheduler_pool = self.scheduler_pool.as_ref();
+        let scheduler = scheduler_pool.and_then(|scheduler_pool| {
+            scheduler_pool.take_scheduler(SchedulingContext::new(bank.clone()))
+        });
+        let has_scheduler = scheduler.is_some();
+        let bank = BankWithScheduler::new_with_transaction_producer(
+            bank,
+            scheduler,
+            is_transaction_producer,
+        );
+        // Block production is serialized, so only replay banks need timeout listeners.
+        if !is_transaction_producer
+            && has_scheduler
+            && let Some(scheduler_pool) = scheduler_pool
+        {
+            scheduler_pool.register_timeout_listener(bank.create_timeout_listener());
+        }
         let prev = self.banks.insert(bank.slot(), bank.clone_with_scheduler());
         assert!(prev.is_none());
         let slot = bank.slot();
@@ -323,27 +344,6 @@ impl BankForks {
 
         bank
     }
-
-    fn install_scheduler_into_bank(
-        scheduler_pool: &InstalledSchedulerPoolArc,
-        mode: SchedulingMode,
-        bank: Arc<Bank>,
-    ) -> BankWithScheduler {
-        let context = SchedulingContext::new(bank.clone());
-        let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
-            return BankWithScheduler::new_without_scheduler(bank);
-        };
-        let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
-        // Skip registering for block production. Both the tvu main loop in the replay stage
-        // and PohRecorder don't support _concurrent block production_ at all. It's strongly
-        // assumed that block is produced in singleton way and it's actually desired, while
-        // ignoring the opportunity cost of (hopefully rare!) fork switching...
-        if matches!(mode, SchedulingMode::BlockVerification) {
-            scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
-        }
-        bank_with_scheduler
-    }
-
     pub fn remove(&mut self, slot: Slot) -> Option<BankWithScheduler> {
         let bank = self.banks.remove(&slot)?;
         for parent in bank.proper_ancestors() {
@@ -904,6 +904,32 @@ mod tests {
         let bank_forks = bank_forks.read().unwrap();
         assert_eq!(bank_forks[1u64].tick_height(), 1);
         assert_eq!(bank_forks.working_bank().tick_height(), 1);
+    }
+
+    #[test]
+    fn test_block_production_bank_is_marked_before_publication() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let root_bank = bank_forks.read().unwrap().root_bank();
+
+        let verification_bank = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), 1);
+        let verification_bank = bank_forks.write().unwrap().insert(verification_bank);
+        assert!(!verification_bank.is_transaction_producer());
+
+        let producer_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 2);
+        let producer_bank = bank_forks
+            .write()
+            .unwrap()
+            .insert_for_block_production(producer_bank);
+        assert!(producer_bank.is_transaction_producer());
+        assert!(
+            bank_forks
+                .read()
+                .unwrap()
+                .get_with_scheduler(2)
+                .unwrap()
+                .is_transaction_producer()
+        );
     }
 
     #[test]

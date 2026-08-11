@@ -11,6 +11,7 @@ use {
             progress_map::{ForkProgress, LockoutInterval, ProgressMap},
             tower_vote_state::TowerVoteState,
         },
+        drop_bank_service::DropBankService,
         repair::cluster_slot_state_verifier::{
             DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
         },
@@ -247,7 +248,8 @@ impl VoteSimulator {
     }
 
     pub fn set_root(&mut self, my_pubkey: &Pubkey, new_root: Slot) {
-        let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
+        let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
+        let drop_bank_service = DropBankService::new(drop_bank_receiver);
         ReplayStage::handle_new_root(
             my_pubkey,
             new_root,
@@ -259,7 +261,9 @@ impl VoteSimulator {
             &mut Vec::new(),
             &drop_bank_sender,
             &mut self.tbft_structs,
-        )
+        );
+        drop(drop_bank_sender);
+        drop_bank_service.join().unwrap();
     }
 
     pub fn create_and_vote_new_branch(

@@ -2,25 +2,17 @@ use {
     crossbeam_channel::bounded,
     itertools::Itertools,
     log::*,
-    solana_core::{
-        consensus::{
-            heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
-            progress_map::{ForkProgress, ProgressMap},
-        },
-        drop_bank_service::DropBankService,
-        repair::cluster_slot_state_verifier::{
-            DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
-        },
-        replay_stage::{ReplayStage, TowerBFTStructures},
-        unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
-    },
-    solana_hash::Hash,
+    solana_account::AccountSharedData,
+    solana_accounts_db::accounts_scan::ScanError,
+    solana_core::drop_bank_service::DropBankService,
     solana_leader_schedule::SlotLeader,
     solana_ledger::genesis_utils::create_genesis_config,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
-        installed_scheduler_pool::SchedulingContext,
+        bank::Bank,
+        bank_forks::BankForks,
+        genesis_utils::GenesisConfigInfo,
+        installed_scheduler_pool::{DropBankRequest, SchedulingContext},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm_timings::ExecuteTimings,
@@ -31,13 +23,13 @@ use {
         DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool, TaskHandler,
     },
     std::{
-        collections::HashMap,
         sync::{Arc, Mutex},
+        time::Duration,
     },
 };
 
 #[test]
-fn test_scheduler_waited_by_drop_bank_service() {
+fn test_drop_bank_service_flush_waits_for_unrooted_retirement() {
     agave_logger::setup();
 
     static LOCK_TO_STALL: Mutex<()> = Mutex::new(());
@@ -54,8 +46,6 @@ fn test_scheduler_waited_by_drop_bank_service() {
         ) {
             info!("Stalling at StallingHandler::handle()...");
             *LOCK_TO_STALL.lock().unwrap();
-            // Wait a bit for the replay stage to prune banks
-            std::thread::sleep(std::time::Duration::from_secs(3));
             info!("Now entering into DefaultTaskHandler::handle()...");
 
             DefaultTaskHandler::handle(result, timings, scheduling_context, task, handler_context);
@@ -77,19 +67,73 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let pool = pool_raw.clone();
     bank_forks.write().unwrap().install_scheduler_pool(pool);
     let genesis = 0;
-    let genesis_bank = &bank_forks.read().unwrap().get(genesis).unwrap();
+    let genesis_bank = bank_forks.read().unwrap().get(genesis).unwrap();
     genesis_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
 
-    // Create bank, which is pruned later
-    let pruned = 2;
-    let pruned_bank = Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), pruned);
-    let pruned_bank = bank_forks.write().unwrap().insert(pruned_bank);
+    // Create a divergent parent and an unfrozen child above the eventual root. These slots can be
+    // replayed after they are pruned, so DropBankService must retire their exact account
+    // generations. Creating the child freezes its parent while leaving the child unfrozen.
+    let pruned_parent = 2;
+    let pruned_parent_bank =
+        Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), pruned_parent);
+    let inherited_account = Pubkey::new_unique();
+    pruned_parent_bank.store_account(
+        &inherited_account,
+        &AccountSharedData::new(24, 0, &Pubkey::default()),
+    );
+    let pruned_parent_bank = bank_forks.write().unwrap().insert(pruned_parent_bank);
+    let pruned_parent_bank_arc = pruned_parent_bank.clone_without_scheduler();
+    drop(pruned_parent_bank);
+
+    let pruned = 4;
+    let pruned_bank = Bank::new_from_parent(
+        pruned_parent_bank_arc.clone(),
+        SlotLeader::default(),
+        pruned,
+    );
+    let stale_account = Pubkey::new_unique();
+    pruned_bank.store_account(
+        &stale_account,
+        &AccountSharedData::new(42, 0, &Pubkey::default()),
+    );
+    let pruned_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_for_block_production(pruned_bank);
+    let pruned_bank_arc = pruned_bank.clone_without_scheduler();
+    assert_eq!(pruned_bank_arc.get_balance(&stale_account), 42);
+    assert_eq!(pruned_bank_arc.get_balance(&inherited_account), 24);
+    assert_eq!(pruned_bank_arc.scan_all_accounts(|_| {}), Ok(()));
+
+    // An unfrozen bank not published for transaction production cannot receive BankingStage
+    // commits, so it is safe to retire immediately.
+    let remote = 5;
+    let remote_bank = Bank::new_from_parent(
+        pruned_parent_bank_arc.clone(),
+        SlotLeader::new_unique(),
+        remote,
+    );
+    let remote_account = Pubkey::new_unique();
+    remote_bank.store_account(
+        &remote_account,
+        &AccountSharedData::new(12, 0, &Pubkey::default()),
+    );
+    let remote_signature = remote_bank
+        .transfer(1, &mint_keypair, &Pubkey::new_unique())
+        .unwrap();
+    let remote_bank = bank_forks.write().unwrap().insert(remote_bank);
+    let remote_bank_arc = remote_bank.clone_without_scheduler();
+    assert!(
+        remote_bank_arc
+            .get_signature_status(&remote_signature)
+            .is_some()
+    );
+    drop(remote_bank);
 
     // Create new root bank
-    let root = 3;
+    let root = 1;
     let root_bank = Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), root);
     root_bank.freeze();
-    let root_hash = root_bank.hash();
     bank_forks.write().unwrap().insert(root_bank);
 
     let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -99,93 +143,137 @@ fn test_scheduler_waited_by_drop_bank_service() {
         genesis_config.hash(),
     ));
 
-    // Delay transaction execution to ensure transaction execution happens after termination has
-    // been started
+    // Block transaction execution so retirement cannot complete until the test releases it.
     let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
     pruned_bank
         .schedule_transaction_executions([(tx, 0)].into_iter())
         .unwrap();
     drop(pruned_bank);
     assert_eq!(pool_raw.pooled_scheduler_count(), 0);
-    drop(lock_to_stall);
 
-    // Create 2 channels to check actual pruned banks
-    let (drop_bank_sender1, drop_bank_receiver1) = bounded(1024);
-    let (drop_bank_sender2, drop_bank_receiver2) = bounded(1024);
-    let drop_bank_service = DropBankService::new(drop_bank_receiver2);
-
-    info!("calling handle_new_root()...");
-    // Mostly copied from: test_handle_new_root()
-    {
-        let heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new((root, root_hash));
-
-        let mut progress = ProgressMap::default();
-        for i in genesis..=root {
-            progress.insert(
-                i,
-                ForkProgress::new(Hash::default(), None, None, 0, 0, None),
-            );
-        }
-
-        let duplicate_slots_tracker: DuplicateSlotsTracker =
-            vec![root - 1, root, root + 1].into_iter().collect();
-        let duplicate_confirmed_slots: DuplicateConfirmedSlots = vec![root - 1, root, root + 1]
-            .into_iter()
-            .map(|s| (s, Hash::default()))
-            .collect();
-        let unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes =
-            UnfrozenGossipVerifiedVoteHashes {
-                votes_per_slot: vec![root - 1, root, root + 1]
-                    .into_iter()
-                    .map(|s| (s, HashMap::new()))
-                    .collect(),
-            };
-        let epoch_slots_frozen_slots: EpochSlotsFrozenSlots = vec![root - 1, root, root + 1]
-            .into_iter()
-            .map(|slot| (slot, Hash::default()))
-            .collect();
-        let mut tbft_structs = TowerBFTStructures {
-            heaviest_subtree_fork_choice,
-            duplicate_slots_tracker,
-            duplicate_confirmed_slots,
-            unfrozen_gossip_verified_vote_hashes,
-            epoch_slots_frozen_slots,
-        };
-        ReplayStage::handle_new_root(
-            &Pubkey::new_unique(),
-            root,
-            &bank_forks,
-            &mut progress,
-            None, // snapshot_controller
-            None,
-            &mut true,
-            &mut Vec::new(),
-            &drop_bank_sender1,
-            &mut tbft_structs,
-        );
-    }
-
-    // Receive pruned banks from the above handle_new_root
-    let pruned_banks = drop_bank_receiver1.recv().unwrap();
+    // Call BankForks::set_root directly: root_utils intentionally waits for schedulers before
+    // pruning, while this test needs the bank to reach DropBankService with work still in flight.
+    let pruned_banks = bank_forks.write().unwrap().set_root(root, None, None);
     assert_eq!(
         pruned_banks
             .iter()
             .map(|b| b.slot())
             .sorted()
             .collect::<Vec<_>>(),
-        vec![genesis, pruned]
+        vec![genesis, pruned_parent, pruned, remote]
     );
-    info!("sending pruned banks to DropBankService...");
-    drop_bank_sender2.send(pruned_banks).unwrap();
 
-    info!("joining the drop bank service...");
-    drop((
-        (drop_bank_sender1, drop_bank_receiver1),
-        (drop_bank_sender2,),
-    ));
+    let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
+    let drop_bank_service = DropBankService::new(drop_bank_receiver);
+    drop_bank_sender
+        .send(DropBankRequest::DropBanks {
+            banks: pruned_banks,
+            new_root: root,
+        })
+        .unwrap();
+
+    // The frozen parent remains protected while its producer child is live, while the unrelated
+    // non-producer bank retires immediately. Barrier reports the matching pending dependency group.
+    let (barrier_ack_sender, barrier_ack_receiver) = bounded(1);
+    drop_bank_sender
+        .send(DropBankRequest::Barrier {
+            slots: vec![pruned_parent],
+            ack_sender: barrier_ack_sender,
+        })
+        .unwrap();
+    assert!(
+        barrier_ack_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+    );
+    assert_eq!(remote_bank_arc.get_balance(&remote_account), 0);
+    assert!(
+        remote_bank_arc
+            .get_signature_status(&remote_signature)
+            .is_none()
+    );
+    assert_eq!(
+        remote_bank_arc.scan_all_accounts(|_| {}),
+        Err(ScanError::SlotRemoved {
+            slot: remote,
+            bank_id: remote_bank_arc.bank_id(),
+        })
+    );
+    assert_eq!(pruned_bank_arc.get_balance(&stale_account), 42);
+    assert_eq!(pruned_bank_arc.get_balance(&inherited_account), 24);
+    assert_eq!(pruned_bank_arc.scan_all_accounts(|_| {}), Ok(()));
+    assert_eq!(pruned_parent_bank_arc.scan_all_accounts(|_| {}), Ok(()));
+
+    let (unrelated_ack_sender, unrelated_ack_receiver) = bounded(1);
+    drop_bank_sender
+        .send(DropBankRequest::Barrier {
+            slots: vec![root],
+            ack_sender: unrelated_ack_sender,
+        })
+        .unwrap();
+    assert!(
+        !unrelated_ack_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+    );
+
+    let (ack_sender, ack_receiver) = bounded(1);
+    drop_bank_sender
+        .send(DropBankRequest::Flush {
+            // Targeting an ancestor must also retire its pending descendants.
+            slots: vec![pruned_parent],
+            ack_sender,
+        })
+        .unwrap();
+
+    // Flush is ordered behind retirement and cannot acknowledge while slot 4's scheduler is
+    // blocked. Account state and scan eligibility must remain intact until execution quiesces.
+    assert!(
+        ack_receiver
+            .recv_timeout(Duration::from_millis(50))
+            .is_err()
+    );
+    assert_eq!(pruned_bank_arc.get_balance(&stale_account), 42);
+    assert_eq!(pruned_bank_arc.scan_all_accounts(|_| {}), Ok(()));
+
+    // Model a BankingStage record that has reserved this bank but has not completed its account
+    // commit. Retirement must fence this legacy path independently of unified-scheduler work.
+    let inflight_commit = pruned_bank_arc.freeze_lock();
+    drop(lock_to_stall);
+    assert!(
+        ack_receiver
+            .recv_timeout(Duration::from_millis(50))
+            .is_err()
+    );
+    assert_eq!(pruned_bank_arc.get_balance(&stale_account), 42);
+
+    drop(inflight_commit);
+    ack_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    // The acknowledgement fences both account retirement and scan invalidation for the exact
+    // unrooted bank generation. The removed genesis Bank is at or below the new root and must not
+    // be tombstoned.
+    assert_eq!(pruned_bank_arc.get_balance(&stale_account), 0);
+    assert_eq!(pruned_bank_arc.get_balance(&inherited_account), 0);
+    assert_eq!(
+        pruned_bank_arc.scan_all_accounts(|_| {}),
+        Err(ScanError::SlotRemoved {
+            slot: pruned,
+            bank_id: pruned_bank_arc.bank_id(),
+        })
+    );
+    assert_eq!(
+        pruned_parent_bank_arc.scan_all_accounts(|_| {}),
+        Err(ScanError::SlotRemoved {
+            slot: pruned_parent,
+            bank_id: pruned_parent_bank_arc.bank_id(),
+        })
+    );
+    assert_eq!(genesis_bank.scan_all_accounts(|_| {}), Ok(()));
+
+    drop(drop_bank_sender);
     drop_bank_service.join().unwrap();
-    info!("finally joined the drop bank service!");
 
-    // the scheduler used by the pruned_bank have been returned now.
-    assert_eq!(pool_raw.pooled_scheduler_count(), 1);
+    // The flush acknowledgement is also ordered after the pruned bank releases its scheduler.
+    assert_eq!(pool_raw.pooled_scheduler_count(), 3);
 }
