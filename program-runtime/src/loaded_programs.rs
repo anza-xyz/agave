@@ -204,8 +204,11 @@ pub struct ProgramToLoad<'a> {
     pub program_id: &'a Pubkey,
     /// The program loader
     pub loader: ProgramCacheEntryOwner,
-    /// Ignore entries deployed before this slot.
-    pub deployed_on_or_after_slot: Slot,
+    /// The slot the program was (re)deployed in, as reported by the program
+    /// account on the caller's own fork.
+    ///
+    /// For Loader V1/V2 and builtin programs, this is 0.
+    pub deployment_slot: Slot,
     /// When the program account was last written to (might be after the deployment slot)
     pub last_modification_slot: Slot,
 }
@@ -217,7 +220,8 @@ pub(crate) enum IndexImplementation {
         /// A two level index:
         ///
         /// - the first level is for the address at which programs are deployed
-        /// - the second level for the slot (and thus also fork), sorted by slot number.
+        /// - the second level for the slot (and thus also fork), sorted by slot
+        ///   number from smallest to largest.
         entries: HashMap<Pubkey, Vec<Arc<ProgramCacheEntry>>>,
         /// The entries that are getting loaded and have not yet finished loading.
         ///
@@ -616,11 +620,17 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         for entry in second_level.iter().rev() {
                             // The entry must have been deployed in the slot reported by
                             // the caller's own program account, and by the same loader.
-                            if program_to_load.deployed_on_or_after_slot != entry.deployment_slot
+                            if program_to_load.deployment_slot != entry.deployment_slot
                                 || program_to_load.loader != entry.account_owner
                             {
                                 continue;
                             }
+
+                            // At this point we're sitting on an entry with a matching
+                            // deployment slot and owner.
+                            //
+                            // Fork-graph analysis below this is now redundant, and it
+                            // can be removed in follow-up.
                             let entry_in_same_branch = entry.deployment_slot
                                 <= self.latest_root_slot
                                 || matches!(
@@ -1988,7 +1998,7 @@ pub(crate) mod tests {
                     .map(|(_program_id, entry)| ProgramToLoad {
                         program_id: key,
                         loader: entry.account_owner,
-                        deployed_on_or_after_slot: entry.deployment_slot,
+                        deployment_slot: entry.deployment_slot,
                         last_modification_slot: entry.deployment_slot,
                     })
             })
@@ -2253,12 +2263,51 @@ pub(crate) mod tests {
         let mut missing = get_entries_to_load(&cache, 12, keys);
         // Program 2's newest entry is at slot 11. Asking for 5 doesn't extract
         // the latest (11) anymore. You get 5.
-        missing.get_mut(1).unwrap().deployed_on_or_after_slot = 5;
+        missing.get_mut(1).unwrap().deployment_slot = 5;
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 5, 12));
+    }
+
+    #[test]
+    fn test_extract_rejects_entry_deployed_after_the_requested_slot() {
+        let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
+        let env = get_mock_program_runtime_environment();
+
+        let mut fork_graph = TestForkGraphSpecific::default();
+        fork_graph.insert_fork(&[0, 5, 11, 12]);
+        let fork_graph = Arc::new(RwLock::new(fork_graph));
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
+
+        // The only cached entry was deployed in slot 11.
+        let program = Pubkey::new_unique();
+        cache.assign_program(&env, program, 11, new_test_entry(11));
+
+        // A caller whose account state holds slot 5 must not be handed it.
+        let mut missing = vec![ProgramToLoad {
+            program_id: &program,
+            loader: ProgramCacheEntryOwner::LoaderV2,
+            deployment_slot: 5,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(12);
+        cache.extract(&mut missing, &mut extracted, &env, true, true);
+        assert!(match_missing(&missing, &program, true));
+        assert!(extracted.find(&program).is_none());
+
+        // The same caller requesting slot 11 gets it.
+        let mut missing = vec![ProgramToLoad {
+            program_id: &program,
+            loader: ProgramCacheEntryOwner::LoaderV2,
+            deployment_slot: 11,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(12);
+        cache.extract(&mut missing, &mut extracted, &env, true, true);
+        assert!(match_missing(&missing, &program, false));
+        assert!(match_slot(&extracted, &program, 11, 12));
     }
 
     #[test]
@@ -2400,7 +2449,7 @@ pub(crate) mod tests {
         let mut missing = vec![ProgramToLoad {
             program_id: &program1,
             loader: ProgramCacheEntryOwner::LoaderV3,
-            deployed_on_or_after_slot: 0,
+            deployment_slot: 0,
             last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(0);

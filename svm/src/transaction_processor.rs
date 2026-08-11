@@ -353,7 +353,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .map(|program_id| ProgramToLoad {
                 program_id,
                 loader: ProgramCacheEntryOwner::NativeLoader,
-                deployed_on_or_after_slot: 0,
+                deployment_slot: 0,
                 last_modification_slot: 0,
             })
             .collect();
@@ -1923,7 +1923,7 @@ mod tests {
             vec![ProgramToLoad {
                 program_id: &key,
                 loader: ProgramCacheEntryOwner::LoaderV3,
-                deployed_on_or_after_slot: 0,
+                deployment_slot: 0,
                 last_modification_slot: 0,
             }],
             &program_runtime_environment_for_execution,
@@ -1962,7 +1962,7 @@ mod tests {
                 vec![ProgramToLoad {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::LoaderV2,
-                    deployed_on_or_after_slot: 0,
+                    deployment_slot: 0,
                     last_modification_slot: 0,
                 }],
                 &program_runtime_environment_for_execution,
@@ -2209,7 +2209,7 @@ mod tests {
                 &mut vec![ProgramToLoad {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::NativeLoader,
-                    deployed_on_or_after_slot: 0,
+                    deployment_slot: 0,
                     last_modification_slot: 0,
                 }],
                 &mut loaded_programs_for_tx_batch,
@@ -2449,7 +2449,7 @@ mod tests {
         let mut search_for = vec![ProgramToLoad {
             program_id: &key,
             loader: ProgramCacheEntryOwner::LoaderV3,
-            deployed_on_or_after_slot: MIGRATION_SLOT,
+            deployment_slot: MIGRATION_SLOT,
             last_modification_slot: MIGRATION_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(MIGRATION_SLOT);
@@ -2487,7 +2487,7 @@ mod tests {
         let mut search_for = vec![ProgramToLoad {
             program_id: &key,
             loader: ProgramCacheEntryOwner::LoaderV3,
-            deployed_on_or_after_slot: MIGRATION_SLOT,
+            deployment_slot: MIGRATION_SLOT,
             last_modification_slot: MIGRATION_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
@@ -2506,7 +2506,7 @@ mod tests {
         let mut search_for = vec![ProgramToLoad {
             program_id: &key,
             loader: ProgramCacheEntryOwner::NativeLoader,
-            deployed_on_or_after_slot: BUILTIN_SLOT,
+            deployment_slot: BUILTIN_SLOT,
             last_modification_slot: BUILTIN_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
