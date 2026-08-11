@@ -2609,16 +2609,27 @@ impl ReplayStage {
             (root_bank, slot_bank_ids_to_purge, removed_banks)
         };
 
-        // Clear the accounts for these slots so that any ongoing RPC scans fail.
-        // These have to be atomically cleared together in the same batch, in order
-        // to prevent RPC from seeing inconsistent results in scans.
+        // Use exact bank IDs where they are still available, and a bank-ID cutoff for banks that
+        // were already pruned. Both paths make overlapping RPC scans discard their results.
         if !slot_bank_ids_to_purge.is_empty() {
             root_bank.remove_unrooted_slots(&slot_bank_ids_to_purge);
+        }
+        let purged_bank_slots = slot_bank_ids_to_purge
+            .iter()
+            .map(|(slot, _)| *slot)
+            .collect::<BTreeSet<_>>();
+        let missing_bank_slots = slots_to_purge
+            .iter()
+            .filter(|slot| !purged_bank_slots.contains(slot))
+            .copied()
+            .collect::<Vec<_>>();
+        if !missing_bank_slots.is_empty() {
+            root_bank.remove_unrooted_slots_by_slot(missing_bank_slots);
         }
 
         // Once the slots above have been purged, now it's safe to remove the banks from
         // BankForks, allowing the Bank::drop() purging to run and not race with the
-        // `remove_unrooted_slots()` call.
+        // the accounts purge.
         drop(banks_to_clear);
         drop(removed_banks);
 
@@ -5389,7 +5400,12 @@ impl ReplayStage {
                     migration_status,
                 ) {
                     ChildBankReplayStart::FromStart => None,
-                    ChildBankReplayStart::FromUpdateParent(num_shreds) => Some(num_shreds),
+                    ChildBankReplayStart::FromUpdateParent(num_shreds) => {
+                        parent_bank.remove_unrooted_slots_by_slot([child_slot]);
+                        parent_bank.clear_slot_signatures(child_slot);
+                        parent_bank.prune_program_cache_by_deployment_slot(child_slot);
+                        Some(num_shreds)
+                    }
                     ChildBankReplayStart::Defer => continue,
                 };
 

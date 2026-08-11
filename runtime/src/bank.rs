@@ -3989,6 +3989,14 @@ impl Bank {
         self.rc.accounts.accounts_db.remove_unrooted_slots(slots)
     }
 
+    pub fn remove_unrooted_slots_by_slot(&self, slots: impl IntoIterator<Item = Slot>) {
+        let max_bank_id = self.rc.bank_id_generator.load(Relaxed);
+        self.rc
+            .accounts
+            .accounts_db
+            .remove_unrooted_slots_by_slot(slots, max_bank_id)
+    }
+
     pub fn get_hash_age(&self, hash: &Hash) -> Option<u64> {
         self.blockhash_queue.read().unwrap().get_hash_age(hash)
     }

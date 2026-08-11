@@ -2,7 +2,7 @@ use {
     crate::ancestors::Ancestors,
     solana_clock::{BankId, Slot},
     std::{
-        collections::{HashSet, btree_map::BTreeMap},
+        collections::{HashMap, HashSet, btree_map::BTreeMap},
         sync::{
             Arc, Mutex, RwLock,
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -70,6 +70,9 @@ pub struct ScanTracker {
     // on any of these slots fails. This is safe to purge once the associated Bank is dropped and
     // scanning the fork with that Bank at the tip is no longer possible.
     pub removed_bank_ids: Mutex<HashSet<BankId>>,
+    /// Highest bank ID manually removed for each slot. Unlike `removed_bank_ids`, these cutoffs
+    /// remain after old banks are dropped so a delayed drop cannot purge a newer bank.
+    pub(crate) removed_bank_id_cutoffs: RwLock<HashMap<Slot, BankId>>,
     /// # scans active currently
     pub active_scans: AtomicUsize,
     /// # of slots between latest max and latest scan
@@ -77,6 +80,13 @@ pub struct ScanTracker {
 }
 
 impl ScanTracker {
+    pub(crate) fn was_scan_bank_removed(&self, bank_id: BankId, ancestors: &Ancestors) -> bool {
+        let cutoffs = self.removed_bank_id_cutoffs.read().unwrap();
+        ancestors
+            .iter()
+            .any(|slot| cutoffs.get(&slot).is_some_and(|cutoff| bank_id <= *cutoff))
+    }
+
     fn min_ongoing_scan_root_from_btree(ongoing_scan_roots: &BTreeMap<Slot, u64>) -> Option<Slot> {
         ongoing_scan_roots.keys().next().cloned()
     }
