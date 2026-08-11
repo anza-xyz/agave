@@ -81,7 +81,7 @@ protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 shuttle = { workspace = true, optional = true }
-solana-account = { workspace = true, features = ["bincode", "wincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-address-lookup-table-interface = { workspace = true, optional = true, features = [
     "bincode",
     "bytemuck",
@@ -142,7 +142,7 @@ assert_matches = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 rand = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
