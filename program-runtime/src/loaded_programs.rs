@@ -203,8 +203,8 @@ pub struct ProgramToLoad<'a> {
     pub program_id: &'a Pubkey,
     /// The program loader
     pub loader: ProgramCacheEntryOwner,
-    /// Potentially filter out / ignore some entries during the start up / catch up phase
-    pub match_criteria: ProgramCacheMatchCriteria,
+    /// Ignore entries deployed before this slot.
+    pub deployed_on_or_after_slot: Slot,
     /// When the program account was last written to (might be after the deployment slot)
     pub last_modification_slot: Slot,
 }
@@ -364,12 +364,6 @@ impl ProgramCacheForTxBatch {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum ProgramCacheMatchCriteria {
-    DeployedOnOrAfterSlot(Slot),
-    NoCriteria,
 }
 
 impl<FG: ForkGraph> ProgramCache<FG> {
@@ -583,18 +577,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         environment == program_runtime_environment
     }
 
-    fn matches_criteria(
-        program: &Arc<ProgramCacheEntry>,
-        criteria: &ProgramCacheMatchCriteria,
-    ) -> bool {
-        match criteria {
-            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot) => {
-                program.deployment_slot >= *slot
-            }
-            ProgramCacheMatchCriteria::NoCriteria => true,
-        }
-    }
-
     /// Extracts a subset of the programs relevant to a transaction batch
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
@@ -654,10 +636,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                             .or(Some(entry.deployment_slot));
                                         continue;
                                     }
-                                    if !Self::matches_criteria(
-                                        entry,
-                                        &program_to_load.match_criteria,
-                                    ) {
+                                    if entry.deployment_slot
+                                        < program_to_load.deployed_on_or_after_slot
+                                    {
                                         break;
                                     }
                                     if let ProgramCacheEntryType::Unloaded(_environment) =
@@ -972,8 +953,7 @@ pub(crate) mod tests {
         crate::{
             loaded_programs::{
                 BlockRelation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
-                ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramToLoad,
-                get_mock_program_runtime_environment,
+                ProgramRuntimeEnvironment, ProgramToLoad, get_mock_program_runtime_environment,
             },
             program_cache_entry::{
                 ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
@@ -1837,7 +1817,7 @@ pub(crate) mod tests {
                     .map(|(_program_id, entry)| ProgramToLoad {
                         program_id: key,
                         loader: entry.account_owner,
-                        match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                        deployed_on_or_after_slot: 0,
                         last_modification_slot: entry.deployment_slot,
                     })
             })
@@ -2099,10 +2079,8 @@ pub(crate) mod tests {
 
         // Test the same fork, but request the program modified at a later slot than what's in the cache.
         let mut missing = get_entries_to_load(&cache, 12, keys);
-        missing.get_mut(0).unwrap().match_criteria =
-            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
-        missing.get_mut(1).unwrap().match_criteria =
-            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
+        missing.get_mut(0).unwrap().deployed_on_or_after_slot = 5;
+        missing.get_mut(1).unwrap().deployed_on_or_after_slot = 5;
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
@@ -2249,7 +2227,7 @@ pub(crate) mod tests {
         let mut missing = vec![ProgramToLoad {
             program_id: &program1,
             loader: ProgramCacheEntryOwner::LoaderV3,
-            match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+            deployed_on_or_after_slot: 0,
             last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(0);
@@ -2408,63 +2386,5 @@ pub(crate) mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(20);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
-    }
-
-    #[test]
-    fn test_usable_entries_for_slot() {
-        ProgramCache::<TestForkGraph>::new(0);
-        let tombstone = Arc::new(ProgramCacheEntry::new_closed_tombstone(
-            0,
-            ProgramCacheEntryOwner::LoaderV2,
-        ));
-
-        assert!(ProgramCache::<TestForkGraph>::matches_criteria(
-            &tombstone,
-            &ProgramCacheMatchCriteria::NoCriteria
-        ));
-
-        assert!(ProgramCache::<TestForkGraph>::matches_criteria(
-            &tombstone,
-            &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0)
-        ));
-
-        assert!(!ProgramCache::<TestForkGraph>::matches_criteria(
-            &tombstone,
-            &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(1)
-        ));
-
-        let program = new_test_entry(0);
-
-        assert!(ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::NoCriteria
-        ));
-
-        assert!(ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0)
-        ));
-
-        assert!(!ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(1)
-        ));
-
-        let program = Arc::new(new_test_entry_with_usage(0, ProgramStatistics::default()));
-
-        assert!(ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::NoCriteria
-        ));
-
-        assert!(ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0)
-        ));
-
-        assert!(!ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(1)
-        ));
     }
 }

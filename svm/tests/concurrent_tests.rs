@@ -13,10 +13,7 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
-            ProgramToLoad,
-        },
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments, ProgramToLoad},
         program_cache_entry::{ProgramCacheEntryOwner, ProgramCacheEntryType},
         program_metrics::ProgramStatistics,
     },
@@ -65,7 +62,7 @@ fn program_cache_execution(threads: usize) {
                     .map(|program_id| ProgramToLoad {
                         program_id,
                         loader: ProgramCacheEntryOwner::LoaderV3,
-                        match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                        deployed_on_or_after_slot: 0,
                         last_modification_slot: 0,
                     })
                     .collect();

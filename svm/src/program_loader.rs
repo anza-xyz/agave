@@ -7,10 +7,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramToLoad,
-        },
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad},
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
     },
     solana_pubkey::Pubkey,
@@ -278,7 +275,7 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
             result.push(ProgramToLoad {
                 program_id: account_key,
                 loader,
-                match_criteria: ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(deployment_slot),
+                deployed_on_or_after_slot: deployment_slot,
                 last_modification_slot,
             });
         }
@@ -897,13 +894,13 @@ mod tests {
                 ProgramToLoad {
                     program_id: &program_ids[1],
                     loader: ProgramCacheEntryOwner::LoaderV2,
-                    match_criteria: ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0),
+                    deployed_on_or_after_slot: 0,
                     last_modification_slot: 0,
                 },
                 ProgramToLoad {
                     program_id: &program_ids[2],
                     loader: ProgramCacheEntryOwner::LoaderV3,
-                    match_criteria: ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0),
+                    deployed_on_or_after_slot: 0,
                     last_modification_slot: 0,
                 },
             ]
