@@ -80,7 +80,7 @@ struct RawModuleXdp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModuleXdp {
     pub enabled: bool,
-    pub tx_queues: Vec<u32>,
+    pub tx_queues: BTreeSet<u32>,
 }
 
 /// The XDP inputs distilled from the merged config, before CLI overrides. The
@@ -126,18 +126,10 @@ fn parse_str(text: &str) -> Result<RawConfig, toml::de::Error> {
 /// Interfaces merge by NIC name; module blocks replace defaults wholesale.
 fn merge(mut base: RawConfig, over: RawConfig) -> RawConfig {
     base.interfaces.extend(over.interfaces);
-    if over.tpu.is_some() {
-        base.tpu = over.tpu;
-    }
-    if over.turbine.is_some() {
-        base.turbine = over.turbine;
-    }
-    if over.repair.is_some() {
-        base.repair = over.repair;
-    }
-    if over.gossip.is_some() {
-        base.gossip = over.gossip;
-    }
+    base.tpu = over.tpu.or(base.tpu);
+    base.turbine = over.turbine.or(base.turbine);
+    base.repair = over.repair.or(base.repair);
+    base.gossip = over.gossip.or(base.gossip);
     base
 }
 
@@ -172,23 +164,25 @@ fn resolve_interface(name: &str, raw: &RawInterface) -> Result<ResolvedInterface
     })
 }
 
-/// Resolve one module's `use_xdp` and, when enabled, validated `tx` queue ids,
-/// tracking the single interface all enabled modules must share.
+/// A module absent post-merge keeps XDP on, matching the default file.
+fn module_enabled(block: &Option<RawModule>) -> bool {
+    block.as_ref().map(|b| b.use_xdp).unwrap_or(true)
+}
+
+/// Resolve one module's `use_xdp` and, when enabled, validated `tx` queue ids.
 fn resolve_module(
     module: &str,
     block: &Option<RawModule>,
     interfaces: &BTreeMap<String, ResolvedInterface>,
-    referenced_iface: &mut Option<String>,
 ) -> Result<ModuleXdp, String> {
-    // A module absent post-merge keeps XDP on, matching the default file.
-    let enabled = block.as_ref().map(|b| b.use_xdp).unwrap_or(true);
+    let enabled = module_enabled(block);
     if !enabled {
         return Ok(ModuleXdp {
             enabled: false,
-            tx_queues: Vec::new(),
+            tx_queues: BTreeSet::new(),
         });
     }
-    let mut tx_queues = Vec::new();
+    let mut tx_queues = BTreeSet::new();
     if let Some(tx) = block.as_ref().and_then(|b| b.xdp.as_ref()).map(|x| &x.tx) {
         for (iface_name, queues) in tx {
             let iface = interfaces.get(iface_name).ok_or_else(|| {
@@ -202,16 +196,6 @@ fn resolve_module(
                     "module `{module}` XDP tx for interface `{iface_name}` lists no queues"
                 ));
             }
-            match referenced_iface {
-                Some(existing) if existing != iface_name => {
-                    return Err(format!(
-                        "XDP tx references multiple interfaces (`{existing}` and `{iface_name}`); \
-                         only one interface is supported"
-                    ));
-                }
-                Some(_) => {}
-                None => *referenced_iface = Some(iface_name.clone()),
-            }
             for queue in queues {
                 if !iface.queue_to_cpu.contains_key(queue) {
                     return Err(format!(
@@ -219,12 +203,11 @@ fn resolve_module(
                          which is not in its queue_to_cpu_mapping"
                     ));
                 }
-                if tx_queues.contains(queue) {
+                if !tx_queues.insert(*queue) {
                     return Err(format!(
                         "module `{module}` XDP tx lists queue {queue} more than once"
                     ));
                 }
-                tx_queues.push(*queue);
             }
         }
     }
@@ -238,12 +221,19 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
         .map(|(name, raw)| resolve_interface(name, raw).map(|iface| (name.clone(), iface)))
         .collect::<Result<BTreeMap<_, _>, _>>()?;
 
+    let blocks = [
+        ("tpu", &config.tpu),
+        ("turbine", &config.turbine),
+        ("repair", &config.repair),
+        ("gossip", &config.gossip),
+    ];
+
     // Every declared interface must be named by some module's `tx` (whether or
     // not that module is enabled); a dangling `[interfaces.<name>]` is a typo or
     // leftover and is rejected rather than silently ignored.
-    let tx_named: BTreeSet<&str> = [&config.tpu, &config.turbine, &config.repair, &config.gossip]
+    let tx_named: BTreeSet<&str> = blocks
         .into_iter()
-        .filter_map(|b| b.as_ref())
+        .filter_map(|(_, block)| block.as_ref())
         .filter_map(|m| m.xdp.as_ref())
         .flat_map(|x| x.tx.keys().map(String::as_str))
         .collect();
@@ -255,16 +245,31 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
         }
     }
 
-    let mut referenced_iface: Option<String> = None;
-    let tpu = resolve_module("tpu", &config.tpu, &interfaces, &mut referenced_iface)?;
-    let turbine = resolve_module(
-        "turbine",
-        &config.turbine,
-        &interfaces,
-        &mut referenced_iface,
-    )?;
-    let repair = resolve_module("repair", &config.repair, &interfaces, &mut referenced_iface)?;
-    let gossip = resolve_module("gossip", &config.gossip, &interfaces, &mut referenced_iface)?;
+    // One shared transmitter means enabled modules' tx maps may name only one
+    // interface. Disabled modules are exempt: their tx is never validated.
+    let referenced: BTreeSet<&str> = blocks
+        .into_iter()
+        .filter(|(_, block)| module_enabled(block))
+        .filter_map(|(_, block)| block.as_ref())
+        .filter_map(|m| m.xdp.as_ref())
+        .flat_map(|x| x.tx.keys().map(String::as_str))
+        .collect();
+    if referenced.len() > 1 {
+        let names = referenced
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "XDP tx references multiple interfaces ({names}); only one interface is supported"
+        ));
+    }
+    let referenced_iface = referenced.first().map(|name| name.to_string());
+
+    let tpu = resolve_module("tpu", &config.tpu, &interfaces)?;
+    let turbine = resolve_module("turbine", &config.turbine, &interfaces)?;
+    let repair = resolve_module("repair", &config.repair, &interfaces)?;
+    let gossip = resolve_module("gossip", &config.gossip, &interfaces)?;
 
     // An interface referenced only by disabled modules passes the dangling
     // check above but is dead at runtime; say so instead of silently falling
@@ -339,7 +344,7 @@ mod tests {
              8 }, { queue = 1, cpu = 9 }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 1] }\n",
         )
         .unwrap();
-        assert_eq!(c.turbine.tx_queues, vec![0, 1]);
+        assert_eq!(c.turbine.tx_queues, BTreeSet::from([0, 1]));
         // Modules without a tx block name no queues.
         assert!(c.tpu.tx_queues.is_empty());
         assert_eq!(c.interface.as_deref(), Some("eth0"));
@@ -377,7 +382,7 @@ mod tests {
         )
         .unwrap();
         assert!(c.turbine.enabled);
-        assert_eq!(c.turbine.tx_queues, vec![0]);
+        assert_eq!(c.turbine.tx_queues, BTreeSet::from([0]));
         assert_eq!(c.interface.as_deref(), Some("eth0"));
     }
 
