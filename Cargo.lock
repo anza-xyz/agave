@@ -1407,8 +1407,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes 0.14.100",
- "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand 0.7.3",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -7338,17 +7338,6 @@ dependencies = [
 
 [[package]]
 name = "solana-big-mod-exp"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30c80fb6d791b3925d5ec4bf23a7c169ef5090c013059ec3ed7d0b2c04efa085"
-dependencies = [
- "num-bigint",
- "num-traits",
- "solana-define-syscall 3.0.0",
-]
-
-[[package]]
-name = "solana-big-mod-exp"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f05789c4afc39164132db9dcc117218d412ca1f1271d2c629fc6f554c19e5a44"
@@ -9629,13 +9618,12 @@ dependencies = [
 
 [[package]]
 name = "solana-program"
-version = "4.0.0"
+version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "778f08fb0eaf52c9a3bef2978247f7fab0ccfddc44cfddb936d5ad9f98ede886"
+checksum = "4c9f2e1b36b5f1c407cff098a383a45890268e848481af32540064986e7397a6"
 dependencies = [
- "memoffset",
  "solana-account-info",
- "solana-big-mod-exp 3.0.0",
+ "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-clock",
  "solana-cpi",
@@ -9648,7 +9636,7 @@ dependencies = [
  "solana-hash 4.6.0",
  "solana-instruction",
  "solana-instruction-error",
- "solana-instructions-sysvar 3.0.1",
+ "solana-instructions-sysvar 4.0.0",
  "solana-keccak-hasher",
  "solana-last-restart-slot",
  "solana-msg",
@@ -11065,7 +11053,7 @@ dependencies = [
  "num-traits",
  "solana-account 4.5.0",
  "solana-account-info",
- "solana-big-mod-exp 4.0.0",
+ "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-bls12-381-syscall",
  "solana-bn254",
