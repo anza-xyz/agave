@@ -455,11 +455,13 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
         (parent_slot, &accounts_to_store[..]),
         BankId::default(),
         None,
+        None,
         &Ancestors::default(),
     );
     accounts.store_accounts_seq(
         (current_slot, &accounts_to_store[..]),
         BankId::default(),
+        None,
         None,
         &Ancestors::default(),
     );
@@ -605,6 +607,7 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
             &batch,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
+            None,
             None,
         );
 

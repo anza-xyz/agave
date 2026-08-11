@@ -184,9 +184,8 @@ mod tests {
         assert!(notifier.is_startup_done.load(Ordering::Relaxed));
     }
 
-    /// The per-account `txn_indexes` slice must be reported positionally, and a
-    /// missing or short slice must degrade to `None` rather than panicking the
-    /// store path.
+    /// The per-account `txn_indexes` slice must be reported positionally, and an
+    /// entry may be `None` for an account whose index isn't known.
     ///
     /// This drives the store path directly to isolate that lookup, so it passes
     /// indexes without the matching transactions — a combination the runtime
@@ -236,26 +235,19 @@ mod tests {
             vec![Some(9)]
         );
 
-        // A slice shorter than the accounts being stored must not panic; the
-        // uncovered accounts simply report no index.
+        // Absent indexes report `None` for every account.
         let key4 = solana_pubkey::new_rand();
-        let key5 = solana_pubkey::new_rand();
         let account4 = AccountSharedData::new(4, 1, &owner);
-        let account5 = AccountSharedData::new(5, 1, &owner);
         accounts.store_accounts_seq(
-            (slot, &[(&key4, &account4), (&key5, &account5)][..]),
+            (slot, &[(&key4, &account4)][..]),
             bank_id,
             None,
-            Some(&[Some(1)]),
+            None,
             &ancestors,
         );
 
         assert_eq!(
             *notifier.txn_indexes_notified.get(&key4).unwrap(),
-            vec![Some(1)]
-        );
-        assert_eq!(
-            *notifier.txn_indexes_notified.get(&key5).unwrap(),
             vec![None]
         );
     }

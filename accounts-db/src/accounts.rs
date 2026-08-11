@@ -552,6 +552,16 @@ impl Accounts {
     ) {
         let accounts_db = &self.accounts_db;
         if accounts_db.has_accounts_update_notifier() {
+            // One entry per account, as produced by `collect_accounts_to_store`.
+            // The lookup below falls open to `None` instead of panicking a store
+            // over what is only a geyser hint, which would also quietly mislabel
+            // a caller that supplied one entry per *transaction* — so assert the
+            // shape here, where tests can catch it.
+            debug_assert!(
+                txn_indexes.is_none_or(|indexes| indexes.len() == accounts.len()),
+                "txn_indexes must have one entry per account being stored",
+            );
+
             let mut current_write_version = accounts_db
                 .write_version
                 .fetch_add(accounts.len() as u64, Ordering::AcqRel);
@@ -559,9 +569,6 @@ impl Accounts {
             for index in 0..accounts.len() {
                 let transaction = transactions
                     .map(|txs| *txs.get(index).expect("txs must be present if provided"));
-                // An absent or short slice means the index isn't known for this
-                // path; report `None` rather than panicking a store over what is
-                // only a geyser hint.
                 let txn_index =
                     txn_indexes.and_then(|indexes| indexes.get(index).copied().flatten());
                 accounts.account_for_geyser(index, |pubkey, account_shared_data| {
