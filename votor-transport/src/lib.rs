@@ -84,7 +84,7 @@ pub(crate) const HANDSHAKE_WORKERS_PER_ENDPOINT: usize = 1;
 /// Hard timeout for an inbound handshake, enforced regardless of what
 /// the peer sends. ~1s suffices for a 300ms-RTT handshake with no packet
 /// loss, so we use 2s to have margin for losses & retransmits.
-pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const SERVER_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Maximum inbound handshakes allowed in flight; once reached we stop pulling
 /// new ones off the endpoint. Bounds handshake memory use. Sized to the most

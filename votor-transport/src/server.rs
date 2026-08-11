@@ -1,8 +1,8 @@
 //! Inbound (server) direction: we-accept, receive-only.
 use {
     crate::{
-        HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
-        PEER_RATE_LIMIT_BURST_WINDOW, PEER_RATE_LIMIT_DOS_WINDOW, PeerListReceiver, close_codes,
+        MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL, PEER_RATE_LIMIT_BURST_WINDOW,
+        PEER_RATE_LIMIT_DOS_WINDOW, PeerListReceiver, SERVER_HANDSHAKE_TIMEOUT, close_codes,
         endpoint::{BanCommand, Datagram, KeyUpdateListener},
         error::Error,
         stats::{self, ServerStats, record_server_error},
@@ -180,7 +180,7 @@ async fn wait_for_complete_handshake(
     events_sender: mpsc::Sender<InboundConnectionEvent>,
     stats: Arc<ServerStats>,
 ) {
-    let connection = match timeout(HANDSHAKE_TIMEOUT, connecting).await {
+    let connection = match timeout(SERVER_HANDSHAKE_TIMEOUT, connecting).await {
         Ok(Ok(connection)) => {
             stats.handshakes_completed.fetch_add(1, Ordering::Relaxed);
             connection
@@ -769,8 +769,8 @@ mod tests {
         });
 
         // The loop should accept the Initial, start the handshake, then time it
-        // out after HANDSHAKE_TIMEOUT despite the client's retransmissions.
-        let deadline = HANDSHAKE_TIMEOUT + Duration::from_secs(3);
+        // out despite the client's retransmissions.
+        let deadline = SERVER_HANDSHAKE_TIMEOUT + Duration::from_secs(3);
         let mut waited = Duration::ZERO;
         let step = Duration::from_millis(100);
         while stats.handshake_timed_out.load(Ordering::Relaxed) == 0 && waited < deadline {
@@ -853,7 +853,9 @@ mod tests {
         // Poll until the server records the rejection.
         let mut waited = Duration::ZERO;
         let step = Duration::from_millis(100);
-        while stats.connection_failed.load(Ordering::Relaxed) == 0 && waited < HANDSHAKE_TIMEOUT {
+        while stats.connection_failed.load(Ordering::Relaxed) == 0
+            && waited < SERVER_HANDSHAKE_TIMEOUT
+        {
             sleep(step).await;
             waited += step;
         }
@@ -929,7 +931,7 @@ mod tests {
         };
         let mut waited = Duration::ZERO;
         let step = Duration::from_millis(100);
-        while recorded(&stats) == 0 && waited < HANDSHAKE_TIMEOUT {
+        while recorded(&stats) == 0 && waited < SERVER_HANDSHAKE_TIMEOUT {
             sleep(step).await;
             waited += step;
         }

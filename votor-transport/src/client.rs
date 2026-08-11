@@ -29,11 +29,11 @@ use {
 
 /// How often the outbound loop reconciles its connection table against the
 /// peer_list. Doubles as the retry interval for failed connects.
-const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+pub(crate) const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Upper bound on a single handshake attempt, enforced inside the connect task.
 /// Accommodates any plausible RTT with margin.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const CLIENT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// State of a peer's entry in the outbound table.
 #[derive(Debug)]
@@ -78,7 +78,7 @@ async fn connect(
         }
         Ok(connection)
     };
-    match timeout(HANDSHAKE_TIMEOUT, attempt).await {
+    match timeout(CLIENT_HANDSHAKE_TIMEOUT, attempt).await {
         Ok(Ok(connection)) => Ok((peer, connection)),
         Ok(Err(e)) => {
             warn!("Connection attempt to ({peer}, {addr}) failed: {e:?}");
@@ -86,7 +86,10 @@ async fn connect(
             Err(peer)
         }
         Err(_elapsed) => {
-            warn!("Connection attempt to ({peer}, {addr}) timed out after {HANDSHAKE_TIMEOUT:?}");
+            warn!(
+                "Connection attempt to ({peer}, {addr}) timed out after \
+                 {CLIENT_HANDSHAKE_TIMEOUT:?}"
+            );
             stats.connect_failed.fetch_add(1, Ordering::Relaxed);
             Err(peer)
         }
@@ -264,7 +267,7 @@ impl OutboundLoop {
                     closed_not_in_peer_list = closed_not_in_peer_list.saturating_add(1);
                     false
                 }
-                // A Connecting entry resolves within HANDSHAKE_TIMEOUT through
+                // A Connecting entry resolves within CLIENT_HANDSHAKE_TIMEOUT through
                 // `handle_handshake_outcome` into an Established (at which point we can wipe it)
                 // or just gets removed there.
                 PeerState::Connecting => true,
