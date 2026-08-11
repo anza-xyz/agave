@@ -4,7 +4,10 @@ use {
     agave_cpu_utils::cpu_affinity,
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
-    solana_core::validator::XdpModules,
+    solana_core::{
+        system_monitor_service::XdpNetworkConfigReport,
+        validator::{XdpModules, XdpTransmitSetup},
+    },
 };
 use {
     crate::{
@@ -1375,19 +1378,8 @@ fn build_xdp_transmit_setup(
     modules: XdpModules,
     active_bind_ip: IpAddr,
     exit: Arc<AtomicBool>,
-) -> Result<
-    (
-        solana_core::validator::XdpTransmitSetup,
-        solana_core::system_monitor_service::XdpNetworkConfigReport,
-    ),
-    String,
-> {
-    use {
-        agave_xdp::{device::NetworkDevice, interface_ipv4, transmitter::TransmitterBuilder},
-        solana_core::{
-            system_monitor_service::XdpNetworkConfigReport, validator::XdpTransmitSetup,
-        },
-    };
+) -> Result<(XdpTransmitSetup, XdpNetworkConfigReport), String> {
+    use agave_xdp::{device::NetworkDevice, interface_ipv4, transmitter::TransmitterBuilder};
 
     let device = match xdp_config.interface.as_deref() {
         Some(interface) => NetworkDevice::new(interface).map_err(|e| {
@@ -1436,6 +1428,88 @@ fn build_xdp_transmit_setup(
     ))
 }
 
+/// clap rejects --no-xdp alongside the XDP flags, but it cannot know that a config
+/// file disables XDP, so that path reports the flags it drops itself.
+#[cfg(target_os = "linux")]
+fn warn_ignored_xdp_flags(
+    cli_interface: Option<&str>,
+    cli_zero_copy: bool,
+    cli_cpu_cores: Option<&str>,
+) {
+    let ignored: Vec<&str> = [
+        ("--xdp-interface", cli_interface.is_some()),
+        ("--xdp-zero-copy", cli_zero_copy),
+        ("--xdp-cpu-cores", cli_cpu_cores.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(flag, present)| present.then_some(flag))
+    .collect();
+    if !ignored.is_empty() {
+        warn!(
+            "the configuration disables XDP transmit for every module; ignoring {}",
+            ignored.join(", ")
+        );
+    }
+}
+
+/// Choose the transmitter's queue -> CPU bindings: the CLI CPU list, else the
+/// config file's tx union, else a single auto-selected core. Also reports whether
+/// the queues came from the file, since only then do its per-module positions
+/// index this queue list.
+#[cfg(target_os = "linux")]
+fn resolve_queues(
+    cli_cpu_cores: Option<&str>,
+    file_queues: Vec<QueueCpuBinding>,
+    poh_pinned_cpu_core: Option<usize>,
+) -> Result<(Vec<QueueCpuBinding>, bool), String> {
+    if let Some(cpu_str) = cli_cpu_cores {
+        let cpus =
+            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        if cpus.is_empty() {
+            return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
+        }
+        if !file_queues.is_empty() {
+            warn!(
+                "--xdp-cpu-cores overrides the config file queue mapping; ignoring its queue ids \
+                 and per-module tx scoping"
+            );
+        }
+        // The CLI expresses a CPU list; map it onto queues sequentially.
+        let queues = cpus
+            .into_iter()
+            .enumerate()
+            .map(|(queue, cpu)| QueueCpuBinding {
+                queue: queue as u32,
+                cpu,
+            })
+            .collect();
+        return Ok((queues, false));
+    }
+    if !file_queues.is_empty() {
+        return Ok((file_queues, true));
+    }
+
+    // Auto-select a single core, avoiding the PoH core.
+    let allowed = cpu_affinity(None).map_err(|e| {
+        format!(
+            "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
+             --xdp-cpu-cores explicitly."
+        )
+    })?;
+    let cpu = allowed
+        .iter()
+        .rev()
+        .map(|cpu| **cpu)
+        .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+        .ok_or_else(|| {
+            format!(
+                "XDP requires a dedicated CPU core separate from PoH (core \
+                 {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to disable XDP."
+            )
+        })?;
+    Ok((vec![QueueCpuBinding { queue: 0, cpu }], false))
+}
+
 #[cfg(target_os = "linux")]
 fn build_xdp_config(
     matches: &ArgMatches,
@@ -1472,24 +1546,9 @@ fn build_xdp_config(
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
 
     // CLI flags do not override per-module use_xdp; a fully-disabled config
-    // skips the multihoming XDP guard. clap rejects --no-xdp alongside the XDP
-    // flags, but it cannot know that a config file disables XDP, so this path
-    // reports the flags it drops itself.
+    // skips the multihoming XDP guard.
     if !(tpu.enabled || turbine.enabled || repair.enabled || gossip.enabled) {
-        let ignored: Vec<&str> = [
-            ("--xdp-interface", cli_interface.is_some()),
-            ("--xdp-zero-copy", cli_zero_copy),
-            ("--xdp-cpu-cores", cli_cpu_cores.is_some()),
-        ]
-        .into_iter()
-        .filter_map(|(flag, present)| present.then_some(flag))
-        .collect();
-        if !ignored.is_empty() {
-            warn!(
-                "the configuration disables XDP transmit for every module; ignoring {}",
-                ignored.join(", ")
-            );
-        }
+        warn_ignored_xdp_flags(cli_interface, cli_zero_copy, cli_cpu_cores);
         info!("XDP transmit is disabled for every module; using OS sockets");
         return Ok(None);
     }
@@ -1503,68 +1562,24 @@ fn build_xdp_config(
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);
 
-    let file_interface_overridden = match (cli_interface, file_interface.as_deref()) {
-        (Some(cli), Some(file)) => cli != file,
-        _ => false,
-    };
-    if file_interface_overridden {
+    // The file's queues and zero_copy describe the interface it named, so drop
+    // both when the CLI selects a different one.
+    let file_interface_overridden = cli_interface
+        .zip(file_interface.as_deref())
+        .is_some_and(|(cli, file)| cli != file);
+    let (file_queues, file_zero_copy) = if file_interface_overridden {
         warn!(
             "--xdp-interface overrides the config file interface; ignoring config file XDP queues \
              and zero_copy"
         );
-    }
+        (Vec::new(), false)
+    } else {
+        (file_queues, file_zero_copy)
+    };
 
     let interface = cli_interface.map(str::to_string).or(file_interface);
-    let zero_copy = cli_zero_copy || (!file_interface_overridden && file_zero_copy);
-
-    // Queue source precedence: CLI CPU list, file tx union when the CLI did not
-    // select a different interface, then auto-selection. File-sourced queues
-    // preserve per-module scoping; global sources do not.
-    let (queues, file_tx_mode): (Vec<QueueCpuBinding>, bool) = if let Some(cpu_str) = cli_cpu_cores
-    {
-        let cpus =
-            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
-        if cpus.is_empty() {
-            return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
-        }
-        if !file_queues.is_empty() {
-            warn!(
-                "--xdp-cpu-cores overrides the config file queue mapping; ignoring its queue ids \
-                 and per-module tx scoping"
-            );
-        }
-        let queues = cpus
-            .into_iter()
-            .enumerate()
-            .map(|(queue, cpu)| QueueCpuBinding {
-                queue: queue as u32,
-                cpu,
-            })
-            .collect();
-        (queues, false)
-    } else if !file_interface_overridden && !file_queues.is_empty() {
-        (file_queues, true)
-    } else {
-        let allowed = cpu_affinity(None).map_err(|e| {
-            format!(
-                "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
-                 --xdp-cpu-cores explicitly."
-            )
-        })?;
-        let cpu = allowed
-            .iter()
-            .rev()
-            .map(|cpu| **cpu)
-            .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
-            .ok_or_else(|| {
-                format!(
-                    "XDP requires a dedicated CPU core separate from PoH (core \
-                     {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to disable \
-                     XDP."
-                )
-            })?;
-        (vec![QueueCpuBinding { queue: 0, cpu }], false)
-    };
+    let zero_copy = cli_zero_copy || file_zero_copy;
+    let (queues, file_tx_mode) = resolve_queues(cli_cpu_cores, file_queues, poh_pinned_cpu_core)?;
 
     // XDP and PoH must never share a CPU core, whatever the mapping's source.
     if let Some(poh_core) = poh_pinned_cpu_core
@@ -1698,6 +1713,29 @@ mod xdp_tests {
         assert!(
             result.unwrap_err().contains("PoH core"),
             "XDP core overlapping PoH core must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_config_file_cpu_conflicts_with_poh_core_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // The PoH check applies whatever the queue source is; here it is the file,
+        // which the --xdp-cpu-cores case above cannot reach.
+        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE.unwrap_or(0);
+        let file = write_config(&format!(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{{ queue = 0, cpu = {poh_core} \
+             }}]\n\n[turbine.xdp]\ntx = {{ eth0 = [0] }}\n"
+        ));
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("maps a worker to PoH core"),
+            "a file-mapped queue on the PoH core must produce an error"
         );
     }
 

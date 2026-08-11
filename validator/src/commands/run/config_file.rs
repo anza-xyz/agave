@@ -223,6 +223,64 @@ fn resolve_module(
     Ok(ResolvedModule { enabled, tx_queues })
 }
 
+/// An interface every naming module disabled is dead at runtime; say so instead of
+/// silently falling back to auto-selection.
+fn warn_unused_interfaces(
+    interfaces: &BTreeMap<String, ResolvedInterface>,
+    referenced: Option<&str>,
+) {
+    for name in interfaces.keys() {
+        if Some(name.as_str()) != referenced {
+            warn!(
+                "interface `{name}` is only referenced by disabled modules; its configuration is \
+                 unused"
+            );
+        }
+    }
+}
+
+/// An enabled module with no `tx` transmits over the whole union, so it shares the
+/// queues other modules named for themselves. A config that looks like it keeps
+/// them apart does not, so say so rather than silently overlapping.
+fn warn_unscoped_modules(modules: &[(&str, &ResolvedModule)]) {
+    let mut scoped = Vec::new();
+    let mut unscoped = Vec::new();
+    for (module, resolved) in modules {
+        if !resolved.enabled {
+            continue;
+        }
+        if resolved.tx_queues.is_empty() {
+            unscoped.push(*module);
+        } else {
+            scoped.push(*module);
+        }
+    }
+    if !scoped.is_empty() && !unscoped.is_empty() {
+        warn!(
+            "modules {unscoped:?} name no XDP tx queues, so they transmit over every configured \
+             queue, including the ones {scoped:?} named for themselves; give them their own `tx` \
+             to keep the queue sets apart"
+        );
+    }
+}
+
+/// A mapped queue no module named gets no transmit worker, which reads as
+/// configured capacity that silently does not exist.
+fn warn_unused_queues(name: &str, iface: &ResolvedInterface, used_queues: &BTreeSet<u32>) {
+    let unused: Vec<u32> = iface
+        .queue_to_cpu
+        .keys()
+        .copied()
+        .filter(|queue| !used_queues.contains(queue))
+        .collect();
+    if !unused.is_empty() {
+        warn!(
+            "interface `{name}` maps queues {unused:?} to CPUs but no module's XDP tx names them; \
+             they get no transmit worker"
+        );
+    }
+}
+
 fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     let interfaces = config
         .interfaces
@@ -242,8 +300,7 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     // leftover and is rejected rather than silently ignored.
     let tx_named: BTreeSet<&str> = blocks
         .into_iter()
-        .filter_map(|(_, block)| block.as_ref())
-        .filter_map(|m| m.xdp.as_ref())
+        .filter_map(|(_, block)| block.as_ref()?.xdp.as_ref())
         .flat_map(|x| x.tx.keys().map(String::as_str))
         .collect();
     for name in interfaces.keys() {
@@ -259,8 +316,7 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     let referenced: BTreeSet<&str> = blocks
         .into_iter()
         .filter(|(_, block)| module_enabled(block))
-        .filter_map(|(_, block)| block.as_ref())
-        .filter_map(|m| m.xdp.as_ref())
+        .filter_map(|(_, block)| block.as_ref()?.xdp.as_ref())
         .flat_map(|x| x.tx.keys().map(String::as_str))
         .collect();
     if referenced.len() > 1 {
@@ -280,51 +336,19 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     let repair = resolve_module("repair", &config.repair, &interfaces)?;
     let gossip = resolve_module("gossip", &config.gossip, &interfaces)?;
 
-    // An interface referenced only by disabled modules passes the dangling
-    // check above but is dead at runtime; say so instead of silently falling
-    // back to auto-selection.
-    for name in interfaces.keys() {
-        if Some(name) != referenced_iface.as_ref() {
-            warn!(
-                "interface `{name}` is only referenced by disabled modules; its configuration is \
-                 unused"
-            );
-        }
-    }
+    warn_unused_interfaces(&interfaces, referenced_iface.as_deref());
+    warn_unscoped_modules(&[
+        ("tpu", &tpu),
+        ("turbine", &turbine),
+        ("repair", &repair),
+        ("gossip", &gossip),
+    ]);
 
     // The transmitter's queue set is the union of enabled modules' tx queues.
     let used_queues: BTreeSet<u32> = [&tpu, &turbine, &repair, &gossip]
         .into_iter()
         .flat_map(|m| m.tx_queues.iter().copied())
         .collect();
-
-    // An enabled module with no `tx` transmits over the whole union, so it shares
-    // the queues other modules named for themselves. A config that looks like it
-    // separates them does not, so say so rather than silently overlapping.
-    let mut scoped = Vec::new();
-    let mut unscoped = Vec::new();
-    for (module, resolved) in [
-        ("tpu", &tpu),
-        ("turbine", &turbine),
-        ("repair", &repair),
-        ("gossip", &gossip),
-    ] {
-        if !resolved.enabled {
-            continue;
-        }
-        if resolved.tx_queues.is_empty() {
-            unscoped.push(module);
-        } else {
-            scoped.push(module);
-        }
-    }
-    if !scoped.is_empty() && !unscoped.is_empty() {
-        warn!(
-            "modules {unscoped:?} name no XDP tx queues, so they transmit over every configured \
-             queue, including the ones {scoped:?} named for themselves; give them their own `tx` \
-             to keep the queue sets apart"
-        );
-    }
 
     // Queues are emitted in `used_queues` order, so a queue's rank in that set
     // is its position in `queues` and therefore in the transmitter's sender list.
@@ -346,20 +370,7 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     let (interface, queues, zero_copy) = match referenced_iface {
         Some(name) => {
             let iface = &interfaces[&name];
-            // A mapped queue no module named gets no transmit worker, which reads
-            // as configured capacity that silently does not exist.
-            let unused: Vec<u32> = iface
-                .queue_to_cpu
-                .keys()
-                .copied()
-                .filter(|queue| !used_queues.contains(queue))
-                .collect();
-            if !unused.is_empty() {
-                warn!(
-                    "interface `{name}` maps queues {unused:?} to CPUs but no module's XDP tx \
-                     names them; they get no transmit worker"
-                );
-            }
+            warn_unused_queues(&name, iface, &used_queues);
             let queues = used_queues
                 .iter()
                 .map(|queue| QueueCpuBinding {
