@@ -197,7 +197,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         fmt,
-        ops::AddAssign,
+        ops::{AddAssign, Deref},
         path::PathBuf,
         slice,
         sync::{
@@ -354,6 +354,152 @@ pub struct LoadAndExecuteTransactionsOutput {
     // Balances accumulated for TransactionStatusSender when transaction
     // balance recording is enabled.
     pub balance_collector: Option<BalanceCollector>,
+}
+
+// The high bit is a permanent retirement latch; the remaining bits count active
+// execution leases. The count must never grow into the retirement bit.
+const BANK_EXECUTION_RETIRED: u64 = 1 << 63;
+const BANK_EXECUTION_COUNT_MASK: u64 = !BANK_EXECUTION_RETIRED;
+
+/// Error returned when work tries to begin after a bank has started retirement.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("bank at slot {slot} is retired and unavailable for execution")]
+pub struct BankExecutionError {
+    pub slot: Slot,
+}
+
+/// Tracks all transaction execution using a bank, including simulation.
+///
+/// The hot path is lock-free. Retirement is rare and yields while admitted execution drains.
+///
+/// Acquisition and retirement are ordered by atomic read-modify-write operations on `state`:
+///
+/// - If the acquisition's increment happens first, it observes an unset retirement bit and its
+///   count forces retirement to wait for the resulting lease to be released.
+/// - If retirement's `fetch_or` happens first, the increment observes the retirement bit, rolls
+///   back its provisional count, and rejects the acquisition.
+///
+/// Once set, the retirement bit is never cleared. Thus no execution can be admitted after
+/// retirement begins, while every execution admitted before retirement is included in the count
+/// that retirement waits to drain.
+#[derive(Debug, Default)]
+struct BankExecutionTracker {
+    state: AtomicU64,
+}
+
+impl BankExecutionTracker {
+    fn try_acquire(&self, slot: Slot) -> std::result::Result<(), BankExecutionError> {
+        // Avoid an increment and rollback when retirement is already visible. This relaxed load
+        // is only a fast rejection path; the value returned by `fetch_add` below is authoritative.
+        if self.state.load(Relaxed) & BANK_EXECUTION_RETIRED != 0 {
+            return Err(BankExecutionError { slot });
+        }
+
+        // Increment first so retirement cannot miss an acquisition that it races with. If
+        // retirement won the race, its permanent bit is present in `previous` and this
+        // provisional increment must be rolled back before returning an error.
+        let previous = self.state.fetch_add(1, AcqRel);
+        if previous & BANK_EXECUTION_RETIRED != 0 {
+            self.state.fetch_sub(1, AcqRel);
+            return Err(BankExecutionError { slot });
+        }
+        assert_ne!(
+            previous & BANK_EXECUTION_COUNT_MASK,
+            BANK_EXECUTION_COUNT_MASK,
+            "bank execution count overflow"
+        );
+        Ok(())
+    }
+
+    fn release(&self) {
+        let previous = self.state.fetch_sub(1, AcqRel);
+        assert_ne!(previous & BANK_EXECUTION_COUNT_MASK, 0);
+    }
+
+    fn retire_and_wait(&self) {
+        // Publishing retirement and sampling the active count use the same atomic state as
+        // acquisition, making the two operations unambiguously ordered.
+        self.state.fetch_or(BANK_EXECUTION_RETIRED, AcqRel);
+        while self.state.load(Acquire) & BANK_EXECUTION_COUNT_MASK != 0 {
+            std::thread::yield_now();
+        }
+    }
+
+    fn try_retire_if_idle(&self) -> bool {
+        // Transition directly from idle to retired. A concurrent acquisition changes zero to a
+        // positive count first and makes this fail; a successful transition makes every later
+        // acquisition observe the retirement bit and reject itself.
+        match self
+            .state
+            .compare_exchange(0, BANK_EXECUTION_RETIRED, AcqRel, Acquire)
+        {
+            Ok(_) => true,
+            Err(state) => state == BANK_EXECUTION_RETIRED,
+        }
+    }
+}
+
+enum BankForExecutionInner<'a> {
+    Borrowed(&'a Bank),
+    Owned(Arc<Bank>),
+}
+
+/// A bank with an active execution lease.
+pub struct BankForExecution<'a> {
+    bank: BankForExecutionInner<'a>,
+}
+
+impl BankForExecution<'_> {
+    fn bank(&self) -> &Bank {
+        match &self.bank {
+            BankForExecutionInner::Borrowed(bank) => bank,
+            BankForExecutionInner::Owned(bank) => bank,
+        }
+    }
+}
+
+impl Deref for BankForExecution<'_> {
+    type Target = Bank;
+
+    fn deref(&self) -> &Self::Target {
+        self.bank()
+    }
+}
+
+impl Drop for BankForExecution<'_> {
+    fn drop(&mut self) {
+        self.bank().execution_tracker.release();
+    }
+}
+
+impl<'a> TryFrom<&'a Bank> for BankForExecution<'a> {
+    type Error = BankExecutionError;
+
+    fn try_from(bank: &'a Bank) -> std::result::Result<Self, Self::Error> {
+        bank.execution_tracker.try_acquire(bank.slot())?;
+        Ok(Self {
+            bank: BankForExecutionInner::Borrowed(bank),
+        })
+    }
+}
+
+impl<'a> TryFrom<&'a Arc<Bank>> for BankForExecution<'a> {
+    type Error = BankExecutionError;
+
+    fn try_from(bank: &'a Arc<Bank>) -> std::result::Result<Self, Self::Error> {
+        Self::try_from(bank.as_ref())
+    }
+}
+
+impl TryFrom<Arc<Bank>> for BankForExecution<'static> {
+    type Error = BankExecutionError;
+
+    fn try_from(bank: Arc<Bank>) -> std::result::Result<Self, Self::Error> {
+        bank.execution_tracker.try_acquire(bank.slot())?;
+        Ok(Self {
+            bank: BankForExecutionInner::Owned(bank),
+        })
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -707,6 +853,7 @@ impl PartialEq for Bank {
             bank_hash_stats: _,
             epoch_rewards_calculation_cache: _,
             block_component_processor: _,
+            execution_tracker: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -1069,6 +1216,9 @@ pub struct Bank {
 
     /// Cached Alpenglow migration state, derived from the genesis certificate account.
     is_alpenglow: AtomicBool,
+
+    /// Prevents the bank from being removed while any transaction execution is using it.
+    execution_tracker: BankExecutionTracker,
 }
 
 #[derive(Debug, Default)]
@@ -1275,6 +1425,7 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
             is_alpenglow: AtomicBool::new(false),
+            execution_tracker: BankExecutionTracker::default(),
         };
 
         bank.transaction_processor =
@@ -1542,6 +1693,7 @@ impl Bank {
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
             is_alpenglow: AtomicBool::new(parent.is_alpenglow()),
+            execution_tracker: BankExecutionTracker::default(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -2198,6 +2350,7 @@ impl Bank {
             expected_bank_hash: RwLock::new(None),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
             is_alpenglow: AtomicBool::new(false),
+            execution_tracker: BankExecutionTracker::default(),
         };
 
         if bank.get_alpenglow_genesis_certificate().is_some() {
@@ -3812,20 +3965,21 @@ impl Bank {
 
         Ok(())
     }
+}
 
-    /// Run transactions against a frozen bank without committing the results
+impl BankForExecution<'_> {
+    /// Run transactions against a frozen bank without committing the results.
     pub fn simulate_transaction(
         &self,
         transaction: &impl TransactionWithMeta,
         enable_cpi_recording: bool,
     ) -> TransactionSimulationResult {
         assert!(self.is_frozen(), "simulation bank must be frozen");
-
         self.simulate_transaction_unchecked(transaction, enable_cpi_recording)
     }
 
     /// Run transactions against a bank without committing the results; does not check if the bank
-    /// is frozen, enabling use in single-Bank test frameworks
+    /// is frozen, enabling use in single-Bank test frameworks.
     pub fn simulate_transaction_unchecked(
         &self,
         transaction: &impl TransactionWithMeta,
@@ -3964,7 +4118,9 @@ impl Bank {
             post_token_balances,
         }
     }
+}
 
+impl Bank {
     fn get_account_overrides_for_simulation(&self, account_keys: &AccountKeys) -> AccountOverrides {
         let mut account_overrides = AccountOverrides::default();
         let slot_history_id = sysvar::slot_history::id();
@@ -4022,7 +4178,9 @@ impl Bank {
         }
         balances
     }
+}
 
+impl BankForExecution<'_> {
     pub fn load_and_execute_transactions(
         &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
@@ -4067,7 +4225,7 @@ impl Bank {
         let sanitized_output = self
             .transaction_processor
             .load_and_execute_sanitized_transactions(
-                self,
+                &**self,
                 sanitized_txs,
                 check_results,
                 &processing_environment,
@@ -4133,6 +4291,24 @@ impl Bank {
             processed_counts,
             balance_collector: sanitized_output.balance_collector,
         }
+    }
+}
+
+impl Bank {
+    pub fn try_for_execution(
+        &self,
+    ) -> std::result::Result<BankForExecution<'_>, BankExecutionError> {
+        BankForExecution::try_from(self)
+    }
+
+    /// Permanently prevents new execution and waits for every admitted execution to finish.
+    pub(crate) fn retire_from_execution(&self) {
+        self.execution_tracker.retire_and_wait();
+    }
+
+    /// Close the execution gate only when there is no admitted execution.
+    pub(crate) fn try_retire_from_execution_if_idle(&self) -> bool {
+        self.execution_tracker.try_retire_if_idle()
     }
 
     fn collect_logs(
@@ -4604,11 +4780,14 @@ impl Bank {
         log_messages_bytes_limit: Option<usize>,
         pre_commit_callback: Option<impl FnOnce(&[TransactionProcessingResult]) -> Result<()>>,
     ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
+        let bank_for_execution = self
+            .try_for_execution()
+            .expect("retired bank reached load-and-commit execution");
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
             balance_collector,
-        } = self.load_and_execute_transactions(
+        } = bank_for_execution.load_and_execute_transactions(
             batch,
             self.max_processing_age(),
             timings,

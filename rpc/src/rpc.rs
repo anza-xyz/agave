@@ -66,7 +66,7 @@ use {
         response::{Response as RpcResponse, *},
     },
     solana_runtime::{
-        bank::{Bank, TransactionSimulationResult},
+        bank::{Bank, BankForExecution, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
         non_circulating_supply::{NonCirculatingSupply, calculate_non_circulating_supply},
@@ -286,6 +286,19 @@ impl JsonRpcRequestProcessor {
             .into());
         }
         Ok(bank)
+    }
+
+    fn get_bank_for_execution_with_config(
+        &self,
+        config: RpcContextConfig,
+    ) -> Result<BankForExecution<'static>> {
+        loop {
+            let bank = self.get_bank_with_config(config)?;
+            if let Ok(bank) = BankForExecution::try_from(bank) {
+                return Ok(bank);
+            }
+            std::thread::yield_now();
+        }
     }
 
     fn check_if_transaction_history_enabled(&self) -> Result<()> {
@@ -3676,6 +3689,7 @@ pub mod rpc_full {
     }
 
     pub struct FullImpl;
+
     impl Full for FullImpl {
         type Metadata = JsonRpcRequestProcessor;
 
@@ -3890,14 +3904,14 @@ pub mod rpc_full {
             } else {
                 preflight_commitment.map(|commitment| CommitmentConfig { commitment })
             };
-            let preflight_bank = &*meta.get_bank_with_config(RpcContextConfig {
+            let preflight_bank = meta.get_bank_for_execution_with_config(RpcContextConfig {
                 commitment: preflight_commitment,
                 min_context_slot,
             })?;
 
             let transaction = sanitize_transaction(
                 unsanitized_tx,
-                preflight_bank,
+                &*preflight_bank,
                 preflight_bank.get_reserved_account_keys(),
             )?;
             let blockhash = *transaction.message().recent_blockhash();
@@ -4032,7 +4046,7 @@ pub mod rpc_full {
             let (_, mut unsanitized_tx) =
                 decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
 
-            let bank = &*meta.get_bank_with_config(RpcContextConfig {
+            let bank = meta.get_bank_for_execution_with_config(RpcContextConfig {
                 commitment,
                 min_context_slot,
             })?;
@@ -4057,7 +4071,7 @@ pub mod rpc_full {
             }
 
             let transaction =
-                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
+                sanitize_transaction(unsanitized_tx, &*bank, bank.get_reserved_account_keys())?;
 
             let verification_error = if sig_verify {
                 transaction.verify().err()
@@ -4121,7 +4135,7 @@ pub mod rpc_full {
                             .map(|address_str| {
                                 let pubkey = verify_pubkey(address_str)?;
                                 get_encoded_account(
-                                    bank,
+                                    &bank,
                                     &pubkey,
                                     accounts_encoding,
                                     None,
@@ -4142,7 +4156,7 @@ pub mod rpc_full {
             });
 
             Ok(new_response(
-                bank,
+                &bank,
                 RpcSimulateTransactionResult {
                     err: result.err().map(Into::into),
                     logs: Some(logs),

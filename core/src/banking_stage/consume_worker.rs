@@ -112,13 +112,16 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         let bank = leader_state
             .working_bank()
             .expect("active_leader_state should only return an active bank");
+        let Ok(bank_for_execution) = bank.try_for_execution() else {
+            return Ok(ProcessingStatus::CouldNotProcess(work));
+        };
         self.metrics
             .count_metrics
             .num_messages_processed
             .fetch_add(1, Ordering::Relaxed);
 
         let output = self.consumer.process_and_record_aged_transactions(
-            bank,
+            &bank_for_execution,
             &work.transactions,
             &work.max_ages,
             &ExecutionFlags {
@@ -425,8 +428,18 @@ pub(crate) mod external {
 
                 return Ok(false);
             }
+            let Ok(bank_for_execution) = bank.try_for_execution() else {
+                return self
+                    .return_not_included_with_reason(
+                        message,
+                        not_included_reasons::BANK_NOT_AVAILABLE,
+                        bank.slot(),
+                    )
+                    .map(|()| true);
+            };
+
             let output = self.consumer.process_and_record_aged_transactions(
-                bank,
+                &bank_for_execution,
                 &transactions,
                 &max_ages,
                 &execution_flags,

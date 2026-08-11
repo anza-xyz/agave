@@ -189,6 +189,12 @@ fn simulate_transaction(
         }
         Ok(tx) => tx,
     };
+    let Ok(bank) = bank.try_for_execution() else {
+        return BanksTransactionResultWithSimulation {
+            result: None,
+            simulation_details: None,
+        };
+    };
     let TransactionSimulationResult {
         result,
         logs,

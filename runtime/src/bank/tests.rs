@@ -11961,7 +11961,10 @@ fn test_failed_simulation_compute_units() {
 
     bank.freeze();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
-    let simulation = bank.simulate_transaction(&sanitized, false);
+    let simulation = bank
+        .try_for_execution()
+        .unwrap()
+        .simulate_transaction(&sanitized, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
     assert_eq!(
         expected_loaded_program_account_data_size,
@@ -11989,7 +11992,10 @@ fn test_failed_simulation_load_error() {
     bank.freeze();
     let mint_balance = bank.get_account(&mint_keypair.pubkey()).unwrap().lamports();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
-    let simulation = bank.simulate_transaction(&sanitized, false);
+    let simulation = bank
+        .try_for_execution()
+        .unwrap()
+        .simulate_transaction(&sanitized, false);
     assert_eq!(
         simulation,
         TransactionSimulationResult {
@@ -12006,6 +12012,54 @@ fn test_failed_simulation_load_error() {
             pre_token_balances: Some(vec![]),
             post_token_balances: Some(vec![]),
         }
+    );
+}
+
+#[test]
+fn test_bank_execution_retirement_waits_and_rejects_late_execution() {
+    let tracker = Arc::new(BankExecutionTracker::default());
+    tracker.try_acquire(42).unwrap();
+    let tracker_for_retirement = tracker.clone();
+    let (retired_sender, retired_receiver) = bounded(1);
+
+    let retirement_thread = Builder::new()
+        .name("bank-retirement".to_string())
+        .spawn(move || {
+            tracker_for_retirement.retire_and_wait();
+            retired_sender.send(()).unwrap();
+        })
+        .unwrap();
+
+    while tracker.state.load(Acquire) & BANK_EXECUTION_RETIRED == 0 {
+        std::hint::spin_loop();
+    }
+    assert_eq!(
+        tracker.try_acquire(42).unwrap_err(),
+        BankExecutionError { slot: 42 }
+    );
+    assert!(
+        retired_receiver
+            .recv_timeout(Duration::from_millis(50))
+            .is_err()
+    );
+
+    tracker.release();
+    retired_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    retirement_thread.join().unwrap();
+}
+
+#[test]
+fn test_execution_wrapper_rejected_after_bank_retirement() {
+    let (genesis_config, _) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    bank.retire_from_execution();
+
+    assert_eq!(
+        bank.try_for_execution().err().unwrap(),
+        BankExecutionError { slot: bank.slot() }
     );
 }
 

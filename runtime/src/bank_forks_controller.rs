@@ -369,7 +369,7 @@ mod tests {
                         let bank_to_clear =
                             replay_bank_forks.read().unwrap().get_with_scheduler(slot);
                         if let Some(bank) = bank_to_clear {
-                            let _ = bank.wait_for_completed_scheduler();
+                            let _ = bank.retire_and_wait_for_outstanding_executions();
                         }
 
                         {

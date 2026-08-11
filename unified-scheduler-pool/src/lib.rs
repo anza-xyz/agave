@@ -2760,7 +2760,9 @@ mod tests {
             ));
         // make sure this tx is really a good one to execute.
         assert_matches!(
-            bank.simulate_transaction_unchecked(&good_tx_after_bad_tx, false)
+            bank.try_for_execution()
+                .unwrap()
+                .simulate_transaction_unchecked(&good_tx_after_bad_tx, false)
                 .result,
             Ok(_)
         );

@@ -123,7 +123,10 @@ fn test_sysvar_syscalls() {
         let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
         let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
         let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
-        let result = bank.simulate_transaction(&sanitized_tx, false);
+        let result = bank
+            .try_for_execution()
+            .unwrap()
+            .simulate_transaction(&sanitized_tx, false);
         assert!(result.result.is_ok());
     }
 
@@ -141,6 +144,9 @@ fn test_sysvar_syscalls() {
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
     let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
-    let result = bank.simulate_transaction(&sanitized_tx, false);
+    let result = bank
+        .try_for_execution()
+        .unwrap()
+        .simulate_transaction(&sanitized_tx, false);
     assert!(result.result.is_err());
 }

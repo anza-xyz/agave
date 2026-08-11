@@ -36,6 +36,7 @@ use {
         ops::Deref,
         sync::{Arc, RwLock},
         thread,
+        time::Instant,
     },
 };
 #[cfg(feature = "dev-context-only-utils")]
@@ -498,6 +499,26 @@ impl BankWithScheduler {
             &self.inner.scheduler,
             WaitReason::TerminatedToFreeze,
         )
+    }
+
+    /// Drain scheduled work, close the bank's execution gate, and wait for all execution,
+    /// including direct execution and simulation, to finish.
+    ///
+    /// This must be called without holding the `BankForks` write lock. The bank must remain in
+    /// `BankForks` until this method returns so admitted execution can continue using its fork
+    /// graph safely.
+    #[must_use]
+    pub fn retire_and_wait_for_outstanding_executions(&self) -> Option<ResultWithTimings> {
+        let start = Instant::now();
+        let result = self.wait_for_completed_scheduler();
+        self.inner.bank.retire_from_execution();
+        self.inner.bank.wait_for_inflight_commits();
+        datapoint_info!(
+            "bank-execution-retirement",
+            ("slot", self.inner.bank.slot() as i64, i64),
+            ("elapsed_us", start.elapsed().as_micros() as i64, i64),
+        );
+        result
     }
 
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {

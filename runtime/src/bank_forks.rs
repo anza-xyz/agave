@@ -356,7 +356,17 @@ impl BankForks {
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<BankWithScheduler> {
-        let bank = self.banks.remove(&slot)?;
+        let bank = self.banks.get(&slot)?;
+        // Removal callers should retire and drain outside the BankForks write lock. Never wait
+        // here: execution may need a BankForks read lock for program-cache access.
+        if !bank.try_retire_from_execution_if_idle() {
+            warn!(
+                "refusing to remove bank at slot {slot} with outstanding execution; callers \
+                 should retire and drain before removal"
+            );
+            return None;
+        }
+        let bank = self.banks.remove(&slot).unwrap();
         for parent in bank.proper_ancestors() {
             let Entry::Occupied(mut entry) = self.descendants.entry(parent) else {
                 panic!("this should not happen!");
@@ -918,6 +928,23 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_refuses_bank_with_outstanding_execution() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let parent = bank_forks.read().unwrap().root_bank();
+        let child = Bank::new_from_parent(parent, SlotLeader::default(), 1);
+        let child = bank_forks.write().unwrap().insert(child);
+        let bank_for_execution = child.try_for_execution().unwrap();
+
+        assert!(bank_forks.write().unwrap().remove(1).is_none());
+        assert!(bank_forks.read().unwrap().get(1).is_some());
+
+        drop(bank_for_execution);
+        assert!(bank_forks.write().unwrap().remove(1).is_some());
+        assert!(bank_forks.read().unwrap().get(1).is_none());
+    }
+
+    #[test]
     fn test_clear_bank_after_scheduler_wait() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
@@ -963,7 +990,7 @@ mod tests {
                 .unwrap()
                 .get_with_scheduler(1)
                 .unwrap();
-            let _ = bank_to_clear.wait_for_completed_scheduler();
+            let _ = bank_to_clear.retire_and_wait_for_outstanding_executions();
             clear_bank_forks.write().unwrap().clear_bank(1, false);
             finish_done_sender.send(()).unwrap();
         });

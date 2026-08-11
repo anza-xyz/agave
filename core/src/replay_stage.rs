@@ -2297,7 +2297,7 @@ impl ReplayStage {
                 .collect()
         };
         for bank in banks_to_remove {
-            let _ = bank.wait_for_completed_scheduler();
+            let _ = bank.retire_and_wait_for_outstanding_executions();
         }
 
         // Grab the Slot and BankId's of the banks we need to purge, then clear the banks
@@ -2586,7 +2586,7 @@ impl ReplayStage {
 
         // Wait for any in progress execution
         for bank in banks_to_clear.iter() {
-            let _ = bank.wait_for_completed_scheduler();
+            let _ = bank.retire_and_wait_for_outstanding_executions();
         }
         let bank_slots_to_clear = banks_to_clear
             .iter()

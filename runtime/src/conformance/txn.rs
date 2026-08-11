@@ -4,7 +4,7 @@
 //!
 //! * The **native** core ([`execute_txn`] + [`BankTxnProcessingResult`]) builds a
 //!   [`Bank`] via [`Bank::new_for_txn_tests`], runs
-//!   `bank.load_and_execute_transactions`, and returns the native execution
+//!   `BankForExecution::load_and_execute_transactions`, and returns the native execution
 //!   result. It depends only on `solana-runtime`/SVM types, so it is available
 //!   under `dev-context-only-utils` and is what the unit tests exercise.
 //! * The **conformance** layer (gated by the `conformance` feature) is the
@@ -180,19 +180,23 @@ pub fn execute_txn(
 
     let mut timings = ExecuteTimings::default();
     let mut metrics = TransactionErrorMetrics::default();
+    let bank_for_execution = bank
+        .try_for_execution()
+        .expect("new conformance bank must be available for execution");
     let result = {
-        let batch = bank.prepare_locked_batch_from_single_tx(&runtime_transaction);
-        bank.load_and_execute_transactions(
-            &batch,
-            MAX_PROCESSING_AGE,
-            &mut timings,
-            &mut metrics,
-            processing_config,
-        )
-        .processing_results
-        .into_iter()
-        .next()
-        .expect("single transaction execution must return one result")
+        let batch = bank_for_execution.prepare_locked_batch_from_single_tx(&runtime_transaction);
+        bank_for_execution
+            .load_and_execute_transactions(
+                &batch,
+                MAX_PROCESSING_AGE,
+                &mut timings,
+                &mut metrics,
+                processing_config,
+            )
+            .processing_results
+            .into_iter()
+            .next()
+            .expect("single transaction execution must return one result")
     };
 
     BankTxnProcessingResult::Processed {

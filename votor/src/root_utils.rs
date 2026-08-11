@@ -223,7 +223,7 @@ pub fn set_bank_forks_root<CB>(
             .collect()
     };
     for bank in banks_to_remove {
-        let _ = bank.wait_for_completed_scheduler();
+        let _ = bank.retire_and_wait_for_outstanding_executions();
     }
 
     bank_forks.read().unwrap().prune_program_cache(new_root);

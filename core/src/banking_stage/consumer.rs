@@ -14,7 +14,7 @@ use {
     },
     solana_runtime::{
         bank::{
-            Bank, LoadAndExecuteTransactionsOutput, ProcessedTransactionCounts,
+            Bank, BankForExecution, LoadAndExecuteTransactionsOutput, ProcessedTransactionCounts,
             entry_bytes_budget::EntryBytesReserveError,
         },
         transaction_batch::TransactionBatch,
@@ -131,7 +131,7 @@ impl Consumer {
 
     pub fn process_and_record_transactions(
         &self,
-        bank: &Bank,
+        bank: &BankForExecution<'_>,
         txs: &[impl TransactionWithMeta],
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
@@ -178,7 +178,7 @@ impl Consumer {
 
     pub fn process_and_record_aged_transactions(
         &self,
-        bank: &Bank,
+        bank: &BankForExecution<'_>,
         txs: &[impl TransactionWithMeta],
         max_ages: &[MaxAge],
         flags: &ExecutionFlags,
@@ -198,7 +198,7 @@ impl Consumer {
 
     fn process_and_record_transactions_with_pre_results(
         &self,
-        bank: &Bank,
+        bank: &BankForExecution<'_>,
         txs: &[impl TransactionWithMeta],
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
         flags: &ExecutionFlags,
@@ -233,7 +233,7 @@ impl Consumer {
 
     fn execute_and_commit_transactions_locked(
         &self,
-        bank: &Bank,
+        bank: &BankForExecution<'_>,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         flags: &ExecutionFlags,
     ) -> ExecuteAndCommitTransactionsOutput {
@@ -847,7 +847,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
-        consumer.process_and_record_transactions(&bank, &transactions)
+        consumer.process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions)
     }
 
     fn generate_new_address_lookup_table(
@@ -912,8 +912,8 @@ mod tests {
             bank.confirmed_last_blockhash(),
         )]);
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -945,8 +945,8 @@ mod tests {
             bank.confirmed_last_blockhash(),
         )]);
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -999,8 +999,8 @@ mod tests {
         bank.freeze();
         assert_ne!(bank.hash(), Hash::default());
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1076,8 +1076,8 @@ mod tests {
             bank.register_default_tick_for_test();
         }
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
             commit_transactions_result,
@@ -1123,8 +1123,8 @@ mod tests {
             sanitize_transactions(vec![tx])
         };
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1181,8 +1181,8 @@ mod tests {
             bank.last_blockhash(),
         )]);
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1219,8 +1219,8 @@ mod tests {
         )]);
         bank.try_lock_accounts(&conflicting_transaction);
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1305,8 +1305,8 @@ mod tests {
             bank.last_blockhash(),
         )]);
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1371,8 +1371,8 @@ mod tests {
                 allocated_data_size: u64::MAX,
             });
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
         let ProcessTransactionBatchOutput {
             cost_model_throttled_transactions_count,
             execute_and_commit_transactions_output,
@@ -1496,7 +1496,7 @@ mod tests {
 
         let process_transactions_batch_output = consumer
             .process_and_record_transactions_with_pre_results(
-                &bank,
+                &bank.try_for_execution().unwrap(),
                 &transactions,
                 std::iter::repeat(Ok(())),
                 &ExecutionFlags {
@@ -1607,8 +1607,8 @@ mod tests {
             bank.try_lock_accounts(&conflicting_transaction);
         }
 
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_batch_output = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1790,8 +1790,8 @@ mod tests {
         // Channel shutdown should result in error returned on record.
         record_receiver.shutdown();
 
-        let process_transactions_summary =
-            consumer.process_and_record_transactions(&bank, &transactions);
+        let process_transactions_summary = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
 
         let ProcessTransactionBatchOutput {
             mut execute_and_commit_transactions_output,
@@ -1878,7 +1878,8 @@ mod tests {
         bank.transfer(rent_exempt_amount, &mint_keypair, &keypair1.pubkey())
             .unwrap();
 
-        let _ = consumer.process_and_record_transactions(&bank, &transactions);
+        let _ = consumer
+            .process_and_record_transactions(&bank.try_for_execution().unwrap(), &transactions);
         drop(consumer); // drop/disconnect transaction_status_sender
 
         let status_messages = transaction_status_receiver.into_iter().collect::<Vec<_>>();
@@ -1968,7 +1969,10 @@ mod tests {
 
         bank.transfer(1, &mint_keypair, &keypair.pubkey()).unwrap();
 
-        let _ = consumer.process_and_record_transactions(&bank, slice::from_ref(&sanitized_tx));
+        let _ = consumer.process_and_record_transactions(
+            &bank.try_for_execution().unwrap(),
+            slice::from_ref(&sanitized_tx),
+        );
         drop(consumer); // drop/disconnect transaction_status_sender
 
         let status_messages = transaction_status_receiver.into_iter().collect::<Vec<_>>();

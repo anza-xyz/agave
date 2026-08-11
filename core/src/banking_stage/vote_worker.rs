@@ -23,7 +23,10 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_perf::packet::bytes::Bytes,
     solana_poh::poh_recorder::PohRecorderError,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::{
+        bank::{Bank, BankForExecution},
+        bank_forks::BankForks,
+    },
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
         transaction_with_meta::TransactionWithMeta,
@@ -153,6 +156,12 @@ impl VoteWorker {
 
         match decision {
             BufferedPacketsDecision::Consume(bank) => {
+                if self.storage.is_empty() {
+                    return;
+                }
+                let Ok(bank) = bank.try_for_execution() else {
+                    return;
+                };
                 let (_, consume_buffered_packets_us) = measure_us!(self.consume_buffered_packets(
                     &bank,
                     banking_stage_stats,
@@ -180,14 +189,10 @@ impl VoteWorker {
 
     fn consume_buffered_packets(
         &mut self,
-        bank: &Bank,
+        bank: &BankForExecution<'_>,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
-        if self.storage.is_empty() {
-            return;
-        }
-
         let mut consumed_buffered_packets_count = 0;
         let mut rebuffered_packet_count = 0;
         let mut proc_start = Measure::start("consume_buffered_process");
@@ -229,7 +234,7 @@ impl VoteWorker {
     // returns `true` if the end of slot is reached
     fn process_packets(
         &mut self,
-        bank: &Bank,
+        bank: &BankForExecution<'_>,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
         banking_stage_stats: &BankingStageStats,
@@ -291,7 +296,7 @@ impl VoteWorker {
 
     fn process_packets_transactions(
         &self,
-        bank: &Bank,
+        bank: &BankForExecution<'_>,
         sanitized_transactions: &[impl TransactionWithMeta],
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
@@ -347,7 +352,7 @@ impl VoteWorker {
     #[cfg_attr(test, qualifier_attr::qualifiers(pub(crate)))]
     fn process_transactions(
         consumer: &Consumer,
-        bank: &Bank,
+        bank: &BankForExecution<'_>,
         transactions: &[impl TransactionWithMeta],
     ) -> ProcessTransactionsSummary {
         let process_transaction_batch_output =
@@ -604,7 +609,11 @@ mod tests {
         )]);
 
         // Process some transactions on a bank that hasn't finished.
-        let summary = VoteWorker::process_transactions(&consumer, &bank, &transactions);
+        let summary = VoteWorker::process_transactions(
+            &consumer,
+            &bank.try_for_execution().unwrap(),
+            &transactions,
+        );
 
         // Assert - Transaction were prcoessed.
         assert!(summary.transaction_counts.committed_transactions_count.0 > 0);

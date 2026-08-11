@@ -1483,7 +1483,7 @@ mod tests {
         fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
             let bank_to_clear = self.bank_forks.read().unwrap().get_with_scheduler(slot);
             if let Some(bank) = bank_to_clear {
-                let _ = bank.wait_for_completed_scheduler();
+                let _ = bank.retire_and_wait_for_outstanding_executions();
             }
             self.bank_forks.write().unwrap().clear_bank(slot, false);
             Ok(())
