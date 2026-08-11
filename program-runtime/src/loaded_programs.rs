@@ -509,8 +509,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     new_root_slot.saturating_sub(MAX_TOMBSTONE_AGE_IN_SLOTS);
                 entries.retain(|_id, second_level| {
                     // Clean up tombstones and unloaded entries
-                    if second_level.len() == 1 {
-                        let candidate = second_level.first().unwrap();
+                    if let [candidate] = &second_level[..] {
                         match candidate.program {
                             ProgramCacheEntryType::Builtin(_)
                             | ProgramCacheEntryType::Loaded(_) => {}
