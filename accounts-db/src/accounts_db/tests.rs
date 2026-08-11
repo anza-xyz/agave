@@ -3,7 +3,6 @@
 
 use {
     super::*,
-    crate::storable_accounts::AccountForStorage,
     solana_account::{AccountSharedData, ReadableAccount},
 };
 
@@ -47,45 +46,5 @@ impl AccountsDb {
                 accessor.check_and_get_loaded_account_shared_data()
             },
         )
-    }
-}
-
-/// this tuple contains slot info PER account
-impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [(&'a Pubkey, &'a T, Slot)])
-where
-    AccountForStorage<'a>: From<&'a T>,
-{
-    fn is_zero_lamport(&self, index: usize) -> bool {
-        self.1[index].1.lamports() == 0
-    }
-    fn data_len(&self, index: usize) -> usize {
-        self.1[index].1.data().len()
-    }
-    fn account<Ret>(
-        &self,
-        index: usize,
-        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-    ) -> Ret {
-        callback(self.1[index].1.into())
-    }
-    fn account_for_geyser<Ret>(
-        &self,
-        _index: usize,
-        _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
-    ) -> Ret {
-        unimplemented!();
-    }
-    fn pubkey(&self, index: usize) -> &Pubkey {
-        self.1[index].0
-    }
-    fn slot(&self, index: usize) -> Slot {
-        // note that this could be different than 'target_slot()' PER account
-        self.1[index].2
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
     }
 }
