@@ -275,7 +275,7 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
             result.push(ProgramToLoad {
                 program_id: account_key,
                 loader,
-                deployed_on_or_after_slot: deployment_slot,
+                deployment_slot,
                 last_modification_slot,
             });
         }
@@ -894,13 +894,13 @@ mod tests {
                 ProgramToLoad {
                     program_id: &program_ids[1],
                     loader: ProgramCacheEntryOwner::LoaderV2,
-                    deployed_on_or_after_slot: 0,
+                    deployment_slot: 0,
                     last_modification_slot: 0,
                 },
                 ProgramToLoad {
                     program_id: &program_ids[2],
                     loader: ProgramCacheEntryOwner::LoaderV3,
-                    deployed_on_or_after_slot: 0,
+                    deployment_slot: 0,
                     last_modification_slot: 0,
                 },
             ]
