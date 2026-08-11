@@ -144,10 +144,10 @@ dependencies = [
 
 [[package]]
 name = "agave-geyser-notifier-interface"
-version = "4.3.0-alpha.3"
+version = "4.4.0-alpha.0"
 dependencies = [
  "crossbeam-channel",
- "solana-account 4.5.0",
+ "solana-account 4.6.0",
  "solana-clock",
  "solana-hash 4.6.0",
  "solana-message",
