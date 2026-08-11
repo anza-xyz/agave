@@ -2350,7 +2350,7 @@ fn main() {
                                 identity_pubkey,
                                 10000,
                                 vote_pubkey,
-                                0,
+                                10_000,
                                 identity_pubkey,
                                 rent.minimum_balance(VoteStateV4::size_of()).max(1),
                             );
