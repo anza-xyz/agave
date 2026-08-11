@@ -1699,32 +1699,52 @@ pub(crate) mod tests {
 
     #[test]
     fn test_prune_tombstones() {
-        let mut cache = ProgramCache::<TestForkGraph>::new(0);
         let env = get_mock_program_runtime_environment();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Ancestor,
         }));
-        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
-        cache.assign_program(&env, program1, 10, new_test_entry(10));
-        cache.assign_program(
-            &env,
-            program1,
-            20,
+        let entries = [
+            Arc::new(ProgramCacheEntry::new_unloaded(
+                20,
+                ProgramCacheEntryOwner::LoaderV3,
+                ProgramRuntimeEnvironment::clone(&env),
+            )),
             Arc::new(ProgramCacheEntry::new_closed_tombstone(
                 20,
                 ProgramCacheEntryOwner::LoaderV3,
             )),
+            Arc::new(ProgramCacheEntry::new_failed_verification_tombstone(
+                20,
+                ProgramCacheEntryOwner::LoaderV3,
+                ProgramRuntimeEnvironment::clone(&env),
+            )),
+        ];
+        for entry in &entries {
+            let mut cache = ProgramCache::<TestForkGraph>::new(0);
+            cache.set_fork_graph(Arc::downgrade(&fork_graph));
+            cache.assign_program(&env, program1, 10, new_test_entry(10));
+            cache.assign_program(&env, program1, entry.deployment_slot, Arc::clone(&entry));
+            cache.prune(100, None, &fork_graph.read().unwrap());
+            let slot_versions = cache.get_slot_versions_for_tests(&program1);
+            assert_eq!(slot_versions, &[entry.clone()]);
+        }
+
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
+        cache.assign_program(
+            &env,
+            program1,
+            entries[0].deployment_slot,
+            Arc::clone(&entries[0]),
         );
-
-        cache.prune(100, None, &fork_graph.read().unwrap());
-        let slot_versions = cache.get_slot_versions_for_tests(&program1);
-        assert!(matches!(
-            &slot_versions.first().unwrap().program,
-            ProgramCacheEntryType::Closed,
-        ));
-
+        cache.prune(
+            MAX_TOMBSTONE_AGE_IN_SLOTS,
+            None,
+            &fork_graph.read().unwrap(),
+        );
+        assert!(!cache.get_flattened_entries_for_tests().is_empty());
         cache.prune(
             MAX_TOMBSTONE_AGE_IN_SLOTS.saturating_add(1),
             None,
