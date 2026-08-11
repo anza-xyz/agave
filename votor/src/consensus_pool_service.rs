@@ -740,7 +740,7 @@ mod tests {
         crate::tests::{get_cluster_info, new_vote_aggregate},
         agave_votor_messages::{
             certificate::CertificateType,
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, BlockId, VoteMessage},
             vote::Vote,
             wire::get_vote_payload_to_sign,
         },
@@ -750,7 +750,6 @@ mod tests {
             BLS_SIGNATURE_AFFINE_SIZE, keypair::Keypair as BLSKeypair,
             signature::Signature as BLSSignature,
         },
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_runtime::{
@@ -856,7 +855,7 @@ mod tests {
         let mut ctx = TestContext::default();
 
         // validator 0 to 7 send Notarize on slot 2
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let target_slot = 2;
         let notarize_vote = Vote::new_notarization_vote(Block {
             slot: target_slot,
@@ -991,7 +990,7 @@ mod tests {
         let mut ctx = TestContext::default();
         let vote = Vote::new_notarization_vote(Block {
             slot: 1,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         });
         let root_bank = ctx.ctx.sharable_banks.root();
         let rank_map = root_bank.get_rank_map(vote.slot()).unwrap();
@@ -1194,10 +1193,7 @@ mod tests {
         // Add a ParentReady event for the slot before our leader slot
         events.push(VotorEvent::ParentReady {
             slot: next_leader_slot.0,
-            parent_block: Block {
-                slot: next_leader_slot.0 - 1,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(next_leader_slot.0 - 1),
         });
 
         ConsensusPoolService::add_produce_block_event(
@@ -1235,10 +1231,7 @@ mod tests {
             .0;
         let restored_parent_ready = (
             next_leader_slot,
-            Block {
-                slot: next_leader_slot.checked_sub(1).unwrap(),
-                block_id: Hash::new_unique(),
-            },
+            Block::new_unique(next_leader_slot.checked_sub(1).unwrap()),
         );
         ctx.ctx.vote_history_highest_parent_ready = Some(restored_parent_ready);
         let mut consensus_pool = ctx.ctx.new_consensus_pool();
@@ -1284,38 +1277,20 @@ mod tests {
 
     #[test]
     fn test_kick_off_parent_ready_uses_restored_vote_history() {
-        let genesis_block = Some(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
-        let root_block = Block {
-            slot: 12,
-            block_id: Hash::new_unique(),
-        };
+        let genesis_block = Some(Block::new_unique(10));
+        let root_block = Block::new_unique(12);
         assert_eq!(
             ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, None),
             (13, root_block)
         );
 
-        let restored = (
-            16,
-            Block {
-                slot: 15,
-                block_id: Hash::new_unique(),
-            },
-        );
+        let restored = (16, Block::new_unique(15));
         assert_eq!(
             ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, Some(restored)),
             restored
         );
 
-        let stale = (
-            12,
-            Block {
-                slot: 11,
-                block_id: Hash::new_unique(),
-            },
-        );
+        let stale = (12, Block::new_unique(11));
         assert_eq!(
             ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, Some(stale)),
             (13, root_block)

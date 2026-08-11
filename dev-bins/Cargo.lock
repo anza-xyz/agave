@@ -95,7 +95,6 @@ dependencies = [
  "solana-bls-signatures",
  "solana-clock",
  "solana-gossip",
- "solana-hash 4.6.0",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -146,6 +145,7 @@ dependencies = [
 name = "agave-geyser-plugin-interface"
 version = "4.3.0-alpha.3"
 dependencies = [
+ "agave-votor-messages",
  "log",
  "solana-clock",
  "solana-entry",
@@ -176,6 +176,7 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-votor-messages",
  "assert_cmd",
  "bincode",
  "chrono",
@@ -6931,6 +6932,7 @@ name = "solana-geyser-plugin-manager"
 version = "4.3.0-alpha.3"
 dependencies = [
  "agave-geyser-plugin-interface",
+ "agave-votor-messages",
  "arc-swap",
  "bs58",
  "crossbeam-channel",

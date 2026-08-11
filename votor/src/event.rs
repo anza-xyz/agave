@@ -198,14 +198,14 @@ impl LatestSwitchRequest {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_hash::Hash};
+    use {super::*, agave_votor_messages::consensus_message::BlockId};
 
     fn block(slot: u64, id_byte: u8) -> Block {
         let mut bytes = [0; 32];
         bytes[31] = id_byte;
         Block {
             slot,
-            block_id: Hash::new_from_array(bytes),
+            block_id: BlockId::new(bytes),
         }
     }
 

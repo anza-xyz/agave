@@ -7,8 +7,8 @@ use {
     serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
-    solana_hash::Hash,
-    std::num::NonZero,
+    solana_hash::{HASH_BYTES, Hash},
+    std::{fmt::Display, num::NonZero},
     wincode::{SchemaRead, SchemaWrite, pod_wrapper},
 };
 
@@ -25,6 +25,67 @@ pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 fn sample_hash(rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized)) -> Hash {
     use solana_frozen_abi::stable_abi::StableAbi;
     Hash::new_from_array(<[u8; solana_hash::HASH_BYTES] as StableAbi>::random(rng))
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
+#[repr(transparent)]
+/// An alpenglow block id
+pub struct BlockId(
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "sample_hash(rng)"))] Hash,
+);
+
+impl BlockId {
+    /// Creates a new BlockId from the given hash
+    pub const fn new(bytes: [u8; HASH_BYTES]) -> Self {
+        Self(Hash::new_from_array(bytes))
+    }
+
+    /// Createa a new BlockId
+    pub fn new_unique() -> Self {
+        Self(Hash::new_unique())
+    }
+
+    /// Returns a reference to the byte representation of the the block id hash.
+    pub const fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    /// Returns the byte representation of the the block id hash consuming self.
+    pub const fn into_bytes(self) -> [u8; HASH_BYTES] {
+        self.0.to_bytes()
+    }
+
+    /// Returns the hash of the block id consuming self.
+    pub const fn into_hash(self) -> Hash {
+        self.0
+    }
+}
+
+impl Display for BlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<Hash> for BlockId {
+    fn from(block_id: Hash) -> Self {
+        Self(block_id)
+    }
 }
 
 /// An alpenglow block
@@ -48,8 +109,17 @@ pub struct Block {
     /// The slot in the block.
     pub slot: Slot,
     /// The block_id of the block.
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "sample_hash(rng)"))]
-    pub block_id: Hash,
+    pub block_id: BlockId,
+}
+
+impl Block {
+    /// Builds a new Block with the given slot and a unique block id
+    pub fn new_unique(slot: Slot) -> Self {
+        Self {
+            slot,
+            block_id: BlockId::new_unique(),
+        }
+    }
 }
 
 /// A consensus vote.

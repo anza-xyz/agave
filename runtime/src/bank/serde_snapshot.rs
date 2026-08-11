@@ -15,6 +15,7 @@ mod tests {
             snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::consensus_message::BlockId,
         solana_accounts_db::{
             ObsoleteAccounts,
             account_storage::AccountStorageMap,
@@ -26,7 +27,6 @@ mod tests {
             accounts_file::{AccountsFile, AccountsFileError},
         },
         solana_epoch_schedule::EpochSchedule,
-        solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         std::{
@@ -114,7 +114,7 @@ mod tests {
 
         let accounts_db = &bank2.rc.accounts.accounts_db;
 
-        bank2.set_block_id(Some(Hash::default()));
+        bank2.set_block_id(Some(BlockId::default()));
         bank2.squash();
         bank2.force_flush_accounts_cache();
 
@@ -227,7 +227,7 @@ mod tests {
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         bank0.squash();
         let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
 
@@ -310,7 +310,7 @@ mod tests {
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();
         }
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // Set extra field
         bank.fee_rate_governor.lamports_per_signature = 7000;

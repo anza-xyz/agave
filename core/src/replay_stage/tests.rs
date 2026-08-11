@@ -13,7 +13,7 @@ use {
     },
     agave_votor_messages::{
         certificate::{CertSignature, GenesisCert},
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
     },
     blockstore_processor::{
         AsyncVerificationProgress, ConfirmationProgress, ProcessOptions, confirm_full_slot,
@@ -109,7 +109,7 @@ fn test_far_future_optimistic_parent_requires_parent_window_ready() {
         .unwrap();
     let parent_bank =
         Bank::new_from_parent_with_bank_forks(&bank_forks, root_bank, parent_leader, parent_slot);
-    let parent_block_id = Hash::new_unique();
+    let parent_block_id = BlockId::new_unique();
     parent_bank.set_block_id(Some(parent_block_id));
     parent_bank.freeze();
 
@@ -178,7 +178,7 @@ fn post_migration_status_for_tests() -> MigrationStatus {
     migration_status.record_feature_activation(0);
     let genesis_block = Block {
         slot: 0,
-        block_id: Hash::default(),
+        block_id: BlockId::default(),
     };
     let genesis_certificate = Arc::new(GenesisCert {
         block: genesis_block,
@@ -246,12 +246,12 @@ fn insert_update_parent_slot(
     slot: Slot,
     block_header_parent_slot: Slot,
     update_parent_slot: Slot,
-    update_parent_block_id: Hash,
+    update_parent_block_id: BlockId,
     replay_fec_set_index: u32,
 ) {
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: block_header_parent_slot,
-        parent_block_id: Hash::new_unique(),
+        parent_block_id: BlockId::new_unique(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: update_parent_slot,
@@ -670,10 +670,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     let my_pubkey = Pubkey::new_unique();
 
     let missing_command = SetRootCommand {
-        new_root: Block {
-            slot: 2,
-            block_id: Hash::new_unique(),
-        },
+        new_root: Block::new_unique(2),
     };
     ReplayStage::process_set_root_command(
         missing_command,
@@ -685,10 +682,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     assert!(!blockstore.is_root(2));
 
     let mismatched_command = SetRootCommand {
-        new_root: Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        },
+        new_root: Block::new_unique(1),
     };
     ReplayStage::process_set_root_command(
         mismatched_command,
@@ -699,7 +693,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     assert_eq!(bank_forks.read().unwrap().root(), 0);
     assert!(!blockstore.is_root(1));
 
-    let unfrozen_block_id = Hash::new_unique();
+    let unfrozen_block_id = BlockId::new_unique();
     let unfrozen_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 2);
     unfrozen_bank.set_block_id(Some(unfrozen_block_id));
     bank_forks.write().unwrap().insert(unfrozen_bank);
@@ -1395,7 +1389,7 @@ fn test_alpenglow_migration_transition_does_not_mark_bank_dead() {
     );
     let genesis_block = Block {
         slot: 0,
-        block_id: Hash::default(),
+        block_id: BlockId::default(),
     };
     process_active_banks_context
         .migration_status
@@ -1458,7 +1452,7 @@ fn test_abandon_invalidates() {
     } = vote_simulator;
 
     let slot = 4;
-    let parent_block_id = Hash::new_unique();
+    let parent_block_id = BlockId::new_unique();
     insert_update_parent_slot(&blockstore, slot, 3, 0, parent_block_id, 32);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
@@ -3229,7 +3223,7 @@ fn test_update_parent_restart() {
 
     let (tx, rx) = bounded(1024);
     for slot in [4, 8, 12, 16] {
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
         insert_update_parent_slot(
             &blockstore,
             slot,
@@ -3310,7 +3304,7 @@ fn test_headerless_update_parent() {
     };
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
-        new_parent_block_id: Hash::default(),
+        new_parent_block_id: BlockId::default(),
     });
 
     let mut shreds = block_marker_shreds(slot, 0, footer_marker(), 0);
@@ -3373,7 +3367,7 @@ fn test_update_parent_tower_gated() {
     } = vote_simulator;
 
     let slot = 1;
-    let parent_block_id = Hash::new_unique();
+    let parent_block_id = BlockId::new_unique();
     let mut meta = blockstore.meta(slot).unwrap().unwrap();
     meta.parent_slot = Some(0);
     meta.parent_block_id = parent_block_id;
@@ -3421,7 +3415,7 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
     let slot = 1;
     let mut meta = blockstore.meta(slot).unwrap().unwrap();
     meta.parent_slot = Some(0);
-    meta.parent_block_id = Hash::new_unique();
+    meta.parent_block_id = BlockId::new_unique();
     meta.replay_fec_set_index = 10;
     blockstore.put_meta(slot, &meta).unwrap();
 
@@ -3464,7 +3458,7 @@ fn test_update_parent_keeps_hard() {
     } = vote_simulator;
 
     let slot = 1;
-    let parent_block_id = Hash::new_unique();
+    let parent_block_id = BlockId::new_unique();
     let mut meta = blockstore.meta(slot).unwrap().unwrap();
     meta.parent_slot = Some(0);
     meta.parent_block_id = parent_block_id;
@@ -3631,11 +3625,11 @@ fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bo
     let bank = bank_forks.write().unwrap().insert(bank);
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
-        parent_block_id: Hash::default(),
+        parent_block_id: BlockId::default(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
-        new_parent_block_id: Hash::default(),
+        new_parent_block_id: BlockId::default(),
     });
     let mut shreds = block_marker_shreds(slot, 0, header, 0);
     shreds.retain(|shred| !shred.is_data() || shred.index() != 0);
@@ -3732,11 +3726,11 @@ fn test_before_update_soft_dead() {
     let bank = bank_forks.write().unwrap().insert(bank);
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
-        parent_block_id: Hash::default(),
+        parent_block_id: BlockId::default(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
-        new_parent_block_id: Hash::default(),
+        new_parent_block_id: BlockId::default(),
     });
     let mut shreds = block_marker_shreds(slot, 0, header, 0);
     shreds.retain(|shred| !shred.is_data() || shred.index() != 0);
@@ -3792,7 +3786,7 @@ fn test_soft_dead_restarts() {
     } = vote_simulator;
 
     let slot = 4;
-    let parent_block_id = Hash::new_unique();
+    let parent_block_id = BlockId::new_unique();
     insert_update_parent_slot(&blockstore, slot, 3, 0, parent_block_id, 32);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
@@ -3876,10 +3870,7 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 8,
             end_slot: 11,
-            parent_block: Block {
-                slot: 7,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(7),
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3890,10 +3881,7 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 12,
             end_slot: 15,
-            parent_block: Block {
-                slot: 11,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(11),
             block_timer: Instant::now(),
         },
     );
@@ -3907,10 +3895,7 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 20,
             end_slot: 22,
-            parent_block: Block {
-                slot: 19,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(19),
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3921,10 +3906,7 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 20,
             end_slot: 23,
-            parent_block: Block {
-                slot: 19,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(19),
             block_timer: Instant::now(),
         },
     );
@@ -3938,10 +3920,7 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 20,
             end_slot: 23,
-            parent_block: Block {
-                slot: 19,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(19),
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3952,10 +3931,7 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 16,
             end_slot: 19,
-            parent_block: Block {
-                slot: 15,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(15),
             block_timer: Instant::now(),
         },
     );
@@ -3985,7 +3961,7 @@ fn test_skip_own_update_full() {
         slot,
         1,
         0,
-        Hash::new_unique(),
+        BlockId::new_unique(),
         replay_fec_set_index,
     );
     let mut meta = blockstore.meta(slot).unwrap().unwrap();

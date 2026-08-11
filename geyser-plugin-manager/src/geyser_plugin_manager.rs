@@ -522,10 +522,10 @@ mod tests {
             GeyserPlugin, ReplicaDeshredTransactionInfo, ReplicaDeshredTransactionInfoVersions,
             ReplicaDeshredUpdateParentInfoVersions, Result as PluginResult,
         },
+        agave_votor_messages::consensus_message::BlockId,
         arc_swap::ArcSwap,
         libloading::Library,
         solana_clock::Slot,
-        solana_hash::Hash,
         solana_ledger::{
             blockstore_meta::UpdateParentInfo,
             deshred_transaction_notifier_interface::DeshredTransactionNotifier,
@@ -617,7 +617,7 @@ mod tests {
         loaded_addresses: Option<LoadedAddresses>,
     }
 
-    type DeshredUpdateParent = (Slot, u32, Slot, Hash);
+    type DeshredUpdateParent = (Slot, u32, Slot, BlockId);
 
     #[derive(Clone, Debug)]
     struct DeshredTestPlugin {
@@ -873,7 +873,7 @@ mod tests {
             &transaction,
             Some(&loaded_addresses),
         );
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
         notifier.notify_deshred_update_parent(&UpdateParentInfo {
             slot: 11,
             update_parent_fec_set_index: 32,

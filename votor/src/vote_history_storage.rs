@@ -205,7 +205,10 @@ mod test {
     use {
         super::*,
         crate::common::MAX_NOTAR_FALLBACK_BLOCKS,
-        agave_votor_messages::{consensus_message::Block, vote::Vote},
+        agave_votor_messages::{
+            consensus_message::{Block, BlockId},
+            vote::Vote,
+        },
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
@@ -280,7 +283,7 @@ mod test {
         for slot in 1..=MAX_SLOTS_WITHOUT_FINALIZATION as u64 {
             let block = Block {
                 slot,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             };
             vote_history.add_vote(Vote::new_notarization_vote(block));
             vote_history.add_block_notarized(block);
@@ -290,7 +293,7 @@ mod test {
                     slot,
                     Block {
                         slot: slot - 1,
-                        block_id: Hash::default(),
+                        block_id: BlockId::default(),
                     },
                 );
             }

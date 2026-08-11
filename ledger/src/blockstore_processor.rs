@@ -2490,7 +2490,7 @@ pub mod tests {
         },
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
-            consensus_message::Block,
+            consensus_message::{Block, BlockId},
         },
         assert_matches::assert_matches,
         crossbeam_channel::bounded,
@@ -2572,7 +2572,7 @@ pub mod tests {
     fn test_startup_replay_enable_waits_for_poh_service_when_started() {
         let genesis_block = Block {
             slot: 1,
-            block_id: Hash::new_from_array([7; solana_hash::HASH_BYTES]),
+            block_id: BlockId::new_unique(),
         };
         let migration_status = Arc::new(ready_to_enable_migration_status(genesis_block));
         let poh_service = {
@@ -5019,7 +5019,7 @@ pub mod tests {
         // whose slot predates migration.
         let genesis_block = Block {
             slot: migration_slot - 1,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         };
         migration_status.set_genesis_block(genesis_block);
         migration_status.set_genesis_certificate(genesis_certificate(genesis_block));
@@ -5665,7 +5665,7 @@ pub mod tests {
 
         let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
         let header_component = BlockComponent::new_block_marker(header);
 
@@ -6254,14 +6254,14 @@ pub mod tests {
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         let parent_bank = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
         parent_bank.set_block_id(Some(parent_block_id));
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&parent_bank);
         let mut parent_meta = SlotMeta::new(1, Some(0));
         parent_meta.next_slots = smallvec::smallvec![2, 3];
 
-        for (slot, block_id) in [(2, Hash::new_unique()), (3, parent_block_id)] {
+        for (slot, block_id) in [(2, BlockId::new_unique()), (3, parent_block_id)] {
             let mut meta = SlotMeta::new(slot, Some(1));
             meta.consumed = 1;
             meta.received = 1;

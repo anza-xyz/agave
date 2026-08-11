@@ -3,6 +3,7 @@
 //! In addition, the dynamic library must export a "C" function _create_plugin which
 //! creates the implementation of the plugin.
 use {
+    agave_votor_messages::consensus_message::BlockId,
     solana_clock::{BankId, Slot, UnixTimestamp},
     solana_entry::block_component::VersionedBlockFooter,
     solana_hash::Hash,
@@ -311,7 +312,7 @@ pub struct ReplicaEntryUpdateParentInfo<'a> {
     pub parent_slot: Slot,
 
     /// The parent block ID selected by the UpdateParent marker.
-    pub parent_block_id: &'a Hash,
+    pub parent_block_id: &'a BlockId,
 }
 
 /// A wrapper to future-proof ReplicaEntryUpdateParentInfo handling.
@@ -334,7 +335,7 @@ pub struct ReplicaDeshredUpdateParentInfo<'a> {
     pub parent_slot: Slot,
 
     /// The parent block ID selected by the UpdateParent marker.
-    pub parent_block_id: &'a Hash,
+    pub parent_block_id: &'a BlockId,
 }
 
 /// A wrapper to future-proof ReplicaDeshredUpdateParentInfo handling.

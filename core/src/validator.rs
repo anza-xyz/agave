@@ -3202,10 +3202,7 @@ mod tests {
         ));
 
         let cert = GenesisCert {
-            block: Block {
-                slot: 40,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(40),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],

@@ -1,7 +1,7 @@
 use {
+    agave_votor_messages::consensus_message::BlockId,
     solana_clock::{BankId, Slot},
     solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
-    solana_hash::Hash,
     std::sync::Arc,
 };
 
@@ -10,7 +10,7 @@ pub struct EntryUpdateParentInfo {
     pub slot: Slot,
     pub cleared_bank_id: BankId,
     pub parent_slot: Slot,
-    pub parent_block_id: Hash,
+    pub parent_block_id: BlockId,
 }
 
 pub trait EntryNotifier {

@@ -9,10 +9,9 @@ use {
         repair_response,
         serve_repair::{AncestorHashesResponse, BlockIdRepairResponse, MAX_ANCESTOR_RESPONSES},
     },
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
@@ -86,7 +85,7 @@ pub trait RepairHandler {
         from_addr: &SocketAddr,
         slot: Slot,
         shred_index: u64,
-        block_id: Hash,
+        block_id: BlockId,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
         let shred = self
@@ -163,7 +162,7 @@ pub trait RepairHandler {
         recycler: &PacketBatchRecycler,
         from_addr: &SocketAddr,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
         let (double_merkle_meta, slot_meta) = self
@@ -194,7 +193,7 @@ pub trait RepairHandler {
         recycler: &PacketBatchRecycler,
         from_addr: &SocketAddr,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
@@ -266,6 +265,7 @@ impl RepairHandlerType {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         rand::Rng,
         solana_entry::entry::create_ticks,
         solana_hash::Hash,
@@ -309,7 +309,7 @@ mod tests {
         slot: Slot,
         parent_slot: Slot,
         num_entries: u64,
-    ) -> (Arc<Blockstore>, Hash, Vec<Hash>) {
+    ) -> (Arc<Blockstore>, BlockId, Vec<Hash>) {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
 
@@ -362,7 +362,7 @@ mod tests {
             .expect("DoubleMerkleMeta fetch should succeed")
             .expect("DoubleMerkleMeta should exist for full slot");
 
-        (blockstore, block_id, fec_set_roots)
+        (blockstore, BlockId::from(block_id), fec_set_roots)
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
         }
 
         // Test with invalid block_id returns None
-        let invalid_block_id = Hash::new_unique();
+        let invalid_block_id = BlockId::new_unique();
         let result =
             handler.run_fec_set_root(&recycler, &from_addr, slot, invalid_block_id, 0, nonce);
         assert!(result.is_none(), "Should return None for invalid block_id");
@@ -496,7 +496,7 @@ mod tests {
                 assert_eq!(p_slot, parent_slot, "Parent slot should match");
                 assert_eq!(
                     p_block_id,
-                    Hash::default(),
+                    BlockId::default(),
                     "Parent block ID should be default"
                 );
 
@@ -506,7 +506,7 @@ mod tests {
         }
 
         // Test with invalid block_id returns None
-        let invalid_block_id = Hash::new_unique();
+        let invalid_block_id = BlockId::new_unique();
         let result =
             handler.run_parent_fec_set_count(&recycler, &from_addr, slot, invalid_block_id, nonce);
         assert!(result.is_none(), "Should return None for invalid block_id");

@@ -1847,6 +1847,7 @@ fn missing_blocks(reference: &[Slot], owned: &[Slot]) -> MissingBlocksData {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::block_component::{BlockFooterV1, BlockHeaderV1, GenesisCertBlockMarker},
     };
@@ -1873,10 +1874,10 @@ mod tests {
     #[test]
     fn test_alpenglow_shreds_marker_ordering() {
         let parent_slot = 41;
-        let blockhash = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let block = ConfirmedBlock {
             previous_blockhash: Hash::default().to_string(),
-            blockhash: blockhash.to_string(),
+            blockhash: block_id.to_string(),
             parent_slot,
             transactions: vec![],
             rewards: vec![],
@@ -1887,12 +1888,12 @@ mod tests {
         let markers = BlockMarkers {
             header: VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                 parent_slot,
-                parent_block_id: Hash::default(),
+                parent_block_id: BlockId::default(),
             }),
             genesis: Some(VersionedBlockMarker::from_genesis_cert_block_marker(
                 GenesisCertBlockMarker {
                     slot: 42,
-                    block_id: blockhash,
+                    block_id,
                     bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                     bitmap: vec![1, 2, 3],
                 },
@@ -1914,7 +1915,7 @@ mod tests {
 
         let alpentick = Entry {
             num_hashes: 1,
-            hash: blockhash,
+            hash: block_id.into_hash(),
             transactions: vec![],
         };
         let entry = Entry {
@@ -1963,7 +1964,7 @@ mod tests {
         assert_eq!(alpentick_entries.len(), 1);
         assert!(alpentick_entries[0].is_tick());
         assert_eq!(alpentick_entries[0].num_hashes, 1);
-        assert_eq!(alpentick_entries[0].hash, blockhash);
+        assert_eq!(alpentick_entries[0].hash, block_id.into_hash());
     }
 
     #[test]

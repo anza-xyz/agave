@@ -191,7 +191,7 @@ mod tests {
         },
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
-            consensus_message::VoteMessage,
+            consensus_message::{BlockId, VoteMessage},
         },
         bitvec::vec::BitVec,
         rand::Rng,
@@ -200,7 +200,6 @@ mod tests {
             Signature as BLSSignature, SignatureCompressed as BlsSignatureCompressed,
             SignatureProjective, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
         },
-        solana_hash::Hash,
         solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
         std::{collections::HashMap, num::NonZero},
@@ -252,7 +251,7 @@ mod tests {
         let genesis_cert = GenesisCert {
             block: Block {
                 slot: migration_slot,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
@@ -335,7 +334,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let notar_vote = Vote::new_notarization_vote(Block {
             slot: reward_slot,
             block_id,

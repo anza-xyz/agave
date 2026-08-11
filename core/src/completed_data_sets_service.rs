@@ -314,6 +314,7 @@ impl CompletedDataSetsService {
 pub mod test {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         crossbeam_channel::bounded,
         solana_entry::{
             block_component::{
@@ -326,8 +327,7 @@ pub mod test {
         solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore,
-            blockstore::Blockstore,
+            blockstore::{self, Blockstore},
             get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
         },
@@ -365,7 +365,7 @@ pub mod test {
     #[derive(Default)]
     struct TestDeshredTransactionNotifier {
         notifications: Mutex<Vec<DeshredNotification>>,
-        update_parents: Mutex<Vec<(u64, u32, u64, Hash)>>,
+        update_parents: Mutex<Vec<(u64, u32, u64, BlockId)>>,
     }
 
     impl DeshredTransactionNotifier for TestDeshredTransactionNotifier {
@@ -645,7 +645,7 @@ pub mod test {
             slot: 12,
             update_parent_fec_set_index: 32,
             parent_slot: 10,
-            parent_block_id: Hash::new_unique(),
+            parent_block_id: BlockId::new_unique(),
         };
         let make_marker_shreds = |marker, shred_index| {
             let component = BlockComponent::new_block_marker(marker);
@@ -666,7 +666,7 @@ pub mod test {
         let mut shreds = make_marker_shreds(
             VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                 parent_slot: 11,
-                parent_block_id: Hash::new_unique(),
+                parent_block_id: BlockId::new_unique(),
             }),
             0,
         );

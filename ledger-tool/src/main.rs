@@ -2472,7 +2472,7 @@ fn main() {
                                 &keypair,
                                 &tick_entries,
                                 /*is_last_in_slot:*/ true,
-                                chained_merkle_root,
+                                chained_merkle_root.into_hash(),
                                 /*next_shred_index:*/ 0,
                                 /*next_code_index:*/ 0,
                                 &ReedSolomonCache::default(),

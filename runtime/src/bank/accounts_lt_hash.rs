@@ -705,6 +705,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::consensus_message::BlockId,
         ahash::HashSetExt as _,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -717,7 +718,6 @@ mod tests {
         solana_cluster_type::ClusterType,
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::{self, GenesisConfig},
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -1089,7 +1089,7 @@ mod tests {
             bank.squash();
             bank.force_flush_accounts_cache();
         }
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // verification happens at startup, so mimic the behavior by loading from a snapshot
         let bank_snapshots_dir = TempDir::new().unwrap();
@@ -1163,7 +1163,7 @@ mod tests {
             bank.squash();
             bank.force_flush_accounts_cache();
         }
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();

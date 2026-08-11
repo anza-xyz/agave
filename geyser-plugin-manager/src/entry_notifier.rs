@@ -140,6 +140,7 @@ mod tests {
         super::*,
         crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
+        agave_votor_messages::consensus_message::BlockId,
         arc_swap::ArcSwap,
         libloading::Library,
         solana_entry::block_component::BlockFooterV1,
@@ -148,7 +149,7 @@ mod tests {
     };
 
     type EntryUpdate = (Slot, BankId, usize, usize);
-    type EntryUpdateParent = (Slot, BankId, Slot, Hash);
+    type EntryUpdateParent = (Slot, BankId, Slot, BlockId);
     type BlockFooterUpdate = (Slot, BankId, VersionedBlockFooter);
 
     #[derive(Debug)]
@@ -272,7 +273,7 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
 
         notifier.notify_entry(42, 9, 3, &entry, 7);
         notifier.notify_entry_update_parent(&EntryUpdateParentInfo {

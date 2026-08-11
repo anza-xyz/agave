@@ -527,7 +527,7 @@ mod tests {
         agave_votor_messages::{
             VerifiedVoterSlotsReceiver,
             certificate::{Certificate, CertificateType},
-            consensus_message::{Block, ConsensusMessage, VoteMessage},
+            consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
             sig_verified_messages::VoteAggregate,
             vote::Vote,
@@ -540,7 +540,6 @@ mod tests {
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, Signature},
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
@@ -645,7 +644,7 @@ mod tests {
                 NUM_SLOTS_FOR_VERIFY,
                 Block {
                     slot: NUM_SLOTS_FOR_VERIFY.saturating_sub(1),
-                    block_id: Hash::default(),
+                    block_id: BlockId::default(),
                 },
             )));
             let verifier = SigVerifier::new(
@@ -752,10 +751,7 @@ mod tests {
     fn test_blockstore_certificate_requires_active_alpenglow() {
         let mut ctx = TestContext::new();
         let shred_version = ctx.verifier.cluster_info.my_shred_version();
-        let block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(1);
         let certificate = test_create_base2_unverified_certificate(
             &ctx.bls_keypairs(),
             shred_version,
@@ -784,10 +780,7 @@ mod tests {
     fn test_old_blockstore_certificate_is_filtered() {
         let mut ctx = TestContext::new();
         let shred_version = ctx.verifier.cluster_info.my_shred_version();
-        let block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(1);
         let certificate = test_create_base2_unverified_certificate(
             &ctx.bls_keypairs(),
             shred_version,
@@ -858,10 +851,7 @@ mod tests {
             &ctx.verifier.sharable_banks.root(),
             &ctx.validator_keypairs,
             ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_notarization_vote(Block {
-                slot: 6,
-                block_id: Hash::new_unique(),
-            }),
+            Vote::new_notarization_vote(Block::new_unique(6)),
             vote_rank2,
         );
         let messages2 = [(
@@ -893,10 +883,7 @@ mod tests {
             &ctx.verifier.sharable_banks.root(),
             &ctx.validator_keypairs,
             ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_notarization_fallback_vote(Block {
-                slot: 7,
-                block_id: Hash::new_unique(),
-            }),
+            Vote::new_notarization_fallback_vote(Block::new_unique(7)),
             vote_rank3,
         );
         let messages3 = [(
@@ -1026,10 +1013,7 @@ mod tests {
             &ctx.verifier.sharable_banks.root(),
             &ctx.validator_keypairs,
             ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_notarization_fallback_vote(Block {
-                slot: 6,
-                block_id: Hash::new_unique(),
-            }),
+            Vote::new_notarization_fallback_vote(Block::new_unique(6)),
             msg2_rank,
         );
         ctx.verifier
@@ -1153,10 +1137,7 @@ mod tests {
         let mut packets = Vec::with_capacity(num_votes);
 
         let vote1 = Vote::new_skip_vote(42);
-        let vote2 = Vote::new_notarization_vote(Block {
-            slot: 43,
-            block_id: Hash::new_unique(),
-        });
+        let vote2 = Vote::new_notarization_vote(Block::new_unique(43));
 
         // Group 1 votes
         for (i, validator_keypair) in ctx
@@ -1380,10 +1361,7 @@ mod tests {
 
         // 2/3 of validators sign the cert.
         let num_signers = (ctx.validator_keypairs.len() * 2).div_ceil(3);
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::Notarize(Block::new_unique(10));
         let cert = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1410,10 +1388,7 @@ mod tests {
 
         // 60% of validators sign the cert.
         let num_signers = (ctx.validator_keypairs.len() * 6).div_ceil(10);
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::Notarize(Block::new_unique(10));
         let cert = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1438,12 +1413,7 @@ mod tests {
     fn test_verify_certificate_base3_valid() {
         let mut ctx = TestContext::new();
 
-        let slot = 20;
-        let block_hash = Hash::new_unique();
-        let block = Block {
-            slot,
-            block_id: block_hash,
-        };
+        let block = Block::new_unique(20);
         let cert_type = CertificateType::NotarizeFallback(block);
         let cert = test_create_base3_certificate(
             &ctx.bls_keypairs(),
@@ -1469,12 +1439,7 @@ mod tests {
     #[test]
     fn test_verify_certificate_base3_just_enough_stake() {
         let mut ctx = TestContext::new();
-        let slot = 20;
-        let block_hash = Hash::new_unique();
-        let block = Block {
-            slot,
-            block_id: block_hash,
-        };
+        let block = Block::new_unique(20);
         let cert_type = CertificateType::NotarizeFallback(block);
         let cert = test_create_base3_certificate(
             &ctx.bls_keypairs(),
@@ -1503,12 +1468,7 @@ mod tests {
 
         // 70% of validators sign.
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
-        let slot = 10;
-        let block_hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(Block {
-            slot,
-            block_id: block_hash,
-        });
+        let cert_type = CertificateType::Notarize(Block::new_unique(10));
         let mut bitmap = BitVec::<u8, Lsb0>::new();
         bitmap.resize(num_signers, false);
         for i in 0..num_signers {
@@ -1568,10 +1528,7 @@ mod tests {
 
         // 70% of validators sign.
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::Notarize(Block::new_unique(10));
         let cert = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1755,12 +1712,7 @@ mod tests {
 
         // 80% of validators sign.
         let num_signers = (ctx.validator_keypairs.len() * 8).div_ceil(10);
-        let slot = 10;
-        let block_hash = Hash::new_unique();
-        let block = Block {
-            slot,
-            block_id: block_hash,
-        };
+        let block = Block::new_unique(10);
         let cert_type = CertificateType::Notarize(block);
         let cert1 = test_create_base2_certificate(
             &ctx.bls_keypairs(),
@@ -1803,10 +1755,7 @@ mod tests {
     fn test_same_type_certs_verify_until_first_valid() {
         let mut ctx = TestContext::new();
 
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::Notarize(Block::new_unique(10));
         let cert1 = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1848,10 +1797,7 @@ mod tests {
     fn test_same_type_certs_try_next_candidate_after_failure() {
         let mut ctx = TestContext::new();
 
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::Notarize(Block::new_unique(10));
         let num_signers = 7;
         let mut bitmap = BitVec::<u8, Lsb0>::new();
         bitmap.resize(num_signers, false);
@@ -1924,10 +1870,7 @@ mod tests {
         let cert_message = ConsensusMessage::Certificate(test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            CertificateType::Notarize(Block {
-                slot: 43,
-                block_id: Hash::new_unique(),
-            }),
+            CertificateType::Notarize(Block::new_unique(43)),
             &(0..7).collect::<Vec<_>>(),
         ));
         let vote_sender = ctx.validator_keypairs[rank].node_keypair.pubkey();
@@ -2016,10 +1959,7 @@ mod tests {
         let messages: Vec<_> = (0..5)
             .map(|i| {
                 let slot = 10 + i as u64;
-                let cert_type = CertificateType::Notarize(Block {
-                    slot,
-                    block_id: Hash::new_unique(),
-                });
+                let cert_type = CertificateType::Notarize(Block::new_unique(slot));
                 let mut cert = test_create_base2_certificate(
                     &ctx.bls_keypairs(),
                     ctx.verifier.cluster_info.my_shred_version(),
@@ -2094,7 +2034,7 @@ mod tests {
             // The ParentReady target slot, rather than the parent block's slot, sets the bound.
             Block {
                 slot: 7,
-                block_id: Hash::new_unique(),
+                block_id: BlockId::new_unique(),
             },
         );
         let max_vote_slot = highest_parent_ready_slot + MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY;

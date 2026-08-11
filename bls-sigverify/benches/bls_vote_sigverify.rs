@@ -15,7 +15,6 @@ use {
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::{Keypair as BLSKeypair, PreparedHashedMessage, VerifySignature},
     solana_genesis_config::GenesisConfig,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_runtime::bank::{Bank, SlotLeader},
     solana_signer::Signer,
@@ -38,10 +37,7 @@ fn generate_test_data(
 ) -> (VotePayloadToSign, Vec<UnverifiedVotePayload>) {
     // Pre-calculate the payloads to ensure exact distinctness
     let slot = 100;
-    let vote = Vote::new_notarization_vote(Block {
-        slot,
-        block_id: Hash::new_unique(),
-    });
+    let vote = Vote::new_notarization_vote(Block::new_unique(slot));
     let payload = get_vote_payload_to_sign(vote, shred_version);
     (
         VotePayloadToSign::new_from_vote(vote, shred_version),

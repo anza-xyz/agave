@@ -11,7 +11,6 @@ use {
         keypair::Keypair as BlsKeypair,
         pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     },
-    solana_hash::Hash,
     std::num::NonZero,
 };
 
@@ -52,11 +51,7 @@ fn bench_verify_cert(c: &mut Criterion) {
         // Assume 2/3rds of validators sign
         let num_signers_base2 = (size * 2) / 3;
         let slot = 100;
-        let hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(Block {
-            slot,
-            block_id: hash,
-        });
+        let cert_type = CertificateType::Notarize(Block::new_unique(slot));
         let cert_base2 = test_create_base2_unverified_certificate(
             &keypairs,
             shred_version,
@@ -115,12 +110,7 @@ fn bench_verify_cert(c: &mut Criterion) {
         // 40% sign Notarize, 30% sign Fallback (Total 70%)
         let num_notarize = (size * 40) / 100;
         let num_fallback = (size * 30) / 100;
-        let slot = 100;
-        let hash = Hash::new_unique();
-        let cert_type = CertificateType::NotarizeFallback(Block {
-            slot,
-            block_id: hash,
-        });
+        let cert_type = CertificateType::NotarizeFallback(Block::new_unique(100));
         let cert_base3 = test_create_base3_unverified_certificate(
             &keypairs,
             shred_version,

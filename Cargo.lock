@@ -81,7 +81,6 @@ dependencies = [
  "rand 0.9.4",
  "rayon",
  "solana-bls-signatures",
- "solana-hash 4.6.0",
  "solana-signer-store",
  "thiserror 2.0.19",
  "wincode",
@@ -112,7 +111,6 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-genesis-config",
  "solana-gossip",
- "solana-hash 4.6.0",
  "solana-keypair",
  "solana-ledger",
  "solana-measure",
@@ -171,6 +169,7 @@ dependencies = [
 name = "agave-geyser-plugin-interface"
 version = "4.3.0-alpha.3"
 dependencies = [
+ "agave-votor-messages",
  "log",
  "solana-clock",
  "solana-entry",
@@ -8715,6 +8714,7 @@ name = "solana-geyser-plugin-manager"
 version = "4.3.0-alpha.3"
 dependencies = [
  "agave-geyser-plugin-interface",
+ "agave-votor-messages",
  "arc-swap",
  "bs58",
  "crossbeam-channel",
@@ -10806,6 +10806,7 @@ name = "solana-storage-bigtable"
 version = "4.3.0-alpha.3"
 dependencies = [
  "agave-reserved-account-keys",
+ "agave-votor-messages",
  "base64 0.22.1",
  "bincode",
  "bzip2",
