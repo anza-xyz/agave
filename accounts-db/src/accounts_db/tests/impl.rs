@@ -12,7 +12,7 @@ use {
     rand::{prelude::SliceRandom as _, rng},
     solana_account::{
         Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, InheritableAccountFields,
-        WritableAccount as _, accounts_equal,
+        WritableAccount as _,
     },
     solana_clock::Slot,
     solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
@@ -201,39 +201,6 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     db.clean_accounts_for_tests();
     assert!(!db.accounts_index.contains(&pubkey));
     assert!(db.storage.get_slot_storage_entry(slot0).is_none());
-}
-
-pub(crate) fn append_single_account_with_default_hash(
-    storage: &AccountStorageEntry,
-    pubkey: &Pubkey,
-    account: &AccountSharedData,
-    mark_alive: bool,
-    add_to_index: Option<&AccountInfoAccountsIndex>,
-) {
-    let slot = storage.slot();
-    let accounts = [(pubkey, account)];
-    let slice = &accounts[..];
-    let storable_accounts = (slot, slice);
-    let stored_accounts_info = storage.accounts.write_accounts(&storable_accounts).unwrap();
-    if mark_alive {
-        // updates 'alive_bytes' on the storage
-        storage.add_accounts(1, stored_accounts_info.size);
-    }
-
-    if let Some(index) = add_to_index {
-        let account_info = AccountInfo::new(
-            StorageLocation::AccountsFile(storage.id(), stored_accounts_info.offsets[0]),
-            account.lamports() == 0,
-        );
-        index.upsert(
-            slot,
-            slot,
-            pubkey,
-            account_info,
-            &mut ReclaimsSlotList::new(),
-            UpsertReclaim::IgnoreReclaims,
-        );
-    }
 }
 
 #[test]
@@ -6245,107 +6212,6 @@ fn test_combine_ancient_slots_simple() {
         unique_accounts_post.stored_accounts.len(),
         unique_accounts_pre.stored_accounts.len(),
     );
-}
-
-fn get_all_accounts_from_storages<'a>(
-    storages: impl Iterator<Item = &'a Arc<AccountStorageEntry>>,
-) -> Vec<(Pubkey, AccountSharedData)> {
-    let mut reader = crate::append_vec::new_scan_accounts_reader();
-    storages
-        .flat_map(|storage| {
-            let mut vec = Vec::default();
-            storage
-                .accounts
-                .scan_accounts(&mut reader, |_offset, account| {
-                    vec.push((*account.pubkey(), create_account_shared_data(&account)));
-                })
-                .expect("must scan accounts storage");
-            // make sure scan_pubkeys results match
-            // Note that we assume traversals are both in the same order, but this doesn't have to be true.
-            let mut compare = Vec::default();
-            storage
-                .accounts
-                .scan_pubkeys(|k| {
-                    compare.push(*k);
-                })
-                .expect("must scan accounts storage");
-            assert_eq!(compare, vec.iter().map(|(k, _)| *k).collect::<Vec<_>>());
-            vec
-        })
-        .collect::<Vec<_>>()
-}
-
-pub(crate) fn get_all_accounts(
-    db: &AccountsDb,
-    slots: impl Iterator<Item = Slot>,
-) -> Vec<(Pubkey, AccountSharedData)> {
-    slots
-        .filter_map(|slot| {
-            let storage = db.storage.get_slot_storage_entry(slot);
-            storage.map(|storage| get_all_accounts_from_storages(std::iter::once(&storage)))
-        })
-        .flatten()
-        .collect::<Vec<_>>()
-}
-
-#[track_caller]
-pub(crate) fn compare_all_accounts(
-    one: &[(Pubkey, AccountSharedData)],
-    two: &[(Pubkey, AccountSharedData)],
-) {
-    let mut failures = 0;
-    let mut two_indexes = (0..two.len()).collect::<Vec<_>>();
-    one.iter().for_each(|(pubkey, account)| {
-        for i in 0..two_indexes.len() {
-            let pubkey2 = two[two_indexes[i]].0;
-            if pubkey2 == *pubkey {
-                if !accounts_equal(account, &two[two_indexes[i]].1) {
-                    failures += 1;
-                }
-                two_indexes.remove(i);
-                break;
-            }
-        }
-    });
-    // helper method to reduce the volume of logged data to help identify differences
-    // modify this when you hit a failure
-    let clean = |accounts: &[(Pubkey, AccountSharedData)]| {
-        accounts
-            .iter()
-            .map(|(_pubkey, account)| account.lamports())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        failures,
-        0,
-        "one: {:?}, two: {:?}, two_indexes: {:?}",
-        clean(one),
-        clean(two),
-        two_indexes,
-    );
-    assert!(
-        two_indexes.is_empty(),
-        "one: {one:?}, two: {two:?}, two_indexes: {two_indexes:?}"
-    );
-}
-
-pub fn get_account_from_account_from_storage(
-    account: &AccountFromStorage,
-    db: &AccountsDb,
-    slot: Slot,
-) -> AccountSharedData {
-    let storage = db
-        .storage
-        .get_slot_storage_entry_shrinking_in_progress_ok(slot)
-        .unwrap();
-    storage
-        .accounts
-        .get_account_shared_data(account.index_info.offset())
-        .unwrap()
-}
-
-pub(crate) fn remove_account_for_tests(storage: &AccountStorageEntry, num_bytes: usize) {
-    storage.remove_accounts(num_bytes, 1);
 }
 
 /// Ensure the calculating capitalization produces the correct value
