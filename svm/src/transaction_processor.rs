@@ -208,12 +208,20 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// ProgramRuntimeEnvironment of the current epoch
     pub program_runtime_environment: ProgramRuntimeEnvironment,
 
-    /// Builtin program ids
+    /// Builtin program ids for this fork.
+    /// Used to see the `builtin_program_cache` between slots via
+    /// `new_from()`.
     pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
 
     /// Cached ProgramCacheForTxBatch pre-populated with builtin entries.
-    /// Populated once per block in `new_from()` from the global program cache,
-    /// avoiding re-acquiring the lock and re-running extract() on every batch.
+    /// Populated once per slot in `new_from()` from the global program cache.
+    ///
+    /// Keeping a dedicated builtin program cache for each slot:
+    ///
+    /// - Protects different forks from extracting the another fork's version
+    ///   of a builtin that may have been recently enabled or migrated to Core
+    ///   BPF.
+    /// - Avoids re-acquiring the lock and re-running extract() on every batch.
     builtin_program_cache: RwLock<ProgramCacheForTxBatch>,
 
     execution_cost: SVMTransactionExecutionCost,
@@ -320,6 +328,25 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         // Pre-populate the builtin program cache from the global cache.
         // This is done once per block rather than once per batch.
+        //
+        // Note: Only the builtins already-listed in this slot's builtin program
+        // IDs can be extracted from the global program cache. This is important
+        // for cross-fork extraction when a builtin may be activated for the
+        // first time or migrated to Core BPF.
+        //
+        // The `builtin_program_ids` on the batch processor are effectively a
+        // guard against cross-fork extraction:
+        //
+        // - If a builtin appears in one fork's `builtin_program_ids`, it will
+        //   never be extracted by a fork whose `builtin_program_ids` _doesn't_
+        //   have it.
+        // - If a builtin is removed from one fork's `builtin_program_ids`, it
+        //   may still be extracted on another fork whose `builtin_program_ids`
+        //   still has it.
+        //
+        // `builtin_program_ids` seeds the `builtin_program_cache` below, which
+        // ensures only non-cached program IDs are extracted from the global
+        // program cache during `replenish_program_cache`.
         let mut builtin_program_cache = ProgramCacheForTxBatch::new(slot);
         let mut search_for: Vec<ProgramToLoad> = builtin_program_ids
             .iter()
@@ -1353,7 +1380,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap().clone()
     }
 
-    /// Add a built-in program
+    /// Add a built-in program to this fork.
+    ///
+    /// A builtin program should _never_ be inserted directly into the global
+    /// program cache without updating the fork guard: `builtin_program_ids`
+    /// and `builtin_program_cache`.
     pub fn add_builtin(&self, program_id: Pubkey, builtin: ProgramCacheEntry) {
         self.builtin_program_ids.write().unwrap().insert(program_id);
         let entry = Arc::new(builtin);
@@ -2155,7 +2186,7 @@ mod tests {
                 ),
             )
         };
-        let program = ProgramCacheEntry::new_builtin(0, register_fn);
+        let program = ProgramCacheEntry::new_builtin(register_fn);
         batch_processor.add_builtin(key, program);
 
         let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new(0);
@@ -2180,7 +2211,7 @@ mod tests {
         let entry = loaded_programs_for_tx_batch.find(&key).unwrap();
 
         // Repeating code because ProgramCacheEntry does not implement clone.
-        let program = ProgramCacheEntry::new_builtin(0, register_fn);
+        let program = ProgramCacheEntry::new_builtin(register_fn);
         assert_eq!(entry, Arc::new(program));
     }
 
