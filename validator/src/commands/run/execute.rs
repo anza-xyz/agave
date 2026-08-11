@@ -1423,17 +1423,6 @@ fn build_xdp_config(
         zero_copy: file_zero_copy,
     } = file;
 
-    // CLI flags do not override per-module use_xdp; a fully-disabled config
-    // skips the multihoming XDP guard.
-    if !(tpu.enabled || turbine.enabled || repair.enabled || gossip.enabled) {
-        return Ok(None);
-    }
-    if bind_addresses.len() > 1 {
-        return Err(
-            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
-        );
-    }
-
     let cli_interface = matches
         .value_of("xdp_interface")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
@@ -1442,6 +1431,34 @@ fn build_xdp_config(
     let cli_cpu_cores = matches
         .value_of("xdp_cpu_cores")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+
+    // CLI flags do not override per-module use_xdp; a fully-disabled config
+    // skips the multihoming XDP guard. clap rejects --no-xdp alongside the XDP
+    // flags, but it cannot know that a config file disables XDP, so this path
+    // reports the flags it drops itself.
+    if !(tpu.enabled || turbine.enabled || repair.enabled || gossip.enabled) {
+        let ignored: Vec<&str> = [
+            ("--xdp-interface", cli_interface.is_some()),
+            ("--xdp-zero-copy", cli_zero_copy),
+            ("--xdp-cpu-cores", cli_cpu_cores.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(flag, present)| present.then_some(flag))
+        .collect();
+        if !ignored.is_empty() {
+            warn!(
+                "the configuration disables XDP transmit for every module; ignoring {}",
+                ignored.join(", ")
+            );
+        }
+        info!("XDP transmit is disabled for every module; using OS sockets");
+        return Ok(None);
+    }
+    if bind_addresses.len() > 1 {
+        return Err(
+            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
+        );
+    }
 
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
