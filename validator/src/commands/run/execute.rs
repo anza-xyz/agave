@@ -293,13 +293,9 @@ pub fn execute(
 
     #[cfg(target_os = "linux")]
     let (xdp_transmit_setup, xdp_network_config_report) = {
-        use {
-            agave_xdp::transmitter::TransmitterBuilder,
-            caps::{
-                CapSet,
-                Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
-            },
-            solana_core::system_monitor_service::XdpNetworkConfigReport,
+        use caps::{
+            CapSet,
+            Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
         };
 
         let super::Config { primordial_caps } = config;
@@ -375,47 +371,16 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let (xdp_transmit_setup, report) = xdp_transmit_config
-            .clone()
-            .map(|(mut xdp_config, modules)| {
-                use {
-                    agave_xdp::{device::NetworkDevice, interface_ipv4},
-                    solana_core::validator::XdpTransmitSetup,
-                };
-
-                let device = if let Some(interface) = xdp_config.interface.as_ref() {
-                    NetworkDevice::new(interface).expect("configured interface should exist")
-                } else {
-                    NetworkDevice::new_from_default_route()
-                        .expect("default route device should exist")
-                };
-
-                let xdp_interface = device.name().to_string();
-                // Keep the transmitter and metrics on the selected XDP device. Source IP lookup
-                // uses the same interface name, with bond-master fallback.
-                xdp_config.interface = Some(xdp_interface.clone());
-                let zero_copy = xdp_config.zero_copy;
-                let src_ip = match node.bind_ip_addrs.active() {
-                    IpAddr::V4(ip) if !ip.is_unspecified() => ip,
-                    IpAddr::V4(_unspecified) => interface_ipv4(&xdp_interface).expect(
-                        "selected interface should exist and have an IPv4 address assigned",
-                    ),
-                    _ => panic!("IPv6 not supported"),
-                };
-                (
-                    XdpTransmitSetup {
-                        transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
-                            .expect("failed to create xdp transmitter"),
-                        src_ip,
-                        modules,
-                    },
-                    XdpNetworkConfigReport {
-                        zero_copy,
-                        interface: xdp_interface,
-                    },
-                )
-            })
-            .map_or((None, None), |(setup, report)| (Some(setup), Some(report)));
+        let setup = match xdp_transmit_config.clone() {
+            Some((xdp_config, modules)) => build_xdp_transmit_setup(
+                xdp_config,
+                modules,
+                node.bind_ip_addrs.active(),
+                exit.clone(),
+            )
+            .map(|(setup, report)| (Some(setup), Some(report))),
+            None => Ok((None, None)),
+        };
 
         // we're done with caps needed to init xdp now. remove them from our process
         caps::set(None, CapSet::Effective, &retained_caps)
@@ -423,7 +388,9 @@ pub fn execute(
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        (xdp_transmit_setup, report)
+        // Only now that the extra capabilities are gone is it safe to leave: a bad
+        // interface or CPU must not exit the process while it is still elevated.
+        setup?
     };
 
     #[cfg(not(target_os = "linux"))]
@@ -1397,6 +1364,78 @@ fn new_snapshot_config(
     Ok(snapshot_config)
 }
 
+/// Resolve the XDP device and source IP and build the transmitter.
+///
+/// Separate from `build_xdp_config` so that config resolution stays free of
+/// system state: this is where a config that names a nonexistent interface or an
+/// unusable CPU is found out, since only here can the system answer.
+#[cfg(target_os = "linux")]
+fn build_xdp_transmit_setup(
+    mut xdp_config: XdpConfig,
+    modules: XdpModules,
+    active_bind_ip: IpAddr,
+    exit: Arc<AtomicBool>,
+) -> Result<
+    (
+        solana_core::validator::XdpTransmitSetup,
+        solana_core::system_monitor_service::XdpNetworkConfigReport,
+    ),
+    String,
+> {
+    use {
+        agave_xdp::{device::NetworkDevice, interface_ipv4, transmitter::TransmitterBuilder},
+        solana_core::{
+            system_monitor_service::XdpNetworkConfigReport, validator::XdpTransmitSetup,
+        },
+    };
+
+    let device = match xdp_config.interface.as_deref() {
+        Some(interface) => NetworkDevice::new(interface).map_err(|e| {
+            format!(
+                "XDP interface `{interface}` is not usable: {e}. Check the config file's \
+                 [interfaces.\"<nic>\"] sections and --xdp-interface, or pass --no-xdp."
+            )
+        })?,
+        None => NetworkDevice::new_from_default_route().map_err(|e| {
+            format!(
+                "failed to select an XDP interface from the default route: {e}. Name one with \
+                 --xdp-interface, or pass --no-xdp."
+            )
+        })?,
+    };
+
+    let xdp_interface = device.name().to_string();
+    // Keep the transmitter and metrics on the selected XDP device. Source IP lookup
+    // uses the same interface name, with bond-master fallback.
+    xdp_config.interface = Some(xdp_interface.clone());
+    let zero_copy = xdp_config.zero_copy;
+    let src_ip = match active_bind_ip {
+        IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+        IpAddr::V4(_unspecified) => interface_ipv4(&xdp_interface).map_err(|e| {
+            format!("XDP interface `{xdp_interface}` has no IPv4 address assigned: {e}")
+        })?,
+        IpAddr::V6(_) => return Err("XDP does not support IPv6".to_string()),
+    };
+
+    let transmitter_builder = TransmitterBuilder::new(xdp_config, exit).map_err(|e| {
+        format!(
+            "failed to create the XDP transmitter: {e}. Check the queue_to_cpu_mapping CPUs are \
+             usable by this process, or pass --no-xdp."
+        )
+    })?;
+    Ok((
+        XdpTransmitSetup {
+            transmitter_builder,
+            src_ip,
+            modules,
+        },
+        XdpNetworkConfigReport {
+            zero_copy,
+            interface: xdp_interface,
+        },
+    ))
+}
+
 #[cfg(target_os = "linux")]
 fn build_xdp_config(
     matches: &ArgMatches,
@@ -1573,8 +1612,25 @@ mod xdp_tests {
         super::*,
         crate::{cli::DefaultArgs, commands::run::args::add_args},
         solana_net_utils::multihomed_sockets::BindIpAddrs,
-        std::net::{IpAddr, Ipv4Addr},
+        std::net::{IpAddr, Ipv4Addr, Ipv6Addr},
     };
+
+    fn xdp_modules() -> XdpModules {
+        XdpModules {
+            tpu: Some([0].into()),
+            turbine: Some([0].into()),
+            repair: Some([0].into()),
+            gossip: Some([0].into()),
+        }
+    }
+
+    fn single_queue_config(interface: &str) -> XdpConfig {
+        XdpConfig::new(
+            Some(interface.to_string()),
+            vec![QueueCpuBinding { queue: 0, cpu: 1 }],
+            false,
+        )
+    }
 
     fn single_ip_bind() -> BindIpAddrs {
         BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap()
@@ -1866,5 +1922,33 @@ mod xdp_tests {
             "CLI XDP flags must not re-enable gossip"
         );
         assert!(modules.tpu.is_some() && modules.turbine.is_some() && modules.repair.is_some());
+    }
+
+    #[test]
+    fn test_unknown_xdp_interface_is_an_error() {
+        let Err(error) = build_xdp_transmit_setup(
+            single_queue_config("nosuchnic0"),
+            xdp_modules(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            Arc::new(AtomicBool::new(false)),
+        ) else {
+            panic!("an interface that does not exist must be a startup error");
+        };
+        assert!(error.contains("`nosuchnic0` is not usable"), "{error}");
+    }
+
+    #[test]
+    fn test_ipv6_bind_address_is_an_error() {
+        // Loopback always exists, so the device lookup passes and the IPv6 check
+        // under test is the one that fails.
+        let Err(error) = build_xdp_transmit_setup(
+            single_queue_config("lo"),
+            xdp_modules(),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            Arc::new(AtomicBool::new(false)),
+        ) else {
+            panic!("an IPv6 bind address must be a startup error");
+        };
+        assert!(error.contains("does not support IPv6"), "{error}");
     }
 }
