@@ -1661,12 +1661,10 @@ mod xdp_tests {
                 QueueCpuBinding { queue: 1, cpu: 4 },
             ]
         );
-        // turbine named queues 0 and 1 via tx; modules without a tx block use
-        // all queues.
+        // turbine named both queues via tx; tpu named none and so uses both too.
+        // test_per_module_tx_scopes_queues covers the two diverging.
         assert_eq!(modules.turbine, Some([0, 1].into()));
         assert_eq!(modules.tpu, Some([0, 1].into()));
-        assert_eq!(modules.repair, Some([0, 1].into()));
-        assert_eq!(modules.gossip, Some([0, 1].into()));
     }
 
     #[test]
@@ -1721,26 +1719,9 @@ mod xdp_tests {
         );
     }
 
-    #[test]
-    fn test_config_file_can_disable_xdp() {
-        let default_args = DefaultArgs::default();
-        let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let file = write_config(
-            "[tpu]\nuse_xdp = false\n[turbine]\nuse_xdp = false\n[repair]\nuse_xdp = \
-             false\n[gossip]\nuse_xdp = false\n",
-        );
-        let matches = app.get_matches_from(vec![
-            "agave-validator",
-            "--experimental-config-file",
-            file.path().to_str().unwrap(),
-        ]);
-        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
-        assert!(
-            result.unwrap().is_none(),
-            "a config disabling every module must disable XDP"
-        );
-    }
-
+    // Multihoming is the stricter case: it also proves the all-disabled early
+    // return happens before the multihoming guard, so no separate single-IP test
+    // is needed.
     #[test]
     fn test_config_file_can_disable_xdp_with_multihoming() {
         let default_args = DefaultArgs::default();
@@ -1830,7 +1811,12 @@ mod xdp_tests {
     fn test_config_file_per_module_disable() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let file = write_config("[turbine]\nuse_xdp = false\n");
+        // tpu names a queue so the file supplies the queue set; without one this
+        // would auto-select a core and depend on the host's cpuset.
+        let file = write_config(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 3 \
+             }]\n\n[turbine]\nuse_xdp = false\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n",
+        );
         let matches = app.get_matches_from(vec![
             "agave-validator",
             "--experimental-config-file",

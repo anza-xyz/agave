@@ -539,27 +539,28 @@ mod tests {
              }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 0] }\n",
         )
         .unwrap_err();
-        assert!(e.contains("queue 0 more than once"), "{e}");
+        // "lists" distinguishes a repeated tx entry from a repeated mapping entry.
+        assert!(e.contains("lists queue 0 more than once"), "{e}");
     }
 
     #[test]
     fn duplicate_queue_in_mapping_is_error() {
         let e = resolve_with_user(
             "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 0, \
-             cpu = 9 }]\n",
+             cpu = 9 }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
         )
         .unwrap_err();
-        assert!(e.contains("queue 0 more than once"), "{e}");
+        assert!(e.contains("maps queue 0 more than once"), "{e}");
     }
 
     #[test]
     fn duplicate_cpu_in_mapping_is_error() {
         let e = resolve_with_user(
             "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 1, \
-             cpu = 8 }]\n",
+             cpu = 8 }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
         )
         .unwrap_err();
-        assert!(e.contains("CPU 8 to more than one queue"), "{e}");
+        assert!(e.contains("maps CPU 8 to more than one queue"), "{e}");
     }
 
     #[test]
@@ -583,25 +584,21 @@ mod tests {
     }
 
     #[test]
-    fn unknown_top_level_section_is_rejected() {
-        let e = resolve_with_user("[nonsense]\nfoo = 1\n").unwrap_err();
-        assert!(!e.is_empty());
-        assert!(parse_str("[nonsense]\nfoo = 1\n").is_err());
+    fn unknown_fields_are_rejected() {
+        for input in [
+            "[nonsense]\nfoo = 1\n",
+            "[turbine]\nbogus = 1\n",
+            "[turbine.xdp]\nbogus = 1\n",
+            "[interfaces.\"eth0\"]\nbogus = 1\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8, bogus = 1 }]\n",
+        ] {
+            assert!(parse_str(input).is_err(), "must be rejected: {input}");
+        }
     }
 
     #[test]
-    fn unknown_module_field_is_rejected() {
-        assert!(parse_str("[turbine]\nbogus = 1\n").is_err());
-    }
-
-    #[test]
-    fn unknown_interface_field_is_rejected() {
-        assert!(
-            parse_str(
-                "[interfaces.\"eth0\"]\nbogus = 1\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
-                 }]\n"
-            )
-            .is_err()
-        );
+    fn unreadable_config_file_is_an_error() {
+        let e = resolve_xdp_config(Some(Path::new("/nonexistent/agave/config.toml"))).unwrap_err();
+        assert!(e.contains("failed to read config file"), "{e}");
     }
 }
