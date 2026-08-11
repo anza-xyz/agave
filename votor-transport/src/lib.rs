@@ -115,7 +115,8 @@ pub(crate) const HANDSHAKE_DRAIN_RATE: usize = {
 /// a deeper queue does not admit more handshakes (the drain rate is fixed), it only
 /// adds latency to the attempts we do serve, so we keep it short and let the excess
 /// be shed by quinn.
-pub(crate) const MAX_INCOMING_DELAY: Duration = Duration::from_millis(1000);
+pub(crate) const MAX_INCOMING_DELAY: Duration =
+    Duration::from_millis(HANDSHAKE_BURST * 1000 / HANDSHAKE_GLOBAL_RATE as u64);
 
 /// How often endpoint metrics are reported.
 pub(crate) const METRICS_INTERVAL: Duration = Duration::from_secs(1);
