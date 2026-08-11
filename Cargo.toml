@@ -209,7 +209,7 @@ bip39 = { version = "2.2.2", features = ["rand", "all-languages"] }
 bitflags = { version = "2.13.1" }
 bitvec = { version = "1.1.1", features = ["serde"] }
 blake3 = "1.8.5"
-blst = "0.3.16"
+blst = "0.3.17"
 blstrs = "0.7.1"
 borsh = { version = "1.8.0", features = ["derive", "unstable__schema"] }
 bs58 = { version = "0.5.1", default-features = false }
