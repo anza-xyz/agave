@@ -1723,10 +1723,17 @@ mod xdp_tests {
         // The PoH check applies whatever the queue source is; here it is the file,
         // which the --xdp-cpu-cores case above cannot reach.
         let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE.unwrap_or(0);
-        let file = write_config(&format!(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{{ queue = 0, cpu = {poh_core} \
-             }}]\n\n[turbine.xdp]\ntx = {{ eth0 = [0] }}\n"
-        ));
+        // Substituted rather than formatted so the TOML keeps single braces.
+        let file = write_config(
+            &r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = POH_CORE }]
+
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#
+            .replace("POH_CORE", &poh_core.to_string()),
+        );
         let matches = app.get_matches_from(vec![
             "agave-validator",
             "--experimental-config-file",
@@ -1752,8 +1759,14 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file = write_config(
-            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [{ queue = 0, cpu = \
-             3 }, { queue = 1, cpu = 4 }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 1] }\n",
+            r#"
+[interfaces."eth0"]
+zero_copy = true
+queue_to_cpu_mapping = [{ queue = 0, cpu = 3 }, { queue = 1, cpu = 4 }]
+
+[turbine.xdp]
+tx = { eth0 = [0, 1] }
+"#,
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1784,8 +1797,16 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // tpu and turbine each name one queue; repair/gossip name none.
         let file = write_config(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 3 }, { queue = 1, \
-             cpu = 4 }]\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n\n[turbine.xdp]\ntx = { eth0 = [1] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 3 }, { queue = 1, cpu = 4 }]
+
+[tpu.xdp]
+tx = { eth0 = [0] }
+
+[turbine.xdp]
+tx = { eth0 = [1] }
+"#,
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1816,7 +1837,12 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // References an interface with no [interfaces.<name>] section.
-        let file = write_config("[turbine.xdp]\ntx = { eth0 = [0] }\n");
+        let file = write_config(
+            r#"
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#,
+        );
         let matches = app.get_matches_from(vec![
             "agave-validator",
             "--experimental-config-file",
@@ -1838,8 +1864,16 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file = write_config(
-            "[tpu]\nuse_xdp = false\n[turbine]\nuse_xdp = false\n[repair]\nuse_xdp = \
-             false\n[gossip]\nuse_xdp = false\n",
+            r#"
+[tpu]
+use_xdp = false
+[turbine]
+use_xdp = false
+[repair]
+use_xdp = false
+[gossip]
+use_xdp = false
+"#,
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1858,8 +1892,13 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file = write_config(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 3 \
-             }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 3 }]
+
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#,
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1890,8 +1929,14 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file = write_config(
-            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [{ queue = 7, cpu = \
-             3 }]\n\n[turbine.xdp]\ntx = { eth0 = [7] }\n",
+            r#"
+[interfaces."eth0"]
+zero_copy = true
+queue_to_cpu_mapping = [{ queue = 7, cpu = 3 }]
+
+[turbine.xdp]
+tx = { eth0 = [7] }
+"#,
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1925,8 +1970,16 @@ mod xdp_tests {
         // tpu names a queue so the file supplies the queue set; without one this
         // would auto-select a core and depend on the host's cpuset.
         let file = write_config(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 3 \
-             }]\n\n[turbine]\nuse_xdp = false\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 3 }]
+
+[turbine]
+use_xdp = false
+
+[tpu.xdp]
+tx = { eth0 = [0] }
+"#,
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1944,7 +1997,12 @@ mod xdp_tests {
     fn test_cli_xdp_flags_do_not_reenable_disabled_modules() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let file = write_config("[gossip]\nuse_xdp = false\n");
+        let file = write_config(
+            r#"
+[gossip]
+use_xdp = false
+"#,
+        );
         let matches = app.get_matches_from(vec![
             "agave-validator",
             "--experimental-config-file",

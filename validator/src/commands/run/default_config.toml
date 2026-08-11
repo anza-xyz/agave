@@ -4,25 +4,52 @@
 # layer of the configuration. A user file passed with --experimental-config-file
 # overrides these sections, and matching CLI flags override the file in turn.
 #
-# XDP transmit is enabled for every module by default. No [interfaces.<nic>]
-# sections are declared here: with no explicit interface or queue -> CPU
-# mapping, the validator auto-detects the default-route interface and
-# auto-selects a single CPU core (avoiding the PoH core), matching the
-# out-of-the-box behavior from before --experimental-config-file existed.
+# XDP transmit is enabled for every module below. Nothing else is declared: with
+# no interface and no queue -> CPU mapping, the validator auto-detects the
+# default-route interface and auto-selects a single CPU core (avoiding the PoH
+# core), matching the behavior from before --experimental-config-file existed.
 #
-# To pin queues to CPUs, declare an interface and reference it from a module:
+#
+# Every setting the file accepts, with its default:
+#
+#   [interfaces."<nic>"]        # one section per NIC. Every interface declared
+#                               # must be named by some module's tx below, and
+#                               # the enabled modules may name only one
+#                               # interface between them, since they share a
+#                               # single transmitter.
+#   zero_copy = false           # request AF_XDP zero-copy on this NIC.
+#   queue_to_cpu_mapping = [    # required: the pool of transmit queues and the
+#     { queue = 0, cpu = 8 },   # CPU each one's worker runs on. A queue and a
+#     { queue = 1, cpu = 9 },   # CPU may each appear once, and no CPU may be
+#   ]                           # the PoH core.
+#
+#   [<module>]                  # tpu, turbine, repair or gossip.
+#   use_xdp = true              # false leaves this module on OS sockets.
+#   [<module>.xdp]
+#   tx = { <nic> = [0, 1] }     # which of that NIC's queues this module
+#                               # transmits over. A module with no tx transmits
+#                               # over every queue named by any module, so scope
+#                               # each module to keep their queues apart.
+#
+#
+# For example, turbine on queue 0, tpu on queue 1, repair and gossip on OS
+# sockets:
 #
 #   [interfaces."ens1f0"]
 #   zero_copy = true
-#   queue_to_cpu_mapping = [
-#     { queue = 0, cpu = 8 },
-#     { queue = 1, cpu = 9 },
-#   ]
+#   queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 1, cpu = 9 }]
 #
-#   [turbine]
-#   use_xdp = true
 #   [turbine.xdp]
-#   tx = { ens1f0 = [0, 1] }
+#   tx = { ens1f0 = [0] }
+#
+#   [tpu.xdp]
+#   tx = { ens1f0 = [1] }
+#
+#   [repair]
+#   use_xdp = false
+#
+#   [gossip]
+#   use_xdp = false
 
 [tpu]
 use_xdp = true

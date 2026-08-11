@@ -105,23 +105,19 @@ pub(crate) struct XdpFileConfig {
 }
 
 pub(crate) fn resolve_xdp_config(user_path: Option<&Path>) -> Result<XdpFileConfig, String> {
-    let base = parse_str(DEFAULT_CONFIG)
+    let base: RawConfig = toml::from_str(DEFAULT_CONFIG)
         .map_err(|e| format!("built-in default config is invalid: {e}"))?;
     let merged = match user_path {
         Some(path) => {
             let text = std::fs::read_to_string(path)
                 .map_err(|e| format!("failed to read config file `{}`: {e}", path.display()))?;
-            let over = parse_str(&text)
+            let over: RawConfig = toml::from_str(&text)
                 .map_err(|e| format!("invalid config file `{}`: {e}", path.display()))?;
             merge(base, over)
         }
         None => base,
     };
     resolve(&merged)
-}
-
-fn parse_str(text: &str) -> Result<RawConfig, toml::de::Error> {
-    toml::from_str(text)
 }
 
 /// Interfaces merge by NIC name; module blocks replace defaults wholesale.
@@ -399,14 +395,14 @@ mod tests {
     use super::*;
 
     fn resolve_with_user(user: &str) -> Result<XdpFileConfig, String> {
-        let base = parse_str(DEFAULT_CONFIG).expect("default config parses");
-        let over = parse_str(user).map_err(|e| e.to_string())?;
+        let base: RawConfig = toml::from_str(DEFAULT_CONFIG).expect("default config parses");
+        let over: RawConfig = toml::from_str(user).map_err(|e| e.to_string())?;
         resolve(&merge(base, over))
     }
 
     #[test]
     fn default_config_enables_all_modules_with_auto_selection() {
-        let base = parse_str(DEFAULT_CONFIG).expect("default config parses");
+        let base: RawConfig = toml::from_str(DEFAULT_CONFIG).expect("default config parses");
         let c = resolve(&base).unwrap();
         assert!(c.tpu.enabled && c.turbine.enabled && c.repair.enabled && c.gossip.enabled);
         // No tx anywhere, so no queues are named; the caller auto-selects.
@@ -421,14 +417,23 @@ mod tests {
         // `default_config.toml` declares no interfaces, so nothing reaches this
         // path through `resolve_xdp_config` yet. Exercise `merge` directly to keep
         // per-NIC merging working once the defaults do declare one.
-        let base = parse_str(
-            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [{ queue = 0, cpu = \
-             1 }]\n[interfaces.\"eth1\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 2 }]\n",
+        let base: RawConfig = toml::from_str(
+            r#"
+[interfaces."eth0"]
+zero_copy = true
+queue_to_cpu_mapping = [{ queue = 0, cpu = 1 }]
+[interfaces."eth1"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 2 }]
+"#,
         )
         .unwrap();
-        let over = parse_str(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 3, cpu = 9 \
-             }]\n[interfaces.\"eth2\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 4 }]\n",
+        let over: RawConfig = toml::from_str(
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 3, cpu = 9 }]
+[interfaces."eth2"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 4 }]
+"#,
         )
         .unwrap();
         let merged = merge(base, over);
@@ -454,8 +459,14 @@ mod tests {
     #[test]
     fn interface_and_tx_resolve_to_queue_bindings() {
         let c = resolve_with_user(
-            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [{ queue = 0, cpu = \
-             8 }, { queue = 1, cpu = 9 }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 1] }\n",
+            r#"
+[interfaces."eth0"]
+zero_copy = true
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 1, cpu = 9 }]
+
+[turbine.xdp]
+tx = { eth0 = [0, 1] }
+"#,
         )
         .unwrap();
         assert_eq!(*c.turbine.tx_positions, [0, 1]);
@@ -475,8 +486,16 @@ mod tests {
     #[test]
     fn union_of_module_queues_is_taken() {
         let c = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 1, \
-             cpu = 9 }]\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n\n[turbine.xdp]\ntx = { eth0 = [1] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 1, cpu = 9 }]
+
+[tpu.xdp]
+tx = { eth0 = [0] }
+
+[turbine.xdp]
+tx = { eth0 = [1] }
+"#,
         )
         .unwrap();
         assert_eq!(
@@ -494,8 +513,13 @@ mod tests {
     #[test]
     fn adding_xdp_block_does_not_disable_module() {
         let c = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
-             }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]
+
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#,
         )
         .unwrap();
         assert!(c.turbine.enabled);
@@ -506,8 +530,16 @@ mod tests {
     #[test]
     fn all_modules_disabled_reports_not_enabled() {
         let c = resolve_with_user(
-            "[tpu]\nuse_xdp = false\n[turbine]\nuse_xdp = false\n[repair]\nuse_xdp = \
-             false\n[gossip]\nuse_xdp = false\n",
+            r#"
+[tpu]
+use_xdp = false
+[turbine]
+use_xdp = false
+[repair]
+use_xdp = false
+[gossip]
+use_xdp = false
+"#,
         )
         .unwrap();
         assert!(!c.tpu.enabled && !c.turbine.enabled && !c.repair.enabled && !c.gossip.enabled);
@@ -517,7 +549,13 @@ mod tests {
 
     #[test]
     fn per_module_use_xdp_is_reported() {
-        let c = resolve_with_user("[turbine]\nuse_xdp = false\n").unwrap();
+        let c = resolve_with_user(
+            r#"
+[turbine]
+use_xdp = false
+"#,
+        )
+        .unwrap();
         assert!(c.tpu.enabled);
         assert!(!c.turbine.enabled);
         assert!(c.repair.enabled);
@@ -528,7 +566,12 @@ mod tests {
     fn disabled_module_tx_is_ignored() {
         // turbine is off, so its (otherwise invalid) tx ref must not be checked.
         let c = resolve_with_user(
-            "[turbine]\nuse_xdp = false\n[turbine.xdp]\ntx = { nosuchdev = [0] }\n",
+            r#"
+[turbine]
+use_xdp = false
+[turbine.xdp]
+tx = { nosuchdev = [0] }
+"#,
         )
         .unwrap();
         assert_eq!(c.interface, None);
@@ -538,15 +581,26 @@ mod tests {
 
     #[test]
     fn undeclared_interface_is_error() {
-        let e = resolve_with_user("[turbine.xdp]\ntx = { eth0 = [0] }\n").unwrap_err();
+        let e = resolve_with_user(
+            r#"
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#,
+        )
+        .unwrap_err();
         assert!(e.contains("undeclared interface"), "{e}");
     }
 
     #[test]
     fn queue_not_in_mapping_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
-             }]\n\n[turbine.xdp]\ntx = { eth0 = [3] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]
+
+[turbine.xdp]
+tx = { eth0 = [3] }
+"#,
         )
         .unwrap_err();
         assert!(e.contains("not in its queue_to_cpu_mapping"), "{e}");
@@ -555,9 +609,17 @@ mod tests {
     #[test]
     fn multiple_interfaces_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
-             }]\n[interfaces.\"eth1\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 9 \
-             }]\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n[turbine.xdp]\ntx = { eth1 = [0] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]
+[interfaces."eth1"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 9 }]
+
+[tpu.xdp]
+tx = { eth0 = [0] }
+[turbine.xdp]
+tx = { eth1 = [0] }
+"#,
         )
         .unwrap_err();
         assert!(e.contains("multiple interfaces"), "{e}");
@@ -567,7 +629,10 @@ mod tests {
     fn unreferenced_interface_is_error() {
         // eth0 is declared with a valid mapping but no module names it in tx.
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]
+"#,
         )
         .unwrap_err();
         assert!(e.contains("declared but no module"), "{e}");
@@ -578,8 +643,15 @@ mod tests {
         // A disabled module's tx still keeps its interface from being treated
         // as an unreferenced declaration, although the interface is unused.
         let c = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
-             }]\n\n[turbine]\nuse_xdp = false\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]
+
+[turbine]
+use_xdp = false
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#,
         )
         .unwrap();
         assert!(!c.turbine.enabled);
@@ -588,8 +660,13 @@ mod tests {
     #[test]
     fn duplicate_tx_queue_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
-             }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 0] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]
+
+[turbine.xdp]
+tx = { eth0 = [0, 0] }
+"#,
         )
         .unwrap_err();
         // "lists" distinguishes a repeated tx entry from a repeated mapping entry.
@@ -599,8 +676,13 @@ mod tests {
     #[test]
     fn duplicate_queue_in_mapping_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 0, \
-             cpu = 9 }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 0, cpu = 9 }]
+
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#,
         )
         .unwrap_err();
         assert!(e.contains("maps queue 0 more than once"), "{e}");
@@ -609,8 +691,13 @@ mod tests {
     #[test]
     fn duplicate_cpu_in_mapping_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 1, \
-             cpu = 8 }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 1, cpu = 8 }]
+
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#,
         )
         .unwrap_err();
         assert!(e.contains("maps CPU 8 to more than one queue"), "{e}");
@@ -619,8 +706,13 @@ mod tests {
     #[test]
     fn empty_mapping_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = []\n\n[turbine.xdp]\ntx = { eth0 = [0] \
-             }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = []
+
+[turbine.xdp]
+tx = { eth0 = [0] }
+"#,
         )
         .unwrap_err();
         assert!(e.contains("empty queue_to_cpu_mapping"), "{e}");
@@ -629,8 +721,13 @@ mod tests {
     #[test]
     fn empty_tx_queue_list_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
-             }]\n\n[turbine.xdp]\ntx = { eth0 = [] }\n",
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]
+
+[turbine.xdp]
+tx = { eth0 = [] }
+"#,
         )
         .unwrap_err();
         assert!(e.contains("lists no queues"), "{e}");
@@ -639,13 +736,32 @@ mod tests {
     #[test]
     fn unknown_fields_are_rejected() {
         for input in [
-            "[nonsense]\nfoo = 1\n",
-            "[turbine]\nbogus = 1\n",
-            "[turbine.xdp]\nbogus = 1\n",
-            "[interfaces.\"eth0\"]\nbogus = 1\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n",
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8, bogus = 1 }]\n",
+            r#"
+[nonsense]
+foo = 1
+"#,
+            r#"
+[turbine]
+bogus = 1
+"#,
+            r#"
+[turbine.xdp]
+bogus = 1
+"#,
+            r#"
+[interfaces."eth0"]
+bogus = 1
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]
+"#,
+            r#"
+[interfaces."eth0"]
+queue_to_cpu_mapping = [{ queue = 0, cpu = 8, bogus = 1 }]
+"#,
         ] {
-            assert!(parse_str(input).is_err(), "must be rejected: {input}");
+            assert!(
+                toml::from_str::<RawConfig>(input).is_err(),
+                "must be rejected: {input}"
+            );
         }
     }
 
