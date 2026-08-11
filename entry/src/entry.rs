@@ -4,6 +4,9 @@
 //! represents an approximate amount of time since the last Entry was created.
 use {
     crate::poh::Poh,
+    agave_transaction_view::{
+        transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
+    },
     crossbeam_channel::{Receiver, Sender},
     log::*,
     rayon::{ThreadPool, prelude::*},
@@ -16,7 +19,7 @@ use {
     solana_signature::Signature,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::{iter::repeat_with, time::Instant},
+    std::{fmt::Formatter, iter::repeat_with, time::Instant},
     wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::BincodeLen},
 };
 
@@ -56,6 +59,53 @@ pub struct Entry {
     pub transactions: Vec<VersionedTransaction>,
 }
 
+pub struct EntryView<D: TransactionData> {
+    /// The number of hashes since the previous Entry ID.
+    pub num_hashes: u64,
+
+    /// The SHA-256 hash `num_hashes` after the previous Entry ID.
+    pub hash: Hash,
+
+    /// An ordered list of transactions that were observed before the Entry ID was
+    /// generated. They may have been observed before a previous Entry ID but were
+    /// pushed back into this list to ensure deterministic interpretation of the ledger.
+    pub transactions: Vec<UnsanitizedTransactionView<D>>,
+}
+
+impl<D> std::fmt::Debug for EntryView<D>
+where
+    D: TransactionData,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EntryView")
+            .field("num_hashes", &self.num_hashes)
+            .field("hash", &self.hash)
+            .field("transactions", &self.transactions)
+            .finish()
+    }
+}
+
+impl<D: TransactionData> EntryView<D> {
+    pub fn is_tick(&self) -> bool {
+        self.transactions.is_empty()
+    }
+}
+
+/// Serializes `entries` and re-parses them through [`crate::block_component_parser::parse`] to
+/// get byte-backed [`EntryView`]s, reusing the same parsing path production uses rather than
+/// hand-constructing transaction views.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn entry_views_for_tests(entries: Vec<Entry>) -> Vec<EntryView<bytes::Bytes>> {
+    let component = crate::block_component::BlockComponent::new_entry_batch(entries).unwrap();
+    let bytes = wincode::serialize(&component).unwrap();
+    let crate::block_component::ParsedBlockComponent::EntryBatch(views) =
+        crate::block_component_parser::parse(bytes).unwrap()
+    else {
+        panic!("expected EntryBatch");
+    };
+    views
+}
+
 // The data needed to verify an Entry.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EntryVerificationData {
@@ -75,6 +125,21 @@ impl From<&Entry> for EntryVerificationData {
                 .transactions
                 .iter()
                 .flat_map(|tx| tx.signatures.iter().copied())
+                .collect(),
+        }
+    }
+}
+
+impl<D: TransactionData> From<&EntryView<D>> for EntryVerificationData {
+    fn from(entry: &EntryView<D>) -> Self {
+        Self {
+            num_hashes: entry.num_hashes,
+            hash: entry.hash,
+            num_transactions: entry.transactions.len(),
+            signatures: entry
+                .transactions
+                .iter()
+                .flat_map(|tx| tx.signatures().iter().copied())
                 .collect(),
         }
     }
@@ -103,6 +168,12 @@ pub fn entries_to_verification_data(entries: &[Entry]) -> Vec<EntryVerificationD
     entries.iter().map(Into::into).collect()
 }
 
+pub fn entry_views_to_verification_data<D: TransactionData>(
+    entries: &[EntryView<D>],
+) -> Vec<EntryVerificationData> {
+    entries.iter().map(Into::into).collect()
+}
+
 pub struct EntrySummary {
     pub num_hashes: u64,
     pub hash: Hash,
@@ -111,6 +182,16 @@ pub struct EntrySummary {
 
 impl From<&Entry> for EntrySummary {
     fn from(entry: &Entry) -> Self {
+        Self {
+            num_hashes: entry.num_hashes,
+            hash: entry.hash,
+            num_transactions: entry.transactions.len() as u64,
+        }
+    }
+}
+
+impl<D: TransactionData> From<&EntryView<D>> for EntrySummary {
+    fn from(entry: &EntryView<D>) -> Self {
         Self {
             num_hashes: entry.num_hashes,
             hash: entry.hash,
@@ -522,6 +603,48 @@ impl EntrySlice for [Entry] {
         verify_entries_cpu(&verification_entries, start_hash)
     }
 
+    fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool {
+        // When hashes_per_tick is 0, hashing is disabled.
+        if hashes_per_tick == 0 {
+            return true;
+        }
+
+        for entry in self {
+            *tick_hash_count = tick_hash_count.saturating_add(entry.num_hashes);
+            if entry.is_tick() {
+                if entry.num_hashes == 0 {
+                    return false;
+                }
+                if *tick_hash_count != hashes_per_tick {
+                    warn!(
+                        "invalid tick hash count!: entry: {entry:#?}, tick_hash_count: \
+                         {tick_hash_count}, hashes_per_tick: {hashes_per_tick}"
+                    );
+                    return false;
+                }
+                *tick_hash_count = 0;
+            }
+        }
+        *tick_hash_count < hashes_per_tick
+    }
+
+    fn tick_count(&self) -> u64 {
+        self.iter().filter(|e| e.is_tick()).count() as u64
+    }
+}
+
+/// Additive counterpart to [`EntrySlice`]'s tick-checking methods, for [`EntryView`] slices.
+pub trait EntrySliceTickCheck {
+    /// Checks that each entry tick has the correct number of hashes. Entry slices do not
+    /// necessarily end in a tick, so `tick_hash_count` is used to carry over the hash count
+    /// for the next entry slice.
+    fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool;
+
+    /// Counts tick entries
+    fn tick_count(&self) -> u64;
+}
+
+impl<D: TransactionData> EntrySliceTickCheck for [EntryView<D>] {
     fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool {
         // When hashes_per_tick is 0, hashing is disabled.
         if hashes_per_tick == 0 {
@@ -1002,7 +1125,7 @@ mod tests {
 
         // empty batch should succeed if hashes_per_tick hasn't been reached
         let mut tick_hash_count = 0;
-        let mut entries = vec![];
+        let mut entries: Vec<Entry> = vec![];
         assert!(entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
         assert_eq!(tick_hash_count, 0);
 
