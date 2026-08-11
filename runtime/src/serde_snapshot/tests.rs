@@ -224,6 +224,7 @@ mod serde_snapshot_tests {
                 (slot, [(pubkey, &account)].as_slice()),
                 0,
                 None,
+                None,
                 &ancestors,
             );
         }

@@ -1373,6 +1373,84 @@ mod tests {
     }
 
     #[test]
+    fn test_transaction_status_batch_indexes_follow_poh_starting_index() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        );
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+        // `true` here is what enables index tracking, mirroring a validator
+        // started with a TransactionStatusSender.
+        let (record_sender, mut record_receiver) = record_channels(true);
+        record_receiver.restart(bank.bank_id());
+        let recorder = TransactionRecorder::new(record_sender);
+
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+        let committer = Committer::new(
+            Some(TransactionStatusSender {
+                sender: transaction_status_sender,
+                dependency_tracker: None,
+            }),
+            replay_vote_sender,
+            None,
+        );
+        let consumer = Consumer::new(committer, recorder, None);
+
+        let rent_exempt_amount = bank.get_minimum_balance_for_rent_exemption(0);
+        let keypair1 = Keypair::new();
+        bank.transfer(rent_exempt_amount, &mint_keypair, &keypair1.pubkey())
+            .unwrap();
+
+        // Two distinct fee payers so both land in one batch. The second fails
+        // with an instruction error but is still processed, so it still gets an
+        // index.
+        let first_batch = sanitize_transactions(vec![
+            system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                rent_exempt_amount,
+                bank.last_blockhash(),
+            ),
+            system_transaction::transfer(
+                &keypair1,
+                &solana_pubkey::new_rand(),
+                2 * rent_exempt_amount,
+                bank.last_blockhash(),
+            ),
+        ]);
+        let _ = consumer.process_and_record_transactions(&bank, &first_batch);
+
+        let second_batch = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            rent_exempt_amount,
+            bank.last_blockhash(),
+        )]);
+        let _ = consumer.process_and_record_transactions(&bank, &second_batch);
+
+        drop(consumer); // disconnect transaction_status_sender
+        let indexes_per_batch = transaction_status_receiver
+            .into_iter()
+            .map(|message| {
+                let TransactionStatusMessage::Batch((status_batch, _)) = message else {
+                    panic!("not a batch");
+                };
+                status_batch.transaction_indexes
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(indexes_per_batch, vec![vec![0, 1], vec![2]]);
+    }
+
+    #[test]
     fn test_write_persist_loaded_addresses() {
         let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let tss = Some(TransactionStatusSender {

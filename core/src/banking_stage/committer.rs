@@ -16,7 +16,9 @@ use {
     solana_svm::{
         transaction_balances::BalanceCollector,
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
-        transaction_processing_result::TransactionProcessingResult,
+        transaction_processing_result::{
+            TransactionProcessingResult, TransactionProcessingResultExtensions,
+        },
     },
     solana_transaction_error::TransactionError,
     std::{num::Saturating, sync::Arc},
@@ -67,11 +69,47 @@ impl Committer {
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
     ) -> (u64, Vec<CommitTransactionDetails>) {
+        // Assign each processed transaction its index within the block. This used
+        // to be computed further down, when building the status batch; it has to
+        // happen before commit now, because commit is what notifies geyser of the
+        // account updates these indexes label. Deriving it from
+        // `processing_results` rather than `commit_results` is equivalent —
+        // `Bank::create_commit_results` maps `processing_result?`, so a result is
+        // committed exactly when it was processed.
+        //
+        // Nothing consumes these unless the node tracks indexes or records
+        // transaction status, so skip the allocation otherwise.
+        let batch_transaction_indexes = (starting_transaction_index.is_some()
+            || self.transaction_status_sender.is_some())
+        .then(|| {
+            let mut next_index = Saturating(starting_transaction_index.unwrap_or_default());
+            processing_results
+                .iter()
+                .map(|processing_result| {
+                    if processing_result.was_processed() {
+                        let Saturating(this_transaction_index) = next_index;
+                        next_index += 1;
+                        this_transaction_index
+                    } else {
+                        0
+                    }
+                })
+                .collect::<Vec<_>>()
+        });
+
+        // Only label geyser account updates when the index is real. With no
+        // `starting_transaction_index` the node isn't tracking indexes, and the
+        // 0-based fallback above — kept for the status batch's existing
+        // behavior — would misreport positions.
+        let geyser_transaction_indexes =
+            starting_transaction_index.and(batch_transaction_indexes.as_deref());
+
         let (commit_results, commit_time_us) = measure_us!(bank.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
             processed_counts,
             &mut execute_and_commit_timings.execute_timings,
+            geyser_transaction_indexes,
         ));
         execute_and_commit_timings.commit_us = commit_time_us;
 
@@ -114,7 +152,7 @@ impl Committer {
                 bank,
                 batch,
                 balance_collector,
-                starting_transaction_index,
+                batch_transaction_indexes,
             );
         });
         execute_and_commit_timings.find_and_send_votes_us = find_and_send_votes_us;
@@ -127,7 +165,7 @@ impl Committer {
         bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         balance_collector: Option<BalanceCollector>,
-        starting_transaction_index: Option<usize>,
+        batch_transaction_indexes: Option<Vec<usize>>,
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
             let sanitized_transactions = batch.sanitized_transactions();
@@ -138,16 +176,14 @@ impl Committer {
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
-            let mut transaction_index = Saturating(starting_transaction_index.unwrap_or_default());
-            let (batch_transaction_indexes, tx_costs): (Vec<_>, Vec<_>) = commit_results
+            let batch_transaction_indexes = batch_transaction_indexes
+                .expect("indexes are computed whenever a transaction status sender is present");
+            let tx_costs = commit_results
                 .iter()
                 .zip(sanitized_transactions.iter())
                 .map(|(commit_result, tx)| {
                     if let Ok(committed_tx) = commit_result {
-                        let Saturating(this_transaction_index) = transaction_index;
-                        transaction_index += 1;
-
-                        let tx_cost = Some(
+                        Some(
                             CostModel::calculate_cost_for_executed_transaction(
                                 tx,
                                 committed_tx.executed_units,
@@ -155,14 +191,12 @@ impl Committer {
                                 &bank.feature_set,
                             )
                             .sum(),
-                        );
-
-                        (this_transaction_index, tx_cost)
+                        )
                     } else {
-                        (0, Some(0))
+                        Some(0)
                     }
                 })
-                .unzip();
+                .collect_vec();
 
             // There are two cases where balance_collector could be None:
             // * Balance recording is disabled. If that were the case, there would

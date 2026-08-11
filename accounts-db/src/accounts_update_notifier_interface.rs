@@ -11,6 +11,11 @@ pub trait AccountsUpdateNotifierInterface: std::fmt::Debug {
     fn snapshot_notifications_enabled(&self) -> bool;
 
     /// Notified when an account is updated at runtime, due to transaction activities
+    ///
+    /// `txn_index` is the index of `txn` within its block, counting only
+    /// processed transactions so it matches the index reported for the
+    /// transaction itself. `None` when unknown — see
+    /// `ReplicaAccountInfoV4::txn_index`.
     fn notify_account_update(
         &self,
         slot: Slot,
@@ -19,6 +24,7 @@ pub trait AccountsUpdateNotifierInterface: std::fmt::Debug {
         txn: &Option<&SanitizedTransaction>,
         pubkey: &Pubkey,
         write_version: u64,
+        txn_index: Option<usize>,
     );
 
     /// Notified when the AccountsDb is initialized at start when restored

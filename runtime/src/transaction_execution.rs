@@ -84,6 +84,11 @@ pub fn execute_batch<'a>(
             timings,
             log_messages_bytes_limit,
             pre_commit_callback,
+            // Block verification knows every transaction's in-block index up
+            // front, so geyser account updates can be labelled with it. An empty
+            // vec means the caller isn't tracking indexes, and those updates
+            // report none.
+            (!transaction_indexes.is_empty()).then_some(transaction_indexes.as_ref()),
         )?;
 
     let mut check_block_costs_elapsed = Measure::start("check_block_costs");
@@ -376,6 +381,7 @@ mod tests {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
+            None,
         );
         let already_processed_sig = already_processed_tx.signatures[0];
         let invalid_blockhash_tx = solana_system_transaction::transfer(
@@ -390,6 +396,7 @@ mod tests {
             &batch,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
+            None,
             None,
         );
         let (err, signature) = do_get_first_error(&batch, &commit_results).unwrap();
@@ -534,6 +541,7 @@ mod tests {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
+            None,
         );
 
         let committed = commit_results[0].as_ref().unwrap();
@@ -555,6 +563,7 @@ mod tests {
             &bank.prepare_batch_for_tests(vec![tx]),
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
+            None,
             None,
         );
 

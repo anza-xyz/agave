@@ -501,12 +501,14 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        txn_indexes: Option<&'a [Option<usize>]>,
         ancestors: &Ancestors,
     ) {
         self._store_accounts(
             accounts,
             bank_id,
             transactions,
+            txn_indexes,
             UpdateIndexThreadSelection::Inline,
             ancestors,
         );
@@ -521,12 +523,14 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        txn_indexes: Option<&'a [Option<usize>]>,
         ancestors: &Ancestors,
     ) {
         self._store_accounts(
             accounts,
             bank_id,
             transactions,
+            txn_indexes,
             UpdateIndexThreadSelection::PoolWithThreshold,
             ancestors,
         );
@@ -542,6 +546,7 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        txn_indexes: Option<&'a [Option<usize>]>,
         update_index_thread_selection: UpdateIndexThreadSelection,
         ancestors: &Ancestors,
     ) {
@@ -554,6 +559,11 @@ impl Accounts {
             for index in 0..accounts.len() {
                 let transaction = transactions
                     .map(|txs| *txs.get(index).expect("txs must be present if provided"));
+                // An absent or short slice means the index isn't known for this
+                // path; report `None` rather than panicking a store over what is
+                // only a geyser hint.
+                let txn_index =
+                    txn_indexes.and_then(|indexes| indexes.get(index).copied().flatten());
                 accounts.account_for_geyser(index, |pubkey, account_shared_data| {
                     accounts_db.notify_account_at_accounts_update(
                         slot,
@@ -562,6 +572,7 @@ impl Accounts {
                         &transaction,
                         pubkey,
                         current_write_version,
+                        txn_index,
                     );
                 });
                 current_write_version = current_write_version.saturating_add(1);
