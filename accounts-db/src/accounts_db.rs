@@ -5976,6 +5976,8 @@ enum PubkeysToStore {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum MarkAccountsObsolete {
     Yes(Slot),
+    // only constructed by dev-context-only-utils callers
+    #[allow(dead_code)]
     No,
 }
 
