@@ -73,14 +73,15 @@ struct RawModuleXdp {
     tx: BTreeMap<String, Vec<u32>>,
 }
 
-/// A module's XDP transmit config: whether it uses XDP (`use_xdp`) and the
-/// hardware queue ids it transmits over (from `[<module>.xdp].tx`). `tx_queues`
-/// is empty when an enabled module named no queues, which the caller treats as
-/// "all queues". Disabled modules also have an empty list but get no sender.
+/// A module's XDP transmit config: whether it uses XDP (`use_xdp`) and which of
+/// `XdpFileConfig::queues` it transmits over, as positions into that list rather
+/// than hardware queue ids. `tx_positions` is empty when an enabled module named
+/// no queues, which the caller treats as "all queues". Disabled modules also
+/// have an empty list but get no sender.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModuleXdp {
     pub enabled: bool,
-    pub tx_queues: BTreeSet<u32>,
+    pub tx_positions: Box<[usize]>,
 }
 
 /// The XDP inputs distilled from the merged config, before CLI overrides. The
@@ -164,9 +165,17 @@ fn resolve_interface(name: &str, raw: &RawInterface) -> Result<ResolvedInterface
     })
 }
 
-/// A module absent post-merge keeps XDP on, matching the default file.
+/// A module's `tx` queue ids, before the union fixes their positions.
+struct ResolvedModule {
+    enabled: bool,
+    tx_queues: BTreeSet<u32>,
+}
+
+/// A module absent post-merge keeps XDP on. Must agree with `default_true` on
+/// `RawModule::use_xdp`, or a module's mere presence would change whether it
+/// transmits over XDP.
 fn module_enabled(block: &Option<RawModule>) -> bool {
-    block.as_ref().map(|b| b.use_xdp).unwrap_or(true)
+    block.as_ref().is_none_or(|b| b.use_xdp)
 }
 
 /// Resolve one module's `use_xdp` and, when enabled, validated `tx` queue ids.
@@ -174,10 +183,10 @@ fn resolve_module(
     module: &str,
     block: &Option<RawModule>,
     interfaces: &BTreeMap<String, ResolvedInterface>,
-) -> Result<ModuleXdp, String> {
+) -> Result<ResolvedModule, String> {
     let enabled = module_enabled(block);
     if !enabled {
-        return Ok(ModuleXdp {
+        return Ok(ResolvedModule {
             enabled: false,
             tx_queues: BTreeSet::new(),
         });
@@ -211,7 +220,7 @@ fn resolve_module(
             }
         }
     }
-    Ok(ModuleXdp { enabled, tx_queues })
+    Ok(ResolvedModule { enabled, tx_queues })
 }
 
 fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
@@ -285,9 +294,26 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
 
     // The transmitter's queue set is the union of enabled modules' tx queues.
     let used_queues: BTreeSet<u32> = [&tpu, &turbine, &repair, &gossip]
-        .iter()
+        .into_iter()
         .flat_map(|m| m.tx_queues.iter().copied())
         .collect();
+
+    // Queues are emitted in `used_queues` order, so a queue's rank in that set
+    // is its position in `queues` and therefore in the transmitter's sender list.
+    let position_of: BTreeMap<u32, usize> = used_queues
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(position, queue)| (queue, position))
+        .collect();
+    let to_module = |module: ResolvedModule| ModuleXdp {
+        enabled: module.enabled,
+        tx_positions: module
+            .tx_queues
+            .iter()
+            .map(|queue| position_of[queue])
+            .collect(),
+    };
 
     let (interface, queues, zero_copy) = match referenced_iface {
         Some(name) => {
@@ -305,10 +331,10 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     };
 
     Ok(XdpFileConfig {
-        tpu,
-        turbine,
-        repair,
-        gossip,
+        tpu: to_module(tpu),
+        turbine: to_module(turbine),
+        repair: to_module(repair),
+        gossip: to_module(gossip),
         interface,
         queues,
         zero_copy,
@@ -331,10 +357,45 @@ mod tests {
         let c = resolve(&base).unwrap();
         assert!(c.tpu.enabled && c.turbine.enabled && c.repair.enabled && c.gossip.enabled);
         // No tx anywhere, so no queues are named; the caller auto-selects.
-        assert!(c.turbine.tx_queues.is_empty());
+        assert!(c.turbine.tx_positions.is_empty());
         assert_eq!(c.interface, None);
         assert!(c.queues.is_empty());
         assert!(!c.zero_copy);
+    }
+
+    #[test]
+    fn interfaces_merge_by_nic_name() {
+        // `default_config.toml` declares no interfaces, so nothing reaches this
+        // path through `resolve_xdp_config` yet. Exercise `merge` directly to keep
+        // per-NIC merging working once the defaults do declare one.
+        let base = parse_str(
+            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [{ queue = 0, cpu = \
+             1 }]\n[interfaces.\"eth1\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 2 }]\n",
+        )
+        .unwrap();
+        let over = parse_str(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 3, cpu = 9 \
+             }]\n[interfaces.\"eth2\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 4 }]\n",
+        )
+        .unwrap();
+        let merged = merge(base, over);
+
+        // eth1 survives from the base and eth2 is added, so the maps merge rather
+        // than the user file replacing the whole section.
+        assert_eq!(
+            merged
+                .interfaces
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["eth0", "eth1", "eth2"]
+        );
+        // A NIC declared in both is replaced wholesale, dropping base zero_copy.
+        let eth0 = &merged.interfaces["eth0"];
+        assert!(!eth0.zero_copy);
+        assert_eq!(eth0.queue_to_cpu_mapping.len(), 1);
+        assert_eq!(eth0.queue_to_cpu_mapping[0].queue, 3);
+        assert_eq!(eth0.queue_to_cpu_mapping[0].cpu, 9);
     }
 
     #[test]
@@ -344,9 +405,9 @@ mod tests {
              8 }, { queue = 1, cpu = 9 }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 1] }\n",
         )
         .unwrap();
-        assert_eq!(c.turbine.tx_queues, BTreeSet::from([0, 1]));
+        assert_eq!(*c.turbine.tx_positions, [0, 1]);
         // Modules without a tx block name no queues.
-        assert!(c.tpu.tx_queues.is_empty());
+        assert!(c.tpu.tx_positions.is_empty());
         assert_eq!(c.interface.as_deref(), Some("eth0"));
         assert!(c.zero_copy);
         assert_eq!(
@@ -372,6 +433,9 @@ mod tests {
                 QueueCpuBinding { queue: 1, cpu: 9 },
             ]
         );
+        // Positions index the union, so each module lands on the queue it named.
+        assert_eq!(*c.tpu.tx_positions, [0]);
+        assert_eq!(*c.turbine.tx_positions, [1]);
     }
 
     #[test]
@@ -382,7 +446,7 @@ mod tests {
         )
         .unwrap();
         assert!(c.turbine.enabled);
-        assert_eq!(c.turbine.tx_queues, BTreeSet::from([0]));
+        assert_eq!(*c.turbine.tx_positions, [0]);
         assert_eq!(c.interface.as_deref(), Some("eth0"));
     }
 
@@ -416,7 +480,7 @@ mod tests {
         .unwrap();
         assert_eq!(c.interface, None);
         assert!(!c.turbine.enabled);
-        assert!(c.turbine.tx_queues.is_empty());
+        assert!(c.turbine.tx_positions.is_empty());
     }
 
     #[test]

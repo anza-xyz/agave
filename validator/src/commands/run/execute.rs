@@ -1520,20 +1520,15 @@ fn build_xdp_config(
     }
 
     // Convert per-module config to sender positions. `None` uses OS sockets;
-    // unscoped modules use all configured XDP senders.
+    // unscoped modules use all configured XDP senders. The file's positions only
+    // index the file's own queue list, so a global queue source discards them.
     let all_positions: Box<[usize]> = (0..queues.len()).collect();
     let module_positions = |module: &config_file::ModuleXdp| -> Option<Box<[usize]>> {
         if !module.enabled {
             return None;
         }
-        if file_tx_mode && !module.tx_queues.is_empty() {
-            let positions = queues
-                .iter()
-                .enumerate()
-                .filter(|(_, binding)| module.tx_queues.contains(&binding.queue))
-                .map(|(i, _)| i)
-                .collect();
-            Some(positions)
+        if file_tx_mode && !module.tx_positions.is_empty() {
+            Some(module.tx_positions.clone())
         } else {
             Some(all_positions.clone())
         }
