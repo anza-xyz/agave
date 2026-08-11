@@ -12,7 +12,7 @@ use solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT;
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
-    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
+    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
@@ -24,22 +24,20 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
     },
-    solana_message::{inner_instruction::InnerInstruction, Message},
+    solana_message::{Message, inner_instruction::InnerInstruction},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, SlotLeader},
         bank_client::BankClient,
-        bank_forks::BankForks,
         genesis_utils::{
-            bootstrap_validator_stake_lamports, create_genesis_config,
+            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
-            GenesisConfigInfo,
         },
         loader_utils::{create_program, load_upgradeable_buffer},
     },
@@ -57,15 +55,10 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
-    std::{
-        assert_eq,
-        str::FromStr,
-        sync::{Arc, RwLock},
-        time::Duration,
-    },
+    std::{assert_eq, str::FromStr, sync::Arc, time::Duration},
     test_case::test_matrix,
 };
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
@@ -204,38 +197,6 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
         )
         .0;
     commit_results.pop().unwrap()
-}
-
-#[cfg(feature = "sbf_rust")]
-fn bank_with_feature_activated(
-    bank_forks: &RwLock<BankForks>,
-    parent: Arc<Bank>,
-    feature_id: &Pubkey,
-) -> Arc<Bank> {
-    let slot = parent.slot().saturating_add(1);
-    let mut bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
-    bank.activate_feature(feature_id);
-    bank_forks
-        .write()
-        .unwrap()
-        .insert(bank)
-        .clone_without_scheduler()
-}
-
-#[cfg(feature = "sbf_rust")]
-fn bank_with_feature_deactivated(
-    bank_forks: &RwLock<BankForks>,
-    parent: Arc<Bank>,
-    feature_id: &Pubkey,
-) -> Arc<Bank> {
-    let slot = parent.slot().saturating_add(1);
-    let mut bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
-    bank.deactivate_feature(feature_id);
-    bank_forks
-        .write()
-        .unwrap()
-        .insert(bank)
-        .clone_without_scheduler()
 }
 
 #[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
@@ -780,17 +741,21 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == "Program data: AQID BAUG"));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == "Program data: AQID BAUG")
+        );
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program return: {} CAFE", program_id))
+        );
     }
 }
 
@@ -4064,9 +4029,11 @@ fn test_program_sbf_processed_inner_instruction() {
         &[instruction2, instruction1, instruction0],
         Some(&mint_keypair.pubkey()),
     );
-    assert!(bank_client
-        .send_and_confirm_message(&[&mint_keypair], message)
-        .is_ok());
+    assert!(
+        bank_client
+            .send_and_confirm_message(&[&mint_keypair], message)
+            .is_ok()
+    );
 }
 
 #[test]
