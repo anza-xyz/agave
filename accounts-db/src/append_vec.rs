@@ -580,8 +580,8 @@ impl AppendVec {
         })
     }
 
-    /// calls `callback` with the stored account fixed portion for the account at `offset` if its data doesn't overrun
-    /// the internal buffer. Otherwise return None.
+    /// calls `callback` with the stored account fixed portion for the account at `offset`.
+    /// Returns None if the record is invalid.
     fn get_stored_account_no_data_callback<Ret>(
         &self,
         offset: usize,
@@ -601,8 +601,18 @@ impl AppendVec {
             ValidSlice(unsafe { slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read) });
         let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
         let (account_meta, _) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
-        // Guard against a corrupt `data_len` whose stored size would overflow.
-        Self::calculate_stored_size_checked(meta.data_len as usize)?;
+        // Guard against a corrupt `data_len`: account data cannot exceed `MAX_PERMITTED_DATA_LENGTH`
+        // and the record does not extend past the written portion of the file.
+        assert!(
+            meta.data_len <= MAX_PERMITTED_DATA_LENGTH,
+            "{}",
+            meta.data_len
+        );
+        let unaligned_stored_size =
+            Self::calculate_unaligned_stored_size_checked(meta.data_len as usize)?;
+        if offset.checked_add(unaligned_stored_size)? > self.len() {
+            return None;
+        }
 
         Some(callback(StoredAccountNoData {
             meta,
@@ -858,13 +868,7 @@ impl AppendVec {
         u64_align!(STORE_META_OVERHEAD + data_len)
     }
 
-    /// Checked variant of [`calculate_stored_size`].
-    #[inline(always)]
-    fn calculate_stored_size_checked(data_len: usize) -> Option<usize> {
-        Self::calculate_unaligned_stored_size_checked(data_len).map(|size| u64_align!(size))
-    }
-
-    /// Unaligned variant of [`calculate_stored_size_checked`].
+    /// Checked, unaligned variant of [`calculate_stored_size`].
     #[inline(always)]
     fn calculate_unaligned_stored_size_checked(data_len: usize) -> Option<usize> {
         STORE_META_OVERHEAD.checked_add(data_len)
@@ -1734,6 +1738,9 @@ mod tests {
         assert!(account.is_none()); // Expect None to be returned.
 
         let result = av.get_stored_account_meta_callback(0, |_| true);
+        assert!(result.is_none()); // Expect None to be returned.
+
+        let result = av.get_stored_account_without_data_callback(0, |_| true);
         assert!(result.is_none()); // Expect None to be returned.
     }
 
