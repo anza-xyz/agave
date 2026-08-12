@@ -256,6 +256,7 @@ impl SigVerifier {
             },
             || {
                 verify_and_send_certificates(
+                    &self.cluster_info.id(),
                     &mut self.verified_certs,
                     extracted_msgs.certs,
                     &root_bank,

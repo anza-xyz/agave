@@ -53,6 +53,7 @@ struct CertVerifyOutcome {
 /// [`verified_certs_set`] and grouped certs with the same [`CertificateType`]. Each group is
 /// verified until the first valid candidate is found.
 pub(super) fn verify_and_send_certificates(
+    my_pubkey: &Pubkey,
     verified_certs_set: &mut HashSet<CertificateType>,
     cert_groups: HashMap<CertificateType, Vec<CertPayload>>,
     root_bank: &Bank,
@@ -79,7 +80,7 @@ pub(super) fn verify_and_send_certificates(
         thread_pool,
     );
     stats.sig_verified_certs += messages.len() as u64;
-    send_certs_to_pool(messages, channel_to_pool, &mut stats.pool_sender)?;
+    send_certs_to_pool(my_pubkey, messages, channel_to_pool, &mut stats.pool_sender)?;
 
     measure.stop();
     stats
