@@ -260,7 +260,7 @@ pub struct JsonRpcRequestProcessor {
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     runtime: Arc<Runtime>,
-    received_transaction_notifier: Option<ReceivedTransactionNotifierArc>,
+    received_transaction_notifiers: Vec<ReceivedTransactionNotifierArc>,
 }
 impl Metadata for JsonRpcRequestProcessor {}
 
@@ -425,7 +425,7 @@ impl JsonRpcRequestProcessor {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<Runtime>,
-        received_transaction_notifier: Option<ReceivedTransactionNotifierArc>,
+        received_transaction_notifiers: Vec<ReceivedTransactionNotifierArc>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (transaction_sender, transaction_receiver) = unbounded();
         (
@@ -448,7 +448,7 @@ impl JsonRpcRequestProcessor {
                 max_complete_transaction_status_slot,
                 prioritization_fee_cache,
                 runtime,
-                received_transaction_notifier,
+                received_transaction_notifiers,
             },
             transaction_receiver,
         )
@@ -533,7 +533,7 @@ impl JsonRpcRequestProcessor {
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
             prioritization_fee_cache: Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
-            received_transaction_notifier: None,
+            received_transaction_notifiers: Vec::new(),
         }
     }
 
@@ -2750,9 +2750,9 @@ fn _send_transaction(
     preflight_skipped: bool,
 ) -> Result<String> {
     // The wire transaction is moved into the send transaction service below, so copy it
-    // for the ingress notification beforehand -- but only when a plugin is actually
+    // for the ingress notification beforehand -- but only when something is actually
     // listening, so that the common path pays nothing.
-    let notification = meta.received_transaction_notifier.as_ref().map(|_| {
+    let notification = (!meta.received_transaction_notifiers.is_empty()).then(|| {
         let received_ns = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|since_epoch| since_epoch.as_nanos() as u64)
@@ -2774,18 +2774,18 @@ fn _send_transaction(
         .send(transaction_info)
         .unwrap_or_else(|err| warn!("Failed to enqueue transaction: {err}"));
 
-    // Notify after the hand-off, so that a slow plugin can never delay forwarding to the
-    // leader. This still sits on the RPC response path, so plugins must not block here.
-    if let (Some(notifier), Some((wire_transaction, received_ns))) =
-        (&meta.received_transaction_notifier, notification)
-    {
-        notifier.notify_transaction_received(
-            &signature,
-            &wire_transaction,
-            received_ns,
-            slot_hint,
-            preflight_skipped,
-        );
+    // Notify after the hand-off, so that a slow consumer can never delay forwarding to the
+    // leader. This still sits on the RPC response path, so consumers must not block here.
+    if let Some((wire_transaction, received_ns)) = notification {
+        for notifier in &meta.received_transaction_notifiers {
+            notifier.notify_transaction_received(
+                &signature,
+                &wire_transaction,
+                received_ns,
+                slot_hint,
+                preflight_skipped,
+            );
+        }
     }
 
     Ok(signature.to_string())
@@ -4950,7 +4950,7 @@ pub mod tests {
                 max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache,
                 service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
-                None,
+                Vec::new(),
             )
             .0;
 
@@ -7027,7 +7027,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime.clone(),
-            None,
+            Vec::new(),
         );
 
         let (tpu_sender, _client) =
@@ -7252,7 +7252,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime.clone(),
-            Some(notifier.clone()),
+            vec![notifier.clone()],
         );
 
         let (tpu_sender, _client) =
@@ -7508,7 +7508,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
-            None,
+            Vec::new(),
         );
 
         SendTransactionService::new(
@@ -9279,7 +9279,7 @@ pub mod tests {
             max_complete_transaction_status_slot,
             prioritization_fee_cache_inner.clone(),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
-            None,
+            Vec::new(),
         );
 
         let mut io = MetaIoHandler::default();

@@ -493,7 +493,7 @@ pub struct JsonRpcServiceConfig<'a> {
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
     pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub rpc_tpu_client_args: RpcTpuClientArgs<'a>,
-    pub received_transaction_notifier: Option<ReceivedTransactionNotifierArc>,
+    pub received_transaction_notifiers: Vec<ReceivedTransactionNotifierArc>,
 }
 
 /// Arguments required to create a TPU client for the RPC service.
@@ -568,7 +568,7 @@ impl JsonRpcService {
             config.max_complete_transaction_status_slot,
             config.prioritization_fee_cache,
             runtime,
-            config.received_transaction_notifier,
+            config.received_transaction_notifiers,
         )?;
         Ok(json_rpc_service)
     }
@@ -596,7 +596,7 @@ impl JsonRpcService {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<TokioRuntime>,
-        received_transaction_notifier: Option<ReceivedTransactionNotifierArc>,
+        received_transaction_notifiers: Vec<ReceivedTransactionNotifierArc>,
     ) -> Result<Self, String> {
         info!("rpc bound to {rpc_addr:?}");
         info!("rpc configuration: {config:?}");
@@ -687,7 +687,7 @@ impl JsonRpcService {
             max_complete_transaction_status_slot,
             prioritization_fee_cache,
             Arc::clone(&runtime),
-            received_transaction_notifier,
+            received_transaction_notifiers,
         );
 
         let _send_transaction_service = Arc::new(SendTransactionService::new(
@@ -917,7 +917,7 @@ mod tests {
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
-            None,
+            Vec::new(),
         )
         .expect("assume successful JsonRpcService start");
         let thread = rpc_service.thread_hdl.thread();
