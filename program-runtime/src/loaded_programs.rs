@@ -1725,10 +1725,10 @@ pub(crate) mod tests {
             let mut cache = ProgramCache::<TestForkGraph>::new(0);
             cache.set_fork_graph(Arc::downgrade(&fork_graph));
             cache.assign_program(&env, program1, 10, new_test_entry(10));
-            cache.assign_program(&env, program1, entry.deployment_slot, Arc::clone(&entry));
+            cache.assign_program(&env, program1, entry.deployment_slot, Arc::clone(entry));
             cache.prune(100, None, &fork_graph.read().unwrap());
             let slot_versions = cache.get_slot_versions_for_tests(&program1);
-            assert_eq!(slot_versions, &[entry.clone()]);
+            assert_eq!(slot_versions, std::slice::from_ref(entry));
         }
 
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
