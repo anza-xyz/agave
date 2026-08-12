@@ -75,10 +75,10 @@ solana-sha256-hasher = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
 solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
+solana-sysvar-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sysvar-id = { workspace = true }
 solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
-wincode = { workspace = true }
 
 [[bench]]
 name = "vote_instructions"

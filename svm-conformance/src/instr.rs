@@ -105,8 +105,8 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_account::Account, solana_pubkey::Pubkey,
-        solana_svm::conformance::programs::keyed_account_for_system_program,
+        super::*, crate::test_utils::proto_sysvar_account, solana_account::Account,
+        solana_pubkey::Pubkey, solana_svm::conformance::programs::keyed_account_for_system_program,
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_TRANSFER_CUS,
     };
 
@@ -133,19 +133,6 @@ mod tests {
         }
     }
 
-    fn proto_sysvar_account<T: serde::Serialize>(
-        pubkey: Pubkey,
-        sysvar: &T,
-    ) -> protosol::protos::AcctState {
-        protosol::protos::AcctState {
-            address: pubkey.to_bytes().to_vec(),
-            owner: solana_sdk_ids::sysvar::id().to_bytes().to_vec(),
-            lamports: 1,
-            data: bincode::serialize(sysvar).unwrap(),
-            executable: false,
-        }
-    }
-
     #[test]
     #[should_panic(expected = "invariant violation: duplicate account load")]
     fn test_duplicate_accounts_panic_with_invariant_violation() {
@@ -165,10 +152,7 @@ mod tests {
                     keyed_account_for_system_program().0,
                     keyed_account_for_system_program().1,
                 ),
-                proto_sysvar_account(
-                    solana_sdk_ids::sysvar::clock::id(),
-                    &solana_clock::Clock::default(),
-                ),
+                proto_sysvar_account(&solana_clock::Clock::default()),
             ],
             instr_accounts: vec![
                 protosol::protos::InstrAcct {
