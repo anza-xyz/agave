@@ -5,7 +5,6 @@ mod tests {
 
     use {
         crate::protocol::{Protocol, deserialize_protocol},
-        serde::Serialize,
         solana_net_utils::tooling_for_tests::{hexdump, validate_packet_format},
         solana_sanitize::Sanitize,
         std::path::PathBuf,
@@ -17,12 +16,10 @@ mod tests {
         Ok(pkt)
     }
 
-    fn serialize<T: Serialize + wincode::SchemaWrite<wincode::config::DefaultConfig, Src = T>>(
+    fn serialize<T: wincode::SchemaWrite<wincode::config::DefaultConfig, Src = T>>(
         pkt: T,
     ) -> Vec<u8> {
-        let wincode_bytes = wincode::serialize(&pkt).unwrap();
-        assert_eq!(wincode_bytes, bincode::serialize(&pkt).unwrap());
-        wincode_bytes
+        wincode::serialize(&pkt).unwrap()
     }
 
     fn find_differences(a: &[u8], b: &[u8]) -> Option<usize> {

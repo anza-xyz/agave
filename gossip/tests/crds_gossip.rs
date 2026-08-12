@@ -417,10 +417,6 @@ fn network_run_push(
                         }
 
                         let prune_keys_size = wincode::serialized_size(&prune_keys).unwrap();
-                        assert_eq!(
-                            prune_keys_size,
-                            bincode::serialized_size(&prune_keys).unwrap()
-                        );
                         bytes += prune_keys_size as usize;
                         delivered += 1;
 

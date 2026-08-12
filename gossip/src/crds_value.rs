@@ -7,7 +7,6 @@ use {
         sigverify_cache::SigVerifyCache,
     },
     rand::Rng,
-    serde::{Deserialize, Serialize, de::Deserializer},
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
     solana_packet::PACKET_DATA_SIZE,
@@ -25,20 +24,19 @@ use {
 /// CrdsValue that is replicated across the cluster
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "4ABukH5bS69APB3bu1hbMiGyeKPw21nzXAVzCRMtKPih",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         // `hash` is recomputed from [signature, data] on deserialize, so it can't
         // match an independently-sampled value; verify the wire round-trip only.
         test_roundtrip = "wire_only",
     )
 )]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite)]
 pub struct CrdsValue {
     signature: Signature,
     data: CrdsData,
-    #[serde(skip_serializing)]
     #[wincode(skip)]
     // Not on the wire (recomputed on deserialize); keep it out of the sample.
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Hash::default()"))]
@@ -291,28 +289,6 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for CrdsValue {
     }
 }
 
-// Manual implementation of Deserialize for CrdsValue in order to populate
-// CrdsValue.hash which is skipped in serialization.
-impl<'de> Deserialize<'de> for CrdsValue {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct CrdsValue {
-            signature: Signature,
-            data: CrdsData,
-        }
-        let CrdsValue { signature, data } = CrdsValue::deserialize(deserializer)?;
-        let hash = compute_crds_value_hash(&signature, &data).map_err(serde::de::Error::custom)?;
-        Ok(Self {
-            signature,
-            data,
-            hash,
-        })
-    }
-}
-
 #[cfg(test)]
 mod test {
     use {
@@ -446,12 +422,7 @@ mod test {
         let original_signature = value.get_signature();
         for _ in 0..num_tries {
             let serialized_value = wincode::serialize(value).unwrap();
-            assert_eq!(serialized_value, bincode::serialize(value).unwrap());
             let deserialized_value: CrdsValue = wincode::deserialize(&serialized_value).unwrap();
-            assert_eq!(
-                deserialized_value,
-                bincode::deserialize::<CrdsValue>(&serialized_value).unwrap()
-            );
 
             // Signatures shouldn't change
             let deserialized_signature = deserialized_value.get_signature();
@@ -549,7 +520,6 @@ mod test {
             },
         ];
         let bytes = wincode::serialize(&values).unwrap();
-        assert_eq!(bytes, bincode::serialize(&values).unwrap());
         // Serialized bytes are fixed and should never change.
         assert_eq!(
             solana_sha256_hasher::hash(&bytes),
@@ -557,40 +527,6 @@ mod test {
         );
         // serialize -> deserialize should round trip.
         let wincode_values = wincode::deserialize::<Vec<CrdsValue>>(&bytes).unwrap();
-        assert_eq!(
-            wincode_values,
-            bincode::deserialize::<Vec<CrdsValue>>(&bytes).unwrap()
-        );
         assert_eq!(wincode_values, values);
-    }
-
-    #[test]
-    fn test_wincode_compatibility_crds_value() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let value = CrdsValue::new_rand(&mut rng, None);
-            let bincode_bytes = bincode::serialize(&value).unwrap();
-            let wincode_bytes = wincode::serialize(&value).unwrap();
-            assert_eq!(
-                bincode_bytes,
-                wincode_bytes,
-                "bytes differ for {:?}",
-                value.label()
-            );
-            // Deprecated types and Vote with test-only invalid transactions intentionally
-            // fail serde deserialization; skip those.
-            let Ok(bincode_decoded) = bincode::deserialize::<CrdsValue>(&bincode_bytes) else {
-                continue;
-            };
-            let wincode_decoded: CrdsValue = wincode::deserialize(&bincode_bytes)
-                .unwrap_or_else(|e| panic!("wincode deser failed for {:?}: {e}", value.label()));
-            assert_eq!(
-                bincode_decoded,
-                wincode_decoded,
-                "deser mismatch for {:?}",
-                value.label()
-            );
-            assert_eq!(value, bincode_decoded);
-        }
     }
 }

@@ -6,7 +6,6 @@ use {
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
     rand::Rng,
-    serde::{Deserialize, Serialize, de::Deserializer},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::{self, Pubkey},
@@ -35,13 +34,13 @@ pub(crate) type EpochSlotsIndex = u8;
 pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 
 // Helper for deprecated types
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite)]
 pub(crate) struct Deprecated {}
 reject_deserialize!(Deprecated, "Trying to deserialize deprecated type");
 
-// Wincode schema that reads a u8 and rejects non-zero values, mirroring the
-// serde `reject_nonzero_u8` deserializer used on the LowestSlot index field.
+// Wincode schema that reads a u8 and rejects non-zero values, used on the
+// deprecated LowestSlot index field.
 struct RejectNonzeroU8;
 unsafe impl<C: Config> SchemaWrite<C> for RejectNonzeroU8 {
     type Src = u8;
@@ -74,23 +73,21 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for RejectNonzeroU8 {
 #[allow(clippy::large_enum_variant)]
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    derive(StableAbi),
     frozen_abi(
         abi_digest = "Dqsrw64E4ALKusk5cjbckL6vNHw1ESwTzKUqKrMSQCic",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
 #[cfg_attr(test, derive(strum_macros::EnumCount))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub enum CrdsData {
     #[allow(private_interfaces)]
     LegacyContactInfo(Deprecated), // Deprecated
     Vote(VoteIndex, Vote),
     LowestSlot(
-        #[serde(deserialize_with = "reject_nonzero_u8")]
-        #[wincode(with = "RejectNonzeroU8")]
-        u8, // u8 is deprecated
+        #[wincode(with = "RejectNonzeroU8")] u8, // u8 is deprecated
         LowestSlot,
     ),
     #[allow(private_interfaces)]
@@ -262,14 +259,14 @@ impl From<&ContactInfo> for CrdsData {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "EMCUxeoxyA9ATkmZpACEx6a6mPd5nV16g9vpeuFzpyG5",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SnapshotHashes {
     pub from: Pubkey,
     pub full: (Slot, Hash),
@@ -297,14 +294,14 @@ impl Sanitize for SnapshotHashes {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "BjFXktfmwd6TT8kdWVEeMJquARTUe8cUvo2oDwzMfhPi",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct LowestSlot {
     pub(crate) from: Pubkey,
     root: Slot, //deprecated
@@ -369,36 +366,20 @@ impl Sanitize for LowestSlot {
     }
 }
 
-fn reject_nonzero_u8<'de, D>(de: D) -> Result<u8, D::Error>
-where
-    D: Deserializer<'de>,
-    D::Error: serde::de::Error,
-{
-    let v = u8::deserialize(de)?;
-    if v == 0 {
-        Ok(v)
-    } else {
-        Err(serde::de::Error::custom(
-            "LowestSlot tag != 0 is deprecated",
-        ))
-    }
-}
-
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi),
+    derive(StableAbi),
     frozen_abi(
         abi_digest = "BuDZ4shsJhBqELG47eMS3cDM8EcqHBGMSVu99JeW6VdM",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite)]
 pub struct Vote {
     pub(crate) from: Pubkey,
     transaction: Transaction,
     pub(crate) wallclock: u64,
-    #[serde(skip_serializing)]
     #[wincode(skip)]
     slot: Option<Slot>,
 }
@@ -452,26 +433,6 @@ impl Vote {
     }
 }
 
-impl<'de> Deserialize<'de> for Vote {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct Vote {
-            from: Pubkey,
-            transaction: Transaction,
-            wallclock: u64,
-        }
-        let vote = Vote::deserialize(deserializer)?;
-        vote.transaction
-            .sanitize()
-            .map_err(serde::de::Error::custom)?;
-        Self::new(vote.from, vote.transaction, vote.wallclock)
-            .ok_or_else(|| serde::de::Error::custom("invalid vote tx"))
-    }
-}
-
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for Vote {
     type Dst = Self;
 
@@ -503,18 +464,8 @@ pub(crate) fn sanitize_wallclock(wallclock: u64) -> Result<(), SanitizeError> {
 
 macro_rules! reject_deserialize {
     ($ty:ty, $msg:expr) => {
-        impl<'de> serde::Deserialize<'de> for $ty {
-            fn deserialize<D>(_de: D) -> Result<Self, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-                D::Error: serde::de::Error,
-            {
-                Err(serde::de::Error::custom($msg))
-            }
-        }
-
-        // Mirror the serde rejection for wincode so deprecated types fail to deserialize
-        // by either path, whether read directly or as a CrdsData variant.
+        // Deprecated types fail to deserialize, whether read directly or as a
+        // CrdsData variant.
         unsafe impl<'de, C: wincode::config::Config> wincode::SchemaRead<'de, C> for $ty {
             type Dst = Self;
             fn read(
@@ -591,7 +542,6 @@ mod test {
     use {
         super::*,
         crate::crds_value::CrdsValue,
-        bincode::Options,
         solana_keypair::Keypair,
         solana_perf::test_tx::new_test_vote_tx,
         solana_signer::Signer,
@@ -658,75 +608,9 @@ mod test {
         .unwrap();
         assert_eq!(vote.slot, Some(7));
         let bytes = wincode::serialize(&vote).unwrap();
-        assert_eq!(bytes, bincode::serialize(&vote).unwrap());
-        let other = wincode::deserialize(&bytes[..]).unwrap();
-        assert_eq!(other, bincode::deserialize::<Vote>(&bytes[..]).unwrap());
+        let other: Vote = wincode::deserialize(&bytes[..]).unwrap();
         assert_eq!(vote, other);
         assert_eq!(other.slot, Some(7));
-        let bytes = bincode::options().serialize(&vote).unwrap();
-        let other = bincode::options().deserialize(&bytes[..]).unwrap();
-        assert_eq!(vote, other);
-        assert_eq!(other.slot, Some(7));
-    }
-
-    #[test]
-    fn test_wincode_compatibility_lowest_slot() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let lowest_slot = LowestSlot::new_rand(&mut rng, None);
-
-            let bincode_bytes = bincode::serialize(&lowest_slot).unwrap();
-            let wincode_decoded: LowestSlot = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(lowest_slot, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&lowest_slot).unwrap();
-            let bincode_decoded: LowestSlot = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(lowest_slot, bincode_decoded);
-
-            assert_eq!(bincode_bytes, wincode_bytes);
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_snapshot_hashes() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let num_incremental = rng.random_range(0usize..5);
-            let snapshot_hashes = SnapshotHashes {
-                from: solana_pubkey::new_rand(),
-                full: (rng.random(), Hash::new_unique()),
-                incremental: (0..num_incremental)
-                    .map(|_| (rng.random(), Hash::new_unique()))
-                    .collect(),
-                wallclock: new_rand_timestamp(&mut rng),
-            };
-
-            let bincode_bytes = bincode::serialize(&snapshot_hashes).unwrap();
-            let wincode_decoded: SnapshotHashes = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(snapshot_hashes, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&snapshot_hashes).unwrap();
-            let bincode_decoded: SnapshotHashes = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(snapshot_hashes, bincode_decoded);
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_vote() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let keypair = Keypair::new();
-            let vote =
-                Vote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
-
-            let bincode_bytes = bincode::serialize(&vote).unwrap();
-            let wincode_decoded: Vote = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(vote, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&vote).unwrap();
-            let bincode_decoded: Vote = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(vote, bincode_decoded);
-        }
     }
 
     #[test]
@@ -755,9 +639,7 @@ mod test {
 
         for value in &deprecated_values {
             let bytes = wincode::serialize(value).unwrap();
-            assert_eq!(bytes, bincode::serialize(value).unwrap());
             assert!(wincode::deserialize::<CrdsData>(&bytes[..]).is_err());
-            assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
         }
 
         let keypair = Keypair::new();
@@ -765,15 +647,13 @@ mod test {
         // LowestSlot(1, ...)
         let lowest_slot =
             CrdsData::LowestSlot(1, LowestSlot::new(keypair.pubkey(), 0, timestamp()));
-        let bytes = bincode::serialize(&lowest_slot).unwrap();
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+        let bytes = wincode::serialize(&lowest_slot).unwrap();
+        assert!(wincode::deserialize::<CrdsData>(&bytes[..]).is_err());
 
         // LowestSlot(0, ...) -> should be deserialized successfully
         let lowest_slot =
             CrdsData::LowestSlot(0, LowestSlot::new(keypair.pubkey(), 0, timestamp()));
         let bytes = wincode::serialize(&lowest_slot).unwrap();
-        assert_eq!(bytes, bincode::serialize(&lowest_slot).unwrap());
         assert!(wincode::deserialize::<CrdsData>(&bytes[..]).is_ok());
-        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_ok());
     }
 }
