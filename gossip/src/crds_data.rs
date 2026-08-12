@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         contact_info::ContactInfo,
@@ -13,7 +15,7 @@ use {
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote::vote_parser,
-    std::{collections::BTreeSet, mem::MaybeUninit},
+    std::{collections::BTreeSet, mem::MaybeUninit, ops::RangeInclusive},
     wincode::{
         ReadError, ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
         config::Config,
@@ -30,8 +32,11 @@ const OLD_MAX_VOTES: VoteIndex = 32;
 /// Number of votes per validator to store.
 pub const MAX_VOTES: VoteIndex = 12;
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) type EpochSlotsIndex = u8;
-pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) const VALID_EPOCH_SLOT_INDEXES: RangeInclusive<EpochSlotsIndex> =
+    RangeInclusive::new(EpochSlotsIndex::MIN, EpochSlotsIndex::MAX);
 
 // Helper for deprecated types
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
@@ -124,7 +129,7 @@ impl Sanitize for CrdsData {
                 val.sanitize()
             }
             CrdsData::EpochSlots(ix, val) => {
-                if *ix as usize >= MAX_EPOCH_SLOTS as usize {
+                if !VALID_EPOCH_SLOT_INDEXES.contains(ix) {
                     return Err(SanitizeError::ValueOutOfBounds);
                 }
                 val.sanitize()
@@ -174,7 +179,7 @@ impl CrdsData {
             )),
             4 => CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(rng, pubkey)),
             _ => CrdsData::EpochSlots(
-                rng.random_range(0..MAX_EPOCH_SLOTS),
+                rng.random_range(VALID_EPOCH_SLOT_INDEXES),
                 EpochSlots::new_rand(rng, pubkey),
             ),
         }
@@ -615,15 +620,20 @@ mod test {
 
     #[test]
     fn test_max_epoch_slots_index() {
+        let (index, expect) = if EpochSlotsIndex::MAX > *VALID_EPOCH_SLOT_INDEXES.end() {
+            (
+                VALID_EPOCH_SLOT_INDEXES.end() + 1,
+                Err(SanitizeError::ValueOutOfBounds),
+            )
+        } else {
+            (EpochSlotsIndex::MAX, Ok(()))
+        };
         let keypair = Keypair::new();
         let item = CrdsValue::new(
-            CrdsData::EpochSlots(
-                MAX_EPOCH_SLOTS,
-                EpochSlots::new(keypair.pubkey(), timestamp()),
-            ),
+            CrdsData::EpochSlots(index, EpochSlots::new(keypair.pubkey(), timestamp())),
             &keypair,
         );
-        assert_eq!(item.sanitize(), Err(SanitizeError::ValueOutOfBounds));
+        assert_eq!(item.sanitize(), expect);
     }
 
     #[test]
