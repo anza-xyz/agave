@@ -33,7 +33,7 @@ serde_json = "1.0.145"
 serde_yaml = "0.9.34"
 tokio = { version = "1.53.1", features = ["full"] }
 toml = "1.0"
-xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "a9b0cf5facf85eb11458bbefc651132722c18dae" }
+xtask_shared = { package = "anza-xtask", version = "0.2.2" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
