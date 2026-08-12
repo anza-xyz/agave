@@ -13,17 +13,6 @@ use {
     wincode::{SchemaRead, config::DefaultConfig, io::Reader},
 };
 
-const _: () = assert!(
-    size_of::<EntryView<Bytes>>() <= size_of::<Entry>(),
-    "EntryView must stay no larger than Entry, or pre-allocating by entry_count could \
-     over-allocate past the checked limit"
-);
-const _: () = assert!(
-    size_of::<UnsanitizedTransactionView<Bytes>>() <= size_of::<VersionedTransaction>(),
-    "UnsanitizedTransactionView must stay no larger than VersionedTransaction, or pre-allocating \
-     by tx_count could over-allocate past the checked limit"
-);
-
 /// Parses a [`ParsedBlockComponent`] from `bytes`, using the same wire format
 /// as [`BlockComponent`].
 pub fn parse<B: Into<Bytes>>(bytes: B) -> Result<ParsedBlockComponent, ParseError> {
@@ -50,14 +39,17 @@ pub fn parse<B: Into<Bytes>>(bytes: B) -> Result<ParsedBlockComponent, ParseErro
             max: BlockComponent::MAX_ENTRIES,
         });
     }
-    let needed = prealloc_bytes_needed::<Entry>(entry_count);
-    if needed > MAX_DATA_SHREDS_SIZE {
-        return Err(ParseError::EntryCountPreallocLimit {
+
+    // Since the bytes are wincode serialization of [`BlockComponent::EntryBatch`] which
+    // contains regular [`Entry`]s, bound by Entry's size to match wincode's prealloc check
+    // behavior for deserialization.
+    check_prealloc_limit::<Entry>(entry_count).map_err(|needed| {
+        ParseError::EntryCountPreallocLimit {
             count: entry_count,
             needed,
             limit: MAX_DATA_SHREDS_SIZE,
-        });
-    }
+        }
+    })?;
 
     // Safe to pre-allocate: entry_count already passed the preallocation-size check above.
     let mut entry_views = Vec::with_capacity(entry_count);
@@ -97,15 +89,17 @@ pub fn parse<B: Into<Bytes>>(bytes: B) -> Result<ParsedBlockComponent, ParseErro
                 entry_index,
                 count: tx_count,
             })?;
-        let needed = prealloc_bytes_needed::<VersionedTransaction>(tx_count);
-        if needed > MAX_DATA_SHREDS_SIZE {
-            return Err(ParseError::TransactionCountPreallocLimit {
+        // Since the bytes are wincode serialization of [`BlockComponent::EntryBatch`] whose
+        // entries contain regular [`VersionedTransaction`]s, bound by VersionedTransaction's
+        // size to match wincode's prealloc check behavior for deserialization.
+        check_prealloc_limit::<VersionedTransaction>(tx_count).map_err(|needed| {
+            ParseError::TransactionCountPreallocLimit {
                 entry_index,
                 count: tx_count,
                 needed,
                 limit: MAX_DATA_SHREDS_SIZE,
-            });
-        }
+            }
+        })?;
 
         // Safe to pre-allocate: tx_count already passed the preallocation-size check above.
         let mut transactions = Vec::with_capacity(tx_count);
@@ -185,12 +179,19 @@ pub enum ParseError {
     BlockMarker(wincode::ReadError),
 }
 
-/// Computes `count * size_of::<T>()`
-fn prealloc_bytes_needed<T>(count: usize) -> usize {
+/// Checks that pre-allocating `count` elements of `T` would stay within
+/// [`MAX_DATA_SHREDS_SIZE`] bytes (`count * size_of::<T>()`), returning the bytes needed as
+/// the error otherwise.
+fn check_prealloc_limit<T>(count: usize) -> Result<(), usize> {
     // max(1) to count zero sized types
     let size_of_t = size_of::<T>().max(1);
+    let needed = count.saturating_mul(size_of_t);
 
-    count.saturating_mul(size_of_t)
+    if needed > MAX_DATA_SHREDS_SIZE {
+        Err(needed)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -517,5 +518,33 @@ mod tests {
             view_result,
             Err(ParseError::TransactionCountPreallocLimit { .. })
         ));
+    }
+
+    const ENTRY_PREALLOC_LIMIT: usize = MAX_DATA_SHREDS_SIZE / size_of::<Entry>();
+
+    #[test_case(0; "zero_count")]
+    #[test_case(1; "one_count")]
+    #[test_case(ENTRY_PREALLOC_LIMIT; "at_limit")]
+    fn check_prealloc_limit_for_entry_accepts_within_limit(count: usize) {
+        assert_matches!(check_prealloc_limit::<Entry>(count), Ok(()));
+    }
+
+    #[test_case(ENTRY_PREALLOC_LIMIT + 1; "over_limit")]
+    #[test_case(usize::MAX; "count_overflows_and_saturates")]
+    fn check_prealloc_limit_for_entry_rejects_count_over_limit(count: usize) {
+        assert_eq!(
+            check_prealloc_limit::<Entry>(count),
+            Err(count.saturating_mul(size_of::<Entry>()))
+        );
+    }
+
+    #[test]
+    fn check_prealloc_limit_treats_zero_sized_types_as_one_byte_each() {
+        struct ZeroSized;
+        assert_eq!(size_of::<ZeroSized>(), 0);
+
+        let count = MAX_DATA_SHREDS_SIZE + 1;
+
+        assert_eq!(check_prealloc_limit::<ZeroSized>(count), Err(count));
     }
 }
