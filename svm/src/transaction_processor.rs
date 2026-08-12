@@ -365,6 +365,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             false,
         );
 
+        // Every registered builtin must be present in the global program cache,
+        // since `add_builtin` writes both together.
+        debug_assert!(
+            search_for.is_empty(),
+            "builtin(s) registered on this fork but missing from the global program cache: \
+             {search_for:?}"
+        );
+
         Self {
             slot,
             epoch,
