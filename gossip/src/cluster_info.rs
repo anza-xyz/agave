@@ -814,7 +814,7 @@ impl ClusterInfo {
                 let entry = CrdsValue::new(epoch_slots, &self_keypair);
                 entries.push(entry);
             }
-            epoch_slot_index = epoch_slot_index.wrapping_add(1);
+            epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
             reset = true;
         }
         let mut gossip_crds = self.gossip.crds.write().unwrap();
@@ -2619,6 +2619,7 @@ mod tests {
             socketaddr,
         },
         itertools::izip,
+        rand::{SeedableRng, rngs::StdRng},
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
@@ -3366,6 +3367,52 @@ mod tests {
 
         let slots = cluster_info.get_epoch_slots(&mut cursor);
         assert!(slots.is_empty());
+    }
+
+    #[test]
+    fn test_push_epoch_slots_wraps() {
+        let keypair = Arc::new(Keypair::new());
+        let pubkey = keypair.pubkey();
+        let contact_info = ContactInfo::new_localhost(&pubkey, 0);
+        let cluster_info =
+            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
+        let mut rng = StdRng::seed_from_u64(0);
+        let slots: Vec<Slot> = repeat_with(|| rng.random_range(1..32))
+            .scan(0, |slot, step| {
+                *slot += step;
+                Some(*slot)
+            })
+            .take(32_000)
+            .collect();
+        let mut epoch_slots = EpochSlots::new(pubkey, timestamp());
+        let num_slots = epoch_slots.fill(&slots, timestamp());
+        assert!(num_slots < slots.len());
+        let next_slot = slots[num_slots];
+        assert_eq!(epoch_slots.clone().fill(&[next_slot], timestamp()), 0);
+
+        let value = CrdsValue::new(
+            CrdsData::EpochSlots(crds_data::MAX_EPOCH_SLOTS - 1, epoch_slots),
+            keypair.as_ref(),
+        );
+        cluster_info
+            .gossip
+            .crds
+            .write()
+            .unwrap()
+            .insert(value, timestamp(), GossipRoute::LocalMessage)
+            .unwrap();
+        cluster_info.push_epoch_slots(&[next_slot]);
+
+        let crds = cluster_info.gossip.crds.read().unwrap();
+        let label = CrdsValueLabel::EpochSlots(0, pubkey);
+        let value = crds.get::<&CrdsValue>(&label).unwrap();
+        assert!(value.sanitize().is_ok());
+        assert_eq!(
+            value.epoch_slots().unwrap().to_slots(next_slot).next(),
+            Some(next_slot)
+        );
+        let invalid_label = CrdsValueLabel::EpochSlots(crds_data::MAX_EPOCH_SLOTS, pubkey);
+        assert!(crds.get::<&CrdsValue>(&invalid_label).is_none());
     }
 
     #[test]
