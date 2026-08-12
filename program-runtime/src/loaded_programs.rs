@@ -361,6 +361,12 @@ impl ProgramCacheForTxBatch {
         })
     }
 
+    /// Remove an entry from the `entries` list.
+    /// Note: DOES NOT remove modified entries!
+    pub fn remove_entry(&mut self, key: &Pubkey) {
+        self.entries.remove(key);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

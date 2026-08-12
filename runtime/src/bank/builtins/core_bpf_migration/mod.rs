@@ -298,12 +298,9 @@ impl Bank {
         );
         self.store_account(&source.buffer_address, &AccountSharedData::default());
 
-        // Remove the built-in program from the bank's list of built-ins.
+        // Remove the built-in program from the bank's fork-guarded builtin cache.
         self.transaction_processor
-            .builtin_program_ids
-            .write()
-            .unwrap()
-            .remove(&target.program_address);
+            .remove_builtin(&target.program_address);
 
         // Update the account data size delta.
         self.calculate_and_update_accounts_data_size_delta_off_chain(old_data_size, new_data_size);
@@ -532,13 +529,16 @@ pub(crate) mod tests {
         solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
-            program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            program_cache_entry::{
+                ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            },
             solana_sbpf::{self, program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader, system_program},
         solana_signer::Signer,
         solana_transaction::Transaction,
+        solana_transaction_error::TransactionError,
         std::{fs::File, io::Read, sync::Arc},
         test_case::test_case,
     };
@@ -774,7 +774,8 @@ pub(crate) mod tests {
             assert_eq!(target_entry.deployment_slot, migration_or_upgrade_slot);
             assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot + 1);
 
-            // The target program entry should be a BPF program.
+            // The target program entry should be a loader v3 BPF program.
+            assert_eq!(target_entry.account_owner, ProgramCacheEntryOwner::LoaderV3);
             assert_matches!(
                 target_entry.program,
                 ProgramCacheEntryType::Unloaded(..) | ProgramCacheEntryType::Loaded(..)
@@ -1348,6 +1349,32 @@ pub(crate) mod tests {
         // Run the post-migration program checks.
         assert!(bank.feature_set.is_active(feature_id));
         test_context.run_program_checks(&bank, migration_slot);
+
+        // The migrated program is not effective until the next slot, so invoking
+        // it in the migration slot must fail (delayed visibility).
+        let meta = bank
+            .process_transaction_with_metadata(Transaction::new(
+                &vec![&mint_keypair],
+                Message::new(
+                    &[Instruction::new_with_bytes(*program_id, &[], Vec::new())],
+                    Some(&mint_keypair.pubkey()),
+                ),
+                bank.last_blockhash(),
+            ))
+            .unwrap();
+        assert_eq!(
+            meta.status,
+            Err(TransactionError::InstructionError(
+                0,
+                InstructionError::UnsupportedProgramId
+            )),
+        );
+        // The loader only logs this for a `DelayVisibility` cache entry.
+        assert!(
+            meta.log_messages
+                .unwrap()
+                .contains(&"Program is not deployed".to_string())
+        );
 
         // Advance one slot so that the new BPF loader v3 program becomes
         // effective in the program cache.
