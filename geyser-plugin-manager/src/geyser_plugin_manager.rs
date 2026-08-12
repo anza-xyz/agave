@@ -103,6 +103,17 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in transactions received on the RPC
+    /// `sendTransaction` path
+    pub fn transaction_received_notifications_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.transaction_received_notifications_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if there is any plugin interested in entry data
     pub fn entry_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {
