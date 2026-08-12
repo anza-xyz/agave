@@ -75,14 +75,15 @@ solana-syscalls = { workspace = true, optional = true }
 solana-transaction-error = { workspace = true, optional = true }
 
 [dev-dependencies]
-bincode = { workspace = true }
-serde = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true }
+solana-sysvar-account = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sysvar-id = { workspace = true }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

@@ -148,10 +148,11 @@ pub unsafe extern "C" fn sol_compat_vm_serialize_execute_v1(
 mod tests {
     use {
         super::*,
+        crate::test_utils::proto_sysvar_account,
         protosol::protos::{AcctState as ProtoAcctState, InstrAcct as ProtoInstrAcct},
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_sdk_ids::{bpf_loader_deprecated, bpf_loader_upgradeable, sysvar},
+        solana_sdk_ids::{bpf_loader_deprecated, bpf_loader_upgradeable},
     };
 
     const PROGRAM_ID: [u8; 32] = [7; 32];
@@ -174,21 +175,11 @@ mod tests {
         }
     }
 
-    fn rent_sysvar() -> ProtoAcctState {
-        ProtoAcctState {
-            address: sysvar::rent::id().to_bytes().to_vec(),
-            lamports: 1,
-            data: bincode::serialize(&Rent::default()).unwrap(),
-            executable: false,
-            owner: sysvar::id().to_bytes().to_vec(),
-        }
-    }
-
     fn serialize(
         mut accounts: Vec<ProtoAcctState>,
         instr_accounts: Vec<ProtoInstrAcct>,
     ) -> ProtoVmSerializationEffects {
-        accounts.push(rent_sysvar()); // <-- Loads Rent into SysvarCache
+        accounts.push(proto_sysvar_account(&Rent::default())); // <-- Loads Rent into SysvarCache
         execute_vm_serialize(ProtoInstrContext {
             program_id: PROGRAM_ID.to_vec(),
             accounts,

@@ -449,7 +449,7 @@ mod tests {
         solana_slot_hashes::SlotHashes,
         solana_svm_feature_set::SVMFeatureSet,
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_PROGRAM_COMPUTE_UNITS,
-        solana_sysvar_id::SysvarId,
+        solana_sysvar_account::create_sysvar_account,
         solana_vote_interface::{
             instruction::{CommissionKind, tower_sync, tower_sync_switch},
             state::{
@@ -460,24 +460,6 @@ mod tests {
         std::{cell::RefCell, collections::HashSet, str::FromStr, sync::Arc},
         test_case::test_matrix,
     };
-
-    fn create_sysvar_account<T>(value: &T) -> AccountSharedData
-    where
-        T: wincode::Serialize<Src = T> + SysvarId,
-    {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
-        let canonical_data_len = match T::id() {
-            sysvar::clock::ID => solana_clock::SIZE,
-            sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
-            sysvar::rent::ID => solana_rent::SIZE,
-            sysvar::slot_hashes::ID => solana_slot_hashes::SIZE,
-            id => panic!("unsupported sysvar: {id}"),
-        };
-        let required_data_len = canonical_data_len.max(serialized_len);
-        let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
-    }
 
     fn vote_state_size_of() -> usize {
         VoteStateV4::size_of()
