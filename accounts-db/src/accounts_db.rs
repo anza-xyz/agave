@@ -2231,8 +2231,6 @@ impl AccountsDb {
         // index has to be correct before we drop the old storage.
         let dead_storages = self.mark_dirty_dead_stores(
             shrink_collect.slot,
-            // If all accounts are zero lamports, then we want to mark the entire OLD append vec as dirty.
-            shrink_collect.all_are_zero_lamports,
             shrink_in_progress,
             shrink_can_be_active,
         );
@@ -2378,7 +2376,6 @@ impl AccountsDb {
     pub fn mark_dirty_dead_stores(
         &self,
         slot: Slot,
-        _add_dirty_stores: bool,
         shrink_in_progress: Option<ShrinkInProgress>,
         shrink_can_be_active: bool,
     ) -> Vec<Arc<AccountStorageEntry>> {
