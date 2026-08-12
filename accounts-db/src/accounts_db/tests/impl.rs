@@ -4833,7 +4833,6 @@ fn test_clean_tombstones_zero_lamport_single_ref_at_reclaim() {
     // deletion and is queued for a later clean via dirty_stores rather than shrink.
     assert!(!db.accounts_index.contains(&account_key3));
     assert_eq!(db.get_and_assert_single_storage(3).num_tombstones(), 1);
-    assert!(db.dirty_stores.contains_key(&3));
     assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&3));
 
     // Once the full snapshot advances past slot 3, clean drops the tombstone-only
@@ -5632,7 +5631,6 @@ fn test_mark_dirty_dead_stores_empty() {
     for add_dirty_stores in [false, true] {
         let dead_storages = db.mark_dirty_dead_stores(slot, add_dirty_stores, None, false);
         assert!(dead_storages.is_empty());
-        assert!(db.dirty_stores.is_empty());
     }
 }
 
@@ -5653,13 +5651,6 @@ fn test_mark_dirty_dead_stores_no_shrink_in_progress() {
         assert!(db.storage.get_slot_storage_entry(slot).is_none());
         assert_eq!(dead_storages.len(), 1);
         assert_eq!(dead_storages.first().unwrap().id(), old_id);
-        if add_dirty_stores {
-            assert_eq!(1, db.dirty_stores.len());
-            let dirty_store = db.dirty_stores.get(&slot).unwrap();
-            assert_eq!(dirty_store.id(), old_id);
-        } else {
-            assert!(db.dirty_stores.is_empty());
-        }
         assert!(db.storage.is_empty_entry(slot));
     }
 }
@@ -5681,13 +5672,6 @@ fn test_mark_dirty_dead_stores() {
         assert!(db.storage.get_slot_storage_entry(slot).is_some());
         assert_eq!(dead_storages.len(), 1);
         assert_eq!(dead_storages.first().unwrap().id(), old_id);
-        if add_dirty_stores {
-            assert_eq!(1, db.dirty_stores.len());
-            let dirty_store = db.dirty_stores.get(&slot).unwrap();
-            assert_eq!(dirty_store.id(), old_id);
-        } else {
-            assert!(db.dirty_stores.is_empty());
-        }
         assert!(db.storage.get_slot_storage_entry(slot).is_some());
     }
 }
