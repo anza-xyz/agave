@@ -33,11 +33,15 @@ pub(crate) struct ShredFetchStage {
 /// to future proof for increases of CU limits (e.g., a future 100k CU limit).
 pub(crate) const SHRED_FETCH_CHANNEL_SIZE: usize = 1024 * 64;
 
-#[derive(Clone)]
 struct RepairContext {
     repair_socket: Arc<UdpSocket>,
     cluster_info: Arc<ClusterInfo>,
     outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+}
+
+enum ShredIngress {
+    Turbine,
+    Repair(RepairContext),
 }
 
 impl ShredFetchStage {
@@ -49,15 +53,13 @@ impl ShredFetchStage {
         sharable_banks: &SharableBanks,
         shred_version: u16,
         name: &'static str,
-        flags: PacketFlags,
-        repair_context: Option<&RepairContext>,
+        ingress: ShredIngress,
         turbine_mode: TurbineMode,
     ) {
-        // Only repair shreds need repair context.
-        debug_assert_eq!(
-            flags.contains(PacketFlags::REPAIR),
-            repair_context.is_some()
-        );
+        let (flags, repair_context) = match &ingress {
+            ShredIngress::Turbine => (PacketFlags::empty(), None),
+            ShredIngress::Repair(repair_context) => (PacketFlags::REPAIR, Some(repair_context)),
+        };
         const STATS_SUBMIT_CADENCE: Duration = Duration::from_secs(1);
         let mut shred_filter_ctx = ShredFilterContext::new_with_turbine_mode(
             sharable_banks.root(),
@@ -70,7 +72,6 @@ impl ShredFetchStage {
             shred_filter_ctx.stats.shred_count += packet_batch.len();
 
             if let Some(repair_context) = repair_context {
-                debug_assert_eq!(flags, PacketFlags::REPAIR);
                 let keypair = repair_context.cluster_info.keypair();
                 ServeRepair::handle_repair_response_pings(
                     &repair_context.repair_socket,
@@ -136,8 +137,7 @@ impl ShredFetchStage {
         shred_version: u16,
         name: &'static str,
         receiver_name: &'static str,
-        flags: PacketFlags,
-        repair_context: Option<RepairContext>,
+        ingress: ShredIngress,
         turbine_mode: TurbineMode,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
@@ -171,8 +171,7 @@ impl ShredFetchStage {
                     &sharable_banks,
                     shred_version,
                     name,
-                    flags,
-                    repair_context.as_ref(),
+                    ingress,
                     turbine_mode,
                 )
             })
@@ -210,8 +209,7 @@ impl ShredFetchStage {
             shred_version,
             "shred_fetch",
             "shred_fetch_receiver",
-            PacketFlags::empty(),
-            None, // repair_context
+            ShredIngress::Turbine,
             turbine_mode.clone(),
         );
 
@@ -226,8 +224,7 @@ impl ShredFetchStage {
             shred_version,
             "shred_fetch_repair",
             "shred_fetch_repair_receiver",
-            PacketFlags::REPAIR,
-            Some(repair_context.clone()),
+            ShredIngress::Repair(repair_context),
             turbine_mode.clone(),
         );
 
