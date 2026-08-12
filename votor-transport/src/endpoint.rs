@@ -407,7 +407,7 @@ mod tests {
             net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
             sync::{
                 Arc,
-                atomic::{AtomicU64, Ordering},
+                atomic::{AtomicBool, AtomicU64, Ordering},
             },
             time::{Duration, Instant},
         },
@@ -1045,6 +1045,86 @@ mod tests {
             (d.peer_pubkey == pubkey2 && d.message == payload2).then_some(())
         })
         .expect("server never received message attributed to K2 after rotation");
+    }
+
+    /// An identity change stops delivery only for as long as the re-handshake
+    /// takes. Only an upper bound is asserted: on loopback the outage is
+    /// sub-millisecond and often drops nothing, so requiring a loss would be flaky.
+    #[test]
+    fn test_client_identity_change_delivery_gap_is_bounded() {
+        // Under HIGH_PPS, so the peer rate limiter cannot manufacture a gap.
+        const SEND_INTERVAL: Duration = Duration::from_millis(5);
+        const MAX_RESUME_DELAY: Duration = Duration::from_secs(2);
+        // Longer than the bound, so the assert fails rather than the loop timing out.
+        const WAIT_LIMIT: Duration = Duration::from_secs(5);
+
+        let rt = make_runtime_for_tests();
+        let keypair1 = Keypair::new();
+        let pubkey1 = keypair1.pubkey();
+        let keypair2 = Keypair::new();
+        let pubkey2 = keypair2.pubkey();
+        let server = Node::spawn_node(
+            &rt,
+            Keypair::new(),
+            HashMap::from([(pubkey1, None), (pubkey2, None)]),
+            HIGH_PPS,
+        );
+        let client = Node::spawn_node(
+            &rt,
+            keypair1,
+            peer_list_of(server.pubkey(), server.addr),
+            HIGH_PPS,
+        );
+
+        let probe = Bytes::from_static(b"probe");
+        send_until_received(&client, &probe, &server.ingress_receiver, |d| {
+            (d.message == probe).then_some(())
+        })
+        .expect("server never received the pre-change probe");
+        drain_backlog(&server.ingress_receiver);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let sender_stop = stop.clone();
+        let egress = client.egress.clone();
+        let sender = std::thread::spawn(move || {
+            let mut seq = 0u32;
+            while !sender_stop.load(Ordering::Relaxed) {
+                let _ = egress.try_send(Bytes::from(seq.to_be_bytes().to_vec()));
+                seq = seq.wrapping_add(1);
+                std::thread::sleep(SEND_INTERVAL);
+            }
+        });
+
+        client
+            .endpoint
+            .key_updater()
+            .update_key(&keypair2)
+            .expect("identity change accepted");
+        let changed_at = Instant::now();
+
+        // Attribution to the new identity is what proves the re-handshake completed.
+        let mut resumed = None;
+        while changed_at.elapsed() < WAIT_LIMIT {
+            match server.ingress_receiver.recv_timeout(SEND_INTERVAL * 4) {
+                Ok(d) if d.peer_pubkey == pubkey2 && d.message.len() == 4 => {
+                    resumed = Some(Instant::now());
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => continue,
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        sender.join().expect("sender thread panicked");
+
+        let resumed = resumed.unwrap_or_else(|| {
+            panic!("delivery never resumed under the new identity within {WAIT_LIMIT:?}")
+        });
+        let gap = resumed.saturating_duration_since(changed_at);
+        assert!(
+            gap < MAX_RESUME_DELAY,
+            "delivery resumed {gap:?} after the change, over the {MAX_RESUME_DELAY:?} bound"
+        );
     }
 
     /// Changing the server identity closes every inbound connection that was
