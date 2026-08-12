@@ -477,7 +477,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("lamports-per-byte-year")
                 .value_name("LAMPORTS")
                 .takes_value(true)
-                .default_value(default_lamports_per_byte)
                 .help(
                     "The cost in lamports that the cluster will charge per byte for accounts with \
                      data",
