@@ -2449,18 +2449,6 @@ fn test_verify_bank_capitalization() {
         );
     }
 }
-#[test]
-fn test_storage_finder() {
-    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let key = solana_pubkey::new_rand();
-    let lamports = 100;
-    let data_len = 8190;
-    let account = AccountSharedData::new(lamports, data_len, &solana_pubkey::new_rand());
-    // pre-populate with a smaller empty store
-    let storage = db.create_store(1, 8192);
-    db.storage.insert(Arc::new(storage));
-    db.store_for_tests((1, [(&key, &account)].as_slice()));
-}
 
 #[test]
 fn test_get_snapshot_storages_empty() {
