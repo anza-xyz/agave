@@ -200,10 +200,7 @@ impl NetworkDevice {
             return Err(io::Error::last_os_error());
         }
 
-        Ok(RingSizes {
-            rx: rp.rx_pending as usize,
-            tx: rp.tx_pending as usize,
-        })
+        RingSizes::from_ethtool_pending(if_name, rp.rx_pending, rp.tx_pending)
     }
 }
 
@@ -218,6 +215,45 @@ impl Default for RingSizes {
         // These are reasonable defaults for devices which don't have a set ring size. Values must
         // be a power of two.
         Self { rx: 1024, tx: 1024 }
+    }
+}
+
+impl RingSizes {
+    /// A driver-reported ring size this large would mean multi-gigabyte UMEM allocations;
+    /// anything at or above this is treated as an unusable ioctl response rather than a
+    /// legitimate configuration. Real NICs top out in the tens of thousands.
+    const MAX_RING_SIZE: u32 = 1 << 20;
+
+    /// Validates raw ethtool ring-parameter values before they can reach [`RingSizes`].
+    ///
+    /// A "successful" `SIOCETHTOOL` ioctl (e.g. on some bonded interfaces) can still report
+    /// `rx_pending == 0` or `tx_pending == 0`, or report values that are individually nonzero
+    /// but not powers of two, or not power-of-two once combined by callers (see
+    /// `xdp::tx_loop::umem_frame_count`). Rejecting anything that isn't a usable nonzero
+    /// power of two here means every caller of `ring_sizes()` gets a `None`/`Err` instead of a
+    /// value that later panics deep inside `PageAlignedMemory::alloc_with_page_size`'s
+    /// `debug_assert!(frame_count.is_power_of_two())` -- the kernel itself rejects non-power-of-two
+    /// ring sizes with `EINVAL` at `xsk_init_queue()` bind time, and this crate's own ring index
+    /// masking (`index & (size - 1)`) is only correct for powers of two, so a non-power-of-two
+    /// value was never actually usable.
+    fn from_ethtool_pending(if_name: &str, rx_pending: u32, tx_pending: u32) -> io::Result<Self> {
+        let usable = |pending: u32| -> bool {
+            pending != 0 && pending.is_power_of_two() && pending < Self::MAX_RING_SIZE
+        };
+        if !usable(rx_pending) || !usable(tx_pending) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "{if_name} reported an unusable ring size despite a successful ethtool \
+                     query (rx={rx_pending}, tx={tx_pending}); expected both to be a nonzero \
+                     power of two"
+                ),
+            ));
+        }
+        Ok(Self {
+            rx: rx_pending as usize,
+            tx: tx_pending as usize,
+        })
     }
 }
 
@@ -496,6 +532,51 @@ pub(crate) unsafe fn mmap_ring<T>(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_ring_sizes_default_is_usable() {
+        let default = RingSizes::default();
+        assert!(RingSizes::from_ethtool_pending(
+            "test0",
+            default.rx as u32,
+            default.tx as u32
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_ring_sizes_from_ethtool_pending_accepts_valid_sizes() {
+        // symmetric and legitimately ASYMMETRIC nonzero power-of-two sizes must both
+        // be accepted -- individually valid ring sizes are not required to be equal.
+        for (rx, tx) in [(1024, 1024), (4096, 512), (512, 4096), (1, 1), (65536, 32768)] {
+            assert!(
+                RingSizes::from_ethtool_pending("test0", rx, tx).is_ok(),
+                "expected rx={rx}, tx={tx} to be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ring_sizes_from_ethtool_pending_rejects_unusable_sizes() {
+        // This is the real discriminator for the original issue: a "successful" ioctl
+        // (res >= 0) that reports a zero, non-power-of-two, or absurdly large ring size
+        // must be rejected here so a bad value never reaches TxLoopBuilder::new.
+        for (rx, tx) in [
+            (0, 0),
+            (0, 1024),
+            (1024, 0),
+            (1023, 1024),
+            (1024, 1023),
+            (RingSizes::MAX_RING_SIZE, 1024),
+        ] {
+            let result = RingSizes::from_ethtool_pending("test0", rx, tx);
+            assert!(
+                result.is_err(),
+                "expected rx={rx}, tx={tx} to be rejected, got {result:?}"
+            );
+            assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidData);
+        }
+    }
 
     #[test]
     fn test_ring_producer() {

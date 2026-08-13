@@ -245,7 +245,7 @@ impl<U: Umem> Socket<U> {
             // See Socket::new() as to why this is needed
             let rx = queue
                 .ring_sizes()
-                .ok_or_else(|| io::Error::other("zero copy requires a set ring size"))?
+                .ok_or_else(|| io::Error::other("zero copy requires a usable device ring size"))?
                 .rx;
             (rx, rx)
         } else {
