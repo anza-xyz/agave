@@ -586,7 +586,24 @@ impl Bank {
     ) -> EpochRewardCalculateParamInfo<'a> {
         // Use `stakes` for stake-related info
         let stake_history = stakes.history().clone();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let mut stake_delegations = stakes.stake_delegations_vec();
+
+        // Drop inert delegations, mirroring the filter applied to the
+        // candidate set at the prior epoch boundary.
+        if self.feature_set.snapshot().remove_inactive_stakes {
+            let new_rate_activation_epoch = self.new_warmup_cooldown_rate_epoch();
+            let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
+            stake_delegations.retain(|(_stake_pubkey, stake_account)| {
+                let activation_status = delegation_activation_status(
+                    stake_account.delegation(),
+                    rewarded_epoch,
+                    &stake_history,
+                    new_rate_activation_epoch,
+                    use_fixed_point_stake_math,
+                );
+                activation_status.effective != 0 || activation_status.activating != 0
+            });
+        }
 
         // Use the VAT-filtered vote-account snapshot from epoch_stakes.
         // Recalculation should match the vote-account admission policy used for
