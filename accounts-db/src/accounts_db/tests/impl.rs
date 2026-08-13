@@ -451,34 +451,8 @@ fn test_flush_slots_with_reclaim_old_slots() {
         }
     }
 
-    // Get the accounts from the write cache slot
-    let accounts_list: Vec<(_, _)> = accounts
-        .accounts_cache
-        .slot_cache(new_slot)
-        .unwrap()
-        .iter()
-        .map(|iter_item| {
-            let pubkey = *iter_item.key();
-            let account = iter_item.value().account.clone();
-            (pubkey, account)
-        })
-        .collect();
-
-    let storage = Arc::new(accounts.create_store(new_slot, 4096));
-    accounts.storage.insert(Arc::clone(&storage));
-
-    accounts.accounts_cache.add_root(new_slot);
-
-    // Flushing this storage directly using store_accounts_for_flush. This is done to pass in
-    // UpsertReclaim::ReclaimOldSlots
-    accounts.store_accounts_for_flush(
-        (new_slot, &accounts_list[..]),
-        &storage,
-        UpsertReclaim::ReclaimOldSlots,
-    );
-
-    // Remove the flushed slot from the cache
-    assert!(accounts.accounts_cache.remove_slot(new_slot).is_some());
+    // Flushing with clean uses UpsertReclaim::ReclaimOldSlots
+    accounts.add_root_and_flush_write_cache(new_slot);
 
     // Verify that the storage for the first slot has been removed
     assert!(accounts.storage.get_slot_storage_entry(0).is_none());
