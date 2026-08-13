@@ -88,7 +88,6 @@ use {
         programs::keyed_account_for_bpf_loader_upgradeable_program,
         setup::sysvar_cache_from_accounts,
     },
-    solana_sysvar::SysvarSerialize,
 };
 
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
@@ -197,16 +196,6 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
         )
         .0;
     commit_results.pop().unwrap()
-}
-
-#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
-fn sysvar_account<T: SysvarSerialize>(sysvar: &T) -> Account {
-    Account {
-        lamports: 1,
-        data: bincode::serialize(sysvar).unwrap(),
-        owner: sysvar::id(),
-        ..Account::default()
-    }
 }
 
 #[cfg(feature = "sbf_rust")]
@@ -2647,13 +2636,21 @@ fn test_program_sbf_upgrade() {
             authority_keypair.pubkey(),
             Account::new(0, 0, &system_program::id()),
         ),
-        (rent::id(), sysvar_account(&Rent::free())),
+        (
+            rent::id(),
+            Account::new_data(1, &Rent::free(), &solana_sdk_ids::sysvar::id()).unwrap(),
+        ),
         (
             clock::id(),
-            sysvar_account(&Clock {
-                slot: UPGRADE_SLOT,
-                ..Clock::default()
-            }),
+            Account::new_data(
+                1,
+                &Clock {
+                    slot: UPGRADE_SLOT,
+                    ..Clock::default()
+                },
+                &solana_sdk_ids::sysvar::id(),
+            )
+            .unwrap(),
         ),
         keyed_account_for_bpf_loader_upgradeable_program(),
     ]);
