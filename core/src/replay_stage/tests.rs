@@ -1687,8 +1687,12 @@ fn test_replay_commitment_cache() {
         block_commitment_cache.clone(),
         OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
     )));
-    let (lockouts_sender, _alpenglow_sender, _commitment_service) =
-        AggregateCommitmentService::new(exit, block_commitment_cache.clone(), rpc_subscriptions);
+    let (lockouts_sender, _alpenglow_sender, _commitment_service) = AggregateCommitmentService::new(
+        exit,
+        block_commitment_cache.clone(),
+        rpc_subscriptions,
+        None,
+    );
 
     assert!(
         block_commitment_cache
