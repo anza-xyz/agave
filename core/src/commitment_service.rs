@@ -13,6 +13,7 @@ use {
     solana_runtime::{
         bank::Bank,
         commitment::{BlockCommitment, BlockCommitmentCache, CommitmentSlots, VOTE_THRESHOLD_SIZE},
+        dependency_tracker::DependencyTracker,
     },
     std::{
         cmp::max,
@@ -72,6 +73,7 @@ impl AggregateCommitmentService {
         exit: Arc<AtomicBool>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         subscriptions: Option<Arc<RpcSubscriptions>>,
+        dependency_tracker: Option<Arc<DependencyTracker>>,
     ) -> (
         Sender<TowerCommitmentAggregationData>,
         Sender<AlpenglowCommitmentAggregationData>,
@@ -106,6 +108,7 @@ impl AggregateCommitmentService {
                                 &ag_receiver,
                                 &block_commitment_cache,
                                 subscriptions.as_deref(),
+                                &dependency_tracker,
                                 &exit,
                             ) {
                                 break;
@@ -122,6 +125,7 @@ impl AggregateCommitmentService {
         ag_receiver: &Receiver<AlpenglowCommitmentAggregationData>,
         block_commitment_cache: &RwLock<BlockCommitmentCache>,
         rpc_subscriptions: Option<&RpcSubscriptions>,
+        dependency_tracker: &Option<Arc<DependencyTracker>>,
         exit: &AtomicBool,
     ) -> Result<(), RecvTimeoutError> {
         loop {
@@ -143,6 +147,14 @@ impl AggregateCommitmentService {
                 recv(ag_receiver) -> msg => {
                     let data = msg?;
                     let data = ag_receiver.try_iter().last().unwrap_or(data);
+
+                    if data.commitment_type == AlpenglowCommitmentType::Rooted
+                        && let (Some(tracker), Some(dependency_work)) =
+                            (dependency_tracker.as_ref(), data.dependency_work)
+                        {
+                            tracker.wait_for_dependency(dependency_work);
+                        }
+
                     Self::alpenglow_update_commitment_cache(
                         block_commitment_cache,
                         data.commitment_type,
@@ -341,6 +353,7 @@ mod tests {
             self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4,
             VoteStateVersions, handler::VoteStateHandler, process_slot_vote_unchecked,
         },
+        std::time::Instant,
     };
 
     #[test]
@@ -350,6 +363,60 @@ mod tests {
         assert_eq!(get_highest_super_majority_root(rooted_stake, 10), 0);
         let rooted_stake = vec![(1, 5), (0, 10), (2, 5), (1, 4)];
         assert_eq!(get_highest_super_majority_root(rooted_stake, 10), 1);
+    }
+
+    #[test]
+    fn test_alpenglow_root_waits_for_dependency() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests()));
+        let dependency_tracker = Arc::new(DependencyTracker::default());
+        let dependency_work = dependency_tracker.declare_work();
+        let rooted_slot = 42;
+
+        let (tower_sender, alpenglow_sender, commitment_service) = AggregateCommitmentService::new(
+            exit.clone(),
+            block_commitment_cache.clone(),
+            None,
+            Some(dependency_tracker.clone()),
+        );
+        alpenglow_sender
+            .send(AlpenglowCommitmentAggregationData {
+                commitment_type: AlpenglowCommitmentType::Rooted,
+                slot: rooted_slot,
+                dependency_work: Some(dependency_work),
+            })
+            .unwrap();
+
+        // Wait until the service has received the message and had an opportunity to process it.
+        let receive_deadline = Instant::now() + Duration::from_secs(1);
+        while !alpenglow_sender.is_empty() && Instant::now() < receive_deadline {
+            thread::yield_now();
+        }
+        let message_received = alpenglow_sender.is_empty();
+        thread::sleep(Duration::from_millis(50));
+        let root_before_dependency = block_commitment_cache.read().unwrap().root();
+
+        dependency_tracker.mark_this_and_all_previous_work_processed(dependency_work);
+
+        let update_deadline = Instant::now() + Duration::from_secs(5);
+        while block_commitment_cache.read().unwrap().root() != rooted_slot
+            && Instant::now() < update_deadline
+        {
+            thread::yield_now();
+        }
+        let root_after_dependency = block_commitment_cache.read().unwrap().root();
+
+        exit.store(true, Ordering::Relaxed);
+        drop(tower_sender);
+        drop(alpenglow_sender);
+        commitment_service.join().unwrap();
+
+        assert!(
+            message_received,
+            "commitment service did not receive the message"
+        );
+        assert_eq!(root_before_dependency, 0);
+        assert_eq!(root_after_dependency, rooted_slot);
     }
 
     #[test]
