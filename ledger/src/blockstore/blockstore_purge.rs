@@ -136,7 +136,7 @@ impl Blockstore {
         let Some(mut slot_meta) = self.meta(slot)? else {
             return Err(BlockstoreError::SlotUnavailable);
         };
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
 
         self.purge_range(
             &mut write_batch,
@@ -193,7 +193,7 @@ impl Blockstore {
         cleanup_chaining: bool,
         purge_stats: &mut PurgeStats,
     ) -> Result<()> {
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
 
         let mut delete_range_timer = Measure::start("delete_range");
         self.purge_range(
@@ -1184,7 +1184,7 @@ pub mod tests {
         );
         blockstore.insert_shreds(shreds, false).unwrap();
 
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         blockstore
             .purge_special_columns_exact(&mut write_batch, slot, slot + 1)
             .unwrap();

@@ -2353,7 +2353,7 @@ impl Blockstore {
         F: Fn(PossibleDuplicateShred),
     {
         let mut pinnable_slice = self.new_pinnable_slice();
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         self.insert_shreds_at_location_handle_duplicate(
             shreds
                 .into_iter()
@@ -2484,7 +2484,7 @@ impl Blockstore {
         let shreds = shreds.into_iter().map(|shred| {
             (Cow::Owned(shred), /*is_repaired:*/ false, to_location)
         });
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         self.do_insert_shreds_locked(
             lock,
             shreds,
@@ -2622,7 +2622,7 @@ impl Blockstore {
         is_trusted: bool,
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let mut pinnable_slice = self.new_pinnable_slice();
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         let shreds = shreds.into_iter().map(Cow::Owned);
         self.insert_cow_shreds(shreds, is_trusted, &mut pinnable_slice, &mut write_batch)
     }
@@ -2630,7 +2630,7 @@ impl Blockstore {
     #[cfg(test)]
     fn insert_shred_return_duplicate(&self, shred: Shred) -> Vec<PossibleDuplicateShred> {
         let mut pinnable_slice = self.new_pinnable_slice();
-        let mut write_batch = self.get_write_batch().unwrap();
+        let mut write_batch = self.get_write_batch();
         let insert_results = self
             .do_insert_shreds(
                 [(
@@ -5308,7 +5308,7 @@ impl Blockstore {
         &self,
         duplicate_confirmed_slot_hashes: impl Iterator<Item = (Slot, Hash)>,
     ) -> Result<()> {
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         for (slot, frozen_hash) in duplicate_confirmed_slot_hashes {
             let data = FrozenHashVersioned::Current(FrozenHashStatus {
                 frozen_hash,
@@ -5323,7 +5323,7 @@ impl Blockstore {
     }
 
     pub fn set_roots<'a>(&self, rooted_slots: impl Iterator<Item = &'a Slot>) -> Result<()> {
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         let mut max_new_rooted_slot = 0;
         for slot in rooted_slots {
             max_new_rooted_slot = std::cmp::max(max_new_rooted_slot, *slot);
@@ -5597,7 +5597,7 @@ impl Blockstore {
             return Ok(());
         }
         info!("Marking slot {root} and any full children slots as connected");
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
 
         // Mark both connected bits on the root slot so that the flags for this
         // slot match the flags of slots that become connected the typical way.
@@ -6138,7 +6138,7 @@ impl Blockstore {
         Ok(index_meta_entry)
     }
 
-    pub fn get_write_batch(&self) -> Result<WriteBatch> {
+    pub fn get_write_batch(&self) -> WriteBatch {
         self.db.batch()
     }
 

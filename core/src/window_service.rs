@@ -442,7 +442,7 @@ impl WindowService {
                     shred_version,
                 );
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
-                let mut write_batch = blockstore.get_write_batch().unwrap();
+                let mut write_batch = blockstore.get_write_batch();
 
                 while !exit.load(Ordering::Relaxed) {
                     shred_recovery_context.maybe_update(sharable_banks.root());

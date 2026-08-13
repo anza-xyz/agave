@@ -323,7 +323,7 @@ impl StandardBroadcastRun {
         let (bsend, brecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
         let (ssend, srecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         self.process_receive_results(
             keypair,
             blockstore,
@@ -821,7 +821,7 @@ mod test {
         let (socket_sender, _socket_receiver) = bounded(1024);
         let (blockstore_sender, _blockstore_receiver) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut standard_broadcast_run = StandardBroadcastRun::new(
             0,
@@ -1060,7 +1060,7 @@ mod test {
         let (bsend, brecv) = bounded(1024);
         let (ssend, _srecv) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut last_tick_height = bank.tick_height();
         let mut standard_broadcast_run = StandardBroadcastRun::new(
@@ -1193,7 +1193,7 @@ mod test {
         let (bsend, brecv) = bounded(1024);
         let (ssend, srecv) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
 
         let ticks = create_ticks(1, 0, genesis_config.hash());
         let err = standard_broadcast_run

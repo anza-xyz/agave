@@ -417,10 +417,10 @@ impl Rocks {
         Ok(self.db.raw_iterator_cf(cf))
     }
 
-    pub(crate) fn batch(&self) -> Result<WriteBatch> {
-        Ok(WriteBatch {
+    pub(crate) fn batch(&self) -> WriteBatch {
+        WriteBatch {
             write_batch: RWriteBatch::default(),
-        })
+        }
     }
 
     pub(crate) fn write<B: AsMut<WriteBatch>>(&self, mut batch: B) -> Result<()> {

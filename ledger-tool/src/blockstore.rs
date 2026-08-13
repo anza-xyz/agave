@@ -631,7 +631,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 AccessType::PrimaryForMaintenance,
             );
             let mut pinnable_slice = target.new_pinnable_slice();
-            let mut write_batch = target.get_write_batch()?;
+            let mut write_batch = target.get_write_batch();
 
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {

@@ -1892,7 +1892,7 @@ fn test_merkle_root_metas_coding() {
     let (_, coding_shreds) = setup_erasure_shreds(slot, parent_slot, 10);
     let coding_shred = coding_shreds[index as usize].clone();
 
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
         ShredInsertionTracker::new(coding_shreds.len(), &mut write_batch);
     blockstore
@@ -1949,7 +1949,7 @@ fn test_merkle_root_metas_coding() {
     let (_, coding_shreds) = setup_erasure_shreds(slot, parent_slot, 10);
     let new_coding_shred = coding_shreds[(index + 1) as usize].clone();
 
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
         ShredInsertionTracker::new(coding_shreds.len(), &mut write_batch);
 
@@ -2084,7 +2084,7 @@ fn test_merkle_root_metas_data() {
     let (data_shreds, _) = setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
     let data_shred = data_shreds[0].clone();
 
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
@@ -2141,7 +2141,7 @@ fn test_merkle_root_metas_data() {
     let (data_shreds, _) = setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
     let new_data_shred = data_shreds[1].clone();
 
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
 
@@ -2237,7 +2237,7 @@ fn test_merkle_root_metas_data() {
         .next()
         .unwrap();
 
-    let mut write_batch = blockstore.db.batch().unwrap();
+    let mut write_batch = blockstore.db.batch();
     let mut shred_insertion_tracker =
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
@@ -2313,7 +2313,7 @@ fn test_check_insert_coding_shred() {
         );
     let coding_shred = code_shreds[0].clone();
 
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
     blockstore
         .check_insert_coding_shred(
@@ -2443,7 +2443,7 @@ fn test_mark_slot_dead_if_not_full() {
         block_id: Hash::new_unique(),
     };
 
-    let mut write_batch = blockstore.db.batch().unwrap();
+    let mut write_batch = blockstore.db.batch();
     let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
 
     blockstore.mark_slot_dead_if_not_full(empty_slot, location, &mut shred_insertion_tracker);
@@ -4685,7 +4685,7 @@ fn test_recovery() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
 
     let slot = 1;
     let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
@@ -4736,7 +4736,7 @@ fn test_skip_alt_recovery() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
 
     let slot = 1;
     let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
@@ -4814,7 +4814,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
 
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -6188,7 +6188,7 @@ fn test_chained_merkle_root_upgrade_inconsistency_backwards() {
     blockstore
         .put_erasure_meta(coding_shred_previous.erasure_set(), &erasure_meta)
         .unwrap();
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     blockstore
         .merkle_root_meta_cf
         .delete_range_in_batch(&mut write_batch, slot, slot);
@@ -6259,7 +6259,7 @@ fn test_chained_merkle_root_upgrade_inconsistency_forwards() {
 
     // Remove the merkle root meta in order to simulate this blockstore originating from
     // an older version.
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     blockstore
         .merkle_root_meta_cf
         .delete_range_in_batch(&mut write_batch, slot, slot);
@@ -6303,7 +6303,7 @@ fn test_add_transaction_memos_to_batch() {
     let blockstore =
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
     let signatures: Vec<Signature> = (0..2).map(|_| Signature::new_unique()).collect();
-    let mut memos_batch = blockstore.get_write_batch().unwrap();
+    let mut memos_batch = blockstore.get_write_batch();
 
     blockstore
         .add_transaction_memos_to_batch(
@@ -6378,7 +6378,7 @@ fn test_add_transaction_status_to_batch() {
         .map(|_| vec![(Pubkey::new_unique(), true), (Pubkey::new_unique(), false)])
         .collect();
     let slot = 5;
-    let mut status_batch = blockstore.get_write_batch().unwrap();
+    let mut status_batch = blockstore.get_write_batch();
 
     for (tx_idx, signature) in signatures.iter().enumerate() {
         blockstore
@@ -6427,7 +6427,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
 
     let parent_slot = 990;
     let parent_block_id = Hash::default();
@@ -6598,7 +6598,7 @@ fn insert_test_block_at_location(
     location: BlockLocation,
 ) -> (Vec<Shred>, Hash) {
     let mut pinnable_slice = blockstore.new_pinnable_slice();
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     let (data_shreds, _) = setup_erasure_shreds(slot, parent_slot, 200);
     let is_repaired = location != BlockLocation::Original;
     let shreds = data_shreds
@@ -6714,7 +6714,7 @@ fn test_get_data_shreds_for_slot() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     let parent_slot = 990;
     let slot = 1000;
     let num_entries = 200;

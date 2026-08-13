@@ -275,7 +275,7 @@ impl BroadcastStage {
         mut broadcast_stage_run: impl BroadcastRun,
     ) -> BroadcastStageReturnType {
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         loop {
             let res = broadcast_stage_run.run(
                 &cluster_info.keypair(),
@@ -427,7 +427,7 @@ impl BroadcastStage {
             let blockstore = blockstore.clone();
             let run_record = move || {
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
-                let mut write_batch = blockstore.get_write_batch().unwrap();
+                let mut write_batch = blockstore.get_write_batch();
                 loop {
                     let res = broadcast_stage_run.record(
                         &blockstore_receiver,
