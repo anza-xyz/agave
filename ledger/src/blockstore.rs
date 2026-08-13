@@ -5365,6 +5365,17 @@ impl Blockstore {
         self.dead_slots_cf.put(slot, &true)
     }
 
+    /// Marks a duplicate slot dead unless it is full, for external use.
+    pub fn set_dead_slot_if_duplicate_and_not_full(&self, slot: Slot) -> Result<()> {
+        let _lock = self.insert_shreds_lock.lock().unwrap();
+        if self.has_duplicate_shreds_in_slot(slot)
+            && !self.meta(slot)?.is_some_and(|meta| meta.is_full())
+        {
+            self.set_dead_slot(slot)?;
+        }
+        Ok(())
+    }
+
     pub fn remove_dead_slot(&self, slot: Slot) -> Result<()> {
         self.dead_slots_cf.delete(slot)
     }
