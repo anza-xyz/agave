@@ -1616,4 +1616,78 @@ mod tests {
             );
         }
     }
+
+    fn run_straddle_boundary(flat_inflation: bool) {
+        let slots_per_epoch = 32;
+        let stake = 200_000_000 * LAMPORTS_PER_SOL;
+        let validators = vec![ValidatorVoteKeypairs::new_rand()];
+        let mut genesis_config = create_genesis_config_with_alpenglow_vote_accounts(
+            100_000_000 * LAMPORTS_PER_SOL,
+            &validators,
+            vec![stake],
+        )
+        .genesis_config;
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+        genesis_config.rent = Rent::default();
+        if flat_inflation {
+            genesis_config.inflation = solana_inflation::Inflation::new_fixed(0.08);
+        }
+
+        let leader = SlotLeader {
+            id: validators[0].node_keypair.pubkey(),
+            vote_address: validators[0].vote_keypair.pubkey(),
+        };
+        let (mut bank, _bank_forks) = new_bank_for_tests(leader, &genesis_config);
+
+        let boundary_slot = slots_per_epoch * 3;
+        for slot in 1..boundary_slot {
+            bank = new_bank_from_parent(bank, slot);
+            let Some(reward_slot) = slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
+                continue;
+            };
+            calc_vote_rewards_update_vote_states(
+                &bank,
+                Some(ValidatedRewardCert::new_for_tests(
+                    reward_slot,
+                    vec![leader.vote_address],
+                )),
+                None,
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as i64,
+            )
+            .unwrap();
+        }
+
+        // Every reward credited during epoch 2 uses epoch 2's inflation state, including delayed
+        // rewards earned in epoch 1.
+        let processing_epoch = bank.epoch();
+        assert_eq!(processing_epoch, 2);
+        let epoch_state = EpochInflationAccountState::new_from_bank(&bank)
+            .unwrap()
+            .get_epoch_state(processing_epoch)
+            .unwrap();
+        let expected_epoch_credits =
+            slots_per_epoch * (epoch_state.max_possible_validator_reward / slots_per_epoch);
+        let vote_state = vote_state_from_bank(&bank, &leader.vote_address);
+        let &(credit_epoch, final_credits, initial_credits) =
+            vote_state.epoch_credits().last().unwrap();
+        assert_eq!(credit_epoch, processing_epoch);
+        assert_eq!(final_credits - initial_credits, expected_epoch_credits);
+
+        // Settling epoch 2 against its own budget happens here.
+        new_bank_from_parent(bank, boundary_slot);
+    }
+
+    #[test]
+    fn test_straddled_rewards_fit_declining_processing_epoch_budget() {
+        run_straddle_boundary(false);
+    }
+
+    #[test]
+    fn test_straddled_rewards_fit_flat_epoch_budget() {
+        run_straddle_boundary(true);
+    }
 }
