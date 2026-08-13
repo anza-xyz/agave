@@ -52,13 +52,8 @@ pub enum RewardStateError {
     MissingEpochStakes { reward_slot: Slot, bank_slot: Slot },
     #[error("missing EpochInflationAccountState for bank_slot {bank_slot}")]
     MissingEpochInflationAccountState { bank_slot: Slot },
-    #[error(
-        "missing validator stake info for reward epoch {reward_epoch} in bank_slot {bank_slot}"
-    )]
-    NoEpochValidatorStake {
-        reward_epoch: Epoch,
-        bank_slot: Slot,
-    },
+    #[error("missing epoch inflation state for in bank_slot {bank_slot}")]
+    MissingEpochInflationState { bank_slot: Slot },
     #[error("validator {pubkey} missing in bank_slot {bank_slot} for reward slot {reward_slot}")]
     MissingRewardSlotValidator {
         pubkey: Pubkey,
@@ -175,7 +170,7 @@ struct RewardState<'a> {
     accounts: &'a HashMap<Pubkey, (u64, VoteAccount)>,
     /// Total stake at `reward_slot`.
     total_stake: u64,
-    /// inflation state at `reward_slot`.
+    /// inflation state at the current bank's epoch.
     epoch_inflation_state: EpochInflationState,
     migration_epoch: Epoch,
 }
@@ -196,21 +191,18 @@ impl<'a> RewardState<'a> {
         )?;
         let accounts = epoch_stakes.stakes().vote_accounts().as_ref();
         let total_stake = epoch_stakes.total_stake();
-        // This assumes that if the epoch_schedule ever changes, the new schedule will maintain correct
-        // info about older slots as well.
-        let reward_epoch = bank.epoch_schedule.get_epoch(reward_slot);
+        let current_epoch = bank.epoch();
         let epoch_inflation_state = {
+            // rewards are always credited to the bank's epoch so use the inflation budget from that
+            // epoch.
             let epoch_inflation_account_state = EpochInflationAccountState::new_from_bank(bank);
             // This function should only be called after alpenglow is active and the slot in the the epoch
             // that activated Alpenglow should have created the account.
             debug_assert!(epoch_inflation_account_state.is_some());
             epoch_inflation_account_state
                 .ok_or(RewardStateError::MissingEpochInflationAccountState { bank_slot })?
-                .get_epoch_state(reward_epoch)
-                .ok_or(RewardStateError::NoEpochValidatorStake {
-                    reward_epoch,
-                    bank_slot,
-                })?
+                .get_epoch_state(current_epoch)
+                .ok_or(RewardStateError::MissingEpochInflationState { bank_slot })?
         };
         let migration_epoch =
             get_migration_epoch(bank).ok_or(RewardStateError::GenesisCertNotFound {
@@ -221,7 +213,7 @@ impl<'a> RewardState<'a> {
             calc_slot_timestamp(bank, reward_slot, block_producer_time_nanos);
         Ok(Self {
             reward_slot_timestamp_ns,
-            current_epoch: bank.epoch(),
+            current_epoch,
             reward_slot,
             reward_validators,
             bank_slot,
@@ -1542,13 +1534,12 @@ mod tests {
             .collect::<HashMap<_, HashMap<Epoch, u64>>>();
         let leader_vote_pubkey = rewarded_bank.leader().vote_address;
         for &reward_slot in &reward_slots {
-            let reward_epoch = rewarded_bank.epoch_schedule.get_epoch(reward_slot);
             let processing_epoch = rewarded_bank
                 .epoch_schedule
                 .get_epoch(reward_slot.saturating_add(NUM_SLOTS_FOR_REWARD));
             let epoch_state = EpochInflationAccountState::new_from_bank(&rewarded_bank)
                 .unwrap()
-                .get_epoch_state(reward_epoch)
+                .get_epoch_state(processing_epoch)
                 .unwrap();
             let epoch_stakes = rewarded_bank.epoch_stakes_from_slot(reward_slot).unwrap();
             let total_stake = epoch_stakes.total_stake();
