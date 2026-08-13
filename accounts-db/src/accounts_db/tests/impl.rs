@@ -1373,7 +1373,6 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
     accounts_db.set_latest_full_snapshot_slot(slot0);
 
     let obsolete_pubkey = Pubkey::new_unique();
-    let obsolete_zero_lamport_pubkey = Pubkey::new_unique();
     let zero_lamport_single_ref_pubkey = Pubkey::new_unique();
     let zero_lamport_multi_ref_pubkey = Pubkey::new_unique();
     let alive_pubkey = Pubkey::new_unique();
@@ -1388,50 +1387,41 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         DEFAULT_FILE_SIZE,
         accounts_db.accounts_file_provider,
     ));
-    // store an obsolete account; shrink drops it entirely
+    // store an account that is made obsolete below; shrink drops it entirely
     append_single_account_with_default_hash(
         &storage1,
         &obsolete_pubkey,
         &open_account,
-        true,
-        Some(&accounts_db.accounts_index),
-    );
-    // store an obsolete zero lamport account; shrink drops it rather than tombstoning it
-    append_single_account_with_default_hash(
-        &storage1,
-        &obsolete_zero_lamport_pubkey,
-        &closed_account,
-        true,
-        Some(&accounts_db.accounts_index),
+        false,
+        None,
     );
     // store a zero lamport single ref account; shrink *should* convert it to a tombstone
     append_single_account_with_default_hash(
         &storage1,
         &zero_lamport_single_ref_pubkey,
         &closed_account,
-        true,
-        Some(&accounts_db.accounts_index),
+        false,
+        None,
     );
     // store a zero lamport multi ref account; multi ref means it stays alive, not tombstoned
     append_single_account_with_default_hash(
         &storage1,
         &zero_lamport_multi_ref_pubkey,
         &closed_account,
-        true,
-        Some(&accounts_db.accounts_index),
+        false,
+        None,
     );
     // store an alive account; it stays alive
-    append_single_account_with_default_hash(
-        &storage1,
-        &alive_pubkey,
-        &open_account,
-        true,
-        Some(&accounts_db.accounts_index),
-    );
+    append_single_account_with_default_hash(&storage1, &alive_pubkey, &open_account, false, None);
     accounts_db.storage.insert(Arc::clone(&storage1));
     accounts_db.add_root(slot1);
 
-    // we manually created the storage, so nothing got marked
+    // Build the index from the storage, the way startup does. Every account gets a single index
+    // entry, including the zero lamport ones, and the storage's alive bytes are derived from the
+    // accounts it holds. `verify` checks each index entry against the account it points at.
+    accounts_db.generate_index(None, true);
+
+    // index generation does not mark tombstones
     assert_eq!(storage1.num_tombstones(), 0);
 
     // store the multi ref account again, in slot 2, so it becomes multi ref
@@ -1444,15 +1434,11 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
     // flush without clean so the multi reference account isn't marked obsolete in slot 1
     accounts_db.flush_rooted_accounts_cache_without_clean();
 
-    // mark the obsolete accounts as obsolete
-    let ancestors = Ancestors::from(vec![slot2]);
-    for pubkey in [obsolete_pubkey, obsolete_zero_lamport_pubkey] {
-        let account_info = accounts_db
-            .accounts_index
-            .get_with_and_then(&pubkey, &ancestors, false, |account_info| account_info)
-            .unwrap();
-        accounts_db.remove_dead_accounts([account_info].iter(), MarkAccountsObsolete::Yes(slot2));
-    }
+    // store a newer version of the obsolete account and flush with clean, which reclaims the
+    // slot 1 copy and marks it obsolete
+    let slot3 = slot2 + 1;
+    accounts_db.store_for_tests((slot3, [(&obsolete_pubkey, &open_account)].as_slice()));
+    accounts_db.add_root_and_flush_write_cache(slot3);
 
     accounts_db.shrink_slot_forced(slot1);
 
@@ -1460,23 +1446,13 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
 
     // ensure ids are different, to indicate shrink ran
     assert_ne!(new_storage1.id(), storage1.id());
-    // ensure there are three accounts in the storage now, removing the two obsolete ones: the
+    // ensure there are three accounts in the storage now, removing the obsolete one: the
     // alive account, the zero-lamport multi-ref account, and the zero-lamport single-ref account
     // carried forward as a tombstone
     assert_eq!(new_storage1.count(), 3);
 
     // the zero lamport single ref account is dropped from the index now that it is a tombstone
-    assert!(
-        accounts_db
-            .accounts_index
-            .get_with_and_then(
-                &zero_lamport_single_ref_pubkey,
-                &ancestors,
-                false,
-                |(_slot, _account_info)| (),
-            )
-            .is_none()
-    );
+    assert!(!accounts_db.contains(&zero_lamport_single_ref_pubkey));
 
     // it is recorded on the new storage's tombstone list
     assert_eq!(new_storage1.num_tombstones(), 1);
