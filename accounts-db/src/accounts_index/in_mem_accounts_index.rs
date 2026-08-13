@@ -269,7 +269,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         &self,
         pubkey: &Pubkey,
         // return true if item should be added to in_mem cache
-        callback: impl for<'a> FnOnce(Option<&AccountMapEntry<T>>) -> (bool, RT),
+        callback: impl FnOnce(Option<&AccountMapEntry<T>>) -> (bool, RT),
     ) -> RT {
         self.get_only_in_mem(pubkey, true, |entry| {
             if let Some(entry) = entry {
