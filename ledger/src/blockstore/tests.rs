@@ -7210,6 +7210,61 @@ fn test_complete_block_skips_pre_update_parent_entries() {
 }
 
 #[test]
+fn test_get_slot_component_views_with_shred_info() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 100;
+    let original_parent = 99;
+    let update_parent = 96;
+    let fixture =
+        insert_complete_update_parent_slot(&blockstore, slot, original_parent, update_parent);
+
+    let (raw_components, raw_completed_ranges, raw_is_full) = blockstore
+        .get_slot_components_with_shred_info(slot, 0, false)
+        .unwrap();
+    let (parsed_components, parsed_completed_ranges, parsed_is_full) = blockstore
+        .get_slot_component_views_with_shred_info(slot, 0, false)
+        .unwrap();
+
+    assert_eq!(parsed_components.len(), raw_components.len());
+    assert_eq!(parsed_completed_ranges, raw_completed_ranges);
+    assert_eq!(parsed_is_full, raw_is_full);
+    assert!(parsed_is_full);
+
+    assert!(matches!(
+        &parsed_components[0],
+        ParsedBlockComponent::BlockMarker(_)
+    ));
+    assert!(matches!(
+        &parsed_components[1],
+        ParsedBlockComponent::EntryBatch(entries)
+            if entries
+                .iter()
+                .flat_map(|entry| &entry.transactions)
+                .map(|transaction| transaction.signatures()[0])
+                .collect::<Vec<_>>() == fixture.pre_update_signatures
+    ));
+    assert!(matches!(
+        &parsed_components[2],
+        ParsedBlockComponent::BlockMarker(marker) if marker.is_update_parent()
+    ));
+    assert!(matches!(
+        &parsed_components[3],
+        ParsedBlockComponent::EntryBatch(entries)
+            if entries
+                .iter()
+                .flat_map(|entry| &entry.transactions)
+                .map(|transaction| transaction.signatures()[0])
+                .collect::<Vec<_>>() == fixture.post_update_signatures
+    ));
+    assert!(matches!(
+        &parsed_components[4],
+        ParsedBlockComponent::BlockMarker(marker) if marker.is_footer()
+    ));
+}
+
+#[test]
 fn test_get_transaction_uses_post_update_parent_indexes() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();

@@ -45,10 +45,11 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_entry::{
         block_component::{
-            BlockComponent, VersionedBlockFooter, VersionedBlockHeader, VersionedBlockMarker,
-            VersionedUpdateParent, finalization_certificates_from_footer,
+            BlockComponent, ParsedBlockComponent, VersionedBlockFooter, VersionedBlockHeader,
+            VersionedBlockMarker, VersionedUpdateParent, finalization_certificates_from_footer,
             genesis_certificate_from_shred,
         },
+        block_component_parser,
         entry::{Entry, create_ticks},
     },
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
@@ -4973,6 +4974,26 @@ impl Blockstore {
         Ok((components, completed_ranges, slot_meta.is_full()))
     }
 
+    /// Returns parsed block components for the slot starting with `start_index`, the completed
+    /// shred range for each component, and whether the slot is full.
+    pub fn get_slot_component_views_with_shred_info(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+    ) -> Result<(Vec<ParsedBlockComponent>, Vec<Range<u32>>, bool)> {
+        let Some((completed_ranges, slot_meta, _)) =
+            self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
+        else {
+            return Ok((vec![], vec![], false));
+        };
+
+        let components =
+            self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
+        debug_assert_eq!(completed_ranges.len(), components.len());
+        Ok((components, completed_ranges, slot_meta.is_full()))
+    }
+
     /// Gets accounts used in transactions in the slot range [starting_slot, ending_slot].
     /// Additionally returns a bool indicating if the set may be incomplete.
     /// Used by ledger-tool to create a minimized snapshot
@@ -5168,6 +5189,31 @@ impl Blockstore {
                     } else {
                         BlockstoreError::InvalidShredData(format!(
                             "could not reconstruct block component: {e}"
+                        ))
+                    }
+                })
+        })
+    }
+
+    /// Fetch the parsed components corresponding to all shred indices in `completed_ranges`.
+    /// Note that one range in `CompletedRanges` corresponds to one parsed block component.
+    fn get_slot_component_views_in_block(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+    ) -> Result<Vec<ParsedBlockComponent>> {
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            let is_empty_entry_batch = BlockComponent::infer_is_empty_entry_batch(&payload);
+
+            block_component_parser::parse(payload)
+                .map(|component| vec![component])
+                .map_err(|error| {
+                    if is_empty_entry_batch {
+                        BlockstoreError::BlockAborted(slot)
+                    } else {
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct block component view: {error}"
                         ))
                     }
                 })
