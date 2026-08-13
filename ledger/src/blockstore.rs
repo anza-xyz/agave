@@ -425,7 +425,7 @@ pub struct SlotMetaWorkingSetEntry {
     did_insert_occur: bool,
 }
 
-struct ShredInsertionTracker<'a> {
+struct ShredInsertionTracker<'a, 'batch> {
     // Map which contains data shreds that have just been inserted. They will
     // later be written to `cf::ShredData` or `cf::AlternateShredData`
     just_inserted_shreds: HashMap<(BlockLocation, ShredId), Cow<'a, Shred>>,
@@ -444,15 +444,15 @@ struct ShredInsertionTracker<'a> {
     duplicate_shreds: Vec<PossibleDuplicateShred>,
     // Collection of the current blockstore writes which will be committed
     // atomically.
-    write_batch: WriteBatch,
+    write_batch: &'batch mut WriteBatch,
     // Time spent on loading or creating the index meta entry from the db
     index_meta_time_us: u64,
     // Collection of recently completed data sets (data portion of erasure batch)
     newly_completed_data_sets: Vec<CompletedDataSetInfo>,
 }
 
-impl ShredInsertionTracker<'_> {
-    fn new(shred_num: usize, write_batch: WriteBatch) -> Self {
+impl<'batch> ShredInsertionTracker<'_, 'batch> {
+    fn new(shred_num: usize, write_batch: &'batch mut WriteBatch) -> Self {
         Self {
             just_inserted_shreds: HashMap::with_capacity(shred_num),
             erasure_metas: BTreeMap::new(),
@@ -1629,7 +1629,7 @@ impl Blockstore {
         if mark_slot_dead {
             // If the slot is already full there is no reason to mark as dead
             self.dead_slots_cf.put_bytes_in_batch(
-                &mut shred_insertion_tracker.write_batch,
+                shred_insertion_tracker.write_batch,
                 slot,
                 &[true as u8],
             );
@@ -1646,7 +1646,7 @@ impl Blockstore {
         >,
         is_trusted: bool,
         pinnable_slice: &mut DBPinnableSlice<'db>,
-        shred_insertion_tracker: &mut ShredInsertionTracker<'a>,
+        shred_insertion_tracker: &mut ShredInsertionTracker<'a, '_>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
         let shreds = shreds.into_iter();
@@ -1938,7 +1938,7 @@ impl Blockstore {
                 meta.last_index.expect("Slot is full"),
                 &shred_insertion_tracker.slot_meta_working_set,
                 &shred_insertion_tracker.merkle_root_metas,
-                &mut shred_insertion_tracker.write_batch,
+                shred_insertion_tracker.write_batch,
             )?;
         }
         Ok(())
@@ -2116,7 +2116,7 @@ impl Blockstore {
         let mut start = Measure::start("Commit Working Sets");
         let signal_updates = self.commit_slot_meta_working_set(
             &shred_insertion_tracker.slot_meta_working_set,
-            &mut shred_insertion_tracker.write_batch,
+            shred_insertion_tracker.write_batch,
         )?;
 
         for (erasure_set, working_erasure_meta) in &shred_insertion_tracker.erasure_metas {
@@ -2126,7 +2126,7 @@ impl Blockstore {
             }
             let (slot, fec_set_index) = erasure_set.store_key();
             self.erasure_meta_cf.put_in_batch(
-                &mut shred_insertion_tracker.write_batch,
+                shred_insertion_tracker.write_batch,
                 (slot, u64::from(fec_set_index)),
                 working_erasure_meta.as_ref(),
             )?;
@@ -2140,7 +2140,7 @@ impl Blockstore {
                 continue;
             }
             self.put_merkle_root_meta_in_batch(
-                &mut shred_insertion_tracker.write_batch,
+                shred_insertion_tracker.write_batch,
                 erasure_set,
                 location,
                 working_merkle_root_meta.as_ref(),
@@ -2152,7 +2152,7 @@ impl Blockstore {
         {
             if index_working_set_entry.did_insert_occur {
                 self.put_index_in_batch(
-                    &mut shred_insertion_tracker.write_batch,
+                    shred_insertion_tracker.write_batch,
                     slot,
                     location,
                     &index_working_set_entry.index,
@@ -2204,6 +2204,7 @@ impl Blockstore {
     ///  - `shred_recovery_context`: recovery-time dependencies and policy for
     ///    erasure recovery. `None` disables recovery.
     ///  - `pinnable_slice`: reusable RocksDB pinnable slice.
+    ///  - `write_batch`: reusable RocksDB write batch.
     ///  - `metrics`: the metric for reporting detailed stats
     ///
     /// On success, the function returns an Ok result with a vector of
@@ -2223,9 +2224,11 @@ impl Blockstore {
         // recovered shreds.
         shred_recovery_context: Option<&mut ShredRecoveryContext>,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
         let mut total_start = Measure::start("Total elapsed");
+        write_batch.clear();
 
         // Acquire the insertion lock
         let mut start = Measure::start("Blockstore lock");
@@ -2239,8 +2242,10 @@ impl Blockstore {
             is_trusted,
             shred_recovery_context,
             pinnable_slice,
+            write_batch,
             metrics,
         );
+        write_batch.clear();
 
         // Roll up metrics
         total_start.stop();
@@ -2260,11 +2265,11 @@ impl Blockstore {
         is_trusted: bool,
         shred_recovery_context: Option<&mut ShredRecoveryContext>,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
         let shreds = shreds.into_iter();
-        let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(shreds.len(), self.get_write_batch()?);
+        let mut shred_insertion_tracker = ShredInsertionTracker::new(shreds.len(), write_batch);
 
         self.attempt_shred_insertion(
             shreds,
@@ -2285,7 +2290,7 @@ impl Blockstore {
         // Handle chaining for the members of the slot_meta_working_set that
         // were inserted into, drop the others.
         self.handle_chaining(
-            &mut shred_insertion_tracker.write_batch,
+            shred_insertion_tracker.write_batch,
             &mut shred_insertion_tracker.slot_meta_working_set,
             metrics,
         )?;
@@ -2303,7 +2308,7 @@ impl Blockstore {
 
         // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
-        self.write_batch(shred_insertion_tracker.write_batch)?;
+        self.write_batch(&mut *shred_insertion_tracker.write_batch)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
 
@@ -2348,6 +2353,7 @@ impl Blockstore {
         F: Fn(PossibleDuplicateShred),
     {
         let mut pinnable_slice = self.new_pinnable_slice();
+        let mut write_batch = self.get_write_batch()?;
         self.insert_shreds_at_location_handle_duplicate(
             shreds
                 .into_iter()
@@ -2355,6 +2361,7 @@ impl Blockstore {
             is_trusted,
             shred_recovery_context,
             &mut pinnable_slice,
+            &mut write_batch,
             handle_duplicate,
             metrics,
         )
@@ -2365,7 +2372,7 @@ impl Blockstore {
     /// Additionally attempts to recover and retransmit recovered shreds (also identifying
     /// and handling duplicate shreds). Broadcast stage should instead call
     /// Blockstore::insert_shreds when inserting own shreds during leader slots.
-    /// The pinnable slice can be reused across calls.
+    /// The pinnable slice and write batch can be reused across calls.
     pub fn insert_shreds_at_location_handle_duplicate<'a, 'db, F>(
         &'db self,
         shreds: impl IntoIterator<
@@ -2375,6 +2382,7 @@ impl Blockstore {
         is_trusted: bool,
         shred_recovery_context: &mut ShredRecoveryContext,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
         handle_duplicate: &F,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<Vec<CompletedDataSetInfo>>
@@ -2389,6 +2397,7 @@ impl Blockstore {
             is_trusted,
             Some(shred_recovery_context),
             pinnable_slice,
+            write_batch,
             metrics,
         )?;
 
@@ -2475,12 +2484,14 @@ impl Blockstore {
         let shreds = shreds.into_iter().map(|shred| {
             (Cow::Owned(shred), /*is_repaired:*/ false, to_location)
         });
+        let mut write_batch = self.get_write_batch()?;
         self.do_insert_shreds_locked(
             lock,
             shreds,
             true, // is_trusted
             None, // should_recover_shreds
             pinnable_slice,
+            &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
         )?;
 
@@ -2588,6 +2599,7 @@ impl Blockstore {
         shreds: impl IntoIterator<Item = Cow<'a, Shred>, IntoIter: ExactSizeIterator>,
         is_trusted: bool,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let shreds = shreds
             .into_iter()
@@ -2597,6 +2609,7 @@ impl Blockstore {
             is_trusted,
             None, // Skip recovery for locally produced shreds.
             pinnable_slice,
+            write_batch,
             &mut BlockstoreInsertionMetrics::default(),
         )?;
         Ok(insert_results.completed_data_set_infos)
@@ -2609,13 +2622,15 @@ impl Blockstore {
         is_trusted: bool,
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let mut pinnable_slice = self.new_pinnable_slice();
+        let mut write_batch = self.get_write_batch()?;
         let shreds = shreds.into_iter().map(Cow::Owned);
-        self.insert_cow_shreds(shreds, is_trusted, &mut pinnable_slice)
+        self.insert_cow_shreds(shreds, is_trusted, &mut pinnable_slice, &mut write_batch)
     }
 
     #[cfg(test)]
     fn insert_shred_return_duplicate(&self, shred: Shred) -> Vec<PossibleDuplicateShred> {
         let mut pinnable_slice = self.new_pinnable_slice();
+        let mut write_batch = self.get_write_batch().unwrap();
         let insert_results = self
             .do_insert_shreds(
                 [(
@@ -2626,6 +2641,7 @@ impl Blockstore {
                 false,
                 None, // Skip recovery for this direct insertion path.
                 &mut pinnable_slice,
+                &mut write_batch,
                 &mut BlockstoreInsertionMetrics::default(),
             )
             .unwrap();
@@ -2656,7 +2672,7 @@ impl Blockstore {
     fn check_insert_coding_shred<'a, 'db>(
         &'db self,
         shred: Cow<'a, Shred>,
-        shred_insertion_tracker: &mut ShredInsertionTracker<'a>,
+        shred_insertion_tracker: &mut ShredInsertionTracker<'a, '_>,
         is_trusted: bool,
         shred_source: ShredSource,
         pinnable_slice: &mut DBPinnableSlice<'db>,
@@ -2882,7 +2898,7 @@ impl Blockstore {
         &'db self,
         shred: Cow<'a, Shred>,
         location: BlockLocation,
-        shred_insertion_tracker: &mut ShredInsertionTracker<'a>,
+        shred_insertion_tracker: &mut ShredInsertionTracker<'a, '_>,
         is_trusted: bool,
         shred_source: ShredSource,
         pinnable_slice: &mut DBPinnableSlice<'db>,
@@ -6123,7 +6139,7 @@ impl Blockstore {
         self.db.batch()
     }
 
-    pub fn write_batch(&self, write_batch: WriteBatch) -> Result<()> {
+    pub fn write_batch<B: AsMut<WriteBatch>>(&self, write_batch: B) -> Result<()> {
         self.db.write(write_batch)
     }
 

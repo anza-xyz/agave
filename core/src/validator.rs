@@ -2891,10 +2891,16 @@ fn cleanup_blockstore_incorrect_shred_versions(
             let mut num_slots_copied = 0;
             let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
             let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
+            let mut write_batch = backup_blockstore.get_write_batch()?;
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                let _ = backup_blockstore.insert_cow_shreds(shreds, true, &mut pinnable_slice);
+                let _ = backup_blockstore.insert_cow_shreds(
+                    shreds,
+                    true,
+                    &mut pinnable_slice,
+                    &mut write_batch,
+                );
                 num_slots_copied += 1;
 
                 if print_timer.elapsed() > PRINT_INTERVAL {
