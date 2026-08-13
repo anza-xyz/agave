@@ -1332,7 +1332,8 @@ fn create_and_insert_leader_bank(
         ctx.rpc_subscriptions.as_deref(),
         &ctx.slot_status_notifier,
         NewBankOptions::default(),
-    );
+    )
+    .mark_leader_bank();
     // make sure parent is frozen for finalized hashes via the above
     // new()-ing of its child bank
     ctx.banking_tracer.hash_event(
@@ -1659,6 +1660,7 @@ mod tests {
         assert!(ctx.bank_forks.read().unwrap().get(1).is_some());
 
         let bank = ctx.poh_recorder.read().unwrap().bank().unwrap();
+        assert!(!bank.should_replay_from_blockstore());
         let in_flight_commit = bank.freeze_lock();
         ctx.record_receiver.shutdown();
         for _ in ctx.record_receiver.drain_after_shutdown() {}
