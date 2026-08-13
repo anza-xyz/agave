@@ -13,4 +13,4 @@ pub const DEFAULT_ACCOUNTS_DB_CONFIG: AccountsDbConfig = {
 };
 
 #[path = "impl.rs"]
-pub(super) mod r#impl;
+mod r#impl;
