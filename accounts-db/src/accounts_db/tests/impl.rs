@@ -1556,48 +1556,38 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
 #[test]
 fn test_fully_tombstoned_storage_reclaim() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let slot = 1;
+    let slot = 2;
     let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
     // Latest full snapshot older than `slot`: tombstones are not yet purgeable.
-    accounts_db.set_latest_full_snapshot_slot(slot);
+    accounts_db.set_latest_full_snapshot_slot(slot - 1);
 
-    let slot = slot + 1;
-    let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
-    let storage = Arc::new(AccountStorageEntry::new(
-        &paths[0],
-        slot,
-        100,
-        DEFAULT_FILE_SIZE,
-        accounts_db.accounts_file_provider,
-    ));
-
-    // Every account is a zero-lamport account physically present but NOT in the index: i.e. the
-    // storage is 100% tombstones carried forward by a prior shrink.
+    // Older versions of the accounts, so that their zero-lamport version is written as a tombstone
+    // rather than purged completely
     let num_tombstones = 3;
-    for _ in 0..num_tombstones {
-        append_single_account_with_default_hash(
-            &storage,
-            &Pubkey::new_unique(),
-            &zero_lamport_account,
-            true,
-            None,
-        );
-    }
-    accounts_db.storage.insert(Arc::clone(&storage));
-    accounts_db.add_root(slot);
+    let alive_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let pubkeys: Vec<_> = iter::repeat_with(Pubkey::new_unique)
+        .take(num_tombstones)
+        .collect();
+    let alive_accounts: Vec<_> = pubkeys
+        .iter()
+        .map(|pubkey| (pubkey, &alive_account))
+        .collect();
+    accounts_db.store_for_tests((slot - 1, alive_accounts.as_slice()));
+    accounts_db.add_root_and_flush_write_cache(slot - 1);
 
-    // Record every account's offset on the storage's tombstone list, as a prior shrink would have.
-    let mut tombstone_offsets = Vec::new();
-    storage
-        .accounts
-        .scan_accounts_without_data(|offset, _account| {
-            tombstone_offsets.push(offset);
-        })
-        .unwrap();
-    storage.batch_insert_tombstone_offsets(tombstone_offsets);
+    // Every account in this slot is zero-lamport, so flushing with clean writes each one to the
+    // storage as a tombstone and removes it from the index: the storage is 100% tombstones.
+    let zero_lamport_accounts: Vec<_> = pubkeys
+        .iter()
+        .map(|pubkey| (pubkey, &zero_lamport_account))
+        .collect();
+    accounts_db.store_for_tests((slot, zero_lamport_accounts.as_slice()));
+    accounts_db.add_root_and_flush_write_cache(slot);
 
     // The storage reads as entirely tombstones / fully removable.
+    let storage = accounts_db.get_and_assert_single_storage(slot);
+    assert_eq!(storage.num_tombstones(), num_tombstones);
     assert!(storage.has_only_tombstones());
 
     // Shrink routes the fully-dead slot to clean; clean retains the storage because the latest full
