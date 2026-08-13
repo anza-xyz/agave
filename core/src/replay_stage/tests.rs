@@ -21,8 +21,11 @@ use {
     },
     crossbeam_channel::bounded,
     itertools::Itertools,
-    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
-    solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
+    solana_accounts_db::{
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+        accounts_scan::ScanError,
+    },
     solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_client::connection_cache::ConnectionCache,
     solana_entry::{
@@ -2818,13 +2821,15 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
     let sender = node_pubkeys[0];
+    let old_account = Pubkey::new_unique();
     let transfer_signature = bank1
         .transfer(
             1,
             &validator_keypairs.get(&sender).unwrap().node_keypair,
-            &Pubkey::new_unique(),
+            &old_account,
         )
         .unwrap();
+    bank1.freeze();
     bank_forks.write().unwrap().insert(bank1);
     let bank1 = bank_forks.read().unwrap().get(1).unwrap();
     assert!(bank1.get_signature_status(&transfer_signature).is_some());
@@ -2837,6 +2842,28 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
     ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new());
 
     assert!(bank1.get_signature_status(&transfer_signature).is_none());
+    assert_eq!(bank1.get_balance(&old_account), 0);
+    assert_eq!(
+        bank1.scan_all_accounts(|_| {}),
+        Err(ScanError::SlotRemoved {
+            slot: 1,
+            bank_id: bank1.bank_id(),
+        })
+    );
+
+    let replacement_bank = Bank::new_from_parent(
+        bank_forks.read().unwrap().root_bank(),
+        SlotLeader::default(),
+        1,
+    );
+    let replacement_account = Pubkey::new_unique();
+    replacement_bank.store_account(
+        &replacement_account,
+        &AccountSharedData::new(2, 0, &Pubkey::default()),
+    );
+    drop(bank1);
+    assert_eq!(replacement_bank.get_balance(&replacement_account), 2);
+    assert_eq!(replacement_bank.scan_all_accounts(|_| {}), Ok(()));
 }
 
 #[test]
@@ -3297,6 +3324,21 @@ fn test_headerless_update_parent() {
     let my_pubkey = Pubkey::new_unique();
     let slot = 4;
     let migration_status = post_migration_status_for_tests();
+    let old_account = Pubkey::new_unique();
+    let old_bank = Bank::new_from_parent(
+        bank_forks.read().unwrap().root_bank(),
+        SlotLeader::default(),
+        slot,
+    );
+    old_bank.store_account(
+        &old_account,
+        &AccountSharedData::new(1, 0, &Pubkey::default()),
+    );
+    old_bank.freeze();
+    bank_forks.write().unwrap().insert(old_bank);
+    let old_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    drop(bank_forks.write().unwrap().remove(slot).unwrap());
+    assert_eq!(old_bank.get_balance(&old_account), 1);
 
     let footer_marker = || {
         VersionedBlockMarker::from_block_footer(BlockFooterV1 {
@@ -3357,6 +3399,17 @@ fn test_headerless_update_parent() {
             .num_shreds,
         32
     );
+
+    let replacement_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    assert_eq!(old_bank.get_balance(&old_account), 0);
+    assert_eq!(replacement_bank.get_balance(&old_account), 0);
+    let replacement_account = Pubkey::new_unique();
+    replacement_bank.store_account(
+        &replacement_account,
+        &AccountSharedData::new(2, 0, &Pubkey::default()),
+    );
+    drop(old_bank);
+    assert_eq!(replacement_bank.get_balance(&replacement_account), 2);
 }
 
 #[test]

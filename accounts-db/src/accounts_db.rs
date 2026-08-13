@@ -2846,6 +2846,13 @@ impl AccountsDb {
     where
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
+        if self.scan_tracker.was_scan_bank_removed(bank_id, ancestors) {
+            return Err(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            });
+        }
+
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
         let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
             .ok_or(ScanError::SlotRemoved {
@@ -2857,7 +2864,7 @@ impl AccountsDb {
         // Scan Guard max root must be used as the scan guard guarantees that
         // the account state as of max root is persisted in the database
         let max_root_ancestors = Ancestors::from(vec![scan_guard.max_root()]);
-        let ancestors = if scan_guard.should_use_ancestors(ancestors) {
+        let effective_ancestors = if scan_guard.should_use_ancestors(ancestors) {
             ancestors
         } else {
             &max_root_ancestors
@@ -2874,8 +2881,9 @@ impl AccountsDb {
                 break;
             }
 
-            if let Some((cached_account, slot)) =
-                self.accounts_cache.load_latest(&pubkey, ancestors)
+            if let Some((cached_account, slot)) = self
+                .accounts_cache
+                .load_latest(&pubkey, effective_ancestors)
             {
                 cached_versions.insert(pubkey, (cached_account, slot));
             }
@@ -2887,11 +2895,11 @@ impl AccountsDb {
         // Bound max_root by ancestors.min_slot() so that roots from slots
         // beyond the querying bank's ancestor chain are not visible.
         let mut max_root = scan_guard.max_root();
-        if let Some(min) = ancestors.min_slot() {
+        if let Some(min) = effective_ancestors.min_slot() {
             max_root = max_root.min(min);
         }
         self.accounts_index.scan_accounts(
-            ancestors,
+            effective_ancestors,
             max_root,
             |pubkey, (account_info, slot)| {
                 if let Some((cached_account, cache_slot)) = cached_versions.remove(pubkey)
@@ -2922,7 +2930,9 @@ impl AccountsDb {
         }
 
         // Check whether the bank was removed while the scan was in progress.
-        if scan_guard.was_scan_corrupted() {
+        if scan_guard.was_scan_corrupted()
+            || self.scan_tracker.was_scan_bank_removed(bank_id, ancestors)
+        {
             return Err(ScanError::SlotRemoved {
                 slot: ancestors.max_slot(),
                 bank_id,
@@ -2954,6 +2964,13 @@ impl AccountsDb {
             return Ok(used_index);
         }
 
+        if self.scan_tracker.was_scan_bank_removed(bank_id, ancestors) {
+            return Err(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            });
+        }
+
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
         let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
             .ok_or(ScanError::SlotRemoved {
@@ -2965,7 +2982,7 @@ impl AccountsDb {
         // Scan Guard max root must be used as the scan guard guarantees that
         // the account state as of max root is persisted in the database
         let max_root_ancestors = Ancestors::from(vec![scan_guard.max_root()]);
-        let ancestors = if scan_guard.should_use_ancestors(ancestors) {
+        let effective_ancestors = if scan_guard.should_use_ancestors(ancestors) {
             ancestors
         } else {
             &max_root_ancestors
@@ -2976,7 +2993,7 @@ impl AccountsDb {
                 break;
             }
             if let Some((account, slot)) = self.do_load(
-                ancestors,
+                effective_ancestors,
                 &pubkey,
                 LoadHint::Unspecified,
                 PopulateReadCache::False,
@@ -2986,7 +3003,9 @@ impl AccountsDb {
         }
 
         // Check whether the bank was removed while the scan was in progress.
-        if scan_guard.was_scan_corrupted() {
+        if scan_guard.was_scan_corrupted()
+            || self.scan_tracker.was_scan_bank_removed(bank_id, ancestors)
+        {
             return Err(ScanError::SlotRemoved {
                 slot: ancestors.max_slot(),
                 bank_id,
@@ -3488,6 +3507,10 @@ impl AccountsDb {
             )
         }
 
+        // Serialize against manual same-slot removal so an old bank cannot begin purging before
+        // the cutoff is installed and finish after its replacement starts writing.
+        let removed_bank_id_cutoffs = self.scan_tracker.removed_bank_id_cutoffs.read().unwrap();
+
         // BANK_DROP_SAFETY: Because this function only runs once the bank is dropped,
         // we know that there are no longer any ongoing scans on this bank, because scans require
         // and hold a reference to the bank at the tip of the fork they're scanning. Hence it's
@@ -3500,6 +3523,13 @@ impl AccountsDb {
             .remove(&bank_id)
         {
             // If this slot was already cleaned up, no need to do any further cleans
+            return;
+        }
+
+        if removed_bank_id_cutoffs
+            .get(&slot)
+            .is_some_and(|cutoff| bank_id <= *cutoff)
+        {
             return;
         }
 
@@ -3743,6 +3773,40 @@ impl AccountsDb {
             &remove_unrooted_purge_stats,
         );
         remove_unrooted_purge_stats.report("remove_unrooted_slots_purge_slots_stats", None);
+    }
+
+    /// Removes slots without requiring their old `Bank` instances to still be available. Delayed
+    /// drops and scans from banks allocated through `max_bank_id` are ignored. Callers must stop
+    /// those banks from writing or creating descendants and serialize replacement creation after
+    /// this call.
+    pub fn remove_unrooted_slots_by_slot(
+        &self,
+        remove_slots: impl IntoIterator<Item = Slot>,
+        max_bank_id: BankId,
+    ) {
+        let remove_slots = remove_slots.into_iter().collect::<Vec<_>>();
+        assert!(
+            remove_slots
+                .iter()
+                .all(|slot| !self.accounts_cache.contains_unflushed_root(*slot)),
+            "Trying to remove accounts for rooted slots {remove_slots:?}"
+        );
+
+        let max_root = self.max_root();
+        let mut removed_bank_id_cutoffs =
+            self.scan_tracker.removed_bank_id_cutoffs.write().unwrap();
+        // Slots below the root cannot be reused, and `purge_slot()` never removes rooted state.
+        removed_bank_id_cutoffs.retain(|slot, _| *slot >= max_root);
+        for slot in &remove_slots {
+            removed_bank_id_cutoffs
+                .entry(*slot)
+                .and_modify(|cutoff| *cutoff = (*cutoff).max(max_bank_id))
+                .or_insert(max_bank_id);
+        }
+
+        let purge_stats = PurgeStats::default();
+        self.purge_slots_from_cache(remove_slots.iter(), &purge_stats);
+        purge_stats.report("remove_unrooted_slots_by_slot_purge_slots_stats", None);
     }
 
     /// Calculates the `AccountLtHash` of `account`
