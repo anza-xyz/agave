@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         contact_info::ContactInfo,
@@ -185,6 +187,7 @@ impl CrdsValue {
     }
 
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn data(&self) -> &CrdsData {
         &self.data
     }

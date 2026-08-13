@@ -23,7 +23,8 @@ fn write_fixture(dir: &std::path::Path, name: &str, input: &[u8]) {
 
 /// Generate protobuf fixture files for cross-implementation conformance
 /// testing. Ignored because it writes to disk and is meant to be run
-/// manually: `FIXTURE_DIR=<path> cargo test -p solana-gossip --test conformance -- --ignored`
+/// manually: `FIXTURE_DIR=<path> cargo test -p agave-conformance --features ffi
+/// --test gossip -- --ignored`
 #[test]
 #[ignore]
 fn generate_gossip_fixtures() {
