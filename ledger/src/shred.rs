@@ -592,19 +592,8 @@ impl Shred {
         if self.id() != other.id() {
             return false;
         }
-        fn get_payload(shred: &Shred) -> &[u8] {
-            let Ok(offset) = shred.retransmitter_signature_offset() else {
-                return shred.payload();
-            };
-            // Assert that the retransmitter's signature is at the very end of
-            // the shred payload.
-            debug_assert_eq!(offset + SIZE_OF_SIGNATURE, shred.payload().len());
-            shred
-                .payload()
-                .get(..offset)
-                .unwrap_or_else(|| shred.payload())
-        }
-        get_payload(self) != get_payload(other)
+        wire::get_payload_without_retransmitter_signature(self.payload())
+            != wire::get_payload_without_retransmitter_signature(other.payload())
     }
 }
 

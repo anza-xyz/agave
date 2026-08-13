@@ -27,10 +27,10 @@ use {
 };
 
 #[inline]
-fn get_shred_size(shred: &[u8]) -> Option<usize> {
-    match get_shred_variant(shred).ok()? {
-        ShredVariant::MerkleCode { .. } => Some(shred::merkle::ShredCode::SIZE_OF_PAYLOAD),
-        ShredVariant::MerkleData { .. } => Some(shred::merkle::ShredData::SIZE_OF_PAYLOAD),
+fn get_shred_size(shred_variant: ShredVariant) -> usize {
+    match shred_variant {
+        ShredVariant::MerkleCode { .. } => shred::merkle::ShredCode::SIZE_OF_PAYLOAD,
+        ShredVariant::MerkleData { .. } => shred::merkle::ShredData::SIZE_OF_PAYLOAD,
     }
 }
 
@@ -40,18 +40,21 @@ where
     P: Into<PacketRef<'a>>,
 {
     let data = packet.into().data(..)?;
-    data.get(..get_shred_size(data)?)
+    let shred_variant = get_shred_variant(data).ok()?;
+    data.get(..get_shred_size(shred_variant))
 }
 
 #[inline]
 pub fn get_shred_mut(buffer: &mut [u8]) -> Option<&mut [u8]> {
-    buffer.get_mut(..get_shred_size(buffer)?)
+    let shred_variant = get_shred_variant(buffer).ok()?;
+    buffer.get_mut(..get_shred_size(shred_variant))
 }
 
 #[inline]
 pub fn get_shred_and_repair_nonce(packet: PacketRef<'_>) -> Option<(&[u8], Option<Nonce>)> {
     let data = packet.data(..)?;
-    let shred = data.get(..get_shred_size(data)?)?;
+    let shred_variant = get_shred_variant(data).ok()?;
+    let shred = data.get(..get_shred_size(shred_variant))?;
     if !packet.meta().repair() {
         return Some((shred, None));
     }
@@ -247,8 +250,10 @@ pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
     ))
 }
 
-fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
-    match get_shred_variant(shred)? {
+fn get_retransmitter_signature_offset_from_variant(
+    shred_variant: ShredVariant,
+) -> Result<usize, Error> {
+    match shred_variant {
         ShredVariant::MerkleCode {
             proof_size,
             resigned,
@@ -258,6 +263,41 @@ fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
             resigned,
         } => shred::merkle::ShredData::get_retransmitter_signature_offset(proof_size, resigned),
     }
+}
+
+fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
+    get_retransmitter_signature_offset_from_variant(get_shred_variant(shred)?)
+}
+
+#[inline]
+fn truncate_retransmitter_signature(shred: &[u8], shred_variant: ShredVariant) -> &[u8] {
+    let Ok(offset) = get_retransmitter_signature_offset_from_variant(shred_variant) else {
+        return shred;
+    };
+    // The retransmitter signature is at the very end of the shred payload.
+    debug_assert_eq!(offset + SIGNATURE_BYTES, shred.len());
+    shred.get(..offset).unwrap_or(shred)
+}
+
+/// Returns the canonical shred bytes from the packet, excluding the
+/// retransmitter signature, if any.
+#[inline]
+pub fn get_shred_without_retransmitter_signature<'a, P>(packet: P) -> Option<&'a [u8]>
+where
+    P: Into<PacketRef<'a>>,
+{
+    let data = packet.into().data(..)?;
+    let shred_variant = get_shred_variant(data).ok()?;
+    let shred = data.get(..get_shred_size(shred_variant))?;
+    Some(truncate_retransmitter_signature(shred, shred_variant))
+}
+
+#[inline]
+pub(super) fn get_payload_without_retransmitter_signature(shred: &[u8]) -> &[u8] {
+    let Ok(shred_variant) = get_shred_variant(shred) else {
+        return shred;
+    };
+    truncate_retransmitter_signature(shred, shred_variant)
 }
 
 pub fn get_retransmitter_signature(shred: &[u8]) -> Result<Signature, Error> {
@@ -518,7 +558,7 @@ mod tests {
             }
             let packet = PacketRef::Packet(&packet);
             assert_eq!(
-                packet.data(..).map(get_shred_size).unwrap().unwrap(),
+                get_shred_size(get_shred_variant(packet.data(..).unwrap()).unwrap()),
                 shred.payload().len()
             );
             let bytes = get_shred(packet).unwrap();
@@ -569,9 +609,15 @@ mod tests {
                 is_last_in_slot && is_last_batch,
             );
             if is_last_in_slot && is_last_batch {
+                let retransmitter_signature_offset =
+                    get_retransmitter_signature_offset(bytes).unwrap();
                 assert_eq!(
-                    get_retransmitter_signature_offset(bytes).unwrap(),
+                    retransmitter_signature_offset,
                     shred.retransmitter_signature_offset().unwrap(),
+                );
+                assert_eq!(
+                    get_shred_without_retransmitter_signature(packet),
+                    bytes.get(..retransmitter_signature_offset),
                 );
                 assert_eq!(
                     get_retransmitter_signature(bytes).unwrap(),
@@ -602,6 +648,10 @@ mod tests {
                 assert_matches!(
                     get_retransmitter_signature(bytes),
                     Err(Error::InvalidShredVariant)
+                );
+                assert_eq!(
+                    get_shred_without_retransmitter_signature(packet),
+                    Some(bytes)
                 );
                 let mut bytes = bytes.to_vec();
                 let signature = make_dummy_signature(&mut rng);
