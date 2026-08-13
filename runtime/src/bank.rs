@@ -1720,11 +1720,9 @@ impl Bank {
             .upgrade_bpf_stake_program_to_v5_1
     }
 
-    /// Whether a stored delegation with neither effective nor activating stake
-    /// should be evicted from the stakes cache.
-    fn remove_inactive_stakes(&self) -> bool {
-        self.feature_set.snapshot().remove_inactive_stakes
-            && matches!(self.epoch_reward_status, EpochRewardStatus::Inactive)
+    /// Whether we are in the epoch rewards period.
+    fn in_epoch_rewards_period(&self) -> bool {
+        !matches!(self.epoch_reward_status, EpochRewardStatus::Inactive)
     }
 
     /// Get cached vote account state from the past few epochs so that some vote
@@ -4783,7 +4781,8 @@ impl Bank {
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
-        let remove_inactive_stakes = self.remove_inactive_stakes();
+        let remove_inactive_stakes = self.feature_set.snapshot().remove_inactive_stakes;
+        let in_epoch_rewards_period = self.in_epoch_rewards_period();
 
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
@@ -4793,6 +4792,7 @@ impl Bank {
                     new_warmup_cooldown_rate_epoch,
                     use_fixed_point_stake_math,
                     remove_inactive_stakes,
+                    in_epoch_rewards_period,
                 )
             })
         });
@@ -5783,7 +5783,8 @@ impl Bank {
         debug_assert_eq!(txs.len(), processing_results.len());
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
-        let remove_inactive_stakes = self.remove_inactive_stakes();
+        let remove_inactive_stakes = self.feature_set.snapshot().remove_inactive_stakes;
+        let in_epoch_rewards_period = self.in_epoch_rewards_period();
         txs.iter()
             .zip(processing_results)
             .filter_map(|(tx, processing_result)| {
@@ -5811,6 +5812,7 @@ impl Bank {
                     new_warmup_cooldown_rate_epoch,
                     use_fixed_point_stake_math,
                     remove_inactive_stakes,
+                    in_epoch_rewards_period,
                 );
             });
     }
