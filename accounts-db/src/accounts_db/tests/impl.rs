@@ -1482,9 +1482,9 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
     assert_eq!(new_storage1.num_tombstones(), 1);
 }
 
-/// `shrink_collect` must recognize tombstone offsets already recorded on a storage (carried
-/// forward by a prior shrink) and route them into `tombstones_to_carry_forward`: rewritten while
-/// the slot is newer than the latest full snapshot, and dropped once the snapshot advances past it.
+/// `shrink_collect` must recognize tombstone offsets already recorded on a storage and retain
+/// them as `tombstones_to_carry_forward` while the slot is newer than the latest full
+/// snapshot, and remove them once the snapshot advances past the slot.
 #[test]
 fn test_shrink_collect_carries_forward_existing_tombstones() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
@@ -1497,46 +1497,23 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
     let alive_account = AccountSharedData::new(1, 0, &Pubkey::default());
     let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
-    let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
-    let storage = Arc::new(AccountStorageEntry::new(
-        &paths[0],
-        slot,
-        100,
-        DEFAULT_FILE_SIZE,
-        accounts_db.accounts_file_provider,
-    ));
-    // An ordinary alive account, present in the index.
-    append_single_account_with_default_hash(
-        &storage,
-        &alive_pubkey,
-        &alive_account,
-        true,
-        Some(&accounts_db.accounts_index),
-    );
-    // A zero-lamport account physically in the storage but NOT in the index: i.e. a tombstone
-    // carried forward by a prior shrink of an even-older storage.
-    append_single_account_with_default_hash(
-        &storage,
-        &tombstone_pubkey,
-        &zero_lamport_account,
-        true,
-        None,
-    );
-    accounts_db.storage.insert(Arc::clone(&storage));
-    accounts_db.add_root(slot);
+    // An older version of the account that will become a tombstone in `slot`.
+    accounts_db.store_for_tests((slot - 1, [(&tombstone_pubkey, &alive_account)].as_slice()));
+    accounts_db.add_root_and_flush_write_cache(slot - 1);
 
-    // Record the tombstone account's offset on the storage's tombstone list, as a prior shrink
-    // would have.
-    let mut tombstone_offset = None;
-    storage
-        .accounts
-        .scan_accounts_without_data(|offset, account| {
-            if account.pubkey == &tombstone_pubkey {
-                tombstone_offset = Some(offset);
-            }
-        })
-        .unwrap();
-    storage.batch_insert_tombstone_offsets([tombstone_offset.unwrap()]);
+    // Flushing with clean writes the zero-lamport account to the storage as a tombstone, removing
+    // it from the index, and stores the alive account normally.
+    accounts_db.store_for_tests((
+        slot,
+        [
+            (&alive_pubkey, &alive_account),
+            (&tombstone_pubkey, &zero_lamport_account),
+        ]
+        .as_slice(),
+    ));
+    accounts_db.add_root_and_flush_write_cache(slot);
+
+    let storage = accounts_db.get_and_assert_single_storage(slot);
     assert_eq!(storage.num_tombstones(), 1);
 
     // Newer than the latest full snapshot: the tombstone must be carried forward, not dropped and
