@@ -71,11 +71,13 @@ use {
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
     seqlock::SeqLock,
-    smallvec::SmallVec,
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_clock::{BankId, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_lattice_hash::{batch, lt_hash::LtHash},
+    solana_lattice_hash::{
+        batch,
+        lt_hash::{LtHash, SingleLtHashUpdater},
+    },
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -3751,45 +3753,39 @@ impl AccountsDb {
             return ZERO_LAMPORT_ACCOUNT_LT_HASH;
         }
 
-        let hasher = Self::hash_account_helper(account, pubkey);
-        let lt_hash = LtHash::with(&hasher);
-        AccountLtHash(lt_hash)
+        let hasher = Self::write_account_hash_input(account, pubkey, blake3::Hasher::new());
+        AccountLtHash(LtHash::with(&hasher))
     }
 
-    /// Hashes `account` and returns the underlying Hasher
-    fn hash_account_helper(account: &impl ReadableAccount, pubkey: &Pubkey) -> blake3::Hasher {
-        let mut hasher = blake3::Hasher::new();
-
-        // allocate a buffer on the stack that's big enough
-        // to hold a token account or a stake account
-        const META_SIZE: usize = 8 /* lamports */ + 1 /* executable */ + 32 /* owner */ + 32 /* pubkey */;
-        const DATA_SIZE: usize = 200; // stake accounts are 200 B and token accounts are 165-182ish B
-        const BUFFER_SIZE: usize = META_SIZE + DATA_SIZE;
-        let mut buffer = SmallVec::<[u8; BUFFER_SIZE]>::new();
-
-        // collect lamports into buffer to hash
-        buffer.extend_from_slice(&account.lamports().to_le_bytes());
-
-        let data = account.data();
-        if data.len() > DATA_SIZE {
-            // For larger accounts whose data can't fit into the buffer, update the hash now.
-            hasher.update(&buffer);
-            buffer.clear();
-
-            // hash account's data
-            hasher.update(data);
-        } else {
-            // For small accounts whose data can fit into the buffer, append it to the buffer.
-            buffer.extend_from_slice(data);
+    /// Group-adds `account`'s lattice hash into `accumulator`, folded in once the
+    /// batch flushes. Zero-lamport accounts hash to the identity and are skipped.
+    ///
+    /// The batch API only adds, so subtracting an account means feeding it into a
+    /// separate accumulator and mixing that accumulator's final hash out.
+    pub fn add_account_to_lt_hash(
+        accumulator: &mut batch::Accumulator,
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+    ) {
+        if account.lamports() == 0 {
+            return;
         }
+        Self::write_account_hash_input(account, pubkey, accumulator.start_message()).finish();
+    }
 
-        // collect executable, owner, and pubkey into buffer to hash
-        buffer.push(account.executable().into());
-        buffer.extend_from_slice(account.owner().as_ref());
-        buffer.extend_from_slice(pubkey.as_ref());
-        hasher.update(&buffer);
-
-        hasher
+    /// The single source of truth for the per-account hash input layout.
+    #[inline]
+    fn write_account_hash_input<S: SingleLtHashUpdater>(
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+        mut sink: S,
+    ) -> S {
+        sink.write_part(&account.lamports().to_le_bytes());
+        sink.write_part(account.data());
+        sink.write_part(&[u8::from(account.executable())]);
+        sink.write_part(account.owner().as_ref());
+        sink.write_part(pubkey.as_ref());
+        sink
     }
 
     pub fn mark_slot_frozen(&self, slot: Slot) {
@@ -5320,19 +5316,8 @@ impl AccountsDb {
                     );
                 }
 
-                // Stream the account's lt-hash message into the (per-thread) batch.
-                // Skip zero-lamport accounts: their `AccountLtHash` is the identity,
-                // so mixing it in is a no-op. These bytes must match the stream that
-                // `hash_account_helper` feeds the `blake3` hasher.
                 if !is_account_zero_lamport {
-                    let mut message = lt_hash_acc.start_message();
-                    message
-                        .add_part(&account.lamports().to_le_bytes())
-                        .add_part(account.data())
-                        .add_part(&[u8::from(account.executable())])
-                        .add_part(account.owner().as_ref())
-                        .add_part(account.pubkey().as_ref());
-                    message.finish();
+                    Self::add_account_to_lt_hash(lt_hash_acc, &account, account.pubkey);
                 }
 
                 // SAFETY: The bank capitalization field is a u64, so the lamport sum of
