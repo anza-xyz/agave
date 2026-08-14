@@ -39,7 +39,7 @@ use {
         blockstore_meta::BlockLocation,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
-            ShredFetchStats, ShredType, layout::get_merkle_root, merkle_tree,
+            ShredFetchStats, ShredFlags, ShredType, layout::get_merkle_root, merkle_tree,
         },
     },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
@@ -126,7 +126,8 @@ impl From<Hash> for FecSetRoot {
 pub enum ShredRepairType {
     /// Requesting `MAX_ORPHAN_REPAIR_RESPONSES ` parent shreds
     Orphan(Slot),
-    /// Requesting any shred with index greater than or equal to the particular index
+    /// Requesting any shred with index greater than or equal to the particular index,
+    /// or a lower shred marked as the last shred in its slot.
     HighestShred(Slot, u64),
     /// Requesting the missing shred at a particular index
     Shred(Slot, u64),
@@ -181,7 +182,12 @@ impl RequestResponse for ShredRepairType {
         match self {
             ShredRepairType::Orphan(slot) => shred_slot <= *slot,
             ShredRepairType::HighestShred(slot, index) => {
-                shred_slot == *slot && get_shred_index(shred) >= Some(*index)
+                shred_slot == *slot
+                    && get_shred_index(shred).is_some_and(|shred_index| {
+                        shred_index >= *index
+                            || shred::layout::get_flags(shred)
+                                .is_ok_and(|flags| flags.contains(ShredFlags::LAST_SHRED_IN_SLOT))
+                    })
             }
             ShredRepairType::Shred(slot, index) => {
                 shred_slot == *slot && get_shred_index(shred) == Some(*index)
@@ -2493,7 +2499,7 @@ mod tests {
         run_highest_window_request(5, 3, 9);
     }
 
-    /// test run_window_request responds with the right shred, and do not overrun
+    /// Test that run_highest_window_request responds with the highest shred.
     pub fn run_highest_window_request(slot: Slot, num_slots: u64, nonce: Nonce) {
         let recycler = PacketBatchRecycler::default();
         agave_logger::setup();
@@ -2533,11 +2539,27 @@ mod tests {
         assert_eq!(rv[0].index(), index as u32);
         assert_eq!(rv[0].slot(), slot);
 
+        let request_index = index + 10;
+        let rv = handler
+            .run_highest_window_request(&recycler, &socketaddr_any!(), slot, request_index, nonce)
+            .expect("last shred response");
+        let request = ShredRepairType::HighestShred(slot, request_index);
+        verify_responses(&request, rv.iter());
+
+        // Do not respond below the requested index if the highest shred is not
+        // marked as the last shred in the slot.
+        let incomplete_slot = slot + 1;
+        let (mut shreds, _) = make_many_slot_entries(incomplete_slot, 1, 5);
+        let last_shred = shreds.pop().unwrap();
+        assert!(last_shred.last_in_slot());
+        blockstore.insert_shreds(shreds, false).unwrap();
+        let meta = blockstore.meta(incomplete_slot).unwrap().unwrap();
+        assert!(meta.last_index.is_none());
         let rv = handler.run_highest_window_request(
             &recycler,
             &socketaddr_any!(),
-            slot,
-            index + 1,
+            incomplete_slot,
+            meta.received + 10,
             nonce,
         );
         assert!(rv.is_none());
@@ -3177,6 +3199,14 @@ mod tests {
         let shred = new_test_data_shred(slot, index + 1);
         assert!(request.verify_response(shred.payload()));
         let shred = new_test_data_shred(slot, index - 1);
+        assert!(!request.verify_response(shred.payload()));
+        let shred = Shredder::single_shred_for_tests(slot, &Keypair::new());
+        let request = ShredRepairType::HighestShred(slot, u64::from(shred.index()) + 10);
+        assert!(shred.last_in_slot());
+        assert!(request.verify_response(shred.payload()));
+        let shred = Shredder::single_shred_for_tests(slot + 1, &Keypair::new());
+        assert!(!request.verify_response(shred.payload()));
+        let shred = new_test_coding_shred(slot, index - 1);
         assert!(!request.verify_response(shred.payload()));
         let shred = new_test_data_shred(slot - 1, index);
         assert!(!request.verify_response(shred.payload()));
