@@ -829,16 +829,6 @@ pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<Path
     Ok((temp_dirs, paths))
 }
 
-/// Indicates when to mark accounts obsolete
-/// * Disabled - do not mark accounts obsolete
-/// * Enabled - mark accounts obsolete during write cache flush
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkObsoleteAccounts {
-    Disabled,
-    #[default]
-    Enabled,
-}
-
 /// One accounts index bin's worth of pubkeys that are candidates for cleaning
 type CleaningCandidatesBin = HashSet<Pubkey, PubkeyHasherBuilder>;
 /// This is the return type of AccountsDb::construct_candidate_clean_keys.
