@@ -1191,6 +1191,10 @@ struct NewEpochBundle {
     unfiltered_distribution_vote_accounts: VoteAccounts,
     /// Current effective stake delegated to each vote account pubkey.
     delegated_stakes: DelegatedStakes,
+    /// Delegations that were inactive in the rewarded epoch and remain inactive
+    /// in the distribution epoch. These are evicted from the stakes cache when
+    /// `remove_inactive_stakes` is active.
+    inert_stake_delegations: HashSet<Pubkey>,
     /// Vote accounts computed from the stakes cache for the current
     /// (distribution) epoch *after* applying VAT filtering.
     filtered_distribution_vote_accounts: VoteAccounts,
@@ -1724,6 +1728,13 @@ impl Bank {
             .upgrade_bpf_stake_program_to_v5_1
     }
 
+    /// Whether a stored delegation with neither effective nor activating stake
+    /// should be evicted from the stakes cache.
+    fn can_safely_remove_inactive_stakes(&self) -> bool {
+        self.feature_set.snapshot().remove_inactive_stakes
+            && matches!(self.epoch_reward_status, EpochRewardStatus::Inactive)
+    }
+
     /// Get cached vote account state from the past few epochs so that some vote
     /// state configuration changes are delayed before being used in reward
     /// calculation.
@@ -1764,13 +1775,14 @@ impl Bank {
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let mut stake_delegations = stakes.stake_delegations_vec();
         let (
             (
                 stake_history,
                 unfiltered_distribution_vote_accounts,
                 delegated_stakes,
                 reward_epoch_delegated_stakes,
+                inert_stake_delegations,
             ),
             calculate_activated_stake_time_us,
         ) = measure_us!(stakes.calculate_activated_stake(
@@ -1779,8 +1791,16 @@ impl Bank {
             self.new_warmup_cooldown_rate_epoch(),
             &stake_delegations,
             self.use_fixed_point_stake_math(),
+            self.feature_set.snapshot().remove_inactive_stakes,
         ));
         debug_assert_eq!(reward_epoch_delegated_stakes.epoch, rewarded_epoch);
+
+        // Filter out inert delegations so they are not marked for rewards. This
+        // set is always empty when the `remove_inactive_stakes` feature is off.
+        if !inert_stake_delegations.is_empty() {
+            stake_delegations
+                .retain(|(stake_pubkey, _)| !inert_stake_delegations.contains(*stake_pubkey));
+        }
 
         // Apply stake rewards and commission using the VAT-filtered distribution
         // vote-account snapshot.
@@ -1809,6 +1829,7 @@ impl Bank {
             stake_history,
             unfiltered_distribution_vote_accounts,
             delegated_stakes,
+            inert_stake_delegations,
             filtered_distribution_vote_accounts,
             rewards_calculation,
             calculate_activated_stake_time_us,
@@ -1838,6 +1859,7 @@ impl Bank {
             stake_history,
             unfiltered_distribution_vote_accounts,
             delegated_stakes,
+            inert_stake_delegations,
             filtered_distribution_vote_accounts,
             rewards_calculation,
             calculate_activated_stake_time_us,
@@ -1854,6 +1876,7 @@ impl Bank {
             stake_history,
             unfiltered_distribution_vote_accounts,
             delegated_stakes,
+            &inert_stake_delegations,
         );
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
@@ -4785,6 +4808,7 @@ impl Bank {
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
+        let can_safely_remove_inactive_stakes = self.can_safely_remove_inactive_stakes();
 
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
@@ -4793,6 +4817,7 @@ impl Bank {
                     &account,
                     new_warmup_cooldown_rate_epoch,
                     use_fixed_point_stake_math,
+                    can_safely_remove_inactive_stakes,
                 )
             })
         });
@@ -5783,6 +5808,7 @@ impl Bank {
         debug_assert_eq!(txs.len(), processing_results.len());
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
+        let can_safely_remove_inactive_stakes = self.can_safely_remove_inactive_stakes();
         txs.iter()
             .zip(processing_results)
             .filter_map(|(tx, processing_result)| {
@@ -5809,6 +5835,7 @@ impl Bank {
                     account,
                     new_warmup_cooldown_rate_epoch,
                     use_fixed_point_stake_math,
+                    can_safely_remove_inactive_stakes,
                 );
             });
     }
