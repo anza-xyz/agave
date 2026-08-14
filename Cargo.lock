@@ -1391,7 +1391,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -4449,7 +4449,7 @@ checksum = "c7d73b3f436185384286bd8098d17ec07c9a7d2388a6599f824d8502b529702a"
 [[package]]
 name = "librocksdb-sys"
 version = "0.17.3+10.4.2"
-source = "git+https://github.com/anza-xyz/rust-rocksdb?rev=4dba80dfe9434e595a971f5b2985ff9ba4fb31e7#4dba80dfe9434e595a971f5b2985ff9ba4fb31e7"
+source = "git+https://github.com/anza-xyz/rust-rocksdb?rev=2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3#2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3"
 dependencies = [
  "bindgen",
  "bzip2-sys",
@@ -6233,7 +6233,7 @@ checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
 [[package]]
 name = "rocksdb"
 version = "0.24.0"
-source = "git+https://github.com/anza-xyz/rust-rocksdb?rev=4dba80dfe9434e595a971f5b2985ff9ba4fb31e7#4dba80dfe9434e595a971f5b2985ff9ba4fb31e7"
+source = "git+https://github.com/anza-xyz/rust-rocksdb?rev=2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3#2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3"
 dependencies = [
  "libc",
  "librocksdb-sys",

@@ -256,5 +256,5 @@ strip = true
 workspace = true
 
 [patch.crates-io]
-librocksdb-sys = { git = "https://github.com/alessandrod/rust-rocksdb", rev = "df04a612d142acc91bf5fdf93841d26330812001" }
-rocksdb = { git = "https://github.com/alessandrod/rust-rocksdb", rev = "df04a612d142acc91bf5fdf93841d26330812001" }
+librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3" }
+rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3" }

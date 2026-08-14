@@ -20,7 +20,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
-        blockstore_db::{DBPinnableSlice, WriteBatch},
+        blockstore_db::DBPinnableSlice,
         blockstore_meta::BlockLocation,
         shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
     },
@@ -213,7 +213,6 @@ fn run_insert<'db, F>(
     blockstore: &'db Blockstore,
     shred_recovery_context: &mut ShredRecoveryContext,
     pinnable_slice: &mut DBPinnableSlice<'db>,
-    write_batch: &mut WriteBatch,
     handle_duplicate: F,
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
@@ -251,7 +250,6 @@ where
         false, // is_trusted
         shred_recovery_context,
         pinnable_slice,
-        write_batch,
         &handle_duplicate,
         metrics,
     )?;
@@ -442,7 +440,6 @@ impl WindowService {
                     shred_version,
                 );
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
-                let mut write_batch = blockstore.get_write_batch();
 
                 while !exit.load(Ordering::Relaxed) {
                     shred_recovery_context.maybe_update(sharable_banks.root());
@@ -453,7 +450,6 @@ impl WindowService {
                         &blockstore,
                         &mut shred_recovery_context,
                         &mut pinnable_slice,
-                        &mut write_batch,
                         handle_duplicate,
                         &mut metrics,
                         &mut ws_metrics,

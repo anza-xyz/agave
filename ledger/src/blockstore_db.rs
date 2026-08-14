@@ -423,13 +423,12 @@ impl Rocks {
         }
     }
 
-    pub(crate) fn write<B: AsMut<WriteBatch>>(&self, mut batch: B) -> Result<()> {
-        let batch = batch.as_mut();
+    pub(crate) fn write(&self, batch: WriteBatch) -> Result<()> {
         let op_start_instant = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_batch_perf_status,
         );
-        let result = self.db.write(&mut batch.write_batch);
+        let result = self.db.write(batch.write_batch);
         if let Some(op_start_instant) = op_start_instant {
             report_rocksdb_write_perf(
                 PERF_METRIC_OP_NAME_WRITE_BATCH, // We use write_batch as cf_name for write batch.
@@ -543,12 +542,6 @@ pub struct WriteBatch {
     write_batch: RWriteBatch,
 }
 
-impl AsMut<Self> for WriteBatch {
-    fn as_mut(&mut self) -> &mut Self {
-        self
-    }
-}
-
 pub(crate) struct BlockstoreByteReference<'a> {
     slice: DBPinnableSlice<'a>,
 }
@@ -577,10 +570,6 @@ impl AsRef<[u8]> for BlockstoreByteReference<'_> {
 }
 
 impl WriteBatch {
-    pub(crate) fn clear(&mut self) {
-        self.write_batch.clear();
-    }
-
     fn put_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K, value: &[u8]) {
         self.write_batch.put_cf(cf, key, value);
     }
