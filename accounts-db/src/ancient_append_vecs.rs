@@ -3752,7 +3752,7 @@ mod tests {
 
                     match i {
                         0 => {
-                            // single slot list because ref_count = 1
+                            // single slot list, so no_duplicates
                             let slot_list = vec![(
                                 slot,
                                 AccountInfo::new(
@@ -3760,7 +3760,7 @@ mod tests {
                                     lamports == 0,
                                 ),
                             )];
-                            alive_accounts.add(1, &account, &slot_list);
+                            alive_accounts.add(&account, &slot_list);
                             assert!(!alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.not_newest_duplicate.accounts.is_empty());
                             assert!(alive_accounts.newest_duplicate.accounts.is_empty());
@@ -3783,13 +3783,13 @@ mod tests {
                                     ),
                                 ),
                             ];
-                            alive_accounts.add(2, &account, &slot_list);
+                            alive_accounts.add(&account, &slot_list);
                             assert!(alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(!alive_accounts.not_newest_duplicate.accounts.is_empty());
                             assert!(alive_accounts.newest_duplicate.accounts.is_empty());
                         }
                         2 => {
-                            // multiple slot list, ref_count=2, this is newest
+                            // multiple slot list, this is the newest, so newest_duplicate
                             let slot_list = vec![
                                 (
                                     slot,
@@ -3806,7 +3806,7 @@ mod tests {
                                     ),
                                 ),
                             ];
-                            alive_accounts.add(2, &account, &slot_list);
+                            alive_accounts.add(&account, &slot_list);
                             assert!(alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.not_newest_duplicate.accounts.is_empty());
                             assert!(!alive_accounts.newest_duplicate.accounts.is_empty());

@@ -47,7 +47,7 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
-            ReclaimsWithNewestSlot, RefCount, ScanFilter, Startup, UpsertReclaim,
+            ReclaimsWithNewestSlot, ScanFilter, Startup, UpsertReclaim,
             in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
@@ -156,12 +156,7 @@ pub(crate) struct AliveAccountsSeparated<'a> {
 pub(crate) trait ShrinkCollector<'a>: Sync + Send {
     fn with_capacity(capacity: usize, slot: Slot) -> Self;
     fn collect(&mut self, other: Self);
-    fn add(
-        &mut self,
-        ref_count: RefCount,
-        account: &'a AccountFromStorage,
-        slot_list: &[(Slot, AccountInfo)],
-    );
+    fn add(&mut self, account: &'a AccountFromStorage, slot_list: &[(Slot, AccountInfo)]);
     fn len(&self) -> usize;
     fn alive_bytes(&self) -> usize;
     fn alive_accounts(&self) -> &Vec<&'a AccountFromStorage>;
@@ -179,13 +174,7 @@ impl<'a> ShrinkCollector<'a> for AliveAccounts<'a> {
             slot,
         }
     }
-    fn add(
-        &mut self,
-        ref_count: RefCount,
-        account: &'a AccountFromStorage,
-        slot_list: &[(Slot, AccountInfo)],
-    ) {
-        assert_eq!(ref_count as usize, slot_list.len());
+    fn add(&mut self, account: &'a AccountFromStorage, _slot_list: &[(Slot, AccountInfo)]) {
         self.accounts.push(account);
         self.bytes = self.bytes.saturating_add(account.stored_size());
     }
@@ -214,19 +203,14 @@ impl<'a> ShrinkCollector<'a> for AliveAccountsSeparated<'a> {
             not_newest_duplicate: AliveAccounts::with_capacity(0, slot),
         }
     }
-    fn add(
-        &mut self,
-        ref_count: RefCount,
-        account: &'a AccountFromStorage,
-        slot_list: &[(Slot, AccountInfo)],
-    ) {
-        assert_eq!(ref_count as usize, slot_list.len());
-        let other = if ref_count == 1 {
+    fn add(&mut self, account: &'a AccountFromStorage, slot_list: &[(Slot, AccountInfo)]) {
+        assert!(!slot_list.is_empty());
+        let slot = self.no_duplicates.slot;
+        let other = if slot_list.len() == 1 {
             &mut self.no_duplicates
-        } else if slot_list.len() == 1
-            || !slot_list
-                .iter()
-                .any(|(slot_list_slot, _info)| slot_list_slot > &self.not_newest_duplicate.slot)
+        } else if !slot_list
+            .iter()
+            .any(|(slot_list_slot, _info)| slot_list_slot > &slot)
         {
             // this entry is alive but is newer than any other slot in the index
             &mut self.newest_duplicate
@@ -235,7 +219,7 @@ impl<'a> ShrinkCollector<'a> for AliveAccountsSeparated<'a> {
             // We would expect clean to get rid of the entry for THIS slot at some point, but clean hasn't done that yet.
             &mut self.not_newest_duplicate
         };
-        other.add(ref_count, account, slot_list);
+        other.add(account, slot_list);
     }
     fn len(&self) -> usize {
         self.no_duplicates
@@ -1927,7 +1911,7 @@ impl AccountsDb {
             accounts.iter().map(|account| account.pubkey()),
             |_pubkey, slots_refs| {
                 let stored_account = &accounts[index];
-                if let Some((slot_list, ref_count)) = slots_refs {
+                if let Some((slot_list, _)) = slots_refs {
                     index_scan_returned_some_count += 1;
                     let is_alive = slot_list.iter().any(|(slot, _acct_info)| {
                         // if the accounts index contains an entry at this slot, then the append vec we're asking about contains this item and thus, it is alive at this slot
@@ -1936,17 +1920,16 @@ impl AccountsDb {
 
                     // All obsolete and tombstones have been filtered. Account MUST be alive in this slot
                     assert!(is_alive);
-                    alive_accounts.add(ref_count, stored_account, slot_list);
+                    alive_accounts.add(stored_account, slot_list);
                 } else {
                     index_scan_returned_none_count += 1;
-                    // getting None here means the account is 'normal' and was written to disk. This means it must have ref_count=1 and
+                    // getting None here means the account is 'normal' and was written to disk. This means it must have
                     // slot_list.len() = 1. This means it must be alive in this slot. This is by far the most common case.
                     // Note that we could get Some(...) here if the account is in the in mem index because it is hot.
                     // Note this could also mean the account isn't on disk either. That would indicate a bug in accounts db.
                     // Account is alive.
-                    let ref_count = 1;
                     let slot_list = [(slot_to_shrink, AccountInfo::default())];
-                    alive_accounts.add(ref_count, stored_account, &slot_list);
+                    alive_accounts.add(stored_account, &slot_list);
                 }
                 index += 1;
             },
