@@ -97,8 +97,7 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     /// None for InMemOnly, Some(threshold_entries_per_bin) for Threshold
     pub(super) threshold_entries_per_bin: Option<ThresholdEntriesPerBin>,
 
-    /// If true, flush dirty entries to disk once `slot_list.len() == 1` and
-    /// `ref_count == 1`, making it evictable
+    /// If true, flush dirty entries to disk once `slot_list.len() == 1`, making it evictable
     should_write_through: bool,
 }
 
@@ -115,8 +114,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         self.disk.is_some()
     }
 
-    /// If true, flush dirty entries to disk once `slot_list.len() == 1` and
-    /// `ref_count == 1`, making it evictable
+    /// If true, flush dirty entries to disk once `slot_list.len() == 1`, making it evictable
     pub(crate) fn should_write_through(&self) -> bool {
         self.should_write_through
     }

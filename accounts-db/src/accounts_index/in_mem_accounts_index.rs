@@ -60,8 +60,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     /// stats related to starting up
     pub(crate) startup_stats: Arc<StartupStats>,
 
-    /// If true, flush dirty entries to disk once `slot_list.len() == 1` and
-    /// `ref_count == 1`, making it evictable
+    /// If true, flush dirty entries to disk once `slot_list.len() == 1`, making it evictable
     should_write_through: bool,
 }
 
@@ -428,9 +427,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Call `user_fn` with a write lock of the slot list and the entry itself.
     /// The entry is always marked dirty after `user_fn` returns, regardless of whether
     /// `user_fn` modifies the slot list — callers should ideally know they will modify it.
-    /// When write-through is active and the resulting slot list has exactly one entry with
-    /// `ref_count == 1`, the entry is additionally flushed to disk immediately and the dirty
-    /// flag may be cleared.
+    /// When write-through is active and the resulting slot list has exactly one entry, the entry
+    /// is additionally flushed to disk immediately and the dirty flag may be cleared.
     pub(crate) fn slot_list_mut_with_entry<RT>(
         &self,
         pubkey: &Pubkey,
@@ -444,7 +442,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     let result = user_fn(entry.slot_list_write_lock(), entry);
                     // always mark dirty unconditionally, even if user_fn made no changes
                     entry.mark_dirty();
-                    if self.should_write_through && entry.ref_count() == 1 {
+                    if self.should_write_through {
                         let slot_list = entry.slot_list_read_lock();
                         if slot_list.len() == 1 {
                             write_through_args = Some(slot_list[0]);
@@ -500,18 +498,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         self.get_only_in_mem(pubkey, false, |entry| {
             if let Some(entry) = entry {
                 let slot_list = entry.slot_list_read_lock();
-                if slot_list.len() == 1
-                    && slot_list[0] == (slot, account_info)
-                    && entry.ref_count() == 1
-                {
+                if slot_list.len() == 1 && slot_list[0] == (slot, account_info) {
                     entry.clear_dirty();
                 }
             }
         });
     }
 
-    /// If the in-mem entry for pubkey is `slot_list.len() == 1` with `ref_count == 1` and
-    /// currently dirty, write it through to disk
+    /// If the in-mem entry for pubkey is `slot_list.len() == 1` and currently dirty, write it
+    /// through to disk
     pub fn try_write_through(&self, pubkey: &Pubkey) {
         let to_write = self.get_only_in_mem(pubkey, false, |entry| {
             entry.and_then(|entry| {
@@ -520,8 +515,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 }
 
                 let slot_list = entry.slot_list_read_lock();
-                match (entry.ref_count(), &slot_list[..]) {
-                    (1, [info]) => Some(*info),
+                match &slot_list[..] {
+                    [info] => Some(*info),
                     _ => None,
                 }
             })
@@ -564,11 +559,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             );
 
             entry.unref_by_count(reclaim_count);
-            assert_eq!(
-                entry.ref_count(),
-                1,
-                "ref count should be one after cleaning all entries"
-            );
         })
         .expect("Expected entry to exist in accounts index");
     }
@@ -622,8 +612,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             );
             entry.mark_dirty();
 
-            should_write_through =
-                self.should_write_through && slot_list_length == 1 && entry.ref_count() == 1;
+            should_write_through = self.should_write_through && slot_list_length == 1;
         });
         if should_write_through {
             let (slot, account_info) = new_item;
@@ -1606,7 +1595,6 @@ mod tests {
         let mut callback_called = false;
         accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
             assert_eq!(entry.slot_list_lock_read_len(), 0);
-            assert_eq!(entry.ref_count(), 0);
             assert!(entry.dirty());
             InMemAccountsIndex::<u64, u64>::lock_and_update_slot_list(
                 entry,
@@ -1648,7 +1636,6 @@ mod tests {
         let mut callback_called = false;
         accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
             assert_eq!(entry.slot_list_lock_read_len(), 1);
-            assert_eq!(entry.ref_count(), 1);
             assert!(entry.dirty());
             callback_called = true;
         });
@@ -1681,7 +1668,6 @@ mod tests {
         let mut callback_called = false;
         accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
             assert_eq!(entry.slot_list_lock_read_len(), 1);
-            assert_eq!(entry.ref_count(), 1);
             assert!(!entry.dirty()); // Entry loaded from disk should not be dirty
             InMemAccountsIndex::<u64, u64>::lock_and_update_slot_list(
                 entry,
@@ -2444,10 +2430,9 @@ mod tests {
         );
     }
 
-    /// `slot_list_mut` write-through fires only for `slot_list.len() == 1`, `ref_count == 1` entries.
+    /// `slot_list_mut` write-through fires only for `slot_list.len() == 1` entries.
     #[test_case(SlotList::from([(1, 0)]), 1, true  ; "writes_through")]
-    #[test_case(SlotList::from(vec![(1, 10), (2, 20)]),  1, false ; "multi_slot")]
-    #[test_case(SlotList::from([(1, 0)]), 2, false ; "multi_ref")]
+    #[test_case(SlotList::from(vec![(1, 10), (2, 20)]),  2, false ; "multi_slot")]
     fn test_slot_list_mut_write_through(
         slot_list: SlotList<u64>,
         ref_count: u32,
@@ -2502,27 +2487,25 @@ mod tests {
             assert!(!entry.dirty()); // write-through clears dirty
         });
 
-        let (slot_list, ref_count) = index
+        let (slot_list, _) = index
             .load_from_disk(&pubkey)
             .expect("upsert should have written entry to disk");
         assert_eq!(slot_list, SlotList::from([(slot, info)]));
-        assert_eq!(ref_count, 1);
     }
 
-    /// `try_write_through` must leave a multi-ref entry alone: if the pubkey still has more
-    /// than one slot-list entry (ref_count > 1), persisting just one of them to disk would let a
-    /// later eviction drop the fresher in-mem entry in favor of an incomplete disk entry. The
-    /// entry must stay dirty and nothing must be written to disk.
+    /// `try_write_through` must leave a multi-slot entry alone: if the pubkey still has more
+    /// than one slot-list entry, persisting just one of them to disk would let a later eviction
+    /// drop the fresher in-mem entry in favor of an incomplete disk entry. The entry must stay
+    /// dirty and nothing must be written to disk.
     #[test]
-    fn test_try_write_through_skips_multi_ref_entry() {
+    fn test_try_write_through_skips_multi_slot_entry() {
         let index = new_should_write_through_for_test(None);
         let pubkey = solana_pubkey::new_rand();
         let info = 10;
 
         assert!(index.load_from_disk(&pubkey).is_none(), "not on disk yet");
 
-        // Upsert the same pubkey at two different (uncached) slots so its slot list has two
-        // entries and ref_count == 2
+        // Upsert the same pubkey at two different (uncached) slots so its slot list has two entries
         for slot in [1, 2] {
             let new_value = PreAllocatedAccountMapEntry::new(slot, info, &index.storage, true);
             index.upsert(
@@ -2540,7 +2523,6 @@ mod tests {
                 2,
                 "two-version slot list"
             );
-            assert_eq!(entry.ref_count(), 2);
             assert!(entry.dirty(), "dirty before write-through attempt");
         });
 

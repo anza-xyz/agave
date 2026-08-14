@@ -524,8 +524,8 @@ fn test_flush_defers_write_through_until_all_cached_slots_drop() {
 
     // Flush slot 2. The pubkey is no longer in any cached slot, so the cache-drop
     // loop in flush_slot_cache calls try_write_through. ReclaimOldSlots has
-    // collapsed the slot list to a single storage entry with ref_count == 1, so
-    // write-through fires and bumps the counter by exactly one.
+    // collapsed the slot list to a single storage entry, so write-through fires
+    // and bumps the counter by exactly one.
     db.add_root_and_flush_write_cache(2);
     assert_eq!(
         immediate_disk_writes(),

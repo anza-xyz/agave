@@ -109,7 +109,7 @@ pub enum ScanFilter {
     #[default]
     All,
 
-    /// abnormal = ref_count != 1 or slot list.len() != 1
+    /// abnormal = slot list.len() != 1
     /// Scan only in-memory index and skip on-disk index
     OnlyAbnormal,
 
@@ -517,17 +517,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         lock.as_ref()
                             .unwrap()
                             .get_only_in_mem(pubkey, false, |mut entry| {
-                                if entry.is_some() && matches!(filter, ScanFilter::OnlyAbnormalTest)
+                                if matches!(filter, ScanFilter::OnlyAbnormalTest)
+                                    && let Some(local_entry) = entry
+                                    && local_entry.slot_list_lock_read_len() == 1
                                 {
-                                    let local_entry = entry.unwrap();
-                                    if local_entry.ref_count() == 1
-                                        && local_entry.slot_list_lock_read_len() == 1
-                                    {
-                                        // Account was found in memory, but is a single ref single slot account
-                                        // For testing purposes, return None as this can be treated like
-                                        // a normal account that was flushed to storage.
-                                        entry = None;
-                                    }
+                                    // Account was found in memory, but is a single slot account.
+                                    // For testing purposes, return None as this can be treated like
+                                    // a normal account that was flushed to storage.
+                                    entry = None;
                                 }
                                 internal_callback(entry);
                                 entry.is_some()
@@ -536,7 +533,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         lock.as_ref().unwrap().get_internal_inner(pubkey, |entry| {
                             assert!(entry.is_some(), "{pubkey}, entry: {entry:?}");
                             let entry = entry.unwrap();
-                            assert_eq!(entry.ref_count(), 1, "{pubkey}");
                             assert_eq!(entry.slot_list_lock_read_len(), 1, "{pubkey}");
                             (false, ())
                         });
@@ -660,8 +656,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     /// Write through to disk the in-mem entries for `pubkeys`. Each entry is only persisted if it
-    /// is dirty, `slot_list.len() == 1`, and `ref_count == 1`. Persisting an entry clears its
-    /// dirty flag so it becomes eligible for eviction. No-op when disk index is disabled.
+    /// is dirty and `slot_list.len() == 1`. Persisting an entry clears its dirty flag so it
+    /// becomes eligible for eviction. No-op when disk index is disabled.
     pub fn write_through_pubkeys(&self, pubkeys: Vec<Pubkey>) {
         if !self.storage.storage.should_write_through() {
             return;
@@ -932,8 +928,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
             // If only a zero lamport single ref account remains, then reclaim it. It will be converted
             // into a tombstone
-            if entry.ref_count() == unref_count + 1
-                && let &[(slot, account_info)] = &*slot_list
+            if let &[(slot, account_info)] = &*slot_list
                 && account_info.is_zero_lamport()
             {
                 reclaims.push(((slot, account_info), slot));
@@ -1362,7 +1357,6 @@ mod tests {
                     to_raw_first,
                 )
                 .into_account_map_entry(&index.storage.storage);
-                assert_eq!(new_entry.ref_count(), 1);
                 assert_eq!(new_entry.slot_list_lock_read_len(), 1);
                 assert_eq!(
                     new_entry.slot_list_read_lock().to_vec(),
@@ -1390,7 +1384,6 @@ mod tests {
 
         for (i, key) in [key0, key1].iter().enumerate() {
             index.get_and_then(key, |entry| {
-                assert_eq!(entry.unwrap().ref_count(), 1);
                 assert_eq!(
                     entry.unwrap().slot_list_read_lock().as_ref(),
                     &[(slot0, account_infos[i])],
@@ -1438,7 +1431,6 @@ mod tests {
         index.get_and_then(&key, |entry| {
             let entry = entry.unwrap();
             let slot_list = entry.slot_list_read_lock();
-            assert_eq!(entry.ref_count(), 1);
             assert_eq!(slot_list.as_ref(), &[(slot0, account_infos[0])]);
             let new_entry = PreAllocatedAccountMapEntry::new(
                 slot0,
@@ -1490,10 +1482,8 @@ mod tests {
             let slot_list = entry.slot_list_read_lock();
 
             if should_have_reclaims {
-                assert_eq!(entry.ref_count(), 1);
                 assert_eq!(slot_list.as_ref(), &[(slot1, account_infos[1])],);
             } else {
-                assert_eq!(entry.ref_count(), 2);
                 assert_eq!(
                     slot_list.as_ref(),
                     &[(slot0, account_infos[0]), (slot1, account_infos[1])],
