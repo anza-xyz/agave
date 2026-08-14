@@ -114,9 +114,9 @@ pub trait RepairHandler {
     ) -> Option<PacketBatch> {
         // Try to find the requested index in one of the slots
         let meta = self.blockstore().meta(slot).ok()??;
-        if meta.received > highest_index {
-            // meta.received must be at least 1 by this point
-            let packet = self.repair_response_packet(slot, meta.received - 1, from_addr, nonce)?;
+        let shred_index = meta.received.checked_sub(1)?;
+        if shred_index >= highest_index || meta.last_index == Some(shred_index) {
+            let packet = self.repair_response_packet(slot, shred_index, from_addr, nonce)?;
             return Some(
                 RecycledPacketBatch::new_with_recycler_data(
                     recycler,
