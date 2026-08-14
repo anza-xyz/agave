@@ -13,12 +13,14 @@ use {
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::transaction_with_meta::{
+        StaticMessageWithMeta, TransactionWithMeta,
+    },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         transaction_error_metrics::TransactionErrorMetrics,
     },
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_transaction::versioned::TransactionVersion,
     solana_transaction_error::{TransactionError, TransactionResult},
 };
@@ -126,14 +128,14 @@ impl Bank {
         )
     }
 
-    fn filter_v1_transactions<'a, Tx: TransactionWithMeta>(
+    fn filter_v1_transactions<'a, Msg: SVMStaticMessage>(
         &self,
-        sanitized_txs: &'a [impl core::borrow::Borrow<Tx>],
+        messages: &'a [impl core::borrow::Borrow<Msg>],
         lock_results: &'a [TransactionResult<()>],
     ) -> impl Iterator<Item = TransactionResult<()>> + 'a {
         let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
         // Discard v1 transactions until feature gate is activated.
-        sanitized_txs
+        messages
             .iter()
             .zip(lock_results)
             .map(move |(tx, lock_result)| match lock_result {
@@ -299,24 +301,24 @@ impl Bank {
         Some((*nonce_address, nonce_data))
     }
 
-    fn check_status_cache<Tx: TransactionWithMeta>(
+    fn check_status_cache<Msg: StaticMessageWithMeta>(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
+        messages: &[impl core::borrow::Borrow<Msg>],
         mut lock_results: Vec<TransactionCheckResult>,
         collect_processed_slots: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> (Vec<TransactionCheckResult>, Option<Vec<Option<Slot>>>) {
         // Do allocation before acquiring the lock on the status cache.
         let mut processed_slots = if collect_processed_slots {
-            Some(Vec::with_capacity(sanitized_txs.len()))
+            Some(Vec::with_capacity(messages.len()))
         } else {
             None
         };
         let rcache = self.status_cache.read().unwrap();
 
-        for (sanitized_tx_ref, lock_result) in sanitized_txs.iter().zip(lock_results.iter_mut()) {
+        for (message_ref, lock_result) in messages.iter().zip(lock_results.iter_mut()) {
             let processed_slot = if lock_result.is_ok() {
-                self.get_processed_slot(sanitized_tx_ref.borrow(), &rcache)
+                self.get_processed_slot(message_ref.borrow(), &rcache)
             } else {
                 None
             };
@@ -336,13 +338,13 @@ impl Bank {
 
     fn get_processed_slot(
         &self,
-        sanitized_tx: &impl TransactionWithMeta,
+        message: &impl StaticMessageWithMeta,
         status_cache: &BankStatusCache,
     ) -> Option<Slot> {
-        let key = sanitized_tx.message_hash();
-        let transaction_blockhash = sanitized_tx.recent_blockhash();
+        let key = message.message_hash();
+        let message_blockhash = message.recent_blockhash();
         status_cache
-            .get_status(key, transaction_blockhash, &self.ancestors)
+            .get_status(key, message_blockhash, &self.ancestors)
             .map(|status| status.0)
     }
 }
