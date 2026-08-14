@@ -88,6 +88,7 @@ RUN \
   cargo install rustfilt && \
   cargo install cargo-build-sbf@4.1.0 --locked && \
   cargo install cargo-deny@0.20.2 --locked && \
+  cargo install taplo-cli@0.10.0 --locked && \
   rustup show && \
   rustc --version && \
   cargo --version && \

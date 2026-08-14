@@ -25,6 +25,9 @@ else
   _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check
 fi
 
+# format toml files
+taplo fmt --check --diff
+
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree
 
