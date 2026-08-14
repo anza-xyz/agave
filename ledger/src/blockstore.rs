@@ -139,6 +139,15 @@ type UpdateParentShredParentKey = (BlockLocation, Slot, u32);
 type UpdateParentShredParentCache =
     LruCache<UpdateParentShredParentKey, /* parent used for shred filtering */ Slot>;
 
+struct UpdateParentTransactions {
+    transactions: Vec<VersionedTransaction>,
+    signature_indexes: HashMap<Signature, u32>,
+}
+
+// Request-scoped cache of transactions after an UpdateParent marker. `None` caches slots that do
+// not contain an UpdateParent marker.
+type UpdateParentTransactionsCache = HashMap<Slot, Option<UpdateParentTransactions>>;
+
 struct SignalUpdates {
     should_signal: bool,
     newly_completed_slots_with_last_index: Vec<(u64, u64)>,
@@ -4513,6 +4522,7 @@ impl Blockstore {
         &self,
         signature: Signature,
         confirmed_unrooted_slots: &HashSet<Slot>,
+        update_parent_transactions_cache: &mut UpdateParentTransactionsCache,
     ) -> Result<(Option<(Slot, TransactionStatusMeta)>, u64)> {
         let mut counter = 0;
         let (lock, _) = self.ensure_lowest_cleanup_slot();
@@ -4533,9 +4543,10 @@ impl Blockstore {
             }
 
             if self
-                .meta(slot)?
-                .is_some_and(|slot_meta| slot_meta.has_update_parent())
-                && self.find_transaction_in_slot(slot, signature)?.is_none()
+                .get_transactions_if_update_parent(slot, update_parent_transactions_cache)?
+                .is_some_and(|transactions| {
+                    !transactions.signature_indexes.contains_key(&signature)
+                })
             {
                 continue;
             }
@@ -4560,14 +4571,39 @@ impl Blockstore {
         self.get_transaction_status(signature, &HashSet::default())
     }
 
+    /// Returns rooted transaction statuses in the same order as the provided signatures.
+    pub fn get_rooted_transaction_statuses(
+        &self,
+        signatures: &[Signature],
+    ) -> Result<Vec<Option<(Slot, TransactionStatusMeta)>>> {
+        let confirmed_unrooted_slots = HashSet::default();
+        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
+        signatures
+            .iter()
+            .map(|signature| {
+                self.get_transaction_status_with_counter(
+                    *signature,
+                    &confirmed_unrooted_slots,
+                    &mut update_parent_transactions_cache,
+                )
+                .map(|(status, _)| status)
+            })
+            .collect()
+    }
+
     /// Returns a transaction status
     pub fn get_transaction_status(
         &self,
         signature: Signature,
         confirmed_unrooted_slots: &HashSet<Slot>,
     ) -> Result<Option<(Slot, TransactionStatusMeta)>> {
-        self.get_transaction_status_with_counter(signature, confirmed_unrooted_slots)
-            .map(|(status, _)| status)
+        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
+        self.get_transaction_status_with_counter(
+            signature,
+            confirmed_unrooted_slots,
+            &mut update_parent_transactions_cache,
+        )
+        .map(|(status, _)| status)
     }
 
     /// Returns a complete transaction if it was processed in a root
@@ -4597,12 +4633,32 @@ impl Blockstore {
         signature: Signature,
         confirmed_unrooted_slots: &HashSet<Slot>,
     ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
-        if let Some((slot, meta)) =
-            self.get_transaction_status(signature, confirmed_unrooted_slots)?
+        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
+        if let Some((slot, meta)) = self
+            .get_transaction_status_with_counter(
+                signature,
+                confirmed_unrooted_slots,
+                &mut update_parent_transactions_cache,
+            )?
+            .0
         {
-            let (transaction, index) = self
-                .find_transaction_in_slot(slot, signature)?
-                .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?; // Should not happen
+            let (transaction, index) = if let Some(update_parent_transactions) =
+                self.get_transactions_if_update_parent(slot, &mut update_parent_transactions_cache)?
+            {
+                let index = *update_parent_transactions
+                    .signature_indexes
+                    .get(&signature)
+                    .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?;
+                let transaction = update_parent_transactions
+                    .transactions
+                    .get(index as usize)
+                    .cloned()
+                    .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?;
+                (transaction, index)
+            } else {
+                self.find_transaction_in_slot(slot, signature)?
+                    .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?
+            };
 
             let block_time = self.get_block_time(slot)?;
             Ok(Some(ConfirmedTransactionWithStatusMeta {
@@ -4649,22 +4705,42 @@ impl Blockstore {
             .map(|(index, transaction)| (transaction, index as u32)))
     }
 
-    fn get_transactions_if_update_parent(
+    fn get_transactions_if_update_parent<'a>(
         &self,
         slot: Slot,
-    ) -> Result<Option<Vec<VersionedTransaction>>> {
-        let Some(slot_meta) = self.meta(slot)? else {
-            return Ok(None);
-        };
-        if !slot_meta.has_update_parent() {
-            return Ok(None);
+        cache: &'a mut UpdateParentTransactionsCache,
+    ) -> Result<Option<&'a UpdateParentTransactions>> {
+        if let HashMapEntry::Vacant(entry) = cache.entry(slot) {
+            let update_parent_transactions = match self.meta(slot)? {
+                Some(slot_meta) if slot_meta.has_update_parent() => {
+                    let transactions: Vec<_> = self
+                        .get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?
+                        .into_iter()
+                        .flat_map(|entry| entry.transactions)
+                        .collect();
+
+                    let mut signature_indexes = HashMap::with_capacity(transactions.len());
+                    for (index, transaction) in transactions.iter().enumerate() {
+                        let Some(signature) = transaction.signatures.first() else {
+                            continue;
+                        };
+                        let index = u32::try_from(index)
+                            .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
+                        signature_indexes.entry(*signature).or_insert(index);
+                    }
+
+                    Some(UpdateParentTransactions {
+                        transactions,
+                        signature_indexes,
+                    })
+                }
+                _ => None,
+            };
+
+            entry.insert(update_parent_transactions);
         }
-        Ok(Some(
-            self.get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?
-                .into_iter()
-                .flat_map(|entry| entry.transactions)
-                .collect(),
-        ))
+
+        Ok(cache.get(&slot).and_then(Option::as_ref))
     }
 
     fn address_signature_matches_transaction(
@@ -4697,13 +4773,15 @@ impl Blockstore {
         &self,
         pubkey: Pubkey,
         slot: Slot,
+        update_parent_transactions_cache: &mut UpdateParentTransactionsCache,
     ) -> Result<Vec<(Slot, Signature, u32)>> {
         let (lock, lowest_available_slot) = self.ensure_lowest_cleanup_slot();
         let mut signatures: Vec<(Slot, Signature, u32)> = vec![];
         if slot < lowest_available_slot {
             return Ok(signatures);
         }
-        let update_parent_transactions = self.get_transactions_if_update_parent(slot)?;
+        let update_parent_transactions =
+            self.get_transactions_if_update_parent(slot, update_parent_transactions_cache)?;
         let index_iterator = self.address_signatures_cf.iter(IteratorMode::From(
             (
                 pubkey,
@@ -4717,13 +4795,13 @@ impl Blockstore {
             if transaction_slot > slot || address != pubkey {
                 break;
             }
-            if let Some(transactions) = update_parent_transactions.as_deref()
+            if let Some(update_parent_transactions) = update_parent_transactions
                 && !self.address_signature_matches_transaction(
                     &pubkey,
                     transaction_slot,
                     transaction_index,
                     signature,
-                    transactions,
+                    &update_parent_transactions.transactions,
                 )?
             {
                 continue;
@@ -4766,6 +4844,7 @@ impl Blockstore {
             AncestorIterator::new_inclusive(highest_slot, self)
                 .take_while(|&slot| slot > max_root)
                 .collect();
+        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
 
         // Figure the `slot` to start listing signatures at, based on the ledger location of the
         // `before` signature if present.  Also generate a HashSet of signatures that should
@@ -4774,8 +4853,13 @@ impl Blockstore {
         let (slot, mut before_excluded_signatures) = match before {
             None => (highest_slot, None),
             Some(before) => {
-                let transaction_status =
-                    self.get_transaction_status(before, &confirmed_unrooted_slots)?;
+                let transaction_status = self
+                    .get_transaction_status_with_counter(
+                        before,
+                        &confirmed_unrooted_slots,
+                        &mut update_parent_transactions_cache,
+                    )?
+                    .0;
                 match transaction_status {
                     None => return Ok(SignatureInfosForAddress::default()),
                     Some((slot, _)) => {
@@ -4801,8 +4885,13 @@ impl Blockstore {
         let (lowest_slot, until_excluded_signatures, found_until) = match until {
             None => (first_available_block, HashSet::new(), false),
             Some(until) => {
-                let transaction_status =
-                    self.get_transaction_status(until, &confirmed_unrooted_slots)?;
+                let transaction_status = self
+                    .get_transaction_status_with_counter(
+                        until,
+                        &confirmed_unrooted_slots,
+                        &mut update_parent_transactions_cache,
+                    )?
+                    .0;
                 match transaction_status {
                     None => (first_available_block, HashSet::new(), false),
                     Some((slot, _)) => {
@@ -4827,7 +4916,11 @@ impl Blockstore {
 
         // Get signatures in `slot`
         let mut get_initial_slot_timer = Measure::start("get_initial_slot_timer");
-        let mut signatures = self.find_address_signatures_for_slot(address, slot)?;
+        let mut signatures = self.find_address_signatures_for_slot(
+            address,
+            slot,
+            &mut update_parent_transactions_cache,
+        )?;
         signatures.reverse();
         if let Some(excluded_signatures) = before_excluded_signatures.take() {
             address_signatures.extend(
@@ -4850,9 +4943,6 @@ impl Blockstore {
             (address, slot, 0, Signature::default()),
             IteratorDirection::Reverse,
         ))?;
-        let mut transactions_slot = None;
-        let mut update_parent_transactions = None;
-
         // Iterate until limit is reached
         while address_signatures.len() < limit {
             if let Some(((key_address, slot, transaction_index, signature), _)) = iterator.next() {
@@ -4861,18 +4951,17 @@ impl Blockstore {
                 }
                 if key_address == address {
                     if self.is_root(slot) || confirmed_unrooted_slots.contains(&slot) {
-                        if transactions_slot != Some(slot) {
-                            transactions_slot = Some(slot);
-                            update_parent_transactions =
-                                self.get_transactions_if_update_parent(slot)?;
-                        }
-                        if let Some(transactions) = update_parent_transactions.as_deref()
+                        if let Some(update_parent_transactions) = self
+                            .get_transactions_if_update_parent(
+                                slot,
+                                &mut update_parent_transactions_cache,
+                            )?
                             && !self.address_signature_matches_transaction(
                                 &address,
                                 slot,
                                 transaction_index,
                                 signature,
-                                transactions,
+                                &update_parent_transactions.transactions,
                             )?
                         {
                             continue;
@@ -4895,8 +4984,13 @@ impl Blockstore {
         let mut get_status_info_timer = Measure::start("get_status_info_timer");
         let mut infos = vec![];
         for (slot, signature, index) in address_signatures_iter {
-            let transaction_status =
-                self.get_transaction_status(signature, &confirmed_unrooted_slots)?;
+            let transaction_status = self
+                .get_transaction_status_with_counter(
+                    signature,
+                    &confirmed_unrooted_slots,
+                    &mut update_parent_transactions_cache,
+                )?
+                .0;
             let err = transaction_status.and_then(|(_slot, status)| status.status.err());
             let memo = self.read_transaction_memos(signature, slot)?;
             let block_time = self.get_block_time(slot)?;
