@@ -152,6 +152,7 @@ solana-version = { path = "../version", version = "=4.4.0-alpha.0", features = [
 solana-vote = { path = "../vote", version = "=4.4.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote-program = { path = "../programs/vote", version = "=4.4.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 tempfile = "3.23.0"
+test-case = "3.3.1"
 thiserror = "2.0.17"
 tokio = "1.48.0"
 wincode = { version = "0.6.1", features = ["derive"] }
