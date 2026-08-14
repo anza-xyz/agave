@@ -635,13 +635,8 @@ impl Tvu {
             highest_finalized,
         );
 
-        let warm_quic_cache_service = create_cache_warmer_if_needed(
-            None,
-            vote_connection_cache,
-            cluster_info,
-            poh_recorder,
-            &exit,
-        );
+        let warm_quic_cache_service =
+            create_cache_warmer_if_needed(vote_connection_cache, cluster_info, poh_recorder, &exit);
 
         let cost_update_service = CostUpdateService::new(cost_update_receiver);
 
@@ -731,18 +726,15 @@ impl Tvu {
 }
 
 fn create_cache_warmer_if_needed(
-    connection_cache: Option<&Arc<ConnectionCache>>,
     vote_connection_cache: Arc<ConnectionCache>,
     cluster_info: &Arc<ClusterInfo>,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     exit: &Arc<AtomicBool>,
 ) -> Option<WarmQuicCacheService> {
-    let tpu_connection_cache = connection_cache.filter(|cache| cache.use_quic()).cloned();
     let vote_connection_cache = Some(vote_connection_cache).filter(|cache| cache.use_quic());
 
-    (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
+    (vote_connection_cache.is_some()).then(|| {
         WarmQuicCacheService::new(
-            tpu_connection_cache,
             vote_connection_cache,
             cluster_info.clone(),
             poh_recorder.clone(),
