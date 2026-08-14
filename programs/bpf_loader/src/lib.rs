@@ -1103,7 +1103,8 @@ mod tests {
         assert_matches::assert_matches,
         rand::Rng,
         solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
+            AccountSharedData, ReadableAccount, WritableAccount,
+            state_traits::StateMutWincode as StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,

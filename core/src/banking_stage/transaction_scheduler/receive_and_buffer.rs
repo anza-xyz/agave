@@ -533,7 +533,7 @@ mod tests {
             BankingPacketBatch, to_banking_packet_batch, to_single_banking_packet_batch,
         },
         crossbeam_channel::{Receiver, Sender, bounded},
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,

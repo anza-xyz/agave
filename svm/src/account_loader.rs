@@ -692,7 +692,10 @@ mod tests {
         super::*,
         crate::transaction_account_state_info::TransactionAccountStateInfo,
         rand::prelude::*,
-        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        solana_account::{
+            Account, AccountSharedData, ReadableAccount, WritableAccount,
+            state_traits::StateMutWincode as _,
+        },
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,

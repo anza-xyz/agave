@@ -111,7 +111,7 @@ wincode = { workspace = true }
 [dev-dependencies]
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-address-lookup-table-interface = { workspace = true }
 solana-client = { workspace = true }
 solana-cluster-type = { workspace = true }

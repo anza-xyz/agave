@@ -110,7 +110,7 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-fee-calculator = { workspace = true }

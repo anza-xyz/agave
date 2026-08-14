@@ -5,7 +5,9 @@
 use {
     bincode::Options,
     rand::Rng,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{DEFAULT_VAT_TO_BURN_PER_EPOCH, MAX_ALPENGLOW_VOTE_ACCOUNTS},

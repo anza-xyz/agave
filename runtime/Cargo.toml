@@ -31,7 +31,6 @@ conformance = [
 dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
-    "solana-loader-v3-interface/wincode",
     "solana-program-binaries",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
@@ -99,7 +98,7 @@ serde_json = { workspace = true }
 serde_with = { workspace = true }
 shuttle = { workspace = true, optional = true }
 smallvec = { workspace = true, features = ["serde"] }
-solana-account = { workspace = true, features = ["bincode", "wincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-decoder = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
@@ -139,7 +138,7 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-lattice-hash = { workspace = true }
 solana-leader-schedule = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["serde"] }
+solana-loader-v3-interface = { workspace = true, features = ["serde", "wincode"] }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }

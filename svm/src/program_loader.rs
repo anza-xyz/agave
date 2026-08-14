@@ -303,7 +303,7 @@ mod tests {
     use {
         super::*,
         crate::transaction_processor::TransactionBatchProcessor,
-        solana_account::WritableAccount,
+        solana_account::{WritableAccount, state_traits::StateMutWincode as _},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::compiled_instruction::CompiledInstruction,
