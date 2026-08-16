@@ -485,10 +485,8 @@ impl Consumer {
             transaction_configuration.priority_fee_lamports,
             bank.fee_features(),
         );
-        let (mut fee_payer_account, _slot) = bank
-            .rc
-            .accounts
-            .load_with_fixed_root(&bank.ancestors, fee_payer)
+        let mut fee_payer_account = bank
+            .get_account_with_fixed_root(fee_payer)
             .ok_or(TransactionError::AccountNotFound)?;
 
         validate_fee_payer(

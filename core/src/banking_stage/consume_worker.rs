@@ -904,13 +904,8 @@ pub(crate) mod external {
                 );
 
                 let fee_payer_balance = working_bank
-                    .rc
-                    .accounts
-                    .load_with_fixed_root(
-                        &working_bank.ancestors,
-                        &transaction.static_account_keys()[0],
-                    )
-                    .map(|(account, _slot)| account.lamports())
+                    .get_account_with_fixed_root(&transaction.static_account_keys()[0])
+                    .map(|account| account.lamports())
                     .unwrap_or(0);
 
                 let response = &mut responses[transaction_index];
