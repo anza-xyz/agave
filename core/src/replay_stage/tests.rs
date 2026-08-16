@@ -238,7 +238,6 @@ fn block_marker_shreds_with_last(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
 }
 
 fn insert_update_parent_slot(
@@ -1017,7 +1016,6 @@ fn test_dead_fork_entry_deserialize_failure() {
                 &mut ProcessShredsStats::default(),
             )
             .unwrap()
-            .collect()
     });
 
     assert_matches!(

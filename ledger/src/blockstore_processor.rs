@@ -5713,6 +5713,7 @@ pub mod tests {
                 &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             )
+            .into_iter()
             .filter(Shred::is_data)
             .collect();
         next_shred_index = header_shreds.last().unwrap().index() + 1;
@@ -5731,6 +5732,7 @@ pub mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
                 .filter(Shred::is_data)
                 .collect();
             next_shred_index = footer_shreds.last().unwrap().index() + 1;
@@ -5746,6 +5748,7 @@ pub mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
                 .filter(Shred::is_data)
                 .collect();
 
@@ -5763,6 +5766,7 @@ pub mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
                 .filter(Shred::is_data)
                 .collect();
             next_shred_index = entry_shreds.last().unwrap().index() + 1;
@@ -5778,6 +5782,7 @@ pub mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
                 .filter(Shred::is_data)
                 .collect();
 
@@ -5967,6 +5972,7 @@ pub mod tests {
                         &ReedSolomonCache::default(),
                         &mut ProcessShredsStats::default(),
                     )
+                    .into_iter()
                     .filter(Shred::is_data)
                     .collect();
                 blockstore.insert_shreds(shreds, true).unwrap();

@@ -324,6 +324,7 @@ mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
             })
             .collect();
         shreds.shuffle(rng);

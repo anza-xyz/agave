@@ -835,6 +835,7 @@ impl Blockstore {
                         &reed_solomon_cache,
                         &mut ProcessShredsStats::default(),
                     )
+                    .into_iter()
                     .filter(Shred::is_data)
                     .collect();
                 if let Some(last_shred) = shreds.last() {
@@ -6742,6 +6743,7 @@ pub fn entries_to_test_shreds(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
+        .into_iter()
         .filter(Shred::is_data)
         .collect()
 }

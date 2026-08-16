@@ -2490,6 +2490,7 @@ fn main() {
                                 &ReedSolomonCache::default(),
                                 &mut ProcessShredsStats::default(),
                             )
+                            .into_iter()
                             .filter(Shred::is_data)
                             .map(Cow::Owned)
                             .collect();

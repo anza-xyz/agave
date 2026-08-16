@@ -1,14 +1,11 @@
-#[cfg(test)]
-use crate::shred::ShredType;
 use {
     crate::{
         shred::{
             self, CODING_SHREDS_PER_FEC_BLOCK, CodingShredHeader, DATA_SHREDS_PER_FEC_BLOCK,
             DataShredHeader, Error, ProcessShredsStats, SHREDS_PER_FEC_BLOCK,
             SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_NONCE,
-            SIZE_OF_SIGNATURE, ShredCommonHeader, ShredFlags, ShredVariant,
+            SIZE_OF_SIGNATURE, Shred, ShredCommonHeader, ShredFlags, ShredVariant,
             common::impl_shred_common,
-            dispatch,
             merkle_tree::*,
             payload::{Payload, PayloadMutGuard},
             shred_code, shred_data,
@@ -19,12 +16,11 @@ use {
         shredder::ReedSolomonCache,
     },
     assert_matches::debug_assert_matches,
-    itertools::{Either, Itertools},
+    itertools::Itertools,
     reed_solomon_erasure::Error::{InvalidIndex, TooFewParityShards},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -65,90 +61,6 @@ pub struct ShredCode {
     common_header: ShredCommonHeader,
     coding_header: CodingShredHeader,
     payload: Payload,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Shred {
-    ShredCode(ShredCode),
-    ShredData(ShredData),
-}
-
-impl Shred {
-    dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
-    dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
-    dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
-    dispatch!(fn sanitize(&self) -> Result<(), Error>);
-    dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
-    dispatch!(fn set_signature(&mut self, signature: Signature));
-    dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
-    dispatch!(pub(super) fn payload(&self) -> &Payload);
-    dispatch!(pub(super) fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
-
-    #[inline]
-    fn fec_set_index(&self) -> u32 {
-        self.common_header().fec_set_index
-    }
-
-    #[inline]
-    fn merkle_proof(&self) -> Result<impl Iterator<Item = &MerkleProofEntry>, Error> {
-        match self {
-            Self::ShredCode(shred) => shred.merkle_proof().map(Either::Left),
-            Self::ShredData(shred) => shred.merkle_proof().map(Either::Right),
-        }
-    }
-
-    #[inline]
-    fn set_merkle_proof<'a, I>(&mut self, proof: I) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = Result<&'a MerkleProofEntry, Error>>,
-    {
-        match self {
-            Self::ShredCode(shred) => shred.set_merkle_proof(proof),
-            Self::ShredData(shred) => shred.set_merkle_proof(proof),
-        }
-    }
-
-    #[must_use]
-    fn verify(&self, pubkey: &Pubkey) -> bool {
-        match self.signed_data() {
-            Ok(data) => self.signature().verify(pubkey.as_ref(), data.as_ref()),
-            Err(_) => false,
-        }
-    }
-
-    #[inline]
-    fn signature(&self) -> &Signature {
-        &self.common_header().signature
-    }
-
-    pub(super) fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
-    where
-        Payload: From<T>,
-    {
-        match shred::layout::get_shred_variant(shred.as_ref())? {
-            ShredVariant::MerkleCode { .. } => Ok(Self::ShredCode(ShredCode::from_payload(shred)?)),
-            ShredVariant::MerkleData { .. } => Ok(Self::ShredData(ShredData::from_payload(shred)?)),
-        }
-    }
-}
-
-#[cfg(test)]
-impl Shred {
-    dispatch!(fn erasure_shard(&self) -> Result<&[u8], Error>);
-    dispatch!(fn proof_size(&self) -> Result<u8, Error>);
-    dispatch!(pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error>);
-    dispatch!(pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
-
-    fn index(&self) -> u32 {
-        self.common_header().index
-    }
-
-    fn shred_type(&self) -> ShredType {
-        ShredType::from(self.common_header().shred_variant)
-    }
 }
 
 impl ShredData {
@@ -295,7 +207,7 @@ macro_rules! impl_merkle_shred {
     ($variant:ident) => {
         // proof_size is the number of merkle proof entries.
         #[inline]
-        fn proof_size(&self) -> Result<u8, Error> {
+        pub(super) fn proof_size(&self) -> Result<u8, Error> {
             match self.common_header.shred_variant {
                 ShredVariant::$variant { proof_size, .. } => Ok(proof_size),
                 _ => Err(Error::InvalidShredVariant),
@@ -367,7 +279,10 @@ macro_rules! impl_merkle_shred {
                 .ok_or(Error::InvalidPayloadSize(self.payload.len()))
         }
 
-        fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error> {
+        pub(super) fn set_chained_merkle_root(
+            &mut self,
+            chained_merkle_root: &Hash,
+        ) -> Result<(), Error> {
             let offset = self.chained_merkle_root_offset()?;
             let Some(mut buffer) = self.payload.get_mut(offset..offset + SIZE_OF_MERKLE_ROOT)
             else {
@@ -386,18 +301,20 @@ macro_rules! impl_merkle_shred {
             get_merkle_root(index, node, proof)
         }
 
-        fn merkle_proof(&self) -> Result<impl Iterator<Item = &MerkleProofEntry>, Error> {
+        pub(super) fn merkle_proof(
+            &self,
+        ) -> Result<impl Iterator<Item = &MerkleProofEntry>, Error> {
             let proof_size = self.proof_size()?;
             let proof_offset = self.proof_offset()?;
             get_merkle_proof(&self.payload, proof_offset, proof_size)
         }
 
-        fn merkle_node(&self) -> Result<Hash, Error> {
+        pub(super) fn merkle_node(&self) -> Result<Hash, Error> {
             let proof_offset = self.proof_offset()?;
             get_merkle_node(&self.payload, SIZE_OF_SIGNATURE..proof_offset)
         }
 
-        fn set_merkle_proof<'a, I>(&mut self, proof: I) -> Result<(), Error>
+        pub(super) fn set_merkle_proof<'a, I>(&mut self, proof: I) -> Result<(), Error>
         where
             I: IntoIterator<Item = Result<&'a MerkleProofEntry, Error>>,
         {
@@ -431,7 +348,10 @@ macro_rules! impl_merkle_shred {
                 .ok_or(Error::InvalidPayloadSize(self.payload.len()))
         }
 
-        fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
+        pub(super) fn set_retransmitter_signature(
+            &mut self,
+            signature: &Signature,
+        ) -> Result<(), Error> {
             let offset = self.retransmitter_signature_offset()?;
             let Some(mut buffer) = self.payload.get_mut(offset..offset + SIZE_OF_SIGNATURE) else {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
@@ -486,7 +406,9 @@ macro_rules! impl_merkle_shred {
         }
 
         // Returns the erasure coded slice as a mutable reference.
-        fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error> {
+        pub(super) fn erasure_shard_mut(
+            &mut self,
+        ) -> Result<PayloadMutGuard<'_, Range<usize>>, Error> {
             let offsets = self.erasure_shard_offsets()?;
             let payload_size = self.payload.len();
             self.payload
@@ -1308,28 +1230,18 @@ fn finish_erasure_batch(
 #[cfg(test)]
 pub(crate) fn finish_erasure_batch_for_tests(
     keypair: &Keypair,
-    shreds: &mut [crate::shred::Shred],
+    shreds: &mut [Shred],
     chained_merkle_root: Hash,
     reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<Hash, Error> {
-    let mut batch: Vec<_> = shreds
-        .iter()
-        .cloned()
-        .map(crate::shred::Shred::try_into)
-        .collect::<Result<_, _>>()?;
-    let chained_merkle_root =
-        finish_erasure_batch(keypair, &mut batch, chained_merkle_root, reed_solomon_cache)?;
-    for (dst, src) in shreds.iter_mut().zip(batch) {
-        *dst = crate::shred::Shred::from(src);
-    }
-    Ok(chained_merkle_root)
+    finish_erasure_batch(keypair, shreds, chained_merkle_root, reed_solomon_cache)
 }
 
 #[cfg(test)]
 mod test {
     use {
         super::*,
-        crate::shred::{ShredFlags, ShredId, merkle_tree::get_proof_size},
+        crate::shred::{ShredFlags, ShredId, ShredType, merkle_tree::get_proof_size},
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::{CryptoRng, Rng, seq::SliceRandom},

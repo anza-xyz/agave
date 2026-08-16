@@ -94,7 +94,6 @@ fn create_update_parent_shreds_with_shred_parent(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
 }
 
 fn create_block_header_shreds(slot: Slot, parent_slot: Slot, parent_block_id: Hash) -> Vec<Shred> {
@@ -126,7 +125,6 @@ fn create_block_header_shreds_with_shred_parent(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
 }
 
 fn verify_next_slots(blockstore: &Blockstore, parent_slot: Slot, expected: &[Slot]) {
@@ -185,7 +183,6 @@ fn create_block_footer_shreds_with_last(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
 }
 
 fn create_entry_batch_shreds(
@@ -209,7 +206,6 @@ fn create_entry_batch_shreds(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
 }
 
 fn data_shreds(shreds: Vec<Shred>) -> Vec<Shred> {
@@ -2237,6 +2233,7 @@ fn test_merkle_root_metas_data() {
             &mut ProcessShredsStats::default(),
         )
         .unwrap()
+        .into_iter()
         .next()
         .unwrap();
 
@@ -2630,7 +2627,7 @@ fn test_get_slot_entries_with_shred_count_corruption() {
     let keypair = Keypair::new();
     let reed_solomon_cache = ReedSolomonCache::default();
 
-    let shreds: Vec<Shred> = shredder
+    let mut shreds = shredder
         .make_shreds_from_data_slice(
             &keypair,
             &[1, 1, 1],
@@ -2641,9 +2638,8 @@ fn test_get_slot_entries_with_shred_count_corruption() {
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         )
-        .unwrap()
-        .take(DATA_SHREDS_PER_FEC_BLOCK)
-        .collect();
+        .unwrap();
+    shreds.truncate(DATA_SHREDS_PER_FEC_BLOCK);
 
     // With the corruption, nothing should be returned, even though an
     // earlier data block was valid
@@ -3053,6 +3049,7 @@ fn test_get_complete_block_with_block_markers() {
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
+        .into_iter()
         .filter(Shred::is_data)
         .collect_vec();
     let entry_end_index = entry_shreds.last().unwrap().index() + 1;
@@ -5647,33 +5644,29 @@ fn setup_duplicate_last_in_slot(
     let leader_keypair = Arc::new(Keypair::new());
     let reed_solomon_cache = ReedSolomonCache::default();
     let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
-    let (shreds1, code1): (Vec<Shred>, Vec<Shred>) = shredder
-        .make_merkle_shreds_from_entries(
-            &leader_keypair,
-            &entries,
-            true,               // is_last_in_slot
-            Hash::new_unique(), // chained_merkle_root
-            0,                  // next_shred_index
-            0,                  // next_code_index,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        )
-        .partition(Shred::is_data);
+    let (shreds1, code1) = shredder.entries_to_merkle_shreds_for_tests(
+        &leader_keypair,
+        &entries,
+        true,               // is_last_in_slot
+        Hash::new_unique(), // chained_merkle_root
+        0,                  // next_shred_index
+        0,                  // next_code_index,
+        &reed_solomon_cache,
+        &mut ProcessShredsStats::default(),
+    );
     let last_data1 = shreds1.last().unwrap();
     let last_code1 = code1.last().unwrap();
 
-    let (shreds2, code2) = shredder
-        .make_merkle_shreds_from_entries(
-            &leader_keypair,
-            &entries,
-            true, // is_last_in_slot
-            last_data1.chained_merkle_root().unwrap(),
-            last_data1.index() + 1, // next_shred_index
-            last_code1.index() + 1, // next_code_index,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        )
-        .partition(Shred::is_data);
+    let (shreds2, code2) = shredder.entries_to_merkle_shreds_for_tests(
+        &leader_keypair,
+        &entries,
+        true, // is_last_in_slot
+        last_data1.chained_merkle_root().unwrap(),
+        last_data1.index() + 1, // next_shred_index
+        last_code1.index() + 1, // next_code_index,
+        &reed_solomon_cache,
+        &mut ProcessShredsStats::default(),
+    );
     ((shreds1, code1), (shreds2, code2))
 }
 

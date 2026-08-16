@@ -8,7 +8,7 @@ use {
         blockstore_meta::ErasureConfig,
         shred::{
             self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, ShredFlags, ShredId, ShredType,
-            ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred,
+            ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred as ShredTrait,
         },
     },
     solana_clock::Slot,
@@ -404,7 +404,9 @@ pub(crate) fn corrupt_packet<R: Rng>(
 mod tests {
     use {
         super::*,
-        crate::shred::{SHREDS_PER_FEC_BLOCK, make_merkle_shreds_for_tests, traits::ShredData},
+        crate::shred::{
+            SHREDS_PER_FEC_BLOCK, Shred, make_merkle_shreds_for_tests, traits::ShredData,
+        },
         assert_matches::assert_matches,
         rand::Rng,
         solana_perf::packet::PacketFlags,
@@ -572,7 +574,7 @@ mod tests {
                     let signature = make_dummy_signature(&mut rng);
                     assert_matches!(set_retransmitter_signature(&mut bytes, &signature), Ok(()));
                     assert_eq!(get_retransmitter_signature(&bytes).unwrap(), signature);
-                    let shred = shred::merkle::Shred::from_payload(bytes).unwrap();
+                    let shred = Shred::from_payload(bytes).unwrap();
                     assert_eq!(shred.retransmitter_signature().unwrap(), signature);
                 }
                 {
@@ -581,7 +583,7 @@ mod tests {
                     let signature = keypair.sign_message(shred.merkle_root().unwrap().as_ref());
                     assert_matches!(resign_shred(&mut bytes, &keypair), Ok(()));
                     assert_eq!(get_retransmitter_signature(&bytes).unwrap(), signature);
-                    let shred = shred::merkle::Shred::from_payload(bytes).unwrap();
+                    let shred = Shred::from_payload(bytes).unwrap();
                     assert_eq!(shred.retransmitter_signature().unwrap(), signature);
                 }
             } else {
@@ -607,12 +609,12 @@ mod tests {
                 );
                 assert_eq!(bytes, shred.payload().as_ref());
             }
-            if let shred::merkle::Shred::ShredCode(_) = shred {
+            if let Shred::ShredCode(_) = shred {
                 assert_matches!(get_flags(bytes), Err(Error::InvalidShredType));
                 assert_matches!(get_data(bytes), Err(Error::InvalidShredType));
                 assert_matches!(get_reference_tick(bytes), Err(Error::InvalidShredType));
             }
-            if let shred::merkle::Shred::ShredData(shred) = shred {
+            if let Shred::ShredData(shred) = shred {
                 let shred_data_header = shred.data_header();
                 assert_eq!(
                     get_parent_offset(bytes).unwrap(),
