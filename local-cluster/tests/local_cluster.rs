@@ -6703,13 +6703,21 @@ mod alpenglow_finality {
         observations
     }
 
-    /// All-online Alpenglow baseline: finalization keeps pace with the tip and
-    /// per-slot latency is logged for inspection. This does not assert absolute
-    /// latency, which is machine-dependent on a colocated cluster.
+    /// All-online Alpenglow baseline: finalization keeps pace with the tip.
+    /// Depth is asserted rather than wall-clock latency, which is
+    /// machine-dependent on a colocated cluster; latency is logged only.
+    /// Paired with `test_tower_finality_depth_control` on the same hardware,
+    /// this pins the behavior Alpenglow changes: finalization within a couple
+    /// of slots of the tip, against Tower's ~32.
     #[test]
     #[serial]
     fn test_alpenglow_finality_latency_baseline() {
         const NUM_NODES: usize = 4;
+        // Alpenglow finalizes within a slot or two of the tip; observed p50 has
+        // been 0-2. Bounded well above that so a real regression in how closely
+        // finalization tracks `processed` fails here, without tightening onto
+        // normal jitter.
+        const MAX_DEPTH: u64 = 5;
         let observations = run_finality_scenario(
             NUM_NODES,
             0,
@@ -6724,6 +6732,11 @@ mod alpenglow_finality {
             observations.latency_ms.len() >= 8,
             "expected at least 8 slots to finalize within the window, got {}",
             observations.latency_ms.len()
+        );
+        let depth = observations.depth_p50();
+        assert!(
+            depth <= MAX_DEPTH,
+            "Alpenglow finalization should track the tip within {MAX_DEPTH} slots, got {depth}"
         );
     }
 
