@@ -6467,11 +6467,25 @@ mod alpenglow_finality {
         latency_ms: Vec<f64>,
         /// `processed - finalized` slot gap, sampled once per poll iteration.
         finalized_depth: Vec<u64>,
+        /// Finalized slot at the first and last successful poll of the window.
+        /// Unlike `latency_ms`, this counts every slot the node finalized during
+        /// the window, including the backlog that was already `processed` when
+        /// the window opened -- which is most of the progress right after a fault.
+        finalized_first: Option<u64>,
+        finalized_last: Option<u64>,
     }
 
     impl FinalityObservations {
         fn latency_p50_p90(&self) -> (f64, f64) {
             (pctl(&self.latency_ms, 50.0), pctl(&self.latency_ms, 90.0))
+        }
+
+        /// Slots finalized over the observation window.
+        fn finalized_advance(&self) -> u64 {
+            match (self.finalized_first, self.finalized_last) {
+                (Some(first), Some(last)) => last.saturating_sub(first),
+                _ => 0,
+            }
         }
 
         fn depth_p50(&self) -> u64 {
@@ -6511,19 +6525,36 @@ mod alpenglow_finality {
         any.then_some(min)
     }
 
+    /// Early-exit condition for an observation. Tests that assert finality
+    /// *continues* only need enough evidence to prove it, so they stop as soon
+    /// as they have it rather than burning a fixed window; `max_window` then
+    /// acts purely as a failure timeout. Tests that assert finality *stopped*
+    /// must watch for the whole window and pass `None`.
+    #[derive(Clone, Copy)]
+    struct StopWhen {
+        min_advance: u64,
+        min_latency_samples: usize,
+    }
+
     /// Tight-polls one node, timestamping each slot when first seen at `processed`
     /// and again when first seen at `finalized`.
-    fn observe_finality(rpc: &RpcClient, window: Duration) -> FinalityObservations {
+    fn observe_finality(
+        rpc: &RpcClient,
+        max_window: Duration,
+        stop_when: Option<StopWhen>,
+    ) -> FinalityObservations {
         let start = Instant::now();
         let mut processed_at: HashMap<u64, Instant> = HashMap::new();
         let mut observations = FinalityObservations {
             latency_ms: Vec::new(),
             finalized_depth: Vec::new(),
+            finalized_first: None,
+            finalized_last: None,
         };
         let mut hi_processed: Option<u64> = None;
         let mut hi_finalized: Option<u64> = None;
 
-        while start.elapsed() < window {
+        while start.elapsed() < max_window {
             let processed = rpc.get_slot_with_commitment(CommitmentConfig::processed());
             let finalized = rpc.get_slot_with_commitment(CommitmentConfig::finalized());
             let now = Instant::now();
@@ -6549,9 +6580,17 @@ mod alpenglow_finality {
                     }
                 }
                 hi_finalized = Some(hi_finalized.map_or(finalized, |hi| hi.max(finalized)));
+                observations.finalized_first.get_or_insert(finalized);
+                observations.finalized_last = Some(finalized);
                 observations
                     .finalized_depth
                     .push(processed.saturating_sub(finalized));
+                if let Some(stop) = stop_when
+                    && observations.finalized_advance() >= stop.min_advance
+                    && observations.latency_ms.len() >= stop.min_latency_samples
+                {
+                    break;
+                }
             }
             sleep(Duration::from_millis(5));
         }
@@ -6565,7 +6604,8 @@ mod alpenglow_finality {
         num_nodes: usize,
         num_offline_nodes: usize,
         is_alpenglow: bool,
-        window: Duration,
+        max_window: Duration,
+        stop_when: Option<StopWhen>,
     ) -> FinalityObservations {
         agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
         let validator_keys = (0..num_nodes)
@@ -6586,10 +6626,11 @@ mod alpenglow_finality {
             validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
             validator_keys: Some(validator_keys.clone()),
             node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
-            // Tower needs its normal cadence here: with 8-tick slots several
-            // validators can fork before gossip converges and wedge the healthy
-            // baseline. Latency is never compared across the two cadences.
-            ticks_per_slot: if is_alpenglow { 8 } else { 64 },
+            // Both modes need the normal cadence: with 8-tick (~50ms) slots
+            // several validators can fork before gossip converges and wedge the
+            // cluster -- observed for Tower on the healthy baseline, and for
+            // Alpenglow as a hard halt once a fault is injected.
+            ticks_per_slot: 64,
             slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH * 2,
             stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
             poh_config: PohConfig {
@@ -6606,10 +6647,10 @@ mod alpenglow_finality {
         };
         assert_eq!(cluster.validators.len(), num_nodes);
 
-        // Warmup: get past startup before observing. Tower additionally needs its
-        // 32-deep rooting pipeline full before the fault, so it warms further;
-        // Alpenglow finalizes within a slot or two of the tip, so 20 is plenty.
-        let warmup_target: u64 = if is_alpenglow { 20 } else { 40 };
+        // Warmup to a well-past-startup finalized slot so the cluster is fully
+        // settled before any fault. Both modes need this, and Tower in particular
+        // needs its 32-deep rooting pipeline full before the fault.
+        let warmup_target: u64 = 40;
         let all_pubkeys = cluster.get_node_pubkeys();
         let warmup_cap = Duration::from_secs(if is_alpenglow { 90 } else { 180 });
         let warmup = Instant::now();
@@ -6632,9 +6673,9 @@ mod alpenglow_finality {
             for (key, _) in validator_keys.iter().take(num_offline_nodes) {
                 cluster.exit_node(&key.node_keypair.pubkey());
             }
-            // Let votes cast before the fault drain so the observation window
-            // reflects steady state under the fault.
-            sleep(Duration::from_secs(5));
+            // Let the cluster fully re-stabilize on the surviving nodes before
+            // observing, so the window reflects steady state under the fault.
+            sleep(Duration::from_secs(10));
         }
 
         let alive = cluster.get_node_pubkeys();
@@ -6642,12 +6683,20 @@ mod alpenglow_finality {
             .iter()
             .find_map(|pk| cluster.get_contact_info(pk).and_then(|ci| ci.rpc()))
             .expect("at least one surviving node exposes RPC");
-        let observations = observe_finality(&RpcClient::new(format!("http://{rpc_addr}")), window);
+        let observe_start = Instant::now();
+        let observations = observe_finality(
+            &RpcClient::new(format!("http://{rpc_addr}")),
+            max_window,
+            stop_when,
+        );
 
         let (p50, p90) = observations.latency_p50_p90();
         info!(
-            "finality observations: {} slots finalized in window, latency p50={p50:.1}ms \
-             p90={p90:.1}ms (colocated; informational only), finalized depth p50={} slots",
+            "finality observations: finalized advanced {} slots in {:?} ({} fully-observed \
+             latency samples), latency p50={p50:.1}ms p90={p90:.1}ms (colocated; informational \
+             only), finalized depth p50={} slots",
+            observations.finalized_advance(),
+            observe_start.elapsed(),
             observations.latency_ms.len(),
             observations.depth_p50(),
         );
@@ -6665,7 +6714,11 @@ mod alpenglow_finality {
             NUM_NODES,
             0,
             /* is_alpenglow */ true,
-            Duration::from_secs(12),
+            Duration::from_secs(30),
+            Some(StopWhen {
+                min_advance: 0,
+                min_latency_samples: 8,
+            }),
         );
         assert!(
             observations.latency_ms.len() >= 8,
@@ -6681,16 +6734,28 @@ mod alpenglow_finality {
     fn test_alpenglow_finality_at_liveness_threshold() {
         const NUM_NODES: usize = 5;
         const NUM_OFFLINE: usize = 2;
+        // Every certificate here needs all three survivors to vote, so the claim
+        // under test is that finality *continues* -- the finalized slot keeps
+        // advancing. Asserted on advance rather than latency samples: slots that
+        // were already `processed` when the window opened finalize without
+        // producing a sample, which undercounts exactly the post-fault recovery
+        // this test exists to observe.
+        const MIN_ADVANCE: u64 = 20;
         let observations = run_finality_scenario(
             NUM_NODES,
             NUM_OFFLINE,
             /* is_alpenglow */ true,
-            Duration::from_secs(12),
+            Duration::from_secs(60),
+            Some(StopWhen {
+                min_advance: MIN_ADVANCE,
+                min_latency_samples: 0,
+            }),
         );
         assert!(
-            observations.latency_ms.len() >= 8,
-            "cluster at exactly 60% online stake should keep finalizing, got {} slots",
-            observations.latency_ms.len()
+            observations.finalized_advance() >= MIN_ADVANCE,
+            "cluster at exactly 60% online stake should keep finalizing, but the finalized slot \
+             advanced only {} slots",
+            observations.finalized_advance(),
         );
     }
 
@@ -6701,18 +6766,24 @@ mod alpenglow_finality {
     fn test_alpenglow_finality_stalls_below_liveness_threshold() {
         const NUM_NODES: usize = 5;
         const NUM_OFFLINE: usize = 3;
+        // No early exit: proving finality *stopped* requires watching for the
+        // whole window, so this one genuinely costs its full duration.
         let observations = run_finality_scenario(
             NUM_NODES,
             NUM_OFFLINE,
             /* is_alpenglow */ true,
-            Duration::from_secs(16),
+            Duration::from_secs(15),
+            None,
         );
         // Certificates already in flight when the fault lands may finalize one or
         // two more slots; sustained progress is impossible below the threshold.
+        // Asserted on finalized-slot advance rather than latency samples: a slot
+        // finalized out of the pre-window backlog yields no latency sample, so a
+        // sample-count assertion could pass even if finality were still moving.
         assert!(
-            observations.latency_ms.len() <= 2,
-            "cluster at 40% online stake should stall, but finalized {} slots",
-            observations.latency_ms.len()
+            observations.finalized_advance() <= 2,
+            "cluster at 40% online stake should stall, but the finalized slot advanced {} slots",
+            observations.finalized_advance()
         );
     }
 
@@ -6725,11 +6796,14 @@ mod alpenglow_finality {
     #[serial]
     fn test_tower_finality_depth_control() {
         const NUM_NODES: usize = 5;
+        // No early exit: the assertion is on the median of the steady-state
+        // depth samples, which needs the full window to be meaningful.
         let observations = run_finality_scenario(
             NUM_NODES,
             0,
             /* is_alpenglow */ false,
             Duration::from_secs(12),
+            None,
         );
         let depth = observations.depth_p50();
         assert!(
