@@ -294,7 +294,6 @@ impl FeatureSet {
         let snapshot = &self.snapshot;
         SVMFeatureSet {
             move_precompile_verification_to_svm: snapshot.move_precompile_verification_to_svm,
-            syscall_parameter_address_restrictions: snapshot.syscall_parameter_address_restrictions,
             virtual_address_space_adjustments: snapshot.virtual_address_space_adjustments,
             account_data_direct_mapping: snapshot.account_data_direct_mapping,
             enable_bpf_loader_set_authority_checked_ix: snapshot
