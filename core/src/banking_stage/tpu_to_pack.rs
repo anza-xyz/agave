@@ -87,7 +87,7 @@ fn handle_packet_batch(
 ) {
     // Clean all remote frees in allocator so we have as much
     // room as possible.
-    allocator.clean_remote_free_lists();
+    allocator.clean_remote_frees();
 
     let mut write_batch = producer.write_batch();
 
