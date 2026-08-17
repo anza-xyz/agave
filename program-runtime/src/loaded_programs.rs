@@ -515,6 +515,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         && candidate.deployment_slot <= self.latest_root_slot
                         && candidate.latest_access_slot.load(Relaxed) < tombstone_slot_cutoff
                     {
+                        self.stats.prunes_stale.fetch_add(1, Ordering::Relaxed);
                         return false;
                     }
                     // Remove entries un/re/deployed on orphan forks
