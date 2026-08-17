@@ -4945,79 +4945,9 @@ fn test_account_info_in_account() {
     }
 
     for program in programs {
-        for syscall_parameter_address_restrictions in [false, true] {
-            let mut bank = Bank::new_for_tests(&genesis_config);
-            let feature_set = Arc::make_mut(&mut bank.feature_set);
-            // by default test banks have all features enabled, so we only need to
-            // disable when needed
-            if !syscall_parameter_address_restrictions {
-                feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-                feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-            }
-
-            let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-            let invoke_program_id = create_program(&bank, &bpf_loader_upgradeable::id(), program);
-            let mut bank_client = BankClient::new_shared(bank.clone());
-            let bank = bank_client
-                .advance_slot(1, &bank_forks, SlotLeader::default())
-                .unwrap();
-
-            let account_keypair = Keypair::new();
-
-            let mint_pubkey = mint_keypair.pubkey();
-
-            let account_metas = vec![
-                AccountMeta::new(mint_pubkey, true),
-                AccountMeta::new(account_keypair.pubkey(), false),
-                AccountMeta::new_readonly(invoke_program_id, false),
-            ];
-
-            let mut instruction_data = vec![TEST_ACCOUNT_INFO_IN_ACCOUNT];
-            instruction_data.extend_from_slice(32usize.to_le_bytes().as_ref());
-
-            let instruction =
-                Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
-
-            let account = AccountSharedData::new(42, 10240, &invoke_program_id);
-
-            bank.store_account(&account_keypair.pubkey(), &account);
-
-            let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if syscall_parameter_address_restrictions {
-                assert!(result.is_err());
-            } else {
-                assert!(result.is_ok());
-            }
-        }
-    }
-}
-
-#[test]
-fn test_account_info_rc_in_account() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    for syscall_parameter_address_restrictions in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !syscall_parameter_address_restrictions {
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
-
+        let bank = Bank::new_for_tests(&genesis_config);
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
-        );
+        let invoke_program_id = create_program(&bank, &bpf_loader_upgradeable::id(), program);
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
             .advance_slot(1, &bank_forks, SlotLeader::default())
@@ -5033,33 +4963,8 @@ fn test_account_info_rc_in_account() {
             AccountMeta::new_readonly(invoke_program_id, false),
         ];
 
-        let instruction_data = vec![TEST_ACCOUNT_INFO_LAMPORTS_RC, 0, 0, 0];
-
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
-        );
-
-        let account = AccountSharedData::new(42, 10240, &invoke_program_id);
-
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let message = Message::new(&[instruction], Some(&mint_pubkey));
-        let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-        let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-
-        if syscall_parameter_address_restrictions {
-            assert!(
-                logs.last().unwrap().ends_with(" failed: Invalid pointer"),
-                "{logs:?}"
-            );
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok(), "{logs:?}");
-        }
-
-        let instruction_data = vec![TEST_ACCOUNT_INFO_DATA_RC, 0, 0, 0];
+        let mut instruction_data = vec![TEST_ACCOUNT_INFO_IN_ACCOUNT];
+        instruction_data.extend_from_slice(32usize.to_le_bytes().as_ref());
 
         let instruction =
             Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
@@ -5068,20 +4973,80 @@ fn test_account_info_rc_in_account() {
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
-        let message = Message::new(&[instruction], Some(&mint_pubkey));
-        let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-        let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-
-        if syscall_parameter_address_restrictions {
-            assert!(
-                logs.last().unwrap().ends_with(" failed: Invalid pointer"),
-                "{logs:?}"
-            );
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok(), "{logs:?}");
-        }
+        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        assert!(result.is_err());
     }
+}
+
+#[test]
+fn test_account_info_rc_in_account() {
+    agave_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(100_123_456_789);
+
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let invoke_program_id = create_program(
+        &bank,
+        &bpf_loader_upgradeable::id(),
+        "solana_sbf_rust_invoke",
+    );
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let bank = bank_client
+        .advance_slot(1, &bank_forks, SlotLeader::default())
+        .unwrap();
+
+    let account_keypair = Keypair::new();
+
+    let mint_pubkey = mint_keypair.pubkey();
+
+    let account_metas = vec![
+        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(invoke_program_id, false),
+    ];
+
+    let instruction_data = vec![TEST_ACCOUNT_INFO_LAMPORTS_RC, 0, 0, 0];
+
+    let instruction =
+        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
+
+    let account = AccountSharedData::new(42, 10240, &invoke_program_id);
+
+    bank.store_account(&account_keypair.pubkey(), &account);
+
+    let message = Message::new(&[instruction], Some(&mint_pubkey));
+    let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+    let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+
+    assert!(
+        logs.last().unwrap().ends_with(" failed: Invalid pointer"),
+        "{logs:?}"
+    );
+    assert!(result.is_err());
+
+    let instruction_data = vec![TEST_ACCOUNT_INFO_DATA_RC, 0, 0, 0];
+
+    let instruction =
+        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
+
+    let account = AccountSharedData::new(42, 10240, &invoke_program_id);
+
+    bank.store_account(&account_keypair.pubkey(), &account);
+
+    let message = Message::new(&[instruction], Some(&mint_pubkey));
+    let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+    let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+
+    assert!(
+        logs.last().unwrap().ends_with(" failed: Invalid pointer"),
+        "{logs:?}"
+    );
+    assert!(result.is_err());
 }
 
 #[test]
