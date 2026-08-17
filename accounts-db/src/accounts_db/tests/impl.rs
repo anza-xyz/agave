@@ -1387,32 +1387,20 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         DEFAULT_FILE_SIZE,
         accounts_db.accounts_file_provider,
     ));
-    // store an account that is made obsolete below; shrink drops it entirely
-    append_single_account_with_default_hash(
-        &storage1,
-        &obsolete_pubkey,
-        &open_account,
-        false,
-        None,
-    );
-    // store a zero lamport single ref account; shrink *should* convert it to a tombstone
-    append_single_account_with_default_hash(
-        &storage1,
-        &zero_lamport_single_ref_pubkey,
-        &closed_account,
-        false,
-        None,
-    );
-    // store a zero lamport multi ref account; multi ref means it stays alive, not tombstoned
-    append_single_account_with_default_hash(
-        &storage1,
-        &zero_lamport_multi_ref_pubkey,
-        &closed_account,
-        false,
-        None,
-    );
-    // store an alive account; it stays alive
-    append_single_account_with_default_hash(&storage1, &alive_pubkey, &open_account, false, None);
+    let accounts_to_write = [
+        // an account that is made obsolete below; shrink drops it entirely
+        (&obsolete_pubkey, &open_account),
+        // a zero lamport single ref account; shrink *should* convert it to a tombstone
+        (&zero_lamport_single_ref_pubkey, &closed_account),
+        // a zero lamport multi ref account; multi ref means it stays alive, not tombstoned
+        (&zero_lamport_multi_ref_pubkey, &closed_account),
+        // an alive account; it stays alive
+        (&alive_pubkey, &open_account),
+    ];
+    storage1
+        .accounts
+        .write_accounts(&(slot1, accounts_to_write.as_slice()))
+        .unwrap();
     accounts_db.storage.insert(Arc::clone(&storage1));
     accounts_db.add_root(slot1);
 
