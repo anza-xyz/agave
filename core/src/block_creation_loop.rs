@@ -77,6 +77,12 @@ mod stats;
 // the leader window deadline.
 const TIME_TO_COMPLETE_BLOCK_BROADCAST: Duration = Duration::from_millis(6);
 
+// Empirically derived value estimating the average turbine transmission time
+// over a leader window. Agave will terminate block production early such that
+// an external observer views `bank.ns_per_slot()` time between consecutive block
+// completions.
+const BLOCK_PRODUCTION_BUFFER: Duration = Duration::from_millis(50);
+
 /// Source of a leader-window notification consumed by BCL.
 enum ParentSource {
     /// Parent from ParentReady event for this leader window is already known.
@@ -450,6 +456,7 @@ fn block_timeout(bank: &Bank, slot: Slot) -> Duration {
     Duration::from_nanos_u128(bank.ns_per_slot_at_slot(slot))
         .saturating_mul((leader_slot_index(slot) as u32).saturating_add(1))
         .saturating_sub(TIME_TO_COMPLETE_BLOCK_BROADCAST)
+        .saturating_sub(BLOCK_PRODUCTION_BUFFER)
 }
 
 /// Select the freshest leader-window notification within one source.
