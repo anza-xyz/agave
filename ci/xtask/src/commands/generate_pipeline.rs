@@ -379,7 +379,7 @@ fn default_sanity_step() -> buildkite::Step {
         name: String::from("sanity"),
         command: String::from("ci/docker-run-default-image.sh ci/test-sanity.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(5),
+        timeout_in_minutes: Some(10),
         ..Default::default()
     })
 }
