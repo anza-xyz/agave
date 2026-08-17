@@ -36,6 +36,18 @@ impl Fraction {
     pub fn approx_f64(&self) -> f64 {
         self.numerator as f64 / self.denominator.get() as f64
     }
+
+    /// Multiplies `value` by this fraction, rounding down and saturating at
+    /// `u64::MAX`.
+    #[inline]
+    pub fn mul_u64(&self, value: u64) -> u64 {
+        // u64 * u64 always fits in u128, and the denominator is non-zero
+        let product = (value as u128)
+            .checked_mul(self.numerator as u128)
+            .and_then(|product| product.checked_div(self.denominator.get() as u128))
+            .unwrap();
+        u64::try_from(product).unwrap_or(u64::MAX)
+    }
 }
 
 impl PartialOrd for Fraction {
@@ -71,6 +83,22 @@ mod tests {
         assert!(frac(2, 4) <= frac(1, 2));
         assert!(frac(2, 4) >= frac(1, 2));
         assert!(frac(3, 4) > frac(2, 3));
+    }
+
+    #[test]
+    fn test_mul_u64() {
+        assert_eq!(frac(15, 100).mul_u64(1_000), 150);
+        assert_eq!(frac(1, 3).mul_u64(10), 3); // rounds down
+        assert_eq!(frac(1, 1).mul_u64(u64::MAX), u64::MAX);
+        assert_eq!(frac(3, 1).mul_u64(u64::MAX), u64::MAX); // saturates
+        assert_eq!(frac(0, 100).mul_u64(u64::MAX), 0);
+        // f64 rounds this one up, integer math does not
+        let stake = 999_999_999_999_999_999u64;
+        assert_eq!(
+            Fraction::from_percentage(15).mul_u64(stake),
+            149_999_999_999_999_999
+        );
+        assert_eq!((stake as f64 * 0.15) as u64, 150_000_000_000_000_000);
     }
 
     #[test]
