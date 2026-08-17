@@ -184,6 +184,7 @@ mod tests {
         agave_feature_set::FEATURE_NAMES,
         protosol::protos::{
             CompiledInstruction as ProtoCompiledInstruction, FeatureSet as ProtoFeatureSet,
+            MessageAddressTableLookup as ProtoMessageAddressTableLookup,
             MessageHeader as ProtoMessageHeader, SanitizedTransaction as ProtoSanitizedTransaction,
             TransactionMessage as ProtoTransactionMessage,
         },
@@ -255,6 +256,30 @@ mod tests {
         }
     }
 
+    fn v0_tx(lookups: Vec<ProtoMessageAddressTableLookup>) -> ProtoSanitizedTransaction {
+        let msg = ProtoTransactionMessage {
+            is_legacy: false,
+            header: Some(ProtoMessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            }),
+            account_keys: vec![vec![1; 32], SYSTEM_PROGRAM_ID.to_vec()],
+            recent_blockhash: vec![0; 32],
+            instructions: vec![ProtoCompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0],
+                data: vec![2, 0, 0, 0],
+            }],
+            address_table_lookups: lookups,
+        };
+        ProtoSanitizedTransaction {
+            message: Some(msg),
+            message_hash: vec![0; 32],
+            signatures: vec![vec![0; 64]],
+        }
+    }
+
     fn estimate_context(tx: ProtoSanitizedTransaction) -> ProtoCostContext {
         ProtoCostContext {
             tx: Some(tx),
@@ -291,6 +316,24 @@ mod tests {
         let result = assert_has_cost(&estimate_context(vote_tx()));
         assert!(result.total_cost > 0);
         assert!(result.signature_cost > 0);
+    }
+
+    #[test]
+    fn test_estimate_v0_with_lookups() {
+        let lookups = vec![ProtoMessageAddressTableLookup {
+            account_key: vec![3; 32],
+            writable_indexes: vec![0, 1],
+            readonly_indexes: vec![2],
+        }];
+        let with_lookups = assert_has_cost(&estimate_context(v0_tx(lookups)));
+        let without_lookups = assert_has_cost(&estimate_context(v0_tx(vec![])));
+
+        // Two writable lookups triple the write lock cost (payer + 2);
+        // the readonly lookup adds nothing.
+        assert_eq!(
+            with_lookups.write_lock_cost,
+            3 * without_lookups.write_lock_cost,
+        );
     }
 
     #[test]
