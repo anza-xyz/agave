@@ -26,9 +26,7 @@ fn get_sysvar<T: SysvarId + Clone>(
     }
 
     if var_addr >= ebpf::MM_INPUT_START
-        && invoke_context
-            .get_feature_set()
-            .syscall_parameter_address_restrictions
+        && true
     {
         return Err(SyscallError::InvalidPointer.into());
     }
@@ -209,9 +207,7 @@ declare_builtin_function!(
         }
 
         if var_addr >= ebpf::MM_INPUT_START
-            && invoke_context
-                .get_feature_set()
-                .syscall_parameter_address_restrictions
+            && true
         {
             return Err(SyscallError::InvalidPointer.into());
         }
