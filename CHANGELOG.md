@@ -28,6 +28,7 @@ Release channels have their own copy of this changelog:
   accounts were silently dropped for compatibility with snapshots created before v2.1.0.
 * Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
 * Previously deprecated `--tpu-connection-pool-size` has been removed. The connection pool size is fixed at the previous default of 1.
+* scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
 #### Deprecations
 * `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
   default). The flag is still accepted for backward compatibility.
