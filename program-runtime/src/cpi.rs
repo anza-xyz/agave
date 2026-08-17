@@ -1253,7 +1253,10 @@ mod tests {
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_account_info::AccountInfo,
         solana_sbpf::{
-            ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
+            ebpf::{MM_INPUT_START, MM_STACK_START},
+            memory_region::MemoryRegion,
+            program::SBPFVersion,
+            vm::Config,
         },
         solana_sdk_ids::{bpf_loader, system_program},
         solana_svm_feature_set::SVMFeatureSet,
@@ -1791,7 +1794,7 @@ mod tests {
         let key = transaction_accounts[1].0;
         let original_data_len = account.data().len();
 
-        let vm_addr = MM_INPUT_START;
+        let vm_addr = MM_STACK_START;
         let (_mem, region, account_metadata) =
             MockAccountInfo::new(key, &account).into_region(vm_addr);
 
@@ -1896,7 +1899,7 @@ mod tests {
         );
 
         let key = Pubkey::new_unique();
-        let vm_addr = MM_INPUT_START;
+        let vm_addr = MM_STACK_START;
         let (_mem, region, account_metadata) =
             MockAccountInfo::new(key, &account).into_region(vm_addr);
 
