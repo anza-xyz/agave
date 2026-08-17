@@ -250,7 +250,7 @@ impl ProgramCacheEntry {
             account_owner,
             deployment_slot,
             stats: Arc::default(),
-            latest_access_slot: AtomicU64::new(0),
+            latest_access_slot: AtomicU64::new(deployment_slot),
         }
     }
 

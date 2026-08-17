@@ -18,7 +18,7 @@ use {
     },
     std::{
         collections::{HashMap, hash_map::Entry},
-        sync::{Weak, atomic::Ordering::Relaxed},
+        sync::Weak,
     },
 };
 
@@ -513,7 +513,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         && (matches!(candidate.program, ProgramCacheEntryType::Unloaded(_))
                             || candidate.is_tombstone())
                         && candidate.deployment_slot <= self.latest_root_slot
-                        && candidate.latest_access_slot.load(Relaxed) < tombstone_slot_cutoff
+                        && candidate.latest_access_slot.load(Ordering::Relaxed)
+                            < tombstone_slot_cutoff
                     {
                         self.stats.prunes_stale.fetch_add(1, Ordering::Relaxed);
                         return false;
@@ -1719,33 +1720,35 @@ pub(crate) mod tests {
         for entry in &entries {
             let mut cache = ProgramCache::<TestForkGraph>::new(0);
             cache.set_fork_graph(Arc::downgrade(&fork_graph));
+            // Test that multiple entries prevent pruning
             cache.assign_program(&env, program1, 10, new_test_entry(10));
             cache.assign_program(&env, program1, entry.deployment_slot, Arc::clone(entry));
-            cache.prune(100, None, &fork_graph.read().unwrap());
+            cache.prune(
+                MAX_TOMBSTONE_AGE_IN_SLOTS,
+                None,
+                &fork_graph.read().unwrap(),
+            );
             let slot_versions = cache.get_slot_versions_for_tests(&program1);
             assert_eq!(slot_versions, std::slice::from_ref(entry));
+            // Test that latest_access_slot prevents pruning
+            cache.prune(
+                MAX_TOMBSTONE_AGE_IN_SLOTS
+                    .saturating_add(entry.latest_access_slot.load(Ordering::Relaxed)),
+                None,
+                &fork_graph.read().unwrap(),
+            );
+            // Test that exeeding latest_access_slot + MAX_TOMBSTONE_AGE_IN_SLOTS prunes
+            let slot_versions = cache.get_slot_versions_for_tests(&program1);
+            assert_eq!(slot_versions, std::slice::from_ref(entry));
+            cache.prune(
+                MAX_TOMBSTONE_AGE_IN_SLOTS
+                    .saturating_add(entry.latest_access_slot.load(Ordering::Relaxed))
+                    .saturating_add(1),
+                None,
+                &fork_graph.read().unwrap(),
+            );
+            assert!(cache.get_flattened_entries_for_tests().is_empty());
         }
-
-        let mut cache = ProgramCache::<TestForkGraph>::new(0);
-        cache.set_fork_graph(Arc::downgrade(&fork_graph));
-        cache.assign_program(
-            &env,
-            program1,
-            entries[0].deployment_slot,
-            Arc::clone(&entries[0]),
-        );
-        cache.prune(
-            MAX_TOMBSTONE_AGE_IN_SLOTS,
-            None,
-            &fork_graph.read().unwrap(),
-        );
-        assert!(!cache.get_flattened_entries_for_tests().is_empty());
-        cache.prune(
-            MAX_TOMBSTONE_AGE_IN_SLOTS.saturating_add(1),
-            None,
-            &fork_graph.read().unwrap(),
-        );
-        assert!(cache.get_flattened_entries_for_tests().is_empty());
     }
 
     #[test]
