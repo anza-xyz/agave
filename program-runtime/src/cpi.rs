@@ -219,13 +219,13 @@ impl<'a> CallerAccount<'a> {
         vm_addr: u64,
         original_data_len: usize,
         len: usize,
-        syscall_parameter_address_restrictions: bool,
+        _syscall_parameter_address_restrictions: bool,
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) -> Result<&'a mut [u8], Error> {
         use crate::memory::translate_slice_mut_for_cpi;
 
-        if syscall_parameter_address_restrictions {
+        if true {
             let is_caller_loader_deprecated = !check_aligned;
             let address_space_reserved_for_account = if is_caller_loader_deprecated {
                 original_data_len
@@ -279,7 +279,7 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::{translate_type, translate_type_mut_for_cpi};
 
-        let syscall_parameter_address_restrictions = invoke_context
+        let _syscall_parameter_address_restrictions = invoke_context
             .get_feature_set()
             .syscall_parameter_address_restrictions;
         let virtual_address_space_adjustments = invoke_context
@@ -288,7 +288,7 @@ impl<'a> CallerAccount<'a> {
         let account_data_direct_mapping =
             invoke_context.get_feature_set().account_data_direct_mapping;
 
-        if syscall_parameter_address_restrictions {
+        if true {
             check_account_info_pointer(
                 invoke_context,
                 account_info.key as *const _ as u64,
@@ -312,7 +312,7 @@ impl<'a> CallerAccount<'a> {
                 account_info.lamports.as_ptr() as u64,
                 check_aligned,
             )?;
-            if syscall_parameter_address_restrictions {
+            if true {
                 if account_info.lamports.as_ptr() as u64 >= solana_sbpf::ebpf::MM_INPUT_START {
                     return Err(Box::new(CpiError::InvalidPointer));
                 }
@@ -334,9 +334,7 @@ impl<'a> CallerAccount<'a> {
         )?;
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
-            if syscall_parameter_address_restrictions
-                && account_info.data.as_ptr() as u64 >= solana_sbpf::ebpf::MM_INPUT_START
-            {
+            if true && account_info.data.as_ptr() as u64 >= solana_sbpf::ebpf::MM_INPUT_START {
                 return Err(Box::new(CpiError::InvalidPointer));
             }
 
@@ -346,7 +344,7 @@ impl<'a> CallerAccount<'a> {
                 account_info.data.as_ptr() as *const _ as u64,
                 check_aligned,
             )?;
-            if syscall_parameter_address_restrictions {
+            if true {
                 check_account_info_pointer(
                     invoke_context,
                     data.as_ptr() as u64,
@@ -364,7 +362,7 @@ impl<'a> CallerAccount<'a> {
 
             let vm_len_addr = (account_info.data.as_ptr() as *const u64 as u64)
                 .saturating_add(std::mem::size_of::<u64>() as u64);
-            if syscall_parameter_address_restrictions {
+            if true {
                 // In the same vein as the other check_account_info_pointer() checks, we don't lock
                 // this pointer to a specific address but we don't want it to be inside accounts, or
                 // callees might be able to write to the pointed memory.
@@ -381,12 +379,12 @@ impl<'a> CallerAccount<'a> {
                     check_aligned,
                     vm_data_addr,
                     account_metadata.original_data_len,
-                    if syscall_parameter_address_restrictions {
+                    if true {
                         *ref_to_len_in_vm as usize
                     } else {
                         data.len()
                     },
-                    syscall_parameter_address_restrictions,
+                    true,
                     virtual_address_space_adjustments,
                     account_data_direct_mapping,
                 )?
@@ -415,7 +413,7 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::translate_type_mut_for_cpi;
 
-        let syscall_parameter_address_restrictions = invoke_context
+        let _syscall_parameter_address_restrictions = invoke_context
             .get_feature_set()
             .syscall_parameter_address_restrictions;
         let virtual_address_space_adjustments = invoke_context
@@ -424,7 +422,7 @@ impl<'a> CallerAccount<'a> {
         let account_data_direct_mapping =
             invoke_context.get_feature_set().account_data_direct_mapping;
 
-        if syscall_parameter_address_restrictions {
+        if true {
             check_account_info_pointer(
                 invoke_context,
                 account_info.key_addr,
@@ -467,7 +465,7 @@ impl<'a> CallerAccount<'a> {
             check_aligned,
         )?;
 
-        if !syscall_parameter_address_restrictions {
+        if !true {
             // Moved to translate_accounts_common() via feature gate.
             invoke_context.compute_meter.consume_checked(
                 account_info
@@ -484,7 +482,7 @@ impl<'a> CallerAccount<'a> {
         let vm_len_addr = vm_addr
             .saturating_add(&account_info.data_len as *const u64 as u64)
             .saturating_sub(account_info as *const _ as *const u64 as u64);
-        if syscall_parameter_address_restrictions {
+        if true {
             // In the same vein as the other check_account_info_pointer() checks, we don't lock
             // this pointer to a specific address but we don't want it to be inside accounts, or
             // callees might be able to write to the pointed memory.
@@ -500,12 +498,12 @@ impl<'a> CallerAccount<'a> {
                 check_aligned,
                 account_info.data_addr,
                 account_metadata.original_data_len,
-                if syscall_parameter_address_restrictions {
+                if true {
                     *ref_to_len_in_vm as usize
                 } else {
                     account_info.data_len as usize
                 },
-                syscall_parameter_address_restrictions,
+                true,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             )?
@@ -784,7 +782,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // changes so the callee can see them.
     let amount = invoke_context.get_execution_cost().invoke_units;
     invoke_context.compute_meter.consume_checked(amount)?;
-    let syscall_parameter_address_restrictions = invoke_context
+    let _syscall_parameter_address_restrictions = invoke_context
         .get_feature_set()
         .syscall_parameter_address_restrictions;
     let virtual_address_space_adjustments = invoke_context
@@ -810,7 +808,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     let mut accounts =
         S::translate_accounts(account_infos_addr, account_infos_len, invoke_context)?;
 
-    if syscall_parameter_address_restrictions {
+    if true {
         // before initiating CPI, the caller may have modified the
         // account (caller_account). We need to update the corresponding
         // BorrowedAccount (callee_account) so the callee can see the
@@ -827,7 +825,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
                 check_aligned,
                 &translated_account.caller_account,
                 callee_account,
-                syscall_parameter_address_restrictions,
+                true,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             )?;
@@ -857,7 +855,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
                 check_aligned,
                 &mut translated_account.caller_account,
                 &mut callee_account,
-                syscall_parameter_address_restrictions,
+                true,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             )?;
@@ -907,14 +905,14 @@ fn translate_account_infos<T, R>(
     check_aligned: bool,
     cb: impl FnOnce(&[T], Vec<&Pubkey>) -> R,
 ) -> Result<R, Error> {
-    let syscall_parameter_address_restrictions = invoke_context
+    let _syscall_parameter_address_restrictions = invoke_context
         .get_feature_set()
         .syscall_parameter_address_restrictions;
 
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
     // this pointer to a specific address but we don't want it to be inside accounts, or
     // callees might be able to write to the pointed memory.
-    if syscall_parameter_address_restrictions
+    if true
         && account_infos_addr
             .saturating_add(account_infos_len.saturating_mul(std::mem::size_of::<T>() as u64))
             >= ebpf::MM_INPUT_START
@@ -985,7 +983,7 @@ where
         .unwrap()
         .accounts_metadata;
 
-    let syscall_parameter_address_restrictions = invoke_context
+    let _syscall_parameter_address_restrictions = invoke_context
         .get_feature_set()
         .syscall_parameter_address_restrictions;
     let virtual_address_space_adjustments = invoke_context
@@ -1049,14 +1047,14 @@ where
                     serialized_metadata,
                 )?;
 
-            if syscall_parameter_address_restrictions {
+            if true {
                 // Moved from do_translate() via feature gate.
                 let amount = (*caller_account.ref_to_len_in_vm)
                     .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX);
                 invoke_context.compute_meter.consume_checked(amount)?;
             }
-            let update_caller = if syscall_parameter_address_restrictions {
+            let update_caller = if true {
                 // update_callee_account() is moved to cpi_common()
                 true
             } else {
@@ -1069,7 +1067,7 @@ where
                     check_aligned,
                     &caller_account,
                     callee_account,
-                    syscall_parameter_address_restrictions,
+                    true,
                     virtual_address_space_adjustments,
                     account_data_direct_mapping,
                 )?
@@ -1110,7 +1108,7 @@ fn update_callee_account(
     check_aligned: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedInstructionAccount<'_, '_>,
-    syscall_parameter_address_restrictions: bool,
+    _syscall_parameter_address_restrictions: bool,
     virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
 ) -> Result<bool, Error> {
@@ -1134,7 +1132,7 @@ fn update_callee_account(
                         caller_account.vm_data_addr,
                         caller_account.original_data_len,
                         prev_len,
-                        syscall_parameter_address_restrictions,
+                        true,
                         virtual_address_space_adjustments,
                         account_data_direct_mapping,
                     )?
@@ -1237,7 +1235,7 @@ fn update_caller_account(
     check_aligned: bool,
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedInstructionAccount<'_, '_>,
-    syscall_parameter_address_restrictions: bool,
+    _syscall_parameter_address_restrictions: bool,
     virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
@@ -1247,18 +1245,15 @@ fn update_caller_account(
     let prev_len = *caller_account.ref_to_len_in_vm as usize;
     let post_len = callee_account.get_data().len();
     let is_caller_loader_deprecated = !check_aligned;
-    let address_space_reserved_for_account =
-        if syscall_parameter_address_restrictions && is_caller_loader_deprecated {
-            caller_account.original_data_len
-        } else {
-            caller_account
-                .original_data_len
-                .saturating_add(MAX_PERMITTED_DATA_INCREASE)
-        };
+    let address_space_reserved_for_account = if true && is_caller_loader_deprecated {
+        caller_account.original_data_len
+    } else {
+        caller_account
+            .original_data_len
+            .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+    };
 
-    if post_len > address_space_reserved_for_account
-        && (syscall_parameter_address_restrictions || prev_len != post_len)
-    {
+    if post_len > address_space_reserved_for_account && (true || prev_len != post_len) {
         let max_increase =
             address_space_reserved_for_account.saturating_sub(caller_account.original_data_len);
         ic_msg!(
@@ -1290,7 +1285,7 @@ fn update_caller_account(
                     caller_account.vm_data_addr,
                     caller_account.original_data_len,
                     post_len,
-                    syscall_parameter_address_restrictions,
+                    true,
                     virtual_address_space_adjustments,
                     account_data_direct_mapping,
                 )?;
