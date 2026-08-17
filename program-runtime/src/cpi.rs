@@ -837,7 +837,6 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
             check_aligned,
             &translated_account.caller_account,
             callee_account,
-            true,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
         )?;
@@ -1097,7 +1096,6 @@ fn update_callee_account(
     check_aligned: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedInstructionAccount<'_, '_>,
-    _syscall_parameter_address_restrictions: bool,
     virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
 ) -> Result<bool, Error> {
@@ -2210,12 +2208,10 @@ mod tests {
         assert_eq!(data_len, 0);
     }
 
-    #[case(false, false, false)]
-    #[case(true, false, false)]
-    #[case(true, true, false)]
-    #[case(true, true, true)]
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(true, true)]
     fn test_update_callee_account_lamports_owner(
-        syscall_parameter_address_restrictions: bool,
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) {
@@ -2257,7 +2253,6 @@ mod tests {
             true, // check_aligned
             &caller_account,
             callee_account,
-            syscall_parameter_address_restrictions,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
         )
@@ -2268,12 +2263,10 @@ mod tests {
         assert_eq!(caller_account.owner, callee_account.get_owner());
     }
 
-    #[case(false, false, false)]
-    #[case(true, false, false)]
-    #[case(true, true, false)]
-    #[case(true, true, true)]
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(true, true)]
     fn test_update_callee_account_data_writable(
-        syscall_parameter_address_restrictions: bool,
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) {
@@ -2314,7 +2307,6 @@ mod tests {
             true, // check_aligned
             &caller_account,
             callee_account,
-            false, // syscall_parameter_address_restrictions,
             false, // virtual_address_space_adjustments,
             false, // account_data_direct_mapping
         )
@@ -2332,7 +2324,6 @@ mod tests {
                 true, // check_aligned
                 &caller_account,
                 callee_account,
-                syscall_parameter_address_restrictions,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             )
@@ -2351,7 +2342,6 @@ mod tests {
                 true, // check_aligned
                 &caller_account,
                 callee_account,
-                syscall_parameter_address_restrictions,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             )
@@ -2371,7 +2361,6 @@ mod tests {
             true, // check_aligned
             &caller_account,
             callee_account,
-            syscall_parameter_address_restrictions,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
         )
@@ -2380,12 +2369,10 @@ mod tests {
         assert_eq!(callee_account.get_data(), b"");
     }
 
-    #[case(false, false, false)]
-    #[case(true, false, false)]
-    #[case(true, true, false)]
-    #[case(true, true, true)]
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(true, true)]
     fn test_update_callee_account_data_readonly(
-        syscall_parameter_address_restrictions: bool,
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) {
@@ -2427,7 +2414,6 @@ mod tests {
                 true, // check_aligned
                 &caller_account,
                 callee_account,
-                false, // syscall_parameter_address_restrictions,
                 false, // virtual_address_space_adjustments,
                 false, // account_data_direct_mapping
             ),
@@ -2445,7 +2431,6 @@ mod tests {
                 true, // check_aligned
                 &caller_account,
                 callee_account,
-                syscall_parameter_address_restrictions,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             ),
@@ -2463,7 +2448,6 @@ mod tests {
                 true, // check_aligned
                 &caller_account,
                 callee_account,
-                syscall_parameter_address_restrictions,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             ),
