@@ -4023,16 +4023,9 @@ fn test_cpi_account_ownership_writability() {
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
-            if virtual_address_space_adjustments {
-                // We move the data pointer, virtual_address_space_adjustments doesn't allow it
-                // anymore so it errors out earlier. See
-                // test_cpi_invalid_account_info_pointers.
-                TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
-            } else {
-                // We managed to make CPI write into the account data, but the
-                // usual checks still apply and we get an error.
-                TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
-            }
+            // We move the data pointer, syscall_parameter_address_restrictions doesn't allow it
+            // anymore so it errors out earlier. See test_cpi_invalid_account_info_pointers.
+            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
         );
 
         // We're going to try and make CPI write ref_to_len_in_vm into a 2nd
@@ -4062,30 +4055,17 @@ fn test_cpi_account_ownership_writability() {
             let message = Message::new(&[instruction], Some(&mint_pubkey));
             let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
             let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-            if virtual_address_space_adjustments {
-                assert_eq!(
-                    result.unwrap_err(),
-                    TransactionError::InstructionError(
-                        0,
-                        InstructionError::ProgramFailedToComplete
-                    )
-                );
-                // We haven't moved the data pointer, but ref_to_len_vm _is_ in
-                // the account data vm range and that's not allowed either.
-                assert!(
-                    logs.iter().any(|log| log.contains("Invalid pointer")),
-                    "{logs:?}"
-                );
-            } else {
-                // we expect this to succeed as after updating `ref_to_len_in_vm`,
-                // CPI will sync the actual account data between the callee and the
-                // caller, _always_ writing over the location pointed by
-                // `ref_to_len_in_vm`. To verify this, we check that the account
-                // data is in fact all zeroes like it is in the callee.
-                result.unwrap();
-                let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-                assert_eq!(account.data(), vec![0; 40]);
-            }
+            assert_eq!(
+                result.unwrap_err(),
+                TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
+            );
+            // We haven't moved the data pointer, but ref_to_len_vm _is_ in
+            // the account data vm range and that's not allowed either.
+            assert!(
+                logs.iter().any(|log| log.contains("Invalid pointer")),
+                "{logs:?}"
+            );
+            assert!(account.data().is_empty());
         }
 
         // Test that the caller can write to an account which it received from the callee
@@ -4191,8 +4171,8 @@ fn test_cpi_account_data_updates() {
                     if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
-                        InstructionError::ModifiedProgramId
-                    }
+                        InstructionError::InvalidRealloc
+                    },
                 )
             );
         } else {
@@ -4225,14 +4205,7 @@ fn test_cpi_account_data_updates() {
         } else if deprecated_caller {
             assert_eq!(
                 result.unwrap_err().unwrap(),
-                TransactionError::InstructionError(
-                    0,
-                    if virtual_address_space_adjustments {
-                        InstructionError::InvalidRealloc
-                    } else {
-                        InstructionError::ExternalAccountDataModified
-                    }
-                )
+                TransactionError::InstructionError(0, InstructionError::InvalidRealloc),
             );
         } else {
             assert!(result.is_ok(), "{result:?}");
@@ -4270,11 +4243,11 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if virtual_address_space_adjustments && deprecated_callee {
+                    if deprecated_callee {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::ExternalAccountDataModified
-                    }
+                    },
                 )
             );
         } else {
@@ -4312,8 +4285,8 @@ fn test_cpi_account_data_updates() {
                     if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
-                        InstructionError::ModifiedProgramId
-                    }
+                        InstructionError::InvalidRealloc
+                    },
                 )
             );
         } else {
@@ -4349,8 +4322,8 @@ fn test_cpi_account_data_updates() {
                     if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
-                        InstructionError::ModifiedProgramId
-                    }
+                        InstructionError::InvalidRealloc
+                    },
                 )
             );
         } else {
@@ -4896,31 +4869,11 @@ fn test_update_callee_account() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-
-        if virtual_address_space_adjustments {
-            // changing the data pointer is not permitted
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok());
-
-            let data = bank_client
-                .get_account_data(&account_keypair.pubkey())
-                .unwrap()
-                .unwrap();
-
-            assert_eq!(data.len(), 10240);
-
-            data.iter().enumerate().for_each(|(i, v)| {
-                let expected = match i {
-                    // since the data is was cloned, the write to 8191 was lost
-                    8190 => (i as u8) ^ 0xe5,
-                    ..=10240 => i as u8,
-                    _ => 0,
-                };
-
-                assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
-            });
-        }
+        // changing the data pointer is not permitted
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
+        );
     }
 }
 
