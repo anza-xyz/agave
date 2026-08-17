@@ -323,10 +323,12 @@ impl StandardBroadcastRun {
         let (bsend, brecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
         let (ssend, srecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         self.process_receive_results(
             keypair,
             blockstore,
             &mut pinnable_slice,
+            &mut write_batch,
             &ssend,
             &bsend,
             receive_results,
@@ -334,7 +336,7 @@ impl StandardBroadcastRun {
         )?;
         // Data and coding shreds are sent in a single batch.
         let _ = self.transmit(&srecv, cluster_info, BroadcastSocket::Udp(sock), bank_forks);
-        let _ = self.record(&brecv, blockstore, &mut pinnable_slice);
+        let _ = self.record(&brecv, blockstore, &mut pinnable_slice, &mut write_batch);
         Ok(())
     }
 
@@ -343,6 +345,7 @@ impl StandardBroadcastRun {
         keypair: &Keypair,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         receive_results: ReceiveResults,
@@ -459,6 +462,7 @@ impl StandardBroadcastRun {
                     [Cow::Borrowed(shred)],
                     true, // is_trusted
                     pinnable_slice,
+                    write_batch,
                 )
                 .expect("Failed to insert shreds in blockstore");
         }
@@ -533,6 +537,7 @@ impl StandardBroadcastRun {
         &mut self,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
         shreds: Arc<Vec<Shred>>,
         broadcast_shred_batch_info: Option<BroadcastShredBatchInfo>,
     ) {
@@ -548,7 +553,12 @@ impl StandardBroadcastRun {
         let num_shreds = shreds.len();
         let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
         blockstore
-            .insert_cow_shreds(shreds, /*is_trusted:*/ true, pinnable_slice)
+            .insert_cow_shreds(
+                shreds,
+                /*is_trusted:*/ true,
+                pinnable_slice,
+                write_batch,
+            )
             .expect("Failed to insert shreds in blockstore");
         let insert_shreds_elapsed = insert_shreds_start.elapsed();
         let new_insert_shreds_stats = InsertShredsStats {
@@ -635,6 +645,7 @@ impl BroadcastRun for StandardBroadcastRun {
         keypair: &Keypair,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
         receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
@@ -651,6 +662,7 @@ impl BroadcastRun for StandardBroadcastRun {
             keypair,
             blockstore,
             pinnable_slice,
+            write_batch,
             socket_sender,
             blockstore_sender,
             receive_results,
@@ -672,9 +684,16 @@ impl BroadcastRun for StandardBroadcastRun {
         receiver: &RecordReceiver,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
     ) -> Result<()> {
         let (shreds, slot_start_ts) = receiver.recv()?;
-        self.insert(blockstore, pinnable_slice, shreds, slot_start_ts);
+        self.insert(
+            blockstore,
+            pinnable_slice,
+            write_batch,
+            shreds,
+            slot_start_ts,
+        );
         Ok(())
     }
 }
@@ -802,6 +821,7 @@ mod test {
         let (socket_sender, _socket_receiver) = bounded(1024);
         let (blockstore_sender, _blockstore_receiver) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut standard_broadcast_run = StandardBroadcastRun::new(
             0,
@@ -815,6 +835,7 @@ mod test {
                 &Keypair::new(),
                 &blockstore,
                 &mut pinnable_slice,
+                &mut write_batch,
                 &socket_sender,
                 &blockstore_sender,
                 receive_results,
@@ -1039,6 +1060,7 @@ mod test {
         let (bsend, brecv) = bounded(1024);
         let (ssend, _srecv) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut last_tick_height = bank.tick_height();
         let mut standard_broadcast_run = StandardBroadcastRun::new(
@@ -1060,6 +1082,7 @@ mod test {
                     &leader_keypair,
                     &blockstore,
                     &mut pinnable_slice,
+                    &mut write_batch,
                     &ssend,
                     &bsend,
                     receive_results,
@@ -1170,6 +1193,7 @@ mod test {
         let (bsend, brecv) = bounded(1024);
         let (ssend, srecv) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
 
         let ticks = create_ticks(1, 0, genesis_config.hash());
         let err = standard_broadcast_run
@@ -1177,6 +1201,7 @@ mod test {
                 &leader_keypair,
                 &blockstore,
                 &mut pinnable_slice,
+                &mut write_batch,
                 &ssend,
                 &bsend,
                 ReceiveResults {
@@ -1195,6 +1220,7 @@ mod test {
                 &leader_keypair,
                 &blockstore,
                 &mut pinnable_slice,
+                &mut write_batch,
                 &ssend,
                 &bsend,
                 ReceiveResults {
@@ -1218,6 +1244,7 @@ mod test {
                 &leader_keypair,
                 &blockstore,
                 &mut pinnable_slice,
+                &mut write_batch,
                 &ssend,
                 &bsend,
                 ReceiveResults {

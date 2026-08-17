@@ -93,6 +93,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         keypair: &Keypair,
         blockstore: &'db Blockstore,
         _pinnable_slice: &mut DBPinnableSlice<'db>,
+        _write_batch: &mut WriteBatch,
         receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
@@ -448,10 +449,16 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         receiver: &RecordReceiver,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
     ) -> Result<()> {
         let (all_shreds, _) = receiver.recv()?;
         blockstore
-            .insert_cow_shreds(all_shreds.iter().map(Cow::Borrowed), true, pinnable_slice)
+            .insert_cow_shreds(
+                all_shreds.iter().map(Cow::Borrowed),
+                true,
+                pinnable_slice,
+                write_batch,
+            )
             .expect("Failed to insert shreds in blockstore");
         Ok(())
     }
