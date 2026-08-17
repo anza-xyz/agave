@@ -22,20 +22,20 @@ name = "solana_vote"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "dep:rand",
-    "dep:bincode",
-    "dep:solana-bls-signatures",
-    "solana-bls-signatures/solana-signer-derive",
+  "dep:qualifier_attr",
+  "dep:rand",
+  "dep:bincode",
+  "dep:solana-bls-signatures",
+  "solana-bls-signatures/solana-signer-derive",
 ]
 frozen-abi = [
-    "dep:solana-bls-signatures",
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-account/frozen-abi",
-    "solana-bls-signatures/solana-signer-derive",
-    "solana-pubkey/frozen-abi",
-    "solana-vote-interface/frozen-abi",
+  "dep:solana-bls-signatures",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-account/frozen-abi",
+  "solana-bls-signatures/solana-signer-derive",
+  "solana-pubkey/frozen-abi",
+  "solana-vote-interface/frozen-abi",
 ]
 
 [dependencies]
@@ -49,10 +49,10 @@ solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true, optional = true }
 solana-clock = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-hash = { workspace = true, features = ["copy"] }
 solana-instruction = { workspace = true }
@@ -78,9 +78,15 @@ solana-keypair = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
-solana-transaction = { workspace = true, features = ["wincode", "dev-context-only-utils"] }
+solana-transaction = { workspace = true, features = [
+  "wincode",
+  "dev-context-only-utils",
+] }
 solana-vote = { path = ".", features = ["agave-unstable-api"] }
-solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
+solana-vote-interface = { workspace = true, features = [
+  "bincode",
+  "dev-context-only-utils",
+] }
 
 [[bench]]
 name = "vote_account"

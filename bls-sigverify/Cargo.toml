@@ -18,11 +18,11 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "agave-bls-cert-verify/dev-context-only-utils",
-    "agave-votor-messages/dev-context-only-utils",
-    "agave-votor-transport/dev-context-only-utils",
-    "solana-perf/dev-context-only-utils",
-    "solana-runtime/dev-context-only-utils",
+  "agave-bls-cert-verify/dev-context-only-utils",
+  "agave-votor-messages/dev-context-only-utils",
+  "agave-votor-transport/dev-context-only-utils",
+  "solana-perf/dev-context-only-utils",
+  "solana-runtime/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -53,7 +53,10 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-bls-sigverify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+agave-bls-sigverify = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 agave-logger = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }

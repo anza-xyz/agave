@@ -34,7 +34,10 @@ caps = { workspace = true }
 crossbeam-queue = { workspace = true }
 
 [dev-dependencies]
-agave-xdp = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+agave-xdp = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 aya = { workspace = true, features = ["test-helpers"] }

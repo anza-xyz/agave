@@ -23,9 +23,9 @@ name = "solana_bloom"
 agave-unstable-api = []
 dev-context-only-utils = []
 frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-hash/frozen-abi",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-hash/frozen-abi",
 ]
 
 [dependencies]
@@ -33,10 +33,10 @@ bv = { workspace = true }
 fnv = { workspace = true }
 rand = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-sanitize = { workspace = true }
 solana-time-utils = { workspace = true }
@@ -45,7 +45,10 @@ wincode = { workspace = true, features = ["bv"] }
 [dev-dependencies]
 bencher = { workspace = true }
 rayon = { workspace = true }
-solana-bloom = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-bloom = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 solana-hash = { workspace = true, features = ["atomic", "wincode"] }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signature = { workspace = true, features = ["std"] }

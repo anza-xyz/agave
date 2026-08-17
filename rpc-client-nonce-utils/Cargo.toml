@@ -21,7 +21,9 @@ agave-unstable-api = []
 clap = ["dep:clap", "dep:solana-clap-utils"]
 
 [dependencies]
-clap = { version = "2.33.0", default-features = false, features = ["suggestions"], optional = true }
+clap = { version = "2.33.0", default-features = false, features = [
+  "suggestions",
+], optional = true }
 solana-account = { workspace = true }
 solana-clap-utils = { workspace = true, optional = true }
 solana-commitment-config = { workspace = true }
@@ -38,7 +40,9 @@ wincode = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
-solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
+solana-account-decoder = { path = "../account-decoder", features = [
+  "agave-unstable-api",
+] }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
 solana-rpc-client-api = { path = "../rpc-client-api" }

@@ -21,7 +21,9 @@ agave-unstable-api = []
 [dependencies]
 anyhow = { workspace = true }
 jsonrpc-core = { workspace = true }
-reqwest = { workspace = true, default-features = false, features = ["rustls-tls"] }
+reqwest = { workspace = true, default-features = false, features = [
+  "rustls-tls",
+] }
 reqwest-middleware = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -28,7 +28,12 @@ solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-tls-utils = { workspace = true, features = ["agave-unstable-api"] }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { workspace = true, features = [
+  "rt-multi-thread",
+  "macros",
+  "sync",
+  "time",
+] }
 tokio-util = { workspace = true }
 
 [dev-dependencies]

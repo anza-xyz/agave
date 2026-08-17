@@ -33,7 +33,10 @@ solana-vote = { workspace = true }
 [dev-dependencies]
 rand = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
-solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-vote = { path = "../vote", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 test-case = { workspace = true }
 
 [lints]

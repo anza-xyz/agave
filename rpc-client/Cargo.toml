@@ -31,7 +31,14 @@ bs58 = { workspace = true }
 futures = { workspace = true }
 indicatif = { workspace = true, optional = true }
 log = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
+reqwest = { workspace = true, features = [
+  "blocking",
+  "brotli",
+  "deflate",
+  "gzip",
+  "rustls-tls",
+  "json",
+] }
 reqwest-middleware = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
@@ -65,7 +72,9 @@ crossbeam-channel = { workspace = true }
 futures = { workspace = true }
 jsonrpc-core = { workspace = true }
 jsonrpc-http-server = { workspace = true }
-solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
+solana-account-decoder = { path = "../account-decoder", features = [
+  "agave-unstable-api",
+] }
 solana-hash = { workspace = true, features = ["atomic"] }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
