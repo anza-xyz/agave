@@ -379,7 +379,7 @@ pub(crate) mod tests {
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        solana_ledger::shred::{PayloadBuilder, ProcessShredsStats, ReedSolomonCache, Shredder},
         solana_signature::Signature,
         solana_signer::Signer,
         solana_system_transaction::transfer,
@@ -1132,22 +1132,26 @@ pub(crate) mod tests {
         let data_shred = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let coding_shred =
             new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader)[0].clone();
-        let mut data_shred_different_retransmitter_payload = data_shred.clone().into_payload();
+        let mut data_shred_different_retransmitter_payload =
+            PayloadBuilder::from(data_shred.clone().into_payload());
         shred::layout::set_retransmitter_signature(
-            &mut data_shred_different_retransmitter_payload.as_mut(),
+            &mut data_shred_different_retransmitter_payload,
             &Signature::new_unique(),
         )
         .unwrap();
         let data_shred_different_retransmitter =
-            Shred::new_from_serialized_shred(data_shred_different_retransmitter_payload).unwrap();
-        let mut coding_shred_different_retransmitter_payload = coding_shred.clone().into_payload();
+            Shred::new_from_serialized_shred(data_shred_different_retransmitter_payload.build())
+                .unwrap();
+        let mut coding_shred_different_retransmitter_payload =
+            PayloadBuilder::from(coding_shred.clone().into_payload());
         shred::layout::set_retransmitter_signature(
-            &mut coding_shred_different_retransmitter_payload.as_mut(),
+            &mut coding_shred_different_retransmitter_payload,
             &Signature::new_unique(),
         )
         .unwrap();
         let coding_shred_different_retransmitter =
-            Shred::new_from_serialized_shred(coding_shred_different_retransmitter_payload).unwrap();
+            Shred::new_from_serialized_shred(coding_shred_different_retransmitter_payload.build())
+                .unwrap();
 
         let test_cases = [
             (data_shred, data_shred_different_retransmitter),

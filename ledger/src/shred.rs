@@ -53,7 +53,7 @@ pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 #[cfg(test)]
 use rand::Rng;
 use {
-    self::traits::{Shred as _, ShredData as _},
+    self::traits::{Shred as _, ShredData as _, ShredWithPayload as _},
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},
@@ -78,7 +78,7 @@ use {
 pub use {
     self::{
         merkle::{ShredCode, ShredData},
-        payload::Payload,
+        payload::{Payload, PayloadBuilder},
         stats::{ProcessShredsStats, ShredFetchStats},
     },
     crate::shredder::{ReedSolomonCache, Shredder},
@@ -421,8 +421,6 @@ use {dispatch, wincode::config::ConfigCore};
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
 
     dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
@@ -515,7 +513,9 @@ impl Shred {
     pub fn sign(&mut self, keypair: &Keypair) {
         let data = self.signed_data().unwrap();
         let signature = keypair.sign_message(data.as_ref());
-        self.set_signature(signature);
+        let mut shred = merkle::Shred::try_from(self.clone()).unwrap();
+        shred.set_signature(signature).unwrap();
+        *self = Self::from(shred);
     }
 
     #[inline]
@@ -1323,19 +1323,16 @@ mod tests {
             shred: Shred,
             is_last_in_slot: bool,
         ) -> Shred {
-            let mut shred = shred.into_payload();
+            let mut shred = PayloadBuilder::from(shred.into_payload());
             let mut signature = [0u8; SIGNATURE_BYTES];
             rng.fill(&mut signature[..]);
-            let out = layout::set_retransmitter_signature(
-                &mut shred.as_mut(),
-                &Signature::from(signature),
-            );
+            let out = layout::set_retransmitter_signature(&mut shred, &Signature::from(signature));
             if is_last_in_slot {
                 assert_matches!(out, Ok(()));
             } else {
                 assert_matches!(out, Err(Error::InvalidShredVariant));
             }
-            Shred::new_from_serialized_shred(shred).unwrap()
+            Shred::new_from_serialized_shred(shred.build()).unwrap()
         }
 
         let mut rng = rand::rng();
@@ -1376,9 +1373,10 @@ mod tests {
         // Shreds of the same (slot, index, shred-type) with different payload
         // (ignoring retransmitter signature) are duplicate.
         for shred in &shreds {
-            let mut other = shred.payload().clone();
-            other.as_mut()[90] = other[90].wrapping_add(1);
-            let other = Shred::new_from_serialized_shred(other).unwrap();
+            // `PayloadBuilder::from(&Payload)` copies, so `shred` is left untouched.
+            let mut other = PayloadBuilder::from(shred.payload());
+            other[90] = other[90].wrapping_add(1);
+            let other = Shred::new_from_serialized_shred(other.build()).unwrap();
             assert_ne!(shred.payload(), other.payload());
             assert_eq!(
                 layout::get_retransmitter_signature(shred.payload()).ok(),
