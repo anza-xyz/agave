@@ -25,9 +25,7 @@ fn get_sysvar<T: SysvarId + Clone>(
         return Err(SyscallError::UnalignedPointer.into());
     }
 
-    if var_addr >= ebpf::MM_INPUT_START
-        && true
-    {
+    if var_addr >= ebpf::MM_INPUT_START {
         return Err(SyscallError::InvalidPointer.into());
     }
 
@@ -206,9 +204,7 @@ declare_builtin_function!(
             return Err(SyscallError::UnalignedPointer.into());
         }
 
-        if var_addr >= ebpf::MM_INPUT_START
-            && true
-        {
+        if var_addr >= ebpf::MM_INPUT_START {
             return Err(SyscallError::InvalidPointer.into());
         }
 
