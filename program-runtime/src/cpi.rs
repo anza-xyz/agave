@@ -275,7 +275,6 @@ impl<'a> CallerAccount<'a> {
         vm_addr: u64,
         original_data_len: usize,
         len: usize,
-        _syscall_parameter_address_restrictions: bool,
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) -> Result<&'a mut [u8], Error> {
@@ -419,7 +418,6 @@ impl<'a> CallerAccount<'a> {
                     data_slice.ptr(),
                     account_metadata.original_data_len,
                     *ref_to_len_in_vm as usize,
-                    true,
                     virtual_address_space_adjustments,
                     account_data_direct_mapping,
                 )?
@@ -520,7 +518,6 @@ impl<'a> CallerAccount<'a> {
                 account_info.data_addr,
                 account_metadata.original_data_len,
                 *ref_to_len_in_vm as usize,
-                true,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             )?
@@ -1124,7 +1121,6 @@ fn update_callee_account(
                         caller_account.vm_data_addr,
                         caller_account.original_data_len,
                         prev_len,
-                        true,
                         virtual_address_space_adjustments,
                         account_data_direct_mapping,
                     )?
@@ -1277,7 +1273,6 @@ fn update_caller_account(
                     caller_account.vm_data_addr,
                     caller_account.original_data_len,
                     post_len,
-                    true,
                     virtual_address_space_adjustments,
                     account_data_direct_mapping,
                 )?;
@@ -1950,7 +1945,6 @@ mod tests {
                     .len()
                     .saturating_add(MAX_PERMITTED_DATA_INCREASE)
                     .saturating_add(1),
-                true,  // syscall_parameter_address_restrictions
                 true,  // virtual_address_space_adjustments
                 false, // account_data_direct_mapping
             )
