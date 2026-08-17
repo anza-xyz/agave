@@ -383,11 +383,7 @@ impl Stats {
                     self.flush_grow_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
-                (
-                    "evict_us",
-                    self.evict_us.swap(0, Ordering::Relaxed),
-                    i64
-                ),
+                ("evict_us", self.evict_us.swap(0, Ordering::Relaxed), i64),
                 (
                     "num_hashmap_reallocates",
                     self.num_hashmap_reallocates.swap(0, Ordering::Relaxed),

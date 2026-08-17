@@ -1329,9 +1329,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
 
         let ages_to_scan = {
-            let old_value = self
-                .ages_to_skip_before_scan
-                .fetch_sub(1, Ordering::AcqRel);
+            let old_value = self.ages_to_skip_before_scan.fetch_sub(1, Ordering::AcqRel);
             if old_value == 0 {
                 self.ages_to_skip_before_scan
                     .store(self.num_ages_to_distribute_scans, Ordering::Release);
@@ -1413,9 +1411,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 if let Entry::Occupied(occupied) = map.entry(*k) {
                     let v = occupied.get();
 
-                    if v.dirty()
-                        || !Self::should_evict_based_on_age(current_age, v, ages_to_scan)
-                    {
+                    if v.dirty() || !Self::should_evict_based_on_age(current_age, v, ages_to_scan) {
                         // marked dirty or bumped in age after we looked above
                         // these evictions will be handled in later passes (at later ages)
                         failed += 1;
