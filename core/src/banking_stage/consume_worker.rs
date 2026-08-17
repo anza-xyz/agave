@@ -220,7 +220,7 @@ pub(crate) mod external {
         },
         solana_svm_transaction::svm_message::SVMMessage,
         solana_transaction::TransactionError,
-        std::ptr::NonNull,
+        std::{num::NonZeroUsize, ptr::NonNull},
     };
 
     #[derive(Debug, Error)]
@@ -311,29 +311,19 @@ pub(crate) mod external {
             should_drain_executes: &mut bool,
         ) -> Result<IterationResult, ExternalConsumeWorkerError> {
             self.allocator.clean_remote_free_lists();
-            if receiver.is_empty() {
-                receiver.sync();
-                *should_drain_executes = false;
+            let capacity = NonZeroUsize::new(receiver.capacity())
+                .expect("shaq queue capacity must be non-zero");
+            let Some(messages) = receiver.try_reserve_read_batch(capacity) else {
+                return Ok(IterationResult::Idle);
+            };
+
+            *should_drain_executes = false;
+            for message in messages {
+                // If the bank is unavailable, drain executes for the remainder of the batch.
+                *should_drain_executes |= self.process_message(&message, *should_drain_executes)?;
             }
 
-            match receiver.try_read() {
-                Some(message) => {
-                    self.sender.sync();
-
-                    // Process message, if bank is unavailable enable draining for the
-                    // remainder of the current batch (i.e. what our `receiver.sync()`
-                    // fetched).
-                    *should_drain_executes |=
-                        self.process_message(message, *should_drain_executes)?;
-
-                    // Publish our send & read offsets.
-                    self.sender.commit();
-                    receiver.finalize();
-
-                    Ok(IterationResult::ProcessedMessage)
-                }
-                None => Ok(IterationResult::Idle),
-            }
+            Ok(IterationResult::ProcessedMessage)
         }
 
         /// Return true if fetching a bank for execution timed out.
@@ -1184,7 +1174,6 @@ pub(crate) mod external {
 
             fn send_message(&mut self, message: PackToWorkerMessage) {
                 self.pack_to_worker.try_write(message).unwrap();
-                self.pack_to_worker.commit();
             }
 
             fn iterate(&mut self) -> Result<(), ExternalConsumeWorkerError> {
@@ -1196,10 +1185,7 @@ pub(crate) mod external {
             }
 
             fn recv_response(&mut self) -> WorkerToPackMessage {
-                self.worker_to_pack.sync();
-                let message = *self.worker_to_pack.try_read().unwrap();
-                self.worker_to_pack.finalize();
-                message
+                self.worker_to_pack.try_read().unwrap()
             }
 
             fn execution_responses(
@@ -2155,10 +2141,6 @@ pub(crate) mod external {
                 not_included_reasons::BANK_NOT_AVAILABLE
             );
 
-            test_frame.enable_execution();
-            test_frame.iterate().unwrap();
-            assert!(test_frame.should_drain_executes);
-
             let response = test_frame.recv_response();
             assert_eq!(response.processed_code, processed_codes::PROCESSED);
             let responses = test_frame.execution_responses(&response.responses);
@@ -2305,7 +2287,6 @@ pub(crate) mod external {
                 not_included_reasons::NONE
             );
 
-            test_frame.iterate().unwrap();
             let second = test_frame.recv_response();
             assert_eq!(second.batch, check_batch.region);
             let second_responses = test_frame.check_responses(&second.responses);
