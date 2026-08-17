@@ -509,19 +509,13 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     new_root_slot.saturating_sub(MAX_TOMBSTONE_AGE_IN_SLOTS);
                 entries.retain(|_id, second_level| {
                     // Clean up tombstones and unloaded entries
-                    if let [candidate] = &second_level[..] {
-                        match candidate.program {
-                            ProgramCacheEntryType::Builtin(_)
-                            | ProgramCacheEntryType::Loaded(_) => {}
-                            _ => {
-                                if candidate.deployment_slot <= self.latest_root_slot
-                                    && candidate.latest_access_slot.load(Relaxed)
-                                        < tombstone_slot_cutoff
-                                {
-                                    return false;
-                                }
-                            }
-                        }
+                    if let [candidate] = &second_level[..]
+                        && (matches!(candidate.program, ProgramCacheEntryType::Unloaded(_))
+                            || candidate.is_tombstone())
+                        && candidate.deployment_slot <= self.latest_root_slot
+                        && candidate.latest_access_slot.load(Relaxed) < tombstone_slot_cutoff
+                    {
+                        return false;
                     }
                     // Remove entries un/re/deployed on orphan forks
                     let mut first_ancestor_found = false;
