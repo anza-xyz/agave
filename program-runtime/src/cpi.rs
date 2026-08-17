@@ -818,7 +818,6 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
                 check_aligned,
                 &mut translated_account.caller_account,
                 &mut callee_account,
-                true,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             )?;
@@ -1175,7 +1174,6 @@ fn update_caller_account(
     check_aligned: bool,
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedInstructionAccount<'_, '_>,
-    _syscall_parameter_address_restrictions: bool,
     virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
@@ -1957,12 +1955,10 @@ mod tests {
         assert_eq!(caller_account.serialized_data, account.data());
     }
 
-    #[case(false, false, false)]
-    #[case(true, false, false)]
-    #[case(true, true, false)]
-    #[case(true, true, true)]
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(true, true)]
     fn test_update_caller_account_lamports_owner(
-        syscall_parameter_address_restrictions: bool,
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) {
@@ -2014,7 +2010,6 @@ mod tests {
             true, // check_aligned
             &mut caller_account,
             &mut callee_account,
-            syscall_parameter_address_restrictions,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
         )
@@ -2088,7 +2083,6 @@ mod tests {
                 true, // check_aligned
                 &mut caller_account,
                 &mut callee_account,
-                false, // syscall_parameter_address_restrictions
                 false, // virtual_address_space_adjustments
                 false, // account_data_direct_mapping
             )
@@ -2114,7 +2108,6 @@ mod tests {
             true, // check_aligned
             &mut caller_account,
             &mut callee_account,
-            false, // syscall_parameter_address_restrictions
             false, // virtual_address_space_adjustments
             false, // account_data_direct_mapping
         )
@@ -2132,7 +2125,6 @@ mod tests {
                 true, // check_aligned
                 &mut caller_account,
                 &mut callee_account,
-                false, // syscall_parameter_address_restrictions
                 false, // virtual_address_space_adjustments
                 false, // account_data_direct_mapping
             ),
@@ -2149,7 +2141,6 @@ mod tests {
             true, // check_aligned
             &mut caller_account,
             &mut callee_account,
-            false, // syscall_parameter_address_restrictions
             false, // virtual_address_space_adjustments
             false, // account_data_direct_mapping
         )
