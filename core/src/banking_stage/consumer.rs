@@ -131,11 +131,10 @@ impl Consumer {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results =
             SmallVec::<[_; TARGET_NUM_TRANSACTIONS_PER_BATCH]>::from_elem(Ok(()), txs.len());
-        let check_results = bank.check_transactions(
+        let check_results = bank.check_transactions_for_scheduling(
             txs,
             &pre_results,
             bank.max_processing_age(),
-            true,
             &mut error_counters,
         );
         let check_results = check_results

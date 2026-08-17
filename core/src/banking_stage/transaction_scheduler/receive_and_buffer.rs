@@ -99,7 +99,7 @@ pub(crate) fn precheck_transaction(
 
     let mut error_counters = TransactionErrorMetrics::default();
     let validated_nonce_address = working_bank
-        .check_transaction_without_status_cache(
+        .precheck_transaction_on_ingest(
             state.transaction(),
             working_bank.max_processing_age(),
             &mut error_counters,
