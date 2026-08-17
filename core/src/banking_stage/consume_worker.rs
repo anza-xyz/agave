@@ -2667,20 +2667,19 @@ mod tests {
         // all but one succeed. 6 for initial funding
         assert_eq!(bank.transaction_count(), 6 + 5);
 
-        let already_processed_results = bank
-            .check_transactions(
-                &sanitized_txs,
-                &vec![Ok(()); sanitized_txs.len()],
-                bank.max_processing_age(),
-                true,
-                &mut TransactionErrorMetrics::default(),
-            )
-            .into_iter()
-            .map(|r| match r {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            })
-            .collect::<Vec<_>>();
+        let already_processed_results = Consumer::check_transactions_for_scheduling(
+            bank,
+            &sanitized_txs,
+            &vec![Ok(()); sanitized_txs.len()],
+            bank.max_processing_age(),
+            &mut TransactionErrorMetrics::default(),
+        )
+        .into_iter()
+        .map(|r| match r {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err),
+        })
+        .collect::<Vec<_>>();
         assert_eq!(
             already_processed_results,
             vec![

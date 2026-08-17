@@ -157,11 +157,14 @@ pub(crate) mod external {
         },
         solana_runtime_transaction::{
             runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-            transaction_meta::TransactionMeta,
+            transaction_meta::TransactionMeta, transaction_with_meta::TransactionWithMeta,
         },
-        solana_svm::transaction_error_metrics::TransactionErrorMetrics,
+        solana_svm::{
+            account_loader::TransactionCheckResult,
+            transaction_error_metrics::TransactionErrorMetrics,
+        },
         solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
-        solana_transaction::TransactionError,
+        solana_transaction::{TransactionError, TransactionResult},
         std::{
             ptr::NonNull,
             sync::{
@@ -671,6 +674,16 @@ pub(crate) mod external {
             }
         }
 
+        fn check_transactions_with_processed_slots<Tx: TransactionWithMeta>(
+            bank: &Bank,
+            txs: &[impl core::borrow::Borrow<Tx>],
+            lock_results: &[TransactionResult<()>],
+            max_age: usize,
+            error_counters: &mut TransactionErrorMetrics,
+        ) -> (Vec<TransactionCheckResult>, Option<Vec<Option<Slot>>>) {
+            bank.check_transactions_external(txs, lock_results, max_age, true, error_counters)
+        }
+
         fn check_status_checks<D: TransactionData>(
             parsing_and_resolve_results: &[Result<(), PacketHandlingError>],
             txs: &[RuntimeTransaction<ResolvedTransactionView<D>>],
@@ -680,13 +693,12 @@ pub(crate) mod external {
             assert_eq!(parsing_and_resolve_results.len(), responses.len());
 
             let mut error_counters = TransactionErrorMetrics::default();
-            let (status_check_results, included_slots) = working_bank
-                .check_transactions_with_processed_slots(
+            let (status_check_results, included_slots) =
+                Self::check_transactions_with_processed_slots(
+                    working_bank,
                     txs,
                     &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE],
                     working_bank.max_processing_age(),
-                    true,
-                    true,
                     &mut error_counters,
                 );
             let included_slots = included_slots.expect("requested to collect processed slots");

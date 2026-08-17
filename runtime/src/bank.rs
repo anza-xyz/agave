@@ -142,6 +142,7 @@ use {
     solana_message::{
         AccountKeys, SanitizedMessage, inner_instruction::InnerInstructions, v0::LoadedAddresses,
     },
+    solana_nonce_account::verify_nonce_account,
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -3488,8 +3489,10 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            self.load_message_nonce_data(message, false)
-                .map(|(_nonce_address, nonce_data)| nonce_data.get_lamports_per_signature())
+            let nonce_address = message.get_durable_nonce()?;
+            let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
+            verify_nonce_account(&nonce_account, message.recent_blockhash())
+                .map(|nonce_data| nonce_data.get_lamports_per_signature())
         })?;
 
         let transaction_configuration =
@@ -4202,11 +4205,10 @@ impl Bank {
     ) -> LoadAndExecuteTransactionsOutput {
         let sanitized_txs = batch.sanitized_transactions();
 
-        let (check_results, check_us) = measure_us!(self.check_transactions(
+        let (check_results, check_us) = measure_us!(self.check_transactions_before_execution(
             sanitized_txs,
             batch.lock_results(),
             max_age,
-            processing_config.strict_nonce_size_check,
             error_counters,
         ));
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);

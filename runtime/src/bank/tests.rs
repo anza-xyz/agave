@@ -4766,15 +4766,6 @@ fn test_check_ro_durable_nonce_fails() {
         bank.process_transaction(&tx),
         Err(TransactionError::BlockhashNotFound)
     );
-    assert_eq!(
-        bank.check_nonce_transaction_validity(
-            &new_sanitized_message(tx.message().clone()),
-            &bank.next_durable_nonce(),
-            false,
-            false,
-        ),
-        None
-    );
 }
 
 #[test]
