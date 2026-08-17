@@ -2136,7 +2136,8 @@ impl JsonRpcRequestProcessor {
                 mint_owner,
                 mint,
                 vec![],
-                true,
+                // Don't sort here: the heap below handles sorting
+                false,
             )
             .await?
         {
