@@ -1290,7 +1290,7 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
-    solana_pubkey::declare_id!("A1PeNgLEYU9sdwWJH5SEcRGVVKXLQYnyq26kpL6G3iJH");
+    solana_pubkey::declare_id!("a1pEnGkb4MY7fPXcTnDSQoeQnK7pqD8ohS7dzKaiM72");
 }
 
 pub mod disable_zk_elgamal_proof_program {
