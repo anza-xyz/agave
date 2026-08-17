@@ -1,8 +1,5 @@
 use {
-    crate::{
-        error::{LedgerToolError, Result},
-        ledger_utils::get_program_ids,
-    },
+    crate::error::{LedgerToolError, Result},
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
@@ -32,7 +29,10 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_signer_store::{Decoded, decode},
-    solana_transaction::versioned::VersionedTransaction,
+    solana_svm_transaction::svm_message::SVMStaticMessage,
+    solana_transaction::versioned::{
+        VersionedTransaction, sanitized::SanitizedVersionedTransaction,
+    },
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, Encodable, EncodedConfirmedBlock,
         EncodedTransactionWithStatusMeta, EntrySummary, Rewards, TransactionDetails,
@@ -981,15 +981,21 @@ pub fn output_slot(
                 .map(|entry| entry.hash)
                 .unwrap_or_default();
 
-            let mut num_transactions = 0;
+            let num_transactions = block_contents.transactions().count();
             let mut program_ids = HashMap::new();
 
-            for transaction in block_contents.transactions() {
-                num_transactions += 1;
-                for program_id in get_program_ids(transaction) {
-                    *program_ids.entry(*program_id).or_insert(0) += 1;
-                }
-            }
+            block_contents
+                .transactions()
+                .cloned()
+                .filter_map(|tx| SanitizedVersionedTransaction::try_new(tx).ok())
+                .for_each(|transaction| {
+                    transaction
+                        .program_instructions_iter()
+                        .for_each(|(program_id, _)| {
+                            *program_ids.entry(*program_id).or_insert(0) += 1;
+                        });
+                });
+
             println!(
                 "  Transactions: {num_transactions}, hashes: {num_hashes}, block_hash: {blockhash}",
             );
