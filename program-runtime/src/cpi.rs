@@ -332,9 +332,6 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::{translate_type, translate_type_mut_for_cpi};
 
-        let _syscall_parameter_address_restrictions = invoke_context
-            .get_feature_set()
-            .syscall_parameter_address_restrictions;
         let virtual_address_space_adjustments = invoke_context
             .get_feature_set()
             .virtual_address_space_adjustments;
@@ -446,9 +443,6 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::translate_type_mut_for_cpi;
 
-        let _syscall_parameter_address_restrictions = invoke_context
-            .get_feature_set()
-            .syscall_parameter_address_restrictions;
         let virtual_address_space_adjustments = invoke_context
             .get_feature_set()
             .virtual_address_space_adjustments;
@@ -796,9 +790,6 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // changes so the callee can see them.
     let amount = invoke_context.get_execution_cost().invoke_units;
     invoke_context.compute_meter.consume_checked(amount)?;
-    let _syscall_parameter_address_restrictions = invoke_context
-        .get_feature_set()
-        .syscall_parameter_address_restrictions;
     let virtual_address_space_adjustments = invoke_context
         .get_feature_set()
         .virtual_address_space_adjustments;
@@ -914,10 +905,6 @@ fn translate_account_infos<T, R>(
     check_aligned: bool,
     cb: impl FnOnce(&[T], Vec<&Pubkey>) -> R,
 ) -> Result<R, Error> {
-    let _syscall_parameter_address_restrictions = invoke_context
-        .get_feature_set()
-        .syscall_parameter_address_restrictions;
-
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
     // this pointer to a specific address but we don't want it to be inside accounts, or
     // callees might be able to write to the pointed memory.
@@ -990,14 +977,6 @@ where
         .memory_context_abi_v1()
         .unwrap()
         .accounts_metadata;
-
-    let _syscall_parameter_address_restrictions = invoke_context
-        .get_feature_set()
-        .syscall_parameter_address_restrictions;
-    let _virtual_address_space_adjustments = invoke_context
-        .get_feature_set()
-        .virtual_address_space_adjustments;
-    let _account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
 
     for (instruction_account_index, instruction_account) in
         next_instruction_accounts.iter().enumerate()
