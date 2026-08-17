@@ -2446,11 +2446,13 @@ fn main() {
                                 AccessType::PrimaryForMaintenance,
                             ));
                             let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
+                            let mut write_batch = backup_blockstore.get_write_batch();
                             let _ = backup_blockstore
                                 .insert_cow_shreds(
                                     shreds.into_iter().map(Cow::Owned),
                                     true,
                                     &mut pinnable_slice,
+                                    &mut write_batch,
                                 )
                                 .expect("Blockstore operation must succeed");
 
@@ -2492,8 +2494,9 @@ fn main() {
                             .map(Cow::Owned)
                             .collect();
                         let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
+                        let mut write_batch = rw_blockstore.get_write_batch();
                         rw_blockstore
-                            .insert_cow_shreds(shreds, true, &mut pinnable_slice)
+                            .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
                             .expect("Blockstore operation must succeed");
                     }
 
