@@ -2638,7 +2638,6 @@ fn test_program_sbf_realloc() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -3923,7 +3922,6 @@ fn test_cpi_account_ownership_writability() {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4121,7 +4119,6 @@ fn test_cpi_account_data_updates() {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4546,7 +4543,6 @@ fn test_deny_access_beyond_current_length() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4616,7 +4612,6 @@ fn test_deny_executable_write() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4672,7 +4667,6 @@ fn test_update_callee_account() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4957,7 +4951,6 @@ fn test_account_info_in_account() {
             // by default test banks have all features enabled, so we only need to
             // disable when needed
             if !syscall_parameter_address_restrictions {
-                feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
                 feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
                 feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
             }
@@ -5015,7 +5008,6 @@ fn test_account_info_rc_in_account() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !syscall_parameter_address_restrictions {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -5106,7 +5098,6 @@ fn test_clone_account_data() {
     let mut bank = Bank::new_for_tests(&genesis_config);
     let feature_set = Arc::make_mut(&mut bank.feature_set);
 
-    feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
     feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
     feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
 
@@ -5451,7 +5442,6 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
