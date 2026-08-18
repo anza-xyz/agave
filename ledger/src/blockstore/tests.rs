@@ -3764,11 +3764,7 @@ fn do_test_lowest_cleanup_slot_and_special_cfs(simulate_blockstore_cleanup_servi
                 .0
                 .is_none(),
             blockstore
-                .find_address_signatures_for_slot(
-                    address0,
-                    lowest_cleanup_slot,
-                    &mut UpdateParentTransactionsCache::default(),
-                )
+                .find_address_signatures_for_slot(address0, lowest_cleanup_slot)
                 .unwrap()
                 .is_empty(),
         )
@@ -3786,11 +3782,7 @@ fn do_test_lowest_cleanup_slot_and_special_cfs(simulate_blockstore_cleanup_servi
                 .0
                 .is_some(),
             !blockstore
-                .find_address_signatures_for_slot(
-                    address1,
-                    lowest_available_slot,
-                    &mut UpdateParentTransactionsCache::default(),
-                )
+                .find_address_signatures_for_slot(address1, lowest_available_slot)
                 .unwrap()
                 .is_empty(),
         );
@@ -4149,11 +4141,7 @@ fn test_find_address_signatures_for_slot() {
     blockstore.set_roots(std::iter::once(&slot1)).unwrap();
 
     let slot1_signatures = blockstore
-        .find_address_signatures_for_slot(
-            address0,
-            1,
-            &mut UpdateParentTransactionsCache::default(),
-        )
+        .find_address_signatures_for_slot(address0, 1)
         .unwrap();
     for (i, (slot, signature, index)) in slot1_signatures.iter().enumerate() {
         assert_eq!(*slot, slot1);
@@ -4162,11 +4150,7 @@ fn test_find_address_signatures_for_slot() {
     }
 
     let slot2_signatures = blockstore
-        .find_address_signatures_for_slot(
-            address0,
-            2,
-            &mut UpdateParentTransactionsCache::default(),
-        )
+        .find_address_signatures_for_slot(address0, 2)
         .unwrap();
     for (i, (slot, signature, index)) in slot2_signatures.iter().enumerate() {
         assert_eq!(*slot, slot2);
@@ -4175,11 +4159,7 @@ fn test_find_address_signatures_for_slot() {
     }
 
     let slot3_signatures = blockstore
-        .find_address_signatures_for_slot(
-            address0,
-            3,
-            &mut UpdateParentTransactionsCache::default(),
-        )
+        .find_address_signatures_for_slot(address0, 3)
         .unwrap();
     for (i, (slot, signature, index)) in slot3_signatures.iter().enumerate() {
         assert_eq!(*slot, slot3);
@@ -7657,11 +7637,7 @@ fn test_get_signatures_for_address_skips_pre_update_parent_transactions() {
         .unwrap();
     assert!(
         blockstore
-            .find_address_signatures_for_slot(
-                fixture.pre_update_address,
-                slot,
-                &mut UpdateParentTransactionsCache::default(),
-            )
+            .find_address_signatures_for_slot(fixture.pre_update_address, slot)
             .unwrap()
             .is_empty()
     );
