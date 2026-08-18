@@ -145,6 +145,7 @@ use {
         Transaction, TransactionVerificationMode, sanitized::SanitizedTransaction,
         versioned::VersionedTransaction,
     },
+    solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, TowerSync},
@@ -9799,7 +9800,7 @@ fn test_verify_transactions_instruction_limit() {
     let recent_blockhash = Hash::new_unique();
     let keypair = Keypair::new();
     let pubkey = keypair.pubkey();
-    let ix_count = 65;
+    let ix_count = MAX_INSTRUCTION_TRACE_LENGTH + 1;
     let ixs: Vec<_> = std::iter::repeat_with(|| CompiledInstruction {
         program_id_index: 1,
         accounts: vec![0],
