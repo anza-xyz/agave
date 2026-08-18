@@ -1290,11 +1290,7 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
-<<<<<<< HEAD
-    solana_pubkey::declare_id!("A1pENGLtPKvimJcQ8eNJ3cN6hMPLg1PWEyCvc7i5LFL8");
-=======
     solana_pubkey::declare_id!("a1pEnGkb4MY7fPXcTnDSQoeQnK7pqD8ohS7dzKaiM72");
->>>>>>> 0ebd4cd4a (bcp: disallow block markers in towerbft blocks (#14689))
 }
 
 pub mod disable_zk_elgamal_proof_program {

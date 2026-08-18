@@ -5449,15 +5449,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-<<<<<<< HEAD
-                    "GGJNQQv8iVqr2qfeLpUtgFVMjTWPiSXUBwE6SzRNRiqX"
-                } else {
-                    "2SeoDNxK19FqNQFQgsfYZkRsCpvyAQYANkifuCtvXDtf"
-=======
                     "2TxrpFi2FB6Cb1Gnwq8uYpEDUpCBcFZF7tze5mjz5hC2"
                 } else {
                     "637crtstLE19ykqsnQ3WeDZD1RHCgbp5EhFpDMakUBHc"
->>>>>>> 0ebd4cd4a (bcp: disallow block markers in towerbft blocks (#14689))
                 },
             );
         }
@@ -5466,15 +5460,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-<<<<<<< HEAD
-                    "pPMYHdcq9eTJcJEwNnAupggSwgrfbHqL8eaD6LsXT6Q"
-                } else {
-                    "HXKPk3qZVsQ1TdefvfhTi4hcMMAXVyVdCLW8hUwDc7iU"
-=======
                     "ETPRGYvvzhi9qBRSeSQvX7jU3RsCSMHyGRoV52F2oroQ"
                 } else {
                     "4GYXKxi4VuxrMtdyL7WxfFm5sthtYoqvr2GZFspyErbL"
->>>>>>> 0ebd4cd4a (bcp: disallow block markers in towerbft blocks (#14689))
                 },
             );
             break;
@@ -5775,16 +5763,8 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     bank2.freeze();
 
     assert_eq!(
-<<<<<<< HEAD
-        bank2.hash().as_bytes(),
-        &[
-            93, 121, 219, 248, 56, 199, 240, 90, 102, 118, 226, 197, 72, 77, 171, 85, 169, 230, 25,
-            25, 138, 146, 93, 197, 57, 27, 26, 228, 224, 145, 124, 159
-        ]
-=======
         bank2.hash().to_string(),
         "LYFRXqcPwYrmWj3CaLSKhVSQhttzjZ8RyAjfazbT7NJ",
->>>>>>> 0ebd4cd4a (bcp: disallow block markers in towerbft blocks (#14689))
     );
 }
 
