@@ -31,6 +31,7 @@ use {
         epoch_slots::EpochSlots,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
+        gossip_ingress::{SanitizedGossipMessage, VerifiedGossipMessage},
         gossip_round::GossipRound,
         local_crds_publisher::LocalCrdsPublisher,
         ping_pong::Pong,
@@ -65,7 +66,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_streamer::{
@@ -2016,7 +2016,7 @@ impl ClusterInfo {
 
     fn process_packets(
         &self,
-        packets: &mut Vec<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        packets: &mut Vec<Vec<VerifiedGossipMessage>>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
         response_sender: &impl ChannelSend<PacketBatch>,
@@ -2034,15 +2034,15 @@ impl ClusterInfo {
                 discard_different_shred_version(msg, self_shred_version, &gossip_crds, &self.stats)
             };
             if packets.len() < 4 && packets.iter().map(Vec::len).sum::<usize>() < 16 {
-                for (_, msg) in packets.iter_mut().flatten() {
-                    discard_different_shred_version(msg);
+                for message in packets.iter_mut().flatten() {
+                    discard_different_shred_version(message.protocol_mut());
                 }
             } else {
                 thread_pool.install(|| {
                     packets
                         .par_iter_mut()
                         .flatten()
-                        .for_each(|(_, msg)| discard_different_shred_version(msg))
+                        .for_each(|message| discard_different_shred_version(message.protocol_mut()))
                 })
             }
         }
@@ -2083,7 +2083,8 @@ impl ClusterInfo {
         let mut prune_messages = vec![];
         let mut ping_messages = vec![];
         let mut pong_messages = vec![];
-        for (from_addr, packet) in packets.drain(..).flatten() {
+        for message in packets.drain(..).flatten() {
+            let (from_addr, packet) = message.into_parts();
             match packet {
                 Protocol::PullRequest(filter, caller) => {
                     if !check_pull_request_shred_version(self_shred_version, &caller) {
@@ -2156,7 +2157,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         epoch_specs: Option<&mut Box<dyn EpochSpecs>>,
         receiver: &PacketBatchReceiver,
-        sender: &impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        sender: &impl ChannelSend<Vec<VerifiedGossipMessage>>,
         packet_buf: &mut Vec<PacketBatch>,
     ) -> Result<(), GossipError> {
         let mut num_packets = 0;
@@ -2180,32 +2181,18 @@ impl ClusterInfo {
             stats: &GossipStats,
             sigverify_cache: &SigVerifyCache,
             is_full_alpenglow_epoch: bool,
-        ) -> Option<(SocketAddr, Protocol)> {
+        ) -> Option<VerifiedGossipMessage> {
             let result: wincode::ReadResult<Protocol> = packet
                 .data(..)
                 .ok_or(wincode::ReadError::Custom("packet discarded"))
                 .and_then(deserialize_protocol);
-            let mut protocol: Protocol = stats.record_received_packet(result)?;
-            protocol.sanitize().ok()?;
-            if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) =
-                &mut protocol
-            {
-                values.retain(|value| {
-                    should_retain_crds_value(
-                        value,
-                        stakes,
-                        GossipFilterDirection::Ingress,
-                        is_full_alpenglow_epoch,
-                    )
-                });
-                if values.is_empty() {
-                    return None;
-                }
-            }
-            protocol.verify(sigverify_cache).then(|| {
-                stats.packets_received_verified_count.add_relaxed(1);
-                (packet.meta().socket_addr(), protocol)
-            })
+            let protocol: Protocol = stats.record_received_packet(result)?;
+            SanitizedGossipMessage::new(packet.meta().socket_addr(), protocol)?
+                .filter_crds_values(stakes, is_full_alpenglow_epoch)?
+                .verify(sigverify_cache)
+                .inspect(|_| {
+                    stats.packets_received_verified_count.add_relaxed(1);
+                })
         }
         let stakes = epoch_specs
             .map(|es| es.current_epoch_staked_nodes())
@@ -2260,11 +2247,11 @@ impl ClusterInfo {
         &self,
         recycler: &PacketBatchRecycler,
         epoch_specs: &mut Option<Box<dyn EpochSpecs>>,
-        receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        receiver: &Receiver<Vec<VerifiedGossipMessage>>,
         response_sender: &impl ChannelSend<PacketBatch>,
         thread_pool: &ThreadPool,
         should_check_duplicate_instance: bool,
-        packet_buf: &mut Vec<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        packet_buf: &mut Vec<Vec<VerifiedGossipMessage>>,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.gossip_listen_loop_time);
         for pkts in receiver
@@ -2300,7 +2287,7 @@ impl ClusterInfo {
         self: Arc<Self>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         receiver: PacketBatchReceiver,
-        sender: impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        sender: impl ChannelSend<Vec<VerifiedGossipMessage>>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         let thread_pool = ThreadPoolBuilder::new()
@@ -2337,7 +2324,7 @@ impl ClusterInfo {
     pub(crate) fn listen(
         self: Arc<Self>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
-        requests_receiver: Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        requests_receiver: Receiver<Vec<VerifiedGossipMessage>>,
         response_sender: impl ChannelSend<PacketBatch>,
         should_check_duplicate_instance: bool,
         exit: Arc<AtomicBool>,
@@ -2666,6 +2653,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
+        solana_sanitize::Sanitize,
         solana_signer::Signer,
         solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
         solana_vote_program::{

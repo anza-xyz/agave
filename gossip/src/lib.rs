@@ -21,6 +21,7 @@ pub mod duplicate_shred_listener;
 pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;
+mod gossip_ingress;
 mod gossip_round;
 pub mod gossip_service;
 mod local_crds_publisher;
