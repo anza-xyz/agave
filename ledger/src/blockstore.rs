@@ -5246,9 +5246,9 @@ impl Blockstore {
     ) -> Result<Vec<Entry>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
             wincode::deserialize(&payload)
-                .map(|component| match component {
-                    BlockComponent::BlockMarker(_) => vec![],
-                    BlockComponent::EntryBatch(entries) => entries,
+                .filter_map(|component| match component {
+                    BlockComponent::BlockMarker(_) => None,
+                    BlockComponent::EntryBatch(entries) => Some(entries),
                 })
                 .map_err(|e| {
                     if BlockComponent::infer_is_empty_entry_batch(&payload) {
@@ -5272,9 +5272,9 @@ impl Blockstore {
             let is_empty_entry_batch = BlockComponent::infer_is_empty_entry_batch(&payload);
 
             block_component_parser::parse(payload)
-                .map(|component| match component {
-                    ParsedBlockComponent::BlockMarker(_) => vec![],
-                    ParsedBlockComponent::EntryBatch(entries) => entries,
+                .filter_map(|component| match component {
+                    ParsedBlockComponent::BlockMarker(_) => None,
+                    ParsedBlockComponent::EntryBatch(entries) => Some(entries),
                 })
                 .map_err(|error| {
                     if is_empty_entry_batch {
