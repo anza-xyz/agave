@@ -70,6 +70,20 @@ fn message_passing_on_all_queues() {
             .try_write(progress_tracker)
             .unwrap();
 
+        // Receive a pack_to_check_worker message.
+        let msg = loop {
+            if let Some(msg) = session.pack_to_check_worker.try_read() {
+                break msg;
+            }
+        };
+        assert_eq!(msg, pack_to_worker);
+
+        // Send a check_worker_to_pack message.
+        session
+            .check_worker_to_pack
+            .try_write(worker_to_pack)
+            .unwrap();
+
         // Receive pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
             let msg = loop {
@@ -112,6 +126,8 @@ fn message_passing_on_all_queues() {
                 pack_to_worker_capacity: 1024,
                 worker_to_pack_capacity: 1024,
                 flags: 0,
+                pack_to_check_worker_capacity: 1024,
+                check_worker_to_pack_capacity: 1024,
             },
             Duration::from_secs(1),
         )
@@ -132,6 +148,20 @@ fn message_passing_on_all_queues() {
             };
         };
         assert_eq!(msg, progress_tracker);
+
+        // Send a pack_to_check_worker message.
+        session
+            .pack_to_check_worker
+            .try_write(pack_to_worker)
+            .unwrap();
+
+        // Receive a check_worker_to_pack message.
+        let msg = loop {
+            if let Some(msg) = session.check_worker_to_pack.try_read() {
+                break msg;
+            }
+        };
+        assert_eq!(msg, worker_to_pack);
 
         // Send pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
@@ -169,6 +199,43 @@ fn message_passing_on_all_queues() {
 }
 
 #[test]
+fn check_worker_queues_use_dedicated_capacities() {
+    const CHECK_REQUEST_CAPACITY: usize = 1 << 18;
+    const CHECK_RESPONSE_CAPACITY: usize = 1 << 19;
+
+    let logon = ClientLogon {
+        worker_count: 1,
+        allocator_size: 64 * 1024 * 1024,
+        allocator_handles: 1,
+        tpu_to_pack_capacity: 2,
+        progress_tracker_capacity: 2,
+        pack_to_worker_capacity: 2,
+        worker_to_pack_capacity: 2,
+        flags: 0,
+        pack_to_check_worker_capacity: CHECK_REQUEST_CAPACITY,
+        check_worker_to_pack_capacity: CHECK_RESPONSE_CAPACITY,
+    };
+    let (_agave, files) = Server::setup_session(logon).unwrap();
+
+    assert!(
+        files[3].metadata().unwrap().len()
+            >= u64::try_from(shaq::mpmc::minimum_file_size::<PackToWorkerMessage>(
+                CHECK_REQUEST_CAPACITY
+            ))
+            .unwrap()
+    );
+    assert!(
+        files[4].metadata().unwrap().len()
+            >= u64::try_from(shaq::mpmc::minimum_file_size::<WorkerToPackMessage>(
+                CHECK_RESPONSE_CAPACITY
+            ))
+            .unwrap()
+    );
+
+    crate::handshake::client::setup_session(&logon, files).unwrap();
+}
+
+#[test]
 fn accept_worker_count_max() {
     let ipc = NamedTempFile::new().unwrap();
     std::fs::remove_file(ipc.path()).unwrap();
@@ -190,6 +257,8 @@ fn accept_worker_count_max() {
                 pack_to_worker_capacity: 1024,
                 worker_to_pack_capacity: 1024,
                 flags: 0,
+                pack_to_check_worker_capacity: 1024,
+                check_worker_to_pack_capacity: 1024,
             },
             Duration::from_secs(1),
         );
@@ -225,6 +294,8 @@ fn reject_worker_count_low() {
                 pack_to_worker_capacity: 1024,
                 worker_to_pack_capacity: 1024,
                 flags: 0,
+                pack_to_check_worker_capacity: 1024,
+                check_worker_to_pack_capacity: 1024,
             },
             Duration::from_secs(1),
         );
@@ -263,6 +334,8 @@ fn reject_worker_count_high() {
                 pack_to_worker_capacity: 1024,
                 worker_to_pack_capacity: 1024,
                 flags: 0,
+                pack_to_check_worker_capacity: 1024,
+                check_worker_to_pack_capacity: 1024,
             },
             Duration::from_secs(1),
         );

@@ -6,7 +6,7 @@ use {
             MAX_WORKERS, VERSION,
         },
     },
-    agave_scheduler_bindings::PackToWorkerMessage,
+    agave_scheduler_bindings::{PackToWorkerMessage, WorkerToPackMessage},
     nix::sys::socket::{self, ControlMessage, MsgFlags, UnixAddr},
     rts_alloc::Allocator,
     std::{
@@ -154,6 +154,13 @@ impl Server {
             Self::create_producer(logon.tpu_to_pack_capacity, true)?;
         let (progress_tracker_file, progress_tracker) =
             Self::create_producer(logon.progress_tracker_capacity, false)?;
+        let (pack_to_check_worker_file, pack_to_check_worker) =
+            Self::create_mpmc_consumer::<PackToWorkerMessage>(logon.pack_to_check_worker_capacity)?;
+        let (check_worker_to_pack_file, check_worker_to_pack) =
+            Self::create_mpmc_producer::<WorkerToPackMessage>(
+                logon.check_worker_to_pack_capacity,
+                true,
+            )?;
 
         // Setup the worker sessions.
         let (worker_files, workers) = (0..logon.worker_count).try_fold(
@@ -185,12 +192,20 @@ impl Server {
                     producer: tpu_to_pack_queue,
                 },
                 progress_tracker,
+                pack_to_check_worker,
+                check_worker_to_pack,
                 workers,
             },
-            [allocator_file, tpu_to_pack_file, progress_tracker_file]
-                .into_iter()
-                .chain(worker_files)
-                .collect(),
+            [
+                allocator_file,
+                tpu_to_pack_file,
+                progress_tracker_file,
+                pack_to_check_worker_file,
+                check_worker_to_pack_file,
+            ]
+            .into_iter()
+            .chain(worker_files)
+            .collect(),
         ))
     }
 
@@ -256,6 +271,42 @@ impl Server {
         };
 
         // Try to create with huge pages, fallback to regular pages.
+        create(true).or_else(|_| create(false))
+    }
+
+    fn create_mpmc_producer<T>(
+        capacity: usize,
+        huge: bool,
+    ) -> Result<(File, shaq::mpmc::Producer<T>), ShaqError> {
+        let create = |huge: bool| {
+            let file = Self::create_shmem(huge)?;
+            let minimum_file_size = shaq::mpmc::minimum_file_size::<T>(capacity);
+            let file_size = Self::align_file_size(minimum_file_size, huge);
+
+            // SAFETY: uniquely creating as producer.
+            unsafe { shaq::mpmc::Producer::create(&file, file_size) }
+                .map(|producer| (file, producer))
+        };
+
+        match huge {
+            true => create(true).or_else(|_| create(false)),
+            false => create(false),
+        }
+    }
+
+    fn create_mpmc_consumer<T>(
+        capacity: usize,
+    ) -> Result<(File, shaq::mpmc::Consumer<T>), ShaqError> {
+        let create = |huge: bool| {
+            let file = Self::create_shmem(huge)?;
+            let minimum_file_size = shaq::mpmc::minimum_file_size::<T>(capacity);
+            let file_size = Self::align_file_size(minimum_file_size, huge);
+
+            // SAFETY: uniquely creating as consumer.
+            unsafe { shaq::mpmc::Consumer::create(&file, file_size) }
+                .map(|consumer| (file, consumer))
+        };
+
         create(true).or_else(|_| create(false))
     }
 

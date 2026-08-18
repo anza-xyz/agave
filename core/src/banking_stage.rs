@@ -688,6 +688,8 @@ mod external {
                 flags: _,
                 tpu_to_pack,
                 progress_tracker,
+                pack_to_check_worker: _,
+                check_worker_to_pack: _,
                 workers,
             }: AgaveSession,
         ) -> Result<Vec<JoinHandle<()>>, ()> {

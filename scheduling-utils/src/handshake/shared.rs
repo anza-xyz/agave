@@ -38,6 +38,10 @@ pub struct ClientLogon {
     pub worker_to_pack_capacity: usize,
     /// Flags that control the behavior of the new scheduling session.
     pub flags: u16,
+    /// The minimum capacity of the scheduler-to-check-worker queue in messages.
+    pub pack_to_check_worker_capacity: usize,
+    /// The minimum capacity of the check-worker-to-scheduler queue in messages.
+    pub check_worker_to_pack_capacity: usize,
     // NB: If adding more fields please ensure:
     // - The fields are zeroable.
     // - If possible the fields are backwards compatible:
@@ -66,6 +70,8 @@ pub struct ClientSession {
     pub allocators: Vec<Allocator>,
     pub tpu_to_pack: shaq::spsc::Consumer<TpuToPackMessage>,
     pub progress_tracker: shaq::spsc::Consumer<ProgressMessage>,
+    pub pack_to_check_worker: shaq::mpmc::Producer<PackToWorkerMessage>,
+    pub check_worker_to_pack: shaq::mpmc::Consumer<WorkerToPackMessage>,
     pub workers: Vec<ClientWorkerSession>,
 }
 
@@ -97,6 +103,8 @@ pub struct AgaveSession {
     pub flags: u16,
     pub tpu_to_pack: AgaveTpuToPackSession,
     pub progress_tracker: shaq::spsc::Producer<ProgressMessage>,
+    pub pack_to_check_worker: shaq::mpmc::Consumer<PackToWorkerMessage>,
+    pub check_worker_to_pack: shaq::mpmc::Producer<WorkerToPackMessage>,
     pub workers: Vec<AgaveWorkerSession>,
 }
 
