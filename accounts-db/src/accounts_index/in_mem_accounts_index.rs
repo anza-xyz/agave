@@ -1004,7 +1004,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     }
 
     /// Collect candidates to evict from `iter` by checking age
-    /// Skip entries with ref_count != 1 since they will be rejected later anyway
     fn gather_possible_evict_candidates<'a>(
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
         current_age: Age,
@@ -1024,13 +1023,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 continue;
             }
 
-            // Skip entries with ref_count != 1 early
-            // In 99% of cases, these will be rejected by evict_from_cache anyway
-            // Filtering here avoids unnecessary work and reduces write lock contention in evict_from_cache
-            if v.ref_count() != 1 {
-                continue;
-            }
-
             if !v.dirty() {
                 sampling_state.select(*k, &mut rng);
             }
@@ -1041,7 +1033,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// scan loop
     /// holds read lock
     /// Returns candidates to evict now, pending further checks.
-    /// Entries with ref_count != 1 are filtered out during scan
     fn evict_scan(
         &self,
         current_age: Age,
@@ -1406,6 +1397,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         failed += 1;
                         continue;
                     }
+
+                    // A clean entry always has a single-slot slot list identical to its disk
+                    // copy: every slot-list mutation marks the entry dirty, and dirty is only
+                    // cleared after a verified single-slot disk write. This keeps multi-slot
+                    // entries in-mem, which ScanFilter::OnlyAbnormal relies on.
+                    assert_eq!(v.slot_list_lock_read_len(), 1, "{k}");
 
                     // all conditions for eviction succeeded, so really evict item from in-mem cache
                     evicted += 1;
@@ -1811,6 +1808,46 @@ mod tests {
         });
         assert_eq!(found_in_mem, Some(true));
         assert!(accounts_index.load_from_disk(&pubkey_dirty_old).is_none());
+    }
+
+    /// A multi-slot entry can never be evicted: every slot-list mutation marks the entry dirty,
+    /// and dirty is only cleared after a verified single-slot disk write, so the dirty check in
+    /// `evict_from_cache` pins multi-slot entries in-mem. `ScanFilter::OnlyAbnormal` relies on
+    /// this to find every multi-slot entry without reading the disk index.
+    #[test]
+    fn test_evict_from_cache_skips_multi_slot_entry() {
+        let index = new_should_write_through_for_test(None);
+        let pubkey = solana_pubkey::new_rand();
+        let info = 10;
+
+        // Upsert the same pubkey at two different (uncached) slots so its slot list has two entries
+        for slot in [1, 2] {
+            let new_value = PreAllocatedAccountMapEntry::new(slot, info, &index.storage, true);
+            index.upsert(
+                &pubkey,
+                new_value,
+                None,
+                &mut ReclaimsSlotList::new(),
+                UpsertReclaim::IgnoreReclaims,
+            );
+        }
+
+        // make the entry age-eligible for eviction; only the dirty check keeps it in-mem
+        let current_age = index.storage.current_age();
+        index.get_only_in_mem(&pubkey, false, |entry| {
+            let entry = entry.expect("entry should be in memory");
+            assert_eq!(entry.slot_list_lock_read_len(), 2);
+            assert!(entry.dirty(), "multi-slot entries are always dirty");
+            entry.set_age(current_age);
+        });
+
+        index.evict_from_cache(&[pubkey], current_age, 0);
+
+        index.get_only_in_mem(&pubkey, false, |entry| {
+            let entry = entry.expect("multi-slot entry must stay in memory");
+            assert!(entry.dirty());
+        });
+        assert!(index.load_from_disk(&pubkey).is_none());
     }
 
     #[test]
