@@ -1737,9 +1737,9 @@ pub(crate) mod tests {
                 None,
                 &fork_graph.read().unwrap(),
             );
-            // Test that exeeding latest_access_slot + MAX_TOMBSTONE_AGE_IN_SLOTS prunes
             let slot_versions = cache.get_slot_versions_for_tests(&program1);
             assert_eq!(slot_versions, std::slice::from_ref(entry));
+            // Test that exeeding latest_access_slot + MAX_TOMBSTONE_AGE_IN_SLOTS prunes
             cache.prune(
                 MAX_TOMBSTONE_AGE_IN_SLOTS
                     .saturating_add(entry.latest_access_slot.load(Ordering::Relaxed))
