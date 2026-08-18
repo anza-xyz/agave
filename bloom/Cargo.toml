@@ -29,10 +29,9 @@ frozen-abi = [
 ]
 
 [dependencies]
-bv = { workspace = true, features = ["serde"] }
+bv = { workspace = true }
 fnv = { workspace = true }
 rand = { workspace = true }
-serde = { workspace = true, features = ["rc"] }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
@@ -45,7 +44,6 @@ wincode = { workspace = true, features = ["bv"] }
 
 [dev-dependencies]
 bencher = { workspace = true }
-bincode = { workspace = true }
 rayon = { workspace = true }
 solana-bloom = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-hash = { workspace = true, features = ["atomic", "wincode"] }

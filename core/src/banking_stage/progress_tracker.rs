@@ -144,13 +144,7 @@ impl ProgressTracker {
         producer: &mut shaq::spsc::Producer<ProgressMessage>,
         message: ProgressMessage,
     ) -> bool {
-        producer.sync();
-        if producer.try_write(message).is_ok() {
-            producer.commit();
-            true
-        } else {
-            false
-        }
+        producer.try_write(message).is_ok()
     }
 
     /// Gets current progress and formats into expected message type.

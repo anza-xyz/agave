@@ -1088,9 +1088,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             Err(TransactionError::AccountInUse)
             // These should have been validated by blockstore by now
             | Err(TransactionError::AccountLoadedTwice)
-            | Err(TransactionError::TooManyAccountLocks)
-            // Block verification should never see this:
-            | Err(TransactionError::CommitCancelled) => {
+            | Err(TransactionError::TooManyAccountLocks) => {
                 unreachable!()
             }
             Err(error) => {
@@ -2407,6 +2405,70 @@ mod tests {
         ) {
             *result = Err(TransactionError::AccountNotFound);
         }
+    }
+
+    #[test]
+    fn test_scheduler_aborts_on_commit_cancelled() {
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+        ]);
+
+        #[derive(Debug)]
+        struct CommitCancelledHandler;
+        impl TaskHandler for CommitCancelledHandler {
+            fn handle(
+                result: &mut Result<()>,
+                _timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                task: &Task,
+                _handler_context: &HandlerContext,
+            ) {
+                assert_eq!(task.task_id(), 0);
+                *result = Err(TransactionError::CommitCancelled);
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let pool =
+            SchedulerPool::<PooledScheduler<CommitCancelledHandler>, _>::new_for_verification(
+                None, None, None, None, None,
+            );
+        let scheduler = pool.do_take_scheduler(SchedulingContext::new(bank.clone()));
+        let cancelled_transaction =
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+        let bank = BankWithScheduler::new(bank, Some(Box::new(scheduler)));
+        bank.schedule_transaction_executions([(cancelled_transaction, 0)].into_iter())
+            .unwrap();
+
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+
+        let transaction_after_abort =
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+        assert_matches!(
+            bank.schedule_transaction_executions([(transaction_after_abort, 1)].into_iter()),
+            Err(TransactionError::CommitCancelled)
+        );
+        assert_matches!(
+            bank.wait_for_completed_scheduler(),
+            Some((Err(TransactionError::CommitCancelled), _))
+        );
     }
 
     fn do_test_scheduler_drop_abort(abort_case: AbortCase) {

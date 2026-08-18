@@ -1125,11 +1125,7 @@ mod tests {
             account_info::{AccountInfo, StorageLocation},
             accounts_db::{
                 AccountsDbConfig, ShrinkCollectRefs,
-                tests::{
-                    ACCOUNTS_DB_CONFIG_APPEND_VEC, append_single_account_with_default_hash,
-                    compare_all_accounts, get_account_from_account_from_storage, get_all_accounts,
-                    remove_account_for_tests,
-                },
+                tests::{ACCOUNTS_DB_CONFIG_APPEND_VEC, append_single_account_with_default_hash},
             },
             accounts_index::{ReclaimsSlotList, UpsertReclaim},
             append_vec::{self, AppendVec},
@@ -1138,7 +1134,7 @@ mod tests {
             utils::create_account_shared_data,
         },
         rand::seq::SliceRandom as _,
-        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+        solana_account::{AccountSharedData, ReadableAccount, WritableAccount, accounts_equal},
         solana_pubkey::Pubkey,
         std::{collections::HashSet, ops::Range},
         strum::IntoEnumIterator,
@@ -1264,7 +1260,7 @@ mod tests {
         .collect()
     }
 
-    pub(crate) fn compare_all_vec_accounts<'a>(
+    fn compare_all_vec_accounts<'a>(
         one: impl Iterator<Item = &'a GetUniqueAccountsResult>,
         two: impl Iterator<Item = &'a GetUniqueAccountsResult>,
         db: &AccountsDb,
@@ -1274,6 +1270,103 @@ mod tests {
             &unique_to_accounts(one, db, slot),
             &unique_to_accounts(two, db, slot),
         );
+    }
+
+    #[track_caller]
+    fn compare_all_accounts(
+        one: &[(Pubkey, AccountSharedData)],
+        two: &[(Pubkey, AccountSharedData)],
+    ) {
+        let mut failures = 0;
+        let mut two_indexes = (0..two.len()).collect::<Vec<_>>();
+        one.iter().for_each(|(pubkey, account)| {
+            for i in 0..two_indexes.len() {
+                let pubkey2 = two[two_indexes[i]].0;
+                if pubkey2 == *pubkey {
+                    if !accounts_equal(account, &two[two_indexes[i]].1) {
+                        failures += 1;
+                    }
+                    two_indexes.remove(i);
+                    break;
+                }
+            }
+        });
+        // helper method to reduce the volume of logged data to help identify differences
+        // modify this when you hit a failure
+        let clean = |accounts: &[(Pubkey, AccountSharedData)]| {
+            accounts
+                .iter()
+                .map(|(_pubkey, account)| account.lamports())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            failures,
+            0,
+            "one: {:?}, two: {:?}, two_indexes: {:?}",
+            clean(one),
+            clean(two),
+            two_indexes,
+        );
+        assert!(
+            two_indexes.is_empty(),
+            "one: {one:?}, two: {two:?}, two_indexes: {two_indexes:?}"
+        );
+    }
+
+    fn get_account_from_account_from_storage(
+        account: &AccountFromStorage,
+        db: &AccountsDb,
+        slot: Slot,
+    ) -> AccountSharedData {
+        let storage = db
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+            .unwrap();
+        storage
+            .accounts
+            .get_account_shared_data(account.index_info.offset())
+            .unwrap()
+    }
+
+    fn get_all_accounts(
+        db: &AccountsDb,
+        slots: impl Iterator<Item = Slot>,
+    ) -> Vec<(Pubkey, AccountSharedData)> {
+        slots
+            .filter_map(|slot| {
+                let storage = db.storage.get_slot_storage_entry(slot);
+                storage.map(|storage| get_all_accounts_from_storages(std::iter::once(&storage)))
+            })
+            .flatten()
+            .collect::<Vec<_>>()
+    }
+
+    fn get_all_accounts_from_storages<'a>(
+        storages: impl Iterator<Item = &'a Arc<AccountStorageEntry>>,
+    ) -> Vec<(Pubkey, AccountSharedData)> {
+        let mut reader = crate::append_vec::new_scan_accounts_reader();
+        storages
+            .flat_map(|storage| {
+                let mut vec = Vec::default();
+                storage
+                    .accounts
+                    .scan_accounts(&mut reader, |_offset, account| {
+                        vec.push((*account.pubkey(), create_account_shared_data(&account)));
+                    })
+                    .expect("must scan accounts storage");
+                // make sure scan_pubkeys results match
+                // Note that we assume traversals are both in the same order, but this doesn't have to be true.
+                let mut compare = Vec::default();
+                storage
+                    .accounts
+                    .scan_pubkeys(|k| {
+                        compare.push(*k);
+                    })
+                    .expect("must scan accounts storage");
+                assert_eq!(compare, vec.iter().map(|(k, _)| *k).collect::<Vec<_>>());
+                vec
+            })
+            .collect::<Vec<_>>()
     }
 
     #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
@@ -2665,7 +2758,7 @@ mod tests {
                         let alive = alives[slot as usize];
                         if !alive {
                             // make this storage not alive
-                            remove_account_for_tests(storage, storage.written_bytes() as usize);
+                            storage.remove_accounts(storage.written_bytes() as usize, 1);
                         }
                     });
                     let alive_storages = storages

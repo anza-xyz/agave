@@ -275,17 +275,13 @@ pub fn register_builtins(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
 ) {
-    const DEPLOYMENT_SLOT: u64 = 0;
     // We must register LoaderV3 as a loadable account, otherwise programs won't execute.
     let loader_v3_name = "solana_bpf_loader_upgradeable_program";
     mock_bank.add_builtin(
         batch_processor,
         solana_sdk_ids::bpf_loader_upgradeable::id(),
         loader_v3_name,
-        ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            solana_bpf_loader_program::Entrypoint::register,
-        ),
+        ProgramCacheEntry::new_builtin(solana_bpf_loader_program::Entrypoint::register),
     );
 
     // Other loaders are needed for testing program cache behavior.
@@ -294,10 +290,7 @@ pub fn register_builtins(
         batch_processor,
         bpf_loader_deprecated::id(),
         loader_v1_name,
-        ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            solana_bpf_loader_program::Entrypoint::register,
-        ),
+        ProgramCacheEntry::new_builtin(solana_bpf_loader_program::Entrypoint::register),
     );
 
     let loader_v2_name = "solana_bpf_loader_program";
@@ -305,10 +298,7 @@ pub fn register_builtins(
         batch_processor,
         bpf_loader::id(),
         loader_v2_name,
-        ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            solana_bpf_loader_program::Entrypoint::register,
-        ),
+        ProgramCacheEntry::new_builtin(solana_bpf_loader_program::Entrypoint::register),
     );
 
     // In order to perform a transference of native tokens using the system instruction,
@@ -319,7 +309,6 @@ pub fn register_builtins(
         solana_system_program::id(),
         system_program_name,
         ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
             solana_system_program::system_processor::Entrypoint::register,
         ),
     );
@@ -330,10 +319,7 @@ pub fn register_builtins(
         batch_processor,
         compute_budget::id(),
         compute_budget_program_name,
-        ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            solana_compute_budget_program::Entrypoint::register,
-        ),
+        ProgramCacheEntry::new_builtin(solana_compute_budget_program::Entrypoint::register),
     );
 }
 

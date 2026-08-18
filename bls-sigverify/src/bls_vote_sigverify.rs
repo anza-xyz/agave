@@ -302,6 +302,7 @@ fn send_msgs(
 ) -> Result<VoteSenderStats, SigVerifyVoteError> {
     let mut sender_stats = VoteSenderStats::default();
     send_sig_verified_batch_to_pool(
+        my_pubkey,
         SigVerifiedBatch::Votes(processed_votes.vote_aggregates_for_pool),
         &channels.channel_to_pool,
         &mut sender_stats,

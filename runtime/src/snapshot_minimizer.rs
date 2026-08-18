@@ -333,12 +333,9 @@ impl<'a> SnapshotMinimizer<'a> {
             new_storage.flush().unwrap();
         }
 
-        let mut dead_storages_this_time = self.accounts_db().mark_dirty_dead_stores(
-            slot,
-            true, // add_dirty_stores
-            shrink_in_progress,
-            false,
-        );
+        let mut dead_storages_this_time =
+            self.accounts_db()
+                .mark_dirty_dead_stores(slot, shrink_in_progress, false);
         dead_storages
             .lock()
             .unwrap()

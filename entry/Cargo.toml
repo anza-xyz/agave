@@ -24,7 +24,9 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
@@ -64,6 +66,7 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
+test-case = { workspace = true }
 
 [[bench]]
 name = "verify_signatures"

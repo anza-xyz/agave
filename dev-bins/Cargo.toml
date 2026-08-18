@@ -68,7 +68,7 @@ serde_json = "1.0.151"
 serde_yaml = "0.9.34"
 serial_test = "3.2.0"
 signal-hook = "0.4.4"
-solana-account = "4.5.0"
+solana-account = "4.6.0"
 solana-account-decoder = { path = "../account-decoder", version = "=4.4.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.4.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bls-signatures = { version = "3.3.0", features = ["serde"] }
@@ -196,5 +196,5 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
-librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3" }
-rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3" }
+librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
+rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }

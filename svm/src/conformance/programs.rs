@@ -111,7 +111,7 @@ pub fn new_program_cache_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     for builtin in SVM_BUILTINS {
         cache.replenish(
             builtin.program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0u64, builtin.register_fn)),
+            Arc::new(ProgramCacheEntry::new_builtin(builtin.register_fn)),
         );
     }
 

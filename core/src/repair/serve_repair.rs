@@ -1,5 +1,3 @@
-#[cfg(feature = "frozen-abi")]
-use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use {
     crate::repair::standard_repair_handler::StandardRepairHandler,
@@ -41,7 +39,7 @@ use {
         blockstore_meta::BlockLocation,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
-            ShredFetchStats, ShredType, layout::get_merkle_root, merkle_tree,
+            ShredFetchStats, ShredFlags, ShredType, layout::get_merkle_root, merkle_tree,
         },
     },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
@@ -106,10 +104,7 @@ const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 
 static_assertions::const_assert_eq!(MAX_ANCESTOR_RESPONSES, 30);
 
 /// The portion of an FEC-set Merkle root committed to by the double-Merkle tree.
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Deserialize, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SchemaRead, SchemaWrite)]
 pub struct FecSetRoot(merkle_tree::MerkleProofEntry);
@@ -131,7 +126,8 @@ impl From<Hash> for FecSetRoot {
 pub enum ShredRepairType {
     /// Requesting `MAX_ORPHAN_REPAIR_RESPONSES ` parent shreds
     Orphan(Slot),
-    /// Requesting any shred with index greater than or equal to the particular index
+    /// Requesting any shred with index greater than or equal to the particular index,
+    /// or a lower shred marked as the last shred in its slot.
     HighestShred(Slot, u64),
     /// Requesting the missing shred at a particular index
     Shred(Slot, u64),
@@ -186,7 +182,12 @@ impl RequestResponse for ShredRepairType {
         match self {
             ShredRepairType::Orphan(slot) => shred_slot <= *slot,
             ShredRepairType::HighestShred(slot, index) => {
-                shred_slot == *slot && get_shred_index(shred) >= Some(*index)
+                shred_slot == *slot
+                    && get_shred_index(shred).is_some_and(|shred_index| {
+                        shred_index >= *index
+                            || shred::layout::get_flags(shred)
+                                .is_ok_and(|flags| flags.contains(ShredFlags::LAST_SHRED_IN_SLOT))
+                    })
             }
             ShredRepairType::Shred(slot, index) => {
                 shred_slot == *slot && get_shred_index(shred) == Some(*index)
@@ -219,10 +220,10 @@ impl AncestorHashesRepairType {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "DhEfFPRMwZSyPVCX3wqoK3u7LvrWaK6SE7q6uLXSJ5ph",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -277,10 +278,10 @@ impl BlockIdRepairType {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "CfbU7jxf8EKXfJYEveg2StWVK8MYbLovaQZitXsHMYLz",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -435,10 +436,7 @@ struct ServeRepairStats {
     err_id_mismatch: usize,
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, Deserialize, Serialize, PartialEq)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, PartialEq))]
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequestHeader {
     signature: Signature,
@@ -490,13 +488,10 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 /// The message can then be removed once the feature gate is active and there are no responders.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(
-        AbiEnumVisitor, AbiExample, StableAbi, Deserialize, Serialize, PartialEq,
-    ),
+    derive(StableAbi, PartialEq),
     frozen_abi(
-        api_digest = "2j14Ywc3jWmohnXsEuMUQRPLf7JmxAVKvXKeKpYuzg7S",
         abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -619,13 +614,10 @@ fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStat
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(
-        AbiEnumVisitor, AbiExample, StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq,
-    ),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
-        api_digest = "2atc1j4n5MjGtmAYoL157stGow5ajeDtqAyMhwcniy5b",
         abi_digest = "5qmbs9MjvFrMQ2DYmre88SLLjLLDx3pdEW37cKUEQKMK",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -2554,7 +2546,7 @@ mod tests {
             index + 1,
             nonce,
         );
-        assert!(rv.is_none());
+        assert!(rv.is_some());
     }
 
     #[test]

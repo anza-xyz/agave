@@ -256,6 +256,7 @@ impl SigVerifier {
             },
             || {
                 verify_and_send_certificates(
+                    &self.cluster_info.id(),
                     &mut self.verified_certs,
                     extracted_msgs.certs,
                     &root_bank,
@@ -361,8 +362,13 @@ impl SigVerifier {
                     }
                 }
                 DecodedWireConsensusMessage::Certificate(cert) => {
-                    if cert.cert_type.slot() < root_slot {
+                    let cert_slot = cert.cert_type.slot();
+                    if cert_slot < root_slot {
                         self.stats.num_old_certs_received += 1;
+                        continue;
+                    }
+                    if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
+                        self.stats.cert_too_far_in_future += 1;
                         continue;
                     }
                     self.add_certificate_to_group(&mut cert_groups, cert, *sender_identity_pubkey);
@@ -384,8 +390,13 @@ impl SigVerifier {
             {
                 continue;
             }
-            if certificate.cert_type.slot() < root_slot {
+            let cert_slot = certificate.cert_type.slot();
+            if cert_slot < root_slot {
                 self.stats.num_old_certs_received += 1;
+                continue;
+            }
+            if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
+                self.stats.cert_too_far_in_future += 1;
                 continue;
             }
             let Some(sender_identity_pubkey) = self
@@ -2148,7 +2159,7 @@ mod tests {
 
         assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 0);
+        assert_eq!(ctx.verifier.stats.cert_too_far_in_future.0, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(
@@ -2187,7 +2198,7 @@ mod tests {
         );
         ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
 
-        assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_too_far_in_future.0, 1);
         expect_no_receive(&ctx.pool_receiver);
     }
 

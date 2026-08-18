@@ -3839,12 +3839,12 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         bank.add_builtin(
             vote_id,
             "mock_program1",
-            ProgramCacheEntry::new_builtin(0, MockBuiltin::register),
+            ProgramCacheEntry::new_builtin(MockBuiltin::register),
         );
         bank.add_builtin(
             stake_id,
             "mock_program2",
-            ProgramCacheEntry::new_builtin(0, MockBuiltin::register),
+            ProgramCacheEntry::new_builtin(MockBuiltin::register),
         );
         {
             let stakes = bank.stakes_cache.stakes();
@@ -5232,7 +5232,7 @@ fn test_fuzz_instructions() {
             bank.add_builtin(
                 key,
                 name.as_str(),
-                ProgramCacheEntry::new_builtin(0, MockBuiltin::register),
+                ProgramCacheEntry::new_builtin(MockBuiltin::register),
             );
             (key, name.as_bytes().to_vec())
         })
@@ -5537,9 +5537,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "GGJNQQv8iVqr2qfeLpUtgFVMjTWPiSXUBwE6SzRNRiqX"
+                    "5UrLWHi74qXWsyEHruqoz8g5XA31u4G7aADAt3Y81q5v"
                 } else {
-                    "2SeoDNxK19FqNQFQgsfYZkRsCpvyAQYANkifuCtvXDtf"
+                    "BSbYeY7uRBu3yoE5pJAJtunekoc6N9XjgDgek8uV3oZH"
                 },
             );
         }
@@ -5548,9 +5548,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "pPMYHdcq9eTJcJEwNnAupggSwgrfbHqL8eaD6LsXT6Q"
+                    "2umT1LU1YvfhfKsGDUah9ChnqSGfnJo4r9EHRKxiPbF2"
                 } else {
-                    "HXKPk3qZVsQ1TdefvfhTi4hcMMAXVyVdCLW8hUwDc7iU"
+                    "FiredfFXh5u9GWcFfqDn9tG5mCEfnX8vAecJbgnwXKgC"
                 },
             );
             break;
@@ -5853,8 +5853,8 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     assert_eq!(
         bank2.hash().as_bytes(),
         &[
-            93, 121, 219, 248, 56, 199, 240, 90, 102, 118, 226, 197, 72, 77, 171, 85, 169, 230, 25,
-            25, 138, 146, 93, 197, 57, 27, 26, 228, 224, 145, 124, 159
+            167, 152, 211, 107, 117, 229, 2, 86, 15, 156, 174, 32, 113, 116, 240, 38, 14, 205, 174,
+            168, 10, 67, 5, 124, 73, 110, 6, 45, 149, 236, 149, 180
         ]
     );
 }

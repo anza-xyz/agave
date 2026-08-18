@@ -6,7 +6,7 @@ use {
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::StaticTransactionWithMeta,
     },
     std::{
         collections::{BTreeSet, HashMap, hash_map::Entry},
@@ -40,7 +40,7 @@ use {
 ///
 /// The container maintains a fixed capacity. If the queue is full when pushing
 /// a new transaction, the lowest priority transaction will be dropped.
-pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
+pub(crate) struct TransactionStateContainer<Tx: StaticTransactionWithMeta> {
     capacity: usize,
     priority_queue: BTreeSet<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
@@ -48,7 +48,7 @@ pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     nonces_in_use: HashMap<Pubkey, TransactionPriorityId, PubkeyHasherBuilder>,
 }
 
-pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
+pub(crate) trait StateContainer<Tx: StaticTransactionWithMeta> {
     /// Create a new `TransactionStateContainer` with the given capacity.
     fn with_capacity(capacity: usize) -> Self;
 
@@ -135,7 +135,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 // is added to the slab before anything can be evicted from a full queue.
 pub(crate) const EXTRA_CAPACITY: usize = 1;
 
-impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
+impl<Tx: StaticTransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             capacity,
@@ -262,7 +262,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 }
 
-impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
+impl<Tx: StaticTransactionWithMeta> TransactionStateContainer<Tx> {
     /// Insert into the map, but NOT into the priority queue.
     /// Returns the id of the inserted transaction.
     pub(crate) fn insert_map_only(&mut self, state: TransactionState<Tx>) -> TransactionId {
