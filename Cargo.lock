@@ -294,8 +294,7 @@ dependencies = [
 [[package]]
 name = "agave-scheduler-bindings"
 version = "5.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4729a9b34a80022313a748b9d47f0f1bcb74a96975e8d633f43cd4da8446260f"
+source = "git+https://github.com/anza-xyz/agave-sdk?rev=128915a413a9903e31b75240649562205b92a388#128915a413a9903e31b75240649562205b92a388"
 
 [[package]]
 name = "agave-scheduling-utils"
