@@ -1,6 +1,6 @@
 use crate::shred::{
-    CODING_SHREDS_PER_FEC_BLOCK, Error, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
-    ShredType, traits::ShredCode as ShredCodeTrait,
+    CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Error, MAX_CODE_SHREDS_PER_SLOT,
+    MAX_DATA_SHREDS_PER_SLOT, ShredType, traits::ShredCode as ShredCodeTrait,
 };
 
 #[inline]
@@ -42,6 +42,10 @@ pub(super) fn sanitize<T: ShredCodeTrait>(shred: &T) -> Result<(), Error> {
             ShredType::Code,
             common_header.index,
         ));
+    }
+    let num_data_shreds = usize::from(coding_header.num_data_shreds);
+    if num_data_shreds != DATA_SHREDS_PER_FEC_BLOCK {
+        return Err(Error::InvalidNumDataShreds(coding_header.num_data_shreds));
     }
     let num_coding_shreds = usize::from(coding_header.num_coding_shreds);
     if num_coding_shreds != CODING_SHREDS_PER_FEC_BLOCK {
