@@ -325,9 +325,14 @@ impl BlockComponentProcessor {
         slot: Slot,
         parent_slot: Slot,
     ) -> Result<(), BlockComponentProcessorError> {
-        // Only require block markers (header/footer) for slots where they should be present
+        // Only allow block markers for slots where they should be present.
+        // TowerBFT blocks must not include block headers.
         if !migration_status.should_allow_block_markers(slot) {
-            return Ok(());
+            if self.stage == BlockComponentStage::PreParentMarker {
+                return Ok(());
+            } else {
+                return Err(BlockComponentProcessorError::BlockComponentPreMigration);
+            };
         }
 
         if Self::requires_genesis_certificate_marker(migration_status, parent_slot)
@@ -1027,6 +1032,37 @@ mod tests {
     }
 
     #[test]
+    fn test_header_during_tower_bft_slot() {
+        let migration_status = MigrationStatus::default();
+        migration_status.record_feature_activation(0);
+        let mut processor = BlockComponentProcessor::default();
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
+        let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+            parent_slot: parent.slot(),
+            parent_block_id: Hash::default(),
+        });
+
+        assert!(!migration_status.should_allow_block_markers(bank.slot()));
+        processor
+            .on_marker(
+                bank.clone(),
+                parent,
+                rand::rng().random(),
+                marker,
+                false,
+                None,
+                &migration_status,
+            )
+            .unwrap();
+
+        assert_matches!(
+            processor.on_final(&migration_status, bank.slot(), bank.parent_slot()),
+            Err(BlockComponentProcessorError::BlockComponentPreMigration)
+        );
+    }
+
+    #[test]
     fn test_first_alpenglow_block_requires_genesis_certificate_marker() {
         let migration_status = post_migration_status_with_genesis_slot(1);
         let processor = processor_after_footer();
@@ -1529,6 +1565,9 @@ mod tests {
         // Even with slot full
         let result = processor.on_entry_batch(&migration_status, 1, &[], false);
         assert!(result.is_ok());
+
+        // A Tower block with no markers is valid
+        assert!(processor.on_final(&migration_status, 1, 0).is_ok());
     }
 
     #[test]
