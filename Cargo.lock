@@ -272,7 +272,7 @@ version = "4.4.0-alpha.0"
 dependencies = [
  "assert_matches",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "solana-hash 4.6.0",
  "solana-sha256-hasher",
  "test-case",
@@ -1231,7 +1231,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -1248,7 +1248,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes 0.14.100",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -3616,7 +3616,7 @@ dependencies = [
  "libc",
  "percent-encoding 2.3.2",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -5569,7 +5569,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -5711,6 +5711,16 @@ checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
  "rand_core 0.9.3",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e6af7f3e25ded52c41df4e0b1af2d047e45896c2f3281792ed68a1c243daedb"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -6146,7 +6156,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -6935,7 +6945,7 @@ dependencies = [
  "num_cpus",
  "qualifier_attr",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "seqlock",
  "serde",
@@ -7799,7 +7809,7 @@ dependencies = [
  "indexmap 2.14.0",
  "log",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
@@ -7854,7 +7864,7 @@ dependencies = [
  "num_enum",
  "qualifier_attr",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "rolling-file",
  "rts-alloc",
@@ -8552,7 +8562,7 @@ dependencies = [
  "prost 0.14.4",
  "protosol",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "serial_test",
  "solana-bloom",
@@ -8818,7 +8828,7 @@ dependencies = [
  "bytemuck",
  "criterion",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "solana-lattice-hash",
 ]
 
@@ -8829,7 +8839,7 @@ dependencies = [
  "agave-random",
  "itertools 0.14.0",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "solana-clock",
  "solana-pubkey 4.3.0",
  "solana-sha256-hasher",
@@ -8872,7 +8882,7 @@ dependencies = [
  "prost 0.14.4",
  "qualifier_attr",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "reed-solomon-erasure",
  "rocksdb",
@@ -9277,7 +9287,7 @@ dependencies = [
  "nix",
  "num_cpus",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "serde",
  "solana-clock",
@@ -11345,7 +11355,7 @@ dependencies = [
  "log",
  "lru 0.18.2",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "solana-clock",
  "solana-cluster-type",
@@ -12118,7 +12128,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]

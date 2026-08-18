@@ -314,7 +314,7 @@ protosol = "=12.0.0"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.11"
 rand = "0.9.4"
-rand_chacha = "0.9.0"
+rand_chacha = "0.10.0"
 rayon = "1.12.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.13.1"
