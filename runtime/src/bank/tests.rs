@@ -5108,6 +5108,7 @@ fn test_process_transaction_with_too_many_account_locks() {
         solana_vote_program::id(),
         MockBuiltin::register,
     );
+    assert_eq!(bank.get_transaction_account_lock_limit(), 64);
 
     let from_pubkey = solana_pubkey::new_rand();
     let to_pubkey = solana_pubkey::new_rand();

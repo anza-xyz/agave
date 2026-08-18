@@ -1036,27 +1036,6 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        let bank = bank_with_feature_deactivated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_tx_account_lock_limit::id(),
-        );
-        assert!(!bank.feature_set.snapshot().increase_tx_account_lock_limit);
-
-        do_invoke_success(
-            TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
-            &[],
-            std::slice::from_ref(&invoked_program_id),
-            &bank,
-        );
-        let bank = bank_with_feature_activated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_tx_account_lock_limit::id(),
-        );
-
-        assert!(bank.feature_set.snapshot().increase_tx_account_lock_limit);
-
         // failure cases
 
         let do_invoke_failure_test_local_with_compute_check =
@@ -1224,14 +1203,6 @@ fn test_program_sbf_invoke_sanity() {
             ]),
             &bank,
         );
-
-        let bank = bank_with_feature_deactivated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_tx_account_lock_limit::id(),
-        );
-
-        assert!(!bank.feature_set.snapshot().increase_tx_account_lock_limit);
 
         do_invoke_failure_test_local(
             TEST_RETURN_ERROR,

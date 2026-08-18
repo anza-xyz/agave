@@ -23,7 +23,6 @@ pub struct FeatureSnapshot {
     pub curve25519_syscall_enabled: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
-    pub increase_tx_account_lock_limit: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_alt_bn128_syscall: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
@@ -98,7 +97,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             disable_deploy_of_alloc_free_syscall: is_active(
                 &disable_deploy_of_alloc_free_syscall::ID,
             ),
-            increase_tx_account_lock_limit: is_active(&increase_tx_account_lock_limit::ID),
             enable_bpf_loader_set_authority_checked_ix: is_active(
                 &enable_bpf_loader_set_authority_checked_ix::ID,
             ),
@@ -322,7 +320,6 @@ impl FeatureSet {
             simplify_alt_bn128_syscall_error_codes: snapshot.simplify_alt_bn128_syscall_error_codes,
             fix_alt_bn128_multiplication_input_length: snapshot
                 .fix_alt_bn128_multiplication_input_length,
-            increase_tx_account_lock_limit: snapshot.increase_tx_account_lock_limit,
             formalize_loaded_transaction_data_size: snapshot.formalize_loaded_transaction_data_size,
             disable_zk_elgamal_proof_program: snapshot.disable_zk_elgamal_proof_program,
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,
@@ -847,10 +844,6 @@ pub mod remove_deprecated_request_unit_ix {
 
 pub mod disable_rehash_for_rent_epoch {
     solana_pubkey::declare_id!("DTVTkmw3JSofd8CJVJte8PXEbxNQ2yZijvVr3pe2APPj");
-}
-
-pub mod increase_tx_account_lock_limit {
-    solana_pubkey::declare_id!("9LZdXeKGeBV6hRLdxS1rHbHoEUsKqesCC2ZAPTPKJAbK");
 }
 
 pub mod limit_max_instruction_trace_length {
@@ -1977,10 +1970,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_deprecated_request_unit_ix::id(),
             "remove support for RequestUnitsDeprecated instruction #27500",
-        ),
-        (
-            increase_tx_account_lock_limit::id(),
-            "increase tx account lock limit to 128 #27241",
         ),
         (
             limit_max_instruction_trace_length::id(),

@@ -182,7 +182,7 @@ use {
     solana_sysvar_id::SysvarId,
     solana_transaction::{
         Transaction, TransactionVerificationMode,
-        sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
+        sanitized::{MessageHash, SanitizedTransaction},
         versioned::{TransactionVersion, VersionedTransaction},
     },
     solana_transaction_context::{
@@ -3677,8 +3677,6 @@ impl Bank {
     pub fn get_transaction_account_lock_limit(&self) -> usize {
         if let Some(transaction_account_lock_limit) = self.transaction_account_lock_limit {
             transaction_account_lock_limit
-        } else if self.feature_set.snapshot().increase_tx_account_lock_limit {
-            MAX_TX_ACCOUNT_LOCKS
         } else {
             64
         }
