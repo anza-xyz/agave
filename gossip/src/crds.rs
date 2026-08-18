@@ -181,6 +181,10 @@ pub enum InsertOutcome {
 }
 
 impl InsertOutcome {
+    pub fn was_applied(self) -> bool {
+        matches!(self, Self::Inserted | Self::Replaced)
+    }
+
     fn into_result(self) -> Result<(), CrdsError> {
         match self {
             Self::Inserted | Self::Replaced => Ok(()),

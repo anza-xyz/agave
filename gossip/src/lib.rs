@@ -22,6 +22,7 @@ pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;
 pub mod gossip_service;
+mod local_crds_publisher;
 pub mod node;
 #[macro_use]
 mod tlv;

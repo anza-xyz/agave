@@ -17,7 +17,7 @@ use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{Crds, Cursor, GossipRoute},
+        crds::{Crds, Cursor, LocalBatchOutcome},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
@@ -31,6 +31,7 @@ use {
         epoch_slots::EpochSlots,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
+        local_crds_publisher::LocalCrdsPublisher,
         ping_pong::Pong,
         protocol::{
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
@@ -187,7 +188,7 @@ pub struct ClusterInfo {
     ping_cache: Mutex<PingCache>,
     pull_request_budget: KeyedRateLimiter<IpAddr>,
     pub(crate) stats: GossipStats,
-    local_message_pending_push_queue: Mutex<Vec<CrdsValue>>,
+    local_publisher: LocalCrdsPublisher,
     contact_debug_interval: u64, // milliseconds, 0 = disabled
     contact_save_interval: u64,  // milliseconds, 0 = disabled
     contact_info_path: PathBuf,
@@ -227,7 +228,7 @@ impl ClusterInfo {
                 GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT,
             ),
             stats: GossipStats::default(),
-            local_message_pending_push_queue: Mutex::default(),
+            local_publisher: LocalCrdsPublisher::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             contact_info_path: PathBuf::default(),
             contact_save_interval: 0, // disabled
@@ -296,11 +297,11 @@ impl ClusterInfo {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn insert_info(&self, node: ContactInfo) {
         let entry = CrdsValue::new(CrdsData::ContactInfo(node), &self.keypair());
-        if let Err(err) = {
-            let mut gossip_crds = self.gossip.crds.write();
-            gossip_crds.insert(entry, timestamp(), GossipRoute::LocalMessage)
-        } {
-            error!("ClusterInfo.insert_info: {err:?}");
+        let outcome = self
+            .local_publisher
+            .publish(&self.gossip.crds, entry, timestamp());
+        if !outcome.was_applied() {
+            error!("ClusterInfo.insert_info: {outcome:?}");
         }
     }
 
@@ -449,7 +450,6 @@ impl ClusterInfo {
         );
         let now = timestamp();
         let self_shred_version = self.my_shred_version();
-        let mut gossip_crds = self.gossip.crds.write();
         for node in nodes {
             if node
                 .contact_info()
@@ -457,8 +457,9 @@ impl ClusterInfo {
             {
                 continue;
             }
-            if let Err(err) = gossip_crds.insert(node, now, GossipRoute::LocalMessage) {
-                warn!("crds insert failed {err:?}");
+            let outcome = self.local_publisher.publish(&self.gossip.crds, node, now);
+            if !outcome.was_applied() {
+                warn!("crds insert failed: {outcome:?}");
             }
         }
     }
@@ -842,12 +843,12 @@ impl ClusterInfo {
             epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
             reset = true;
         }
-        let mut gossip_crds = self.gossip.crds.write();
         let now = timestamp();
-        for entry in entries {
-            if let Err(err) = gossip_crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_epoch_slots failed: {err:?}");
-            }
+        let outcome = self
+            .local_publisher
+            .publish_batch(&self.gossip.crds, entries, now);
+        if matches!(outcome, LocalBatchOutcome::Rejected) {
+            error!("push_epoch_slots failed: {outcome:?}");
         }
     }
 
@@ -860,10 +861,7 @@ impl ClusterInfo {
     }
 
     fn push_message(&self, message: CrdsValue) {
-        self.local_message_pending_push_queue
-            .lock()
-            .unwrap()
-            .push(message);
+        self.local_publisher.enqueue(message);
     }
 
     pub fn push_snapshot_hashes(
@@ -895,9 +893,9 @@ impl ClusterInfo {
         let vote = Vote::new(self_pubkey, vote, now).unwrap();
         let vote = CrdsData::Vote(vote_index, vote);
         let vote = CrdsValue::new(vote, self_keypair);
-        let mut gossip_crds = self.gossip.crds.write();
-        if let Err(err) = gossip_crds.insert(vote, now, GossipRoute::LocalMessage) {
-            error!("push_vote failed: {err:?}");
+        let outcome = self.local_publisher.publish(&self.gossip.crds, vote, now);
+        if !outcome.was_applied() {
+            error!("push_vote failed: {outcome:?}");
         }
     }
 
@@ -1220,11 +1218,11 @@ impl ClusterInfo {
             node.clone()
         };
         let node = CrdsValue::new(CrdsData::ContactInfo(node), &keypair);
-        if let Err(err) = {
-            let mut gossip_crds = self.gossip.crds.write();
-            gossip_crds.insert(node, timestamp(), GossipRoute::LocalMessage)
-        } {
-            error!("refresh_my_gossip_contact_info failed: {err:?}");
+        let outcome = self
+            .local_publisher
+            .publish(&self.gossip.crds, node, timestamp());
+        if !outcome.was_applied() {
+            error!("refresh_my_gossip_contact_info failed: {outcome:?}");
         }
     }
 
@@ -1321,15 +1319,7 @@ impl ClusterInfo {
     }
 
     pub fn flush_push_queue(&self) {
-        let entries: Vec<CrdsValue> =
-            std::mem::take(&mut *self.local_message_pending_push_queue.lock().unwrap());
-        if !entries.is_empty() {
-            let mut gossip_crds = self.gossip.crds.write();
-            let now = timestamp();
-            for entry in entries {
-                let _ = gossip_crds.insert(entry, now, GossipRoute::LocalMessage);
-            }
-        }
+        self.local_publisher.flush(&self.gossip.crds, timestamp());
     }
     fn new_push_requests(
         &self,
@@ -2650,6 +2640,7 @@ mod tests {
     use {
         super::*,
         crate::{
+            crds::GossipRoute,
             crds_gossip_pull::tests::MIN_NUM_BLOOM_FILTERS,
             crds_value::{CrdsValue, CrdsValueLabel},
             duplicate_shred::tests::new_rand_shred,
