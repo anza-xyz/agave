@@ -236,6 +236,7 @@ impl Consumer {
         // were not included in the block should have their cost removed, the rest
         // should update with their actually consumed units.
         QosService::remove_or_update_costs(
+            txs.iter(),
             transaction_qos_cost_results.iter(),
             commit_transactions_result.as_ref().ok(),
             bank,
