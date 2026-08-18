@@ -37,6 +37,7 @@ fn message_passing_on_all_queues() {
         leader_range_end: 16,
         remaining_cost_units: 12_000_000,
         latest_blockhash: [42; 32],
+        target_bank_time_ms: 0,
     };
     let batch = SharableTransactionBatchRegion {
         num_transactions: 5,

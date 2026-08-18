@@ -192,6 +192,7 @@ impl ProgressTracker {
                 leader_range_end: next_leader_range_end,
                 remaining_cost_units: self.remaining_block_cost(),
                 latest_blockhash: working_bank.last_blockhash().to_bytes(),
+                target_bank_time_ms: target_bank_time_ms(working_bank.ns_per_slot),
             }
         } else {
             self.last_observed_bank_id = None;
@@ -229,6 +230,7 @@ impl ProgressTracker {
                 leader_range_end: next_leader_range_end,
                 remaining_cost_units: 0,
                 latest_blockhash: [0; 32],
+                target_bank_time_ms: 0,
             }
         };
 
@@ -242,6 +244,11 @@ impl ProgressTracker {
             .map(|(limit, shared_block_cost)| limit.saturating_sub(shared_block_cost.load()))
             .unwrap_or(0)
     }
+}
+
+fn target_bank_time_ms(ns_per_slot: u128) -> u16 {
+    let milliseconds = ns_per_slot.wrapping_div(1_000_000);
+    u16::try_from(milliseconds).unwrap_or(u16::MAX)
 }
 
 fn alpenglow_progress(elapsed: Duration, slot_duration: Duration) -> u8 {
@@ -363,6 +370,7 @@ mod tests {
         assert_eq!(message.leader_range_end, u64::MAX);
         assert_eq!(message.epoch, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+        assert_eq!(message.target_bank_time_ms, 0);
 
         let expected_tick_height = 2 * ticks_per_slot;
         shared_leader_state.store(Arc::new(LeaderState::new(
@@ -380,6 +388,7 @@ mod tests {
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.epoch, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+        assert_eq!(message.target_bank_time_ms, 0);
 
         // Next leader slot is in the future - should be NOT_LEADER.
         shared_leader_state.store(Arc::new(LeaderState::new(
@@ -397,6 +406,7 @@ mod tests {
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.epoch, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+        assert_eq!(message.target_bank_time_ms, 0);
 
         // In leader slot but no bank yet - should be LEADER_STARTING.
         // leader_first_tick_height is at start of slot 4, and we're at tick_height
@@ -420,6 +430,7 @@ mod tests {
         assert_eq!(message.current_slot_progress, 1);
         assert_eq!(message.epoch, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+        assert_eq!(message.target_bank_time_ms, 0);
 
         // Slot boundary mid-window: tick_height one tick before leader_first_tick_height.
         let slot_5_boundary = 5 * ticks_per_slot;
@@ -457,6 +468,10 @@ mod tests {
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.epoch, bank.epoch());
         assert_eq!(message.latest_blockhash, bank.last_blockhash().to_bytes());
+        assert_eq!(
+            message.target_bank_time_ms,
+            target_bank_time_ms(bank.ns_per_slot)
+        );
 
         bank.fill_bank_with_ticks_for_tests();
         assert!(bank.is_complete());
@@ -475,6 +490,10 @@ mod tests {
         assert_eq!(message.current_slot_progress, 100);
         assert_eq!(message.epoch, bank.epoch());
         assert_eq!(message.latest_blockhash, bank.last_blockhash().to_bytes());
+        assert_eq!(
+            message.target_bank_time_ms,
+            target_bank_time_ms(bank.ns_per_slot)
+        );
 
         // Child bank past the first epoch boundary - epoch should advance.
         let child_bank = Arc::new(Bank::new_from_parent(
@@ -500,6 +519,10 @@ mod tests {
         assert_eq!(
             message.latest_blockhash,
             child_bank.last_blockhash().to_bytes()
+        );
+        assert_eq!(
+            message.target_bank_time_ms,
+            target_bank_time_ms(child_bank.ns_per_slot)
         );
     }
 
