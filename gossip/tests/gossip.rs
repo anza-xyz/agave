@@ -139,17 +139,9 @@ fn retransmit_to(
             .filter(|addr| socket_addr_space.check(addr))
             .collect()
     };
-    match multi_target_send(socket, data, &dests) {
-        Ok(_num_sent) => (),
-        Err(SendPktsError::IoError(ioerr, num_sent)) => {
-            error!(
-                "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
-                ioerr,
-                dests.len() - num_sent,
-                dests.len(),
-            );
-        }
-    }
+    multi_target_send(socket, data, &dests).unwrap_or_else(|SendPktsError::IoError(ioerr)| {
+        panic!("retransmit_to can not send packets any more, the send path is broken: {ioerr:?}")
+    });
 }
 
 /// ring a -> b -> c -> d -> e -> a

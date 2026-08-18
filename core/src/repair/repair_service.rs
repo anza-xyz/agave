@@ -356,6 +356,10 @@ pub struct RepairStats {
     pub orphan: RepairStatsGroup,
     pub get_best_orphans_us: u64,
     pub get_best_shreds_us: u64,
+    /// Request packets the send path accepted.
+    pub num_packets_sent: u64,
+    /// Request packets the send path refused, e.g. an unreachable peer or a full XDP queue.
+    pub num_packets_dropped: u64,
 }
 
 impl RepairStats {
@@ -384,6 +388,8 @@ impl RepairStats {
                 ("highest-shred-slot-min", nonzero_num(self.highest_shred.min), Option<i64>),
                 ("orphan-slot-max", nonzero_num(self.orphan.max), Option<i64>),
                 ("orphan-slot-min", nonzero_num(self.orphan.min), Option<i64>),
+                ("packets-sent", self.num_packets_sent, i64),
+                ("packets-dropped", self.num_packets_dropped, i64),
             );
         }
     }
@@ -833,26 +839,24 @@ impl RepairService {
         let mut send_batch_us = Measure::start("send_batch_us");
         if !batch.is_empty() {
             let num_pkts = batch.len();
-            if let Some(xdp) = xdp_sender {
+            let num_sent = if let Some(xdp) = xdp_sender {
+                let mut num_sent = 0;
                 for (i, (bytes, addr)) in batch.into_iter().enumerate() {
-                    if let Err(e) = xdp.try_send(i, addr, Bytes::from(bytes)) {
-                        warn!("repair xdp send failed: {e:?}");
+                    if xdp.try_send(i, addr, Bytes::from(bytes)).is_ok() {
+                        num_sent += 1;
                     }
                 }
+                num_sent
             } else {
                 let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
-                match batch_send(repair_socket, batch) {
-                    Ok(_num_sent) => (),
-                    Err(SendPktsError::IoError(err, num_sent)) => {
-                        let num_failed = num_pkts - num_sent;
-                        error!(
-                            "{} batch_send failed to send {num_failed}/{num_pkts} packets first \
-                             error {err:?}",
-                            repair_info.cluster_info.id()
-                        );
-                    }
-                }
-            }
+                batch_send(repair_socket, batch).unwrap_or_else(|SendPktsError::IoError(err)| {
+                    panic!(
+                        "can not send repair requests any more, the send path is broken: {err:?}"
+                    )
+                })
+            };
+            repair_metrics.stats.num_packets_sent += num_sent as u64;
+            repair_metrics.stats.num_packets_dropped += (num_pkts - num_sent) as u64;
         }
         send_batch_us.stop();
 
@@ -1189,15 +1193,12 @@ impl RepairService {
         // Prepare packet batch to send
         let reqs = [(&packet_buf, address)];
 
-        // Send packet batch
-        match batch_send(repair_socket, reqs) {
-            Ok(_num_sent) => {
-                debug!("successfully sent repair request to {pubkey} / {address}!");
-            }
-            Err(SendPktsError::IoError(err, _num_sent)) => {
-                error!("batch_send failed to send packet - error = {err:?}");
-            }
-        }
+        // Send packet batch. A drop is ignored: this path has no RepairStats in scope to report it
+        // into, and the shred stays in the repair queue so the request is reissued anyway.
+        batch_send(repair_socket, reqs).unwrap_or_else(|SendPktsError::IoError(err)| {
+            panic!("can not send repair requests any more, the send path is broken: {err:?}")
+        });
+        debug!("sent repair request to {pubkey} / {address}");
     }
 
     pub fn request_repair_if_needed(

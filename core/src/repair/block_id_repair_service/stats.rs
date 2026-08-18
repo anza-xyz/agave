@@ -62,6 +62,9 @@ pub(super) struct BlockIdRepairRequestsStats {
     pub parent_fec_set_count_requests: usize,
     pub fec_set_root_requests: usize,
     pub shred_for_block_id_requests: usize,
+
+    /// Request packets the send path refused, e.g. an unreachable peer.
+    pub dropped_requests: usize,
 }
 
 impl BlockIdRepairRequestsStats {
@@ -80,6 +83,7 @@ impl BlockIdRepairRequestsStats {
                 self.shred_for_block_id_requests,
                 i64
             ),
+            ("dropped_requests", self.dropped_requests, i64),
         );
         *self = Self::default();
     }

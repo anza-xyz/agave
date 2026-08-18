@@ -86,9 +86,6 @@ pub enum StreamerError {
 
     #[error("send packets error")]
     Send(#[from] SendError<PacketBatch>),
-
-    #[error(transparent)]
-    SendPktsError(#[from] SendPktsError),
 }
 
 pub struct StreamerReceiveStats {
@@ -436,12 +433,15 @@ pub fn filter_packets_by_socket_addr_space<'a>(
 }
 
 pub trait ResponseSender {
-    /// Send a batch of packets.
+    /// Send a batch of packets, returning how many of them made it out.
     ///
-    /// Returns Ok if all the packets with valid destination within batch were sent successfully,
-    /// and returns an error if any packet within the batch failed to send with number of failed
-    /// packets.
-    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError>;
+    /// Packets with an invalid destination are dropped, and so are the ones the network refuses
+    /// to accept. Both are expected in normal operation and only lower the returned count. An
+    /// error means the send path is permanently broken and the sender can not be used any more.
+    fn send_batch(
+        &self,
+        batch: PacketBatch,
+    ) -> std::result::Result<usize /*num sent:*/, SendPktsError>;
 }
 
 pub fn responder_loop<G: ResponseSender>(
@@ -451,10 +451,10 @@ pub fn responder_loop<G: ResponseSender>(
     stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
 ) {
     const SEND_REPORTING_INTERVAL: Duration = Duration::from_secs(1);
-    let mut errors = 0;
-    let mut last_error = None;
     let mut send_elapsed_us: u64 = 0;
     let mut send_batch_count: u64 = 0;
+    let mut packet_count: u64 = 0;
+    let mut dropped_packet_count: u64 = 0;
 
     let mut now = Instant::now();
     let mut stats = None;
@@ -474,14 +474,17 @@ pub fn responder_loop<G: ResponseSender>(
             if let Some(stats) = stats.as_mut() {
                 packet_batch.iter().for_each(|p| stats.record(p));
             }
+            let batch_len = packet_batch.len();
             let mut measure_send = Measure::start("send batch");
-            if let Err(e) = sender.send_batch(packet_batch) {
-                errors += 1;
-                last_error = Some(StreamerError::SendPktsError(e));
-            }
+            let num_sent = sender.send_batch(packet_batch).unwrap_or_else(|err| {
+                panic!("{name} can not send packets any more, the send path is broken: {err:?}")
+            });
             measure_send.stop();
             send_elapsed_us = send_elapsed_us.saturating_add(measure_send.as_us());
             send_batch_count = send_batch_count.saturating_add(1);
+            packet_count = packet_count.saturating_add(batch_len as u64);
+            dropped_packet_count =
+                dropped_packet_count.saturating_add((batch_len - num_sent) as u64);
         }
 
         // Metrics reporting
@@ -501,15 +504,26 @@ pub fn responder_loop<G: ResponseSender>(
                     sample_duration.as_millis() as i64,
                     i64
                 ),
+                (
+                    "streamer-send-egress_packet_count",
+                    packet_count as i64,
+                    i64
+                ),
+                // packets the send path refused, e.g. an invalid destination or an
+                // unreachable peer
+                (
+                    "streamer-send-egress_dropped_packet_count",
+                    dropped_packet_count as i64,
+                    i64
+                ),
             );
+            if dropped_packet_count != 0 {
+                info!("{name} dropped {dropped_packet_count}/{packet_count} egress packets");
+            }
             send_elapsed_us = 0;
             send_batch_count = 0;
-            if errors != 0 {
-                datapoint_info!(name, ("errors", errors, i64),);
-                info!("{name} last-error: {last_error:?} count: {errors}");
-                errors = 0;
-                last_error = None;
-            }
+            packet_count = 0;
+            dropped_packet_count = 0;
             now = Instant::now();
         }
         if let Some(ref stats_reporter_sender) = stats_reporter_sender
@@ -549,10 +563,13 @@ mod test {
     }
 
     impl ResponseSender for TestUdpSocketSender {
-        fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+        fn send_batch(
+            &self,
+            batch: PacketBatch,
+        ) -> std::result::Result<usize /*num sent:*/, SendPktsError> {
             let packets =
                 filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
-            batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>()).map(|_num_sent| ())
+            batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>())
         }
     }
 

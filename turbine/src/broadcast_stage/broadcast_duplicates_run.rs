@@ -441,9 +441,13 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 panic!("Xdp not supported for duplicate shreds run");
             }
         };
-        batch_send(sock, packets)
-            .map(|_num_sent| ())
-            .map_err(|SendPktsError::IoError(err, _)| Error::Io(err))
+        batch_send(sock, packets).unwrap_or_else(|SendPktsError::IoError(err)| {
+            panic!(
+                "duplicate broadcast can not send shreds any more, the send path is broken: \
+                 {err:?}"
+            )
+        });
+        Ok(())
     }
 
     fn record<'db>(

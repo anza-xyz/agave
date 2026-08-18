@@ -23,9 +23,9 @@ use {
 
 #[derive(Debug, Error)]
 pub enum SendPktsError {
-    /// Fatal IO error during send: the error, num packets sent before it
-    #[error("fatal IO error, the socket is unusable")]
-    IoError(io::Error, usize),
+    /// Fatal IO error during send, the socket can not be used any more.
+    #[error("fatal IO error, the send path is broken")]
+    IoError(io::Error),
 }
 
 impl From<SendPktsError> for TransportError {
@@ -40,14 +40,13 @@ impl From<SendPktsError> for TransportError {
 /// problem with one destination or transient backpressure. Those are expected in
 /// normal operation and only cost us this one packet. On non-unix platforms we can not
 /// tell the two apart, so we swallow everything.
-fn check_fatal(err: io::Error, num_sent: usize) -> Result<(), SendPktsError> {
+fn check_fatal(err: io::Error) -> Result<(), SendPktsError> {
     #[cfg(unix)]
     match err.raw_os_error() {
         Some(libc::EMSGSIZE) => {
             debug_assert!(
                 false,
-                "packet exceeds the maximum UDP datagram size, the caller must not hand oversized \
-                 buffers to batch_send: {err:?}"
+                "packet exceeds the maximum UDP datagram size: {err:?}"
             );
         }
         Some(
@@ -58,12 +57,12 @@ fn check_fatal(err: io::Error, num_sent: usize) -> Result<(), SendPktsError> {
             | libc::EOPNOTSUPP
             | libc::EDESTADDRREQ,
         ) => {
-            return Err(SendPktsError::IoError(err, num_sent));
+            return Err(SendPktsError::IoError(err));
         }
         _ => (),
     }
     #[cfg(not(unix))]
-    let _ = (err, num_sent);
+    let _ = err;
     Ok(())
 }
 
@@ -86,7 +85,7 @@ where
     for (p, a) in packets {
         match sock.send_to(p.as_ref(), a.borrow()) {
             Ok(_) => num_sent += 1,
-            Err(err) => check_fatal(err, num_sent)?,
+            Err(err) => check_fatal(err)?,
         }
     }
     Ok(num_sent)
@@ -166,7 +165,7 @@ fn sendmmsg_retry(
     while !pkts.is_empty() {
         let npkts = match unsafe { libc::sendmmsg(sock_fd, &mut pkts[0], pkts.len() as u32, 0) } {
             -1 => {
-                check_fatal(io::Error::last_os_error(), num_sent)?;
+                check_fatal(io::Error::last_os_error())?;
                 // skip over the failing packet
                 1_usize
             }
@@ -251,13 +250,8 @@ where
         if chunk.len() == 0 {
             break;
         }
-        match batch_send_max_iov(sock, chunk) {
-            Ok(n) => num_sent += n,
-            // The socket is dead, do not bother with the remaining chunks.
-            Err(SendPktsError::IoError(err, n)) => {
-                return Err(SendPktsError::IoError(err, num_sent + n));
-            }
-        }
+        // On error the socket is dead, do not bother with the remaining chunks.
+        num_sent += batch_send_max_iov(sock, chunk)?;
     }
     Ok(num_sent)
 }
@@ -534,9 +528,8 @@ mod tests {
 
         match batch_send(&not_a_socket, packet_refs) {
             Ok(num_sent) => panic!("a send on a non-socket fd must fail, sent {num_sent}"),
-            Err(SendPktsError::IoError(ioerror, num_sent)) => {
+            Err(SendPktsError::IoError(ioerror)) => {
                 assert_eq!(ioerror.raw_os_error(), Some(libc::ENOTSOCK));
-                assert_eq!(num_sent, 0, "no packet in the batch was sent");
             }
         }
     }

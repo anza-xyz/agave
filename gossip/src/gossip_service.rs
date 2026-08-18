@@ -405,17 +405,23 @@ impl GossipUdpSocketProvider {
 }
 
 impl ResponseSender for GossipUdpSocketProvider {
-    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+    fn send_batch(
+        &self,
+        batch: PacketBatch,
+    ) -> std::result::Result<usize /*num sent:*/, SendPktsError> {
         let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
         let sock = self.socket_provider.current_socket_ref();
-        batch_send(sock, packets.collect::<Vec<_>>()).map(|_num_sent| ())
+        batch_send(sock, packets.collect::<Vec<_>>())
     }
 }
 
 struct GossipXdpSender(XdpSender);
 
 impl ResponseSender for GossipXdpSender {
-    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+    fn send_batch(
+        &self,
+        batch: PacketBatch,
+    ) -> std::result::Result<usize /*num sent:*/, SendPktsError> {
         let packets = batch.iter().filter_map(|pkt| {
             let addr = pkt.meta().socket_addr();
             let data = pkt.data(..)?;
@@ -450,27 +456,19 @@ impl ResponseSender for GossipXdpSender {
             }
         }
 
-        let num_failed = num_dropped_full + num_dropped_disconnected;
-        if num_failed > 0 {
-            let kind = if num_dropped_disconnected != 0 {
-                io::ErrorKind::BrokenPipe
-            } else {
-                io::ErrorKind::WouldBlock
-            };
-            return Err(SendPktsError::IoError(
-                io::Error::new(
-                    kind,
-                    format!(
-                        "XDP sender failed to enqueue {num_failed} out of {num_total} gossip \
-                         packets ({num_dropped_full} full queue, {num_dropped_disconnected} \
-                         disconnected)",
-                        num_total = num_sent + num_failed
-                    ),
+        // A full queue is backpressure, it only costs us these packets. A disconnected
+        // sender never comes back, so it is fatal.
+        if num_dropped_disconnected > 0 {
+            return Err(SendPktsError::IoError(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!(
+                    "XDP sender is disconnected, dropped {num_dropped_disconnected} out of \
+                     {num_total} gossip packets",
+                    num_total = num_sent + num_dropped_full + num_dropped_disconnected
                 ),
-                num_failed,
-            ));
+            )));
         }
-        Ok(())
+        Ok(num_sent)
     }
 }
 

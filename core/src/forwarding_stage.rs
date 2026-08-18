@@ -426,12 +426,6 @@ enum ForwardingClientError {
     LeaderContactMissing,
 }
 
-impl From<SendPktsError> for ForwardingClientError {
-    fn from(_err: SendPktsError) -> Self {
-        ForwardingClientError::Failed
-    }
-}
-
 impl From<TransportError> for ForwardingClientError {
     fn from(_err: TransportError) -> Self {
         ForwardingClientError::Failed
@@ -442,7 +436,7 @@ impl From<TransportError> for ForwardingClientError {
 /// forward transactions to other validators.
 trait ForwardingClient: Send + Sync + 'static {
     /// Sends a batch of serialized transactions to the currently configured
-    /// address.
+    /// address. An error means at least one transaction did not make it out.
     fn send_transactions_in_batch(
         &self,
         wire_transactions: Vec<Vec<u8>>,
@@ -481,7 +475,14 @@ impl ForwardingClient for VoteClient {
         let batch_with_addresses = wire_transactions
             .iter()
             .map(|bytes| (bytes, current_address));
-        batch_send(&self.bind_socket, batch_with_addresses)?;
+        let num_sent = batch_send(&self.bind_socket, batch_with_addresses).unwrap_or_else(
+            |SendPktsError::IoError(err)| {
+                panic!("can not forward votes any more, the send path is broken: {err:?}")
+            },
+        );
+        if num_sent < wire_transactions.len() {
+            return Err(ForwardingClientError::Failed);
+        }
         Ok(())
     }
 }

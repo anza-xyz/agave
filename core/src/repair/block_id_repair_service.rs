@@ -1010,35 +1010,31 @@ impl BlockIdRepairService {
         }
 
         if !block_id_socket_batch.is_empty() {
-            let total = block_id_socket_batch.len();
-            let _ = batch_send(
+            let num_sent = batch_send(
                 block_id_repair_socket,
                 block_id_socket_batch
                     .iter()
                     .map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, sent)| {
-                error!(
-                    "{}: failed to send block_id repair packets, packets failed {}/{total}: \
-                     {err:?}",
-                    repair_info.cluster_info.id(),
-                    total - sent,
+            .unwrap_or_else(|SendPktsError::IoError(err)| {
+                panic!(
+                    "can not send block_id repair packets any more, the send path is broken: \
+                     {err:?}"
                 )
             });
+            state.request_stats.dropped_requests += block_id_socket_batch.len() - num_sent;
         }
         if !shred_socket_batch.is_empty() {
-            let total = shred_socket_batch.len();
-            let _ = batch_send(
+            let num_sent = batch_send(
                 repair_socket,
                 shred_socket_batch.iter().map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, sent)| {
-                error!(
-                    "{}: failed to send shred repair requests, packets failed {}/{total}: {err:?}",
-                    repair_info.cluster_info.id(),
-                    total - sent,
+            .unwrap_or_else(|SendPktsError::IoError(err)| {
+                panic!(
+                    "can not send shred repair requests any more, the send path is broken: {err:?}"
                 )
             });
+            state.request_stats.dropped_requests += shred_socket_batch.len() - num_sent;
         }
     }
 

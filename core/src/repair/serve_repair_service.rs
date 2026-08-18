@@ -96,8 +96,11 @@ struct ServeRepairSocketProvider {
 }
 
 impl ResponseSender for ServeRepairSocketProvider {
-    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+    fn send_batch(
+        &self,
+        batch: PacketBatch,
+    ) -> std::result::Result<usize /*num sent:*/, SendPktsError> {
         let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
-        batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>()).map(|_num_sent| ())
+        batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>())
     }
 }
