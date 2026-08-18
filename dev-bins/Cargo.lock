@@ -601,7 +601,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -612,7 +612,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2276,7 +2276,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3015,7 +3015,7 @@ dependencies = [
  "libc",
  "percent-encoding 2.3.2",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -4534,7 +4534,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -4573,7 +4573,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -4677,6 +4677,16 @@ checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
  "rand_core 0.9.5",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e6af7f3e25ded52c41df4e0b1af2d047e45896c2f3281792ed68a1c243daedb"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -5056,7 +5066,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5114,7 +5124,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5545,7 +5555,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6254,7 +6264,7 @@ dependencies = [
  "num_enum",
  "qualifier_attr",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "rolling-file",
  "rts-alloc",
@@ -6743,7 +6753,7 @@ dependencies = [
  "log",
  "num-traits",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "solana-bloom",
  "solana-clock",
@@ -6954,7 +6964,7 @@ version = "4.4.0-alpha.0"
 dependencies = [
  "agave-random",
  "itertools 0.14.0",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "solana-clock",
  "solana-pubkey 4.3.0",
  "solana-vote",
@@ -6991,7 +7001,7 @@ dependencies = [
  "prost",
  "qualifier_attr",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "reed-solomon-erasure",
  "rocksdb",
@@ -8827,7 +8837,7 @@ dependencies = [
  "log",
  "lru 0.18.2",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "solana-clock",
  "solana-cluster-type",
@@ -9495,7 +9505,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10356,7 +10366,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

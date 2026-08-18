@@ -2964,7 +2964,7 @@ dependencies = [
  "libc",
  "percent-encoding 2.3.2",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -4523,7 +4523,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -4659,6 +4659,16 @@ checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
  "rand_core 0.9.3",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e6af7f3e25ded52c41df4e0b1af2d047e45896c2f3281792ed68a1c243daedb"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -5047,7 +5057,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -5557,7 +5567,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -6346,7 +6356,7 @@ dependencies = [
  "num_enum",
  "qualifier_attr",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "rolling-file",
  "rts-alloc",
@@ -6868,7 +6878,7 @@ dependencies = [
  "log",
  "num-traits",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "solana-bloom",
  "solana-clock",
@@ -7081,7 +7091,7 @@ version = "4.4.0-alpha.0"
 dependencies = [
  "agave-random",
  "itertools 0.14.0",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "solana-clock",
  "solana-pubkey 4.3.0",
  "solana-vote",
@@ -7118,7 +7128,7 @@ dependencies = [
  "prost",
  "qualifier_attr",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "reed-solomon-erasure",
  "rocksdb",
@@ -9814,7 +9824,7 @@ dependencies = [
  "log",
  "lru 0.18.2",
  "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand_chacha 0.10.0",
  "rayon",
  "solana-clock",
  "solana-cluster-type",
@@ -10517,7 +10527,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
