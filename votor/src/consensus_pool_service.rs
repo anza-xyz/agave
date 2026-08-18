@@ -237,9 +237,10 @@ impl ConsensusPoolService {
     }
 
     fn is_current_identity_staked(ctx: &ConsensusPoolContext) -> bool {
-        ctx.sharable_banks
-            .root()
-            .current_epoch_staked_nodes()
+        let root_bank = ctx.sharable_banks.root();
+        root_bank
+            .epoch_staked_nodes(root_bank.epoch())
+            .expect("Root bank retains epoch_stakes for its own epoch")
             .get(&ctx.cluster_info.id())
             .is_some_and(|stake| *stake > 0)
     }
