@@ -40,6 +40,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
+        cost_update_service::report_cost_tracker_stats,
         resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
@@ -639,7 +640,8 @@ fn setup_slot_recording(
                 let cost_tracker = bank.read_cost_tracker().unwrap();
                 let slot = bank.slot();
                 let is_leader_block = false;
-                cost_tracker.report_stats(
+                report_cost_tracker_stats(
+                    &cost_tracker.stats(),
                     slot,
                     is_leader_block,
                     total_transaction_fee,
