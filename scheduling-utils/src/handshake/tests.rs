@@ -36,6 +36,7 @@ fn message_passing_on_all_queues() {
         next_leader_slot: 12,
         leader_range_end: 16,
         remaining_cost_units: 12_000_000,
+        remaining_allocated_accounts_data_size: 20_000_000,
         latest_blockhash: [42; 32],
         target_bank_time_ms: 0,
     };
