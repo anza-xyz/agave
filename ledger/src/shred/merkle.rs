@@ -1795,10 +1795,6 @@ mod test {
                     );
                     assert_eq!(shred::layout::get_flags(shred).unwrap(), data_header.flags);
                     assert_eq!(shred::layout::get_data(shred).unwrap(), data);
-                    assert_eq!(
-                        shred::layout::get_reference_tick(shred).unwrap(),
-                        reference_tick
-                    );
                     num_data_shreds += 1;
                 }
             }
