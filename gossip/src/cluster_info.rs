@@ -31,6 +31,7 @@ use {
         epoch_slots::EpochSlots,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
+        gossip_round::GossipRound,
         local_crds_publisher::LocalCrdsPublisher,
         ping_pong::Pong,
         protocol::{
@@ -1211,16 +1212,18 @@ impl ClusterInfo {
     }
 
     fn refresh_my_gossip_contact_info(&self) {
+        self.refresh_my_gossip_contact_info_at(timestamp());
+    }
+
+    fn refresh_my_gossip_contact_info_at(&self, now: u64) {
         let keypair = self.keypair();
         let node = {
             let mut node = self.my_contact_info.write().unwrap();
-            node.set_wallclock(timestamp());
+            node.set_wallclock(now);
             node.clone()
         };
         let node = CrdsValue::new(CrdsData::ContactInfo(node), &keypair);
-        let outcome = self
-            .local_publisher
-            .publish(&self.gossip.crds, node, timestamp());
+        let outcome = self.local_publisher.publish(&self.gossip.crds, node, now);
         if !outcome.was_applied() {
             error!("refresh_my_gossip_contact_info failed: {outcome:?}");
         }
@@ -1281,8 +1284,8 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
         stakes: &HashMap<Pubkey, u64>,
+        now: u64,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
-        let now = timestamp();
         let keypair = self.keypair();
         let mut contact_info = self.my_contact_info();
         contact_info.set_wallclock(now);
@@ -1319,19 +1322,24 @@ impl ClusterInfo {
     }
 
     pub fn flush_push_queue(&self) {
-        self.local_publisher.flush(&self.gossip.crds, timestamp());
+        self.flush_push_queue_at(timestamp());
+    }
+
+    fn flush_push_queue_at(&self, now: u64) {
+        self.local_publisher.flush(&self.gossip.crds, now);
     }
     fn new_push_requests(
         &self,
         stakes: &HashMap<Pubkey, u64>,
+        now: u64,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         let self_id = self.id();
         let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let (entries, push_messages, num_pushes) = {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
-            self.flush_push_queue();
+            self.flush_push_queue_at(now);
             self.gossip
-                .new_push_messages(&self_id, timestamp(), stakes, |value| {
+                .new_push_messages(&self_id, now, stakes, |value| {
                     should_retain_crds_value(
                         value,
                         stakes,
@@ -1379,17 +1387,21 @@ impl ClusterInfo {
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
-        generate_pull_requests: bool,
+        round: &GossipRound<'_>,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
-        self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
+        self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, round.stakes, round.wallclock);
         // This will flush local pending push messages before generating
         // pull-request bloom filters, preventing pull responses to return the
         // same values back to the node itself. Note that packets will arrive
         // and are processed out of order.
-        let out = self.new_push_requests(stakes);
-        if generate_pull_requests {
-            let reqs = self.new_pull_requests(thread_pool, gossip_validators, stakes);
+        let out = self.new_push_requests(round.stakes, round.wallclock);
+        if round.should_generate_pull(PULL_REQUEST_PERIOD) {
+            let reqs = self.new_pull_requests(
+                thread_pool,
+                gossip_validators,
+                round.stakes,
+                round.wallclock,
+            );
             Either::Right(out.chain(reqs))
         } else {
             Either::Left(out)
@@ -1402,20 +1414,14 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        round: &GossipRound<'_>,
         sender: &impl ChannelSend<PacketBatch>,
-        generate_pull_requests: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.gossip_transmit_loop_time);
         let mut packet_batch = RecycledPacketBatch::new_with_recycler(recycler, 0, "run_gossip");
-        self.generate_new_gossip_requests(
-            thread_pool,
-            gossip_validators,
-            stakes,
-            generate_pull_requests,
-        )
-        .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
-        .for_each(|pkt| packet_batch.push(pkt));
+        self.generate_new_gossip_requests(thread_pool, gossip_validators, round)
+            .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
+            .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty()
             && let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch.into())
         {
@@ -1452,22 +1458,22 @@ impl ClusterInfo {
             .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
     }
 
-    fn handle_purge(&self, thread_pool: &ThreadPool, stakes: &HashMap<Pubkey, u64>) {
+    fn handle_purge(&self, thread_pool: &ThreadPool, round: &GossipRound<'_>) {
         let self_pubkey = self.id();
-        let timeouts = self
-            .gossip
-            .make_timeouts(self_pubkey, stakes, CRDS_GOSSIP_PURGE_DURATION);
+        let timeouts =
+            self.gossip
+                .make_timeouts(self_pubkey, round.stakes, CRDS_GOSSIP_PURGE_DURATION);
         let num_purged = {
             let _st = ScopedTimer::from(&self.stats.purge);
             self.gossip
-                .purge(&self_pubkey, thread_pool, timestamp(), &timeouts)
+                .purge(&self_pubkey, thread_pool, round.wallclock, &timeouts)
         };
         self.stats.purge_count.add_relaxed(num_purged as u64);
     }
 
     // Trims the CRDS table by dropping all values associated with the pubkeys
     // with the lowest stake, so that the number of unique pubkeys are bounded.
-    fn trim_crds_table(&self, cap: usize, stakes: &HashMap<Pubkey, u64>) {
+    fn trim_crds_table(&self, cap: usize, stakes: &HashMap<Pubkey, u64>, now: u64) {
         if !self.gossip.crds.read().should_trim(cap) {
             return;
         }
@@ -1483,7 +1489,7 @@ impl ClusterInfo {
             .collect();
         self.stats.trim_crds_table.add_relaxed(1);
         let mut gossip_crds = self.gossip.crds.write();
-        let num_purged = gossip_crds.trim(cap, &keep, stakes, timestamp());
+        let num_purged = gossip_crds.trim(cap, &keep, stakes, now);
         self.stats
             .trim_crds_table_purged_values_count
             .add_relaxed(num_purged as u64);
@@ -1505,9 +1511,9 @@ impl ClusterInfo {
         Builder::new()
             .name("solGossip".to_string())
             .spawn(move || {
-                let mut last_push = 0;
-                let mut last_contact_info_trace = timestamp();
-                let mut last_contact_info_save = timestamp();
+                let mut last_push = None;
+                let mut last_contact_info_trace = Some(Instant::now());
+                let mut last_contact_info_save = Some(Instant::now());
                 let mut entrypoints_processed = false;
                 let recycler = PacketBatchRecycler::default();
 
@@ -1515,9 +1521,16 @@ impl ClusterInfo {
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    let start = timestamp();
+                    let stakes = epoch_specs
+                        .as_mut()
+                        .map(|es| es.current_epoch_staked_nodes())
+                        .unwrap_or_default();
+                    let round = GossipRound::new(gossip_round, &stakes);
                     if self.contact_debug_interval != 0
-                        && start - last_contact_info_trace > self.contact_debug_interval
+                        && round.is_due(
+                            last_contact_info_trace,
+                            Duration::from_millis(self.contact_debug_interval),
+                        )
                     {
                         // Log contact info
                         info!(
@@ -1525,47 +1538,47 @@ impl ClusterInfo {
                             self.contact_info_trace(),
                             self.rpc_info_trace()
                         );
-                        last_contact_info_trace = start;
+                        last_contact_info_trace = Some(round.started_at);
                     }
 
                     if self.contact_save_interval != 0
-                        && start - last_contact_info_save > self.contact_save_interval
+                        && round.is_due(
+                            last_contact_info_save,
+                            Duration::from_millis(self.contact_save_interval),
+                        )
                     {
                         self.save_contact_info();
-                        last_contact_info_save = start;
+                        last_contact_info_save = Some(round.started_at);
                     }
-                    let stakes = epoch_specs
-                        .as_mut()
-                        .map(|es| es.current_epoch_staked_nodes())
-                        .unwrap_or_default();
 
                     let _ = self.run_gossip(
                         &thread_pool,
                         gossip_validators.as_ref(),
                         &recycler,
-                        &stakes,
+                        &round,
                         &sender,
-                        // Make pull requests every PULL_REQUEST_PERIOD rounds
-                        gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
-                    self.handle_purge(&thread_pool, &stakes);
+                    self.handle_purge(&thread_pool, &round);
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
-                    if start - last_push > CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2 {
-                        self.refresh_my_gossip_contact_info();
+                    if round.is_due(
+                        last_push,
+                        Duration::from_millis(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2),
+                    ) {
+                        self.refresh_my_gossip_contact_info_at(round.wallclock);
                         self.refresh_push_active_set(
                             &recycler,
-                            &stakes,
+                            round.stakes,
                             gossip_validators.as_ref(),
                             &sender,
                         );
-                        last_push = timestamp();
+                        last_push = Some(round.started_at);
                     }
-                    let elapsed = timestamp() - start;
-                    if GOSSIP_SLEEP_MILLIS > elapsed {
-                        let time_left = GOSSIP_SLEEP_MILLIS - elapsed;
-                        sleep(Duration::from_millis(time_left));
+                    if let Some(time_left) =
+                        round.sleep_remaining(Duration::from_millis(GOSSIP_SLEEP_MILLIS))
+                    {
+                        sleep(time_left);
                     }
                 }
             })
@@ -1915,16 +1928,16 @@ impl ClusterInfo {
         if messages.is_empty() {
             return;
         }
+        let now = timestamp();
         // Origins' pubkeys of upserted crds values.
         let origins: HashSet<_> = {
             let _st = ScopedTimer::from(&self.stats.process_push_message);
-            let now = timestamp();
             self.gossip.process_push_message(messages, now)
         };
         // Generate prune messages.
         let prune_messages = self.generate_prune_messages(thread_pool, origins, stakes);
         let mut packet_batch = make_gossip_packet_batch(prune_messages, recycler, &self.stats);
-        self.new_push_requests(stakes)
+        self.new_push_requests(stakes, now)
             .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
             .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty()
@@ -2129,7 +2142,7 @@ impl ClusterInfo {
             response_sender,
         );
         self.handle_batch_pull_responses(pull_responses, stakes);
-        self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
+        self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes, timestamp());
         self.handle_batch_pong_messages(pong_messages, Instant::now());
         self.handle_batch_pull_requests(pull_requests, recycler, stakes, response_sender);
         Ok(())
@@ -2683,7 +2696,7 @@ mod tests {
             Vec<(SocketAddr, Ping)>,     // Ping packets
             Vec<(SocketAddr, Protocol)>, // Pull requests
         ) {
-            self.new_pull_requests(thread_pool, gossip_validators, stakes)
+            self.new_pull_requests(thread_pool, gossip_validators, stakes, timestamp())
                 .partition_map(|(addr, protocol)| {
                     if let Protocol::PingMessage(ping) = protocol {
                         Either::Left((addr, ping))
@@ -2954,12 +2967,9 @@ mod tests {
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
         );
-        let mut reqs = cluster_info.generate_new_gossip_requests(
-            &thread_pool,
-            None,            // gossip_validators
-            &HashMap::new(), // stakes
-            true,            // generate_pull_requests
-        );
+        let stakes = HashMap::new();
+        let round = GossipRound::new(0, &stakes); // Generate pull requests.
+        let mut reqs = cluster_info.generate_new_gossip_requests(&thread_pool, None, &round);
         //assert none of the addrs are invalid.
         assert!(reqs.all(|(addr, _)| {
             ContactInfo::is_valid_address(&addr, &SocketAddrSpace::Unspecified)
