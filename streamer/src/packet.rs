@@ -53,10 +53,10 @@ pub(crate) fn recv_from(
     trace!("receiving on {}", socket.local_addr().unwrap());
     let should_wait = max_wait.is_some();
     let start = should_wait.then(Instant::now);
-    // The socket is blocking for the first read only, so that we wait for at
-    // least one packet. Every subsequent read must not block.
-    let mut is_blocking = true;
     loop {
+        // The socket is blocking for the first read only, so that we wait for at
+        // least one packet. `recv_mmsg` sets it non blocking as soon as it has
+        // received a packet, so every subsequent read returns immediately.
         match recv_mmsg(socket, batch) {
             Err(err) if !batch.is_empty() => {
                 if !should_wait && err.kind() == ErrorKind::WouldBlock {
@@ -68,10 +68,6 @@ pub(crate) fn recv_from(
                 return Err(e);
             }
             Ok(npkts) => {
-                if is_blocking {
-                    socket.set_nonblocking(true)?;
-                    is_blocking = false;
-                }
                 trace!("got {npkts} packets");
                 // Try to batch into big enough buffers
                 // will cause less re-shuffling later on.
