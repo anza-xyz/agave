@@ -1164,7 +1164,7 @@ impl AccountsDb {
 
     /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
     ///
-    /// The reclaimed accounts were already unref'd and removed from the slot list when the
+    /// The reclaimed accounts were already removed from the slot list when the
     /// reclaims were collected
     fn clean_accounts_older_than_root(&self, reclaims: &ReclaimsWithNewestSlot<AccountInfo>) {
         if reclaims.is_empty() {
@@ -1845,8 +1845,8 @@ impl AccountsDb {
     /// * 'mark_accounts_obsolete' - Whether to mark accounts as obsolete or not. If `Yes`, then
     ///   obsolete account entry will be marked in the storage so snapshots/accounts hash can
     ///   determine the state of the account at a specified slot. This should only be done if the
-    ///   account is already unrefed and removed from the accounts index
-    ///   It must be unrefed and removed to avoid double counting or missed counting in shrink
+    ///   account is already removed from the accounts index
+    ///   It must be removed to avoid double counting or missed counting in shrink
     ///
     /// Returns the set of dead slots that were removed from storage as a result of this call.
     fn handle_reclaims<'a, I>(
@@ -5506,7 +5506,7 @@ impl AccountsDb {
     }
 
     /// Use the duplicated pubkeys to mark all older version of the pubkeys as obsolete
-    /// This will unref the accounts and then reclaim the accounts
+    /// This will remove the older entries from the slot lists and then reclaim the accounts
     fn mark_obsolete_accounts_at_startup(
         &self,
         slot_marked_obsolete: Slot,
@@ -5517,7 +5517,7 @@ impl AccountsDb {
             .map(|pubkeys_by_bin| {
                 let reclaims = self
                     .accounts_index
-                    .clean_and_unref_rooted_entries_by_bin(pubkeys_by_bin);
+                    .clean_rooted_entries_by_bin(pubkeys_by_bin);
                 let stats = PurgeStats::default();
 
                 // Mark all the entries as obsolete, and remove any empty storages
@@ -5706,7 +5706,7 @@ enum PubkeysToStore {
 }
 
 /// Specify whether obsolete accounts should be marked or not during reclaims
-/// They should only be marked if they are also getting unreffed in the index
+/// They should only be marked if they are also getting removed from the index
 ///
 /// When an account is marked obsolete at the slot it is present in (Eg. if the account is present
 /// in slot 10 and marked obsolete at slot 10), it means the account was deleted rather than
