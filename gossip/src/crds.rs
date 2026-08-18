@@ -51,7 +51,7 @@ use {
         cmp::Ordering,
         collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
         ops::{Bound, Index, IndexMut},
-        sync::Mutex,
+        sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
     },
 };
 
@@ -64,6 +64,36 @@ const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // target: 1 signature reported per minute
 // log2(680k) = ~19.375.
 pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
+
+/// Synchronization boundary around the CRDS table.
+///
+/// Keeping lock acquisition here prevents the synchronization primitive from
+/// leaking into the push and pull overlays and gives local publication a
+/// single place to add transactional operations.
+#[derive(Default)]
+pub struct CrdsStore {
+    inner: RwLock<Crds>,
+}
+
+impl CrdsStore {
+    #[inline]
+    pub fn read(&self) -> RwLockReadGuard<'_, Crds> {
+        self.inner.read().unwrap()
+    }
+
+    #[inline]
+    pub fn write(&self) -> RwLockWriteGuard<'_, Crds> {
+        self.inner.write().unwrap()
+    }
+}
+
+impl From<Crds> for CrdsStore {
+    fn from(crds: Crds) -> Self {
+        Self {
+            inner: RwLock::new(crds),
+        }
+    }
+}
 
 pub struct Crds {
     /// Stores the map of labels and values
