@@ -501,39 +501,7 @@ impl Accounts {
     }
 
     /// Store `accounts` into the DB
-    ///
-    /// This version updates the accounts index sequentially,
-    /// using the same thread that calls the fn itself.
-    pub fn store_accounts_seq<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        bank_id: BankId,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: &Ancestors,
-    ) {
-        self._store_accounts(accounts, bank_id, transactions, ancestors);
-    }
-
-    /// Store `accounts` into the DB
-    ///
-    /// This version updates the accounts index in parallel,
-    /// using the foreground AccountsDb thread pool.
-    pub fn store_accounts_par<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        bank_id: BankId,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: &Ancestors,
-    ) {
-        self._store_accounts(accounts, bank_id, transactions, ancestors);
-    }
-
-    /// Store `accounts` into the DB
-    ///
-    /// This version is a private impl, performing the common additional tasks
-    /// when storing accounts that fall outside AccountsDb itself.
-    /// E.g. geyser account update notifications.
-    fn _store_accounts<'a>(
+    pub fn store_accounts<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
