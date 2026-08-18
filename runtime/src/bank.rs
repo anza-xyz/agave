@@ -5553,16 +5553,14 @@ impl Bank {
                 return Err(TransactionError::SanitizeFailure);
             }
 
-            // SIMD-0160, check instruction limit before signature verification
-            let number_of_instructions: usize = tx.num_instructions().into();
-            if number_of_instructions > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH {
-                return Err(TransactionError::SanitizeFailure);
-            }
+            let sanitized_tx = tx
+                .sanitize(&solana_runtime_transaction::sanitize_config::sanitize_config())
+                .map_err(|_| TransactionError::SanitizeFailure)?;
 
             if verification_mode == TransactionVerificationMode::FullVerification {
-                let message_data = tx.message_data();
-                let keys = tx.static_account_keys().iter();
-                let signatures = tx.signatures().iter();
+                let message_data = sanitized_tx.message_data();
+                let keys = sanitized_tx.static_account_keys().iter();
+                let signatures = sanitized_tx.signatures().iter();
 
                 for (key, signature) in keys.zip(signatures) {
                     let valid_signature = signature.verify(key.as_ref(), message_data);
@@ -5571,10 +5569,6 @@ impl Bank {
                     }
                 }
             };
-
-            let sanitized_tx = tx
-                .sanitize(&solana_runtime_transaction::sanitize_config::sanitize_config())
-                .map_err(|_| TransactionError::SanitizeFailure)?;
 
             let sanitized_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 sanitized_tx,
