@@ -519,6 +519,34 @@ pub enum ReplicaContactInfoVersions<'a> {
     V0_0_1(&'a ReplicaContactInfoV0_0_1<'a>),
 }
 
+/// Information about a transaction accepted on the RPC sendTransaction
+/// ingress path, captured after decode and sanitization succeed and
+/// independent of TPU forwarding.
+#[derive(Debug)]
+#[repr(C)]
+pub struct ReceivedTransactionInfo<'a> {
+    /// First signature of the transaction.
+    pub signature: &'a Signature,
+
+    /// Serialized wire transaction, exactly as received.
+    pub transaction: &'a [u8],
+
+    /// Nanoseconds since the UNIX epoch at which the node accepted the transaction.
+    pub received_ns: u64,
+
+    /// The node's view of the current slot at admission (best-effort).
+    pub slot_hint: Slot,
+
+    /// Whether the client requested `skipPreflight`. When true, the transaction's
+    /// signatures were NOT verified before this notification fired.
+    pub preflight_skipped: bool,
+}
+
+#[repr(u32)]
+pub enum ReceivedTransactionInfoVersions<'a> {
+    V0_0_1(&'a ReceivedTransactionInfo<'a>),
+}
+
 /// Errors returned by plugin calls
 #[derive(Error, Debug)]
 #[repr(u32)]
@@ -877,6 +905,24 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Default is false -- if the plugin is interested in
     /// transaction data, please return true.
     fn transaction_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Called when a transaction is accepted on the RPC sendTransaction ingress
+    /// path, before it is known whether the transaction lands. Only called when
+    /// `transaction_received_notifications_enabled()` returns true.
+    #[allow(unused_variables)]
+    fn notify_transaction_received(
+        &self,
+        transaction: ReceivedTransactionInfoVersions,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Check if the plugin is interested in sendTransaction ingress data.
+    /// Default is false -- if the plugin is interested in this data,
+    /// please return true.
+    fn transaction_received_notifications_enabled(&self) -> bool {
         false
     }
 

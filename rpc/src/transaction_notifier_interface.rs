@@ -22,3 +22,16 @@ pub trait TransactionNotifier {
 }
 
 pub type TransactionNotifierArc = Arc<dyn TransactionNotifier + Sync + Send>;
+
+pub trait ReceivedTransactionNotifier {
+    fn notify_transaction_received(
+        &self,
+        signature: &Signature,
+        transaction: &[u8],
+        received_ns: u64,
+        slot_hint: Slot,
+        preflight_skipped: bool,
+    );
+}
+
+pub type ReceivedTransactionNotifierArc = Arc<dyn ReceivedTransactionNotifier + Sync + Send>;

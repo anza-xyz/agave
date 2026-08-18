@@ -2,13 +2,14 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
+        ReceivedTransactionInfo, ReceivedTransactionInfoVersions, ReplicaTransactionInfoV3,
+        ReplicaTransactionInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
     solana_hash::Hash,
-    solana_rpc::transaction_notifier_interface::TransactionNotifier,
+    solana_rpc::transaction_notifier_interface::{ReceivedTransactionNotifier, TransactionNotifier},
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::TransactionStatusMeta,
@@ -98,5 +99,69 @@ impl TransactionNotifierImpl {
             transaction,
             transaction_status_meta,
         }
+    }
+}
+
+/// This implementation of ReceivedTransactionNotifier is passed to the RPC service's
+/// sendTransaction handler at validator startup. The handler invokes
+/// notify_transaction_received for each transaction it admits, independent of TPU
+/// forwarding; the implementation in turn invokes notify_transaction_received of each
+/// plugin enabled with sendTransaction-ingress notification managed by the
+/// GeyserPluginManager.
+pub(crate) struct ReceivedTransactionNotifierImpl {
+    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+}
+
+impl ReceivedTransactionNotifier for ReceivedTransactionNotifierImpl {
+    fn notify_transaction_received(
+        &self,
+        signature: &Signature,
+        transaction: &[u8],
+        received_ns: u64,
+        slot_hint: Slot,
+        preflight_skipped: bool,
+    ) {
+        let plugin_manager = self.plugin_manager.load();
+
+        if plugin_manager.plugins.is_empty() {
+            return;
+        }
+
+        let info = ReceivedTransactionInfo {
+            signature,
+            transaction,
+            received_ns,
+            slot_hint,
+            preflight_skipped,
+        };
+
+        for plugin in plugin_manager.plugins.iter() {
+            if !plugin.transaction_received_notifications_enabled() {
+                continue;
+            }
+            match plugin
+                .notify_transaction_received(ReceivedTransactionInfoVersions::V0_0_1(&info))
+            {
+                Err(err) => {
+                    error!(
+                        "Failed to notify received transaction, error: ({}) to plugin {}",
+                        err,
+                        plugin.name()
+                    )
+                }
+                Ok(_) => {
+                    trace!(
+                        "Successfully notified received transaction to plugin {}",
+                        plugin.name()
+                    );
+                }
+            }
+        }
+    }
+}
+
+impl ReceivedTransactionNotifierImpl {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
+        Self { plugin_manager }
     }
 }

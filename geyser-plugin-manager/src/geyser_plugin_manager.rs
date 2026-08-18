@@ -103,6 +103,16 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in sendTransaction ingress data
+    pub fn transaction_received_notifications_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.transaction_received_notifications_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if there is any plugin interested in entry data
     pub fn entry_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {

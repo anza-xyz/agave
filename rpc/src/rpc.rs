@@ -8,6 +8,7 @@ use {
         filter::filter_allows, max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
+        transaction_notifier_interface::ReceivedTransactionNotifierArc,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
     agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
@@ -114,7 +115,7 @@ use {
             Arc, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
-        time::Duration,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     },
     tokio::runtime::Runtime,
 };
@@ -250,6 +251,7 @@ pub struct JsonRpcRequestProcessor {
     cluster_info: Arc<ClusterInfo>,
     genesis_hash: Hash,
     transaction_sender: Sender<TransactionInfo>,
+    received_transaction_notifier: Option<ReceivedTransactionNotifierArc>,
     bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
@@ -422,6 +424,7 @@ impl JsonRpcRequestProcessor {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<Runtime>,
+        received_transaction_notifier: Option<ReceivedTransactionNotifierArc>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (transaction_sender, transaction_receiver) = unbounded();
         (
@@ -436,6 +439,7 @@ impl JsonRpcRequestProcessor {
                 cluster_info,
                 genesis_hash,
                 transaction_sender,
+                received_transaction_notifier,
                 bigtable_ledger_storage,
                 optimistically_confirmed_bank,
                 largest_accounts_cache,
@@ -523,6 +527,7 @@ impl JsonRpcRequestProcessor {
             cluster_info,
             genesis_hash,
             transaction_sender,
+            received_transaction_notifier: None,
             bigtable_ledger_storage: None,
             optimistically_confirmed_bank,
             largest_accounts_cache: Arc::new(RwLock::new(LargestAccountsCache::new(30))),
@@ -2746,7 +2751,17 @@ fn _send_transaction(
     last_valid_block_height: u64,
     durable_nonce_info: Option<(Pubkey, Hash)>,
     max_retries: Option<usize>,
+    slot_hint: Slot,
+    preflight_skipped: bool,
 ) -> Result<String> {
+    // Preserved for the received-transaction notification below: `wire_transaction` is
+    // moved into `transaction_info` and forwarded through the channel, so the raw bytes
+    // are no longer available to us once `.send()` is called.
+    let received_transaction_bytes = meta
+        .received_transaction_notifier
+        .as_ref()
+        .map(|_| wire_transaction.clone());
+
     let transaction_info = TransactionInfo::new(
         message_hash,
         signature,
@@ -2760,6 +2775,24 @@ fn _send_transaction(
     meta.transaction_sender
         .send(transaction_info)
         .unwrap_or_else(|err| warn!("Failed to enqueue transaction: {err}"));
+
+    // Fired after the transaction is already handed off above, so plugin cost can never
+    // delay forwarding to the leader.
+    if let (Some(notifier), Some(wire_transaction)) =
+        (&meta.received_transaction_notifier, received_transaction_bytes)
+    {
+        let received_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        notifier.notify_transaction_received(
+            &signature,
+            &wire_transaction,
+            received_ns,
+            slot_hint,
+            preflight_skipped,
+        );
+    }
 
     Ok(signature.to_string())
 }
@@ -3866,6 +3899,8 @@ pub mod rpc_full {
                 last_valid_block_height,
                 None,
                 None,
+                bank.slot(),
+                true, // request_airdrop never runs preflight simulation
             )
         }
 
@@ -4011,6 +4046,8 @@ pub mod rpc_full {
                 last_valid_block_height,
                 durable_nonce_info,
                 max_retries,
+                preflight_bank.slot(),
+                skip_preflight,
             )
         }
 
@@ -4916,6 +4953,7 @@ pub mod tests {
                 max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache,
                 service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
+                None,
             )
             .0;
 
@@ -6992,6 +7030,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime.clone(),
+            None,
         );
 
         let (tpu_sender, _client) =
@@ -7307,6 +7346,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
+            None,
         );
 
         SendTransactionService::new(
@@ -9077,6 +9117,7 @@ pub mod tests {
             max_complete_transaction_status_slot,
             prioritization_fee_cache_inner.clone(),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
+            None,
         );
 
         let mut io = MetaIoHandler::default();

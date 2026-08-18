@@ -907,6 +907,7 @@ impl Validator {
         let (
             accounts_update_notifier,
             transaction_notifier,
+            received_transaction_notifier,
             deshred_transaction_notifier,
             entry_notifier,
             block_metadata_notifier,
@@ -915,13 +916,14 @@ impl Validator {
             (
                 service.get_accounts_update_notifier(),
                 service.get_transaction_notifier(),
+                service.get_received_transaction_notifier(),
                 service.get_deshred_transaction_notifier(),
                 service.get_entry_notifier(),
                 service.get_block_metadata_notifier(),
                 service.get_slot_status_notifier(),
             )
         } else {
-            (None, None, None, None, None, None)
+            (None, None, None, None, None, None, None)
         };
 
         info!(
@@ -1318,6 +1320,7 @@ impl Validator {
                 max_complete_transaction_status_slot: max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 rpc_tpu_client_args,
+                received_transaction_notifier,
             };
             let json_rpc_service =
                 JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;

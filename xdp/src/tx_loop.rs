@@ -33,6 +33,22 @@ use {
     },
 };
 
+/// Derives the UMEM frame count from a device's RX/TX ring sizes.
+///
+/// `PageAlignedMemory::alloc_with_page_size` requires `frame_count` to be a nonzero power of
+/// two. `RingSizes::from_ethtool_pending` already guarantees `rx_size`/`tx_size` are each a
+/// nonzero power of two individually, but their sum is not necessarily one -- e.g. a driver
+/// legitimately reporting rx=4096/tx=512 yields `(4096 + 512) * 2 = 9216`, which is not a power
+/// of two. Rounding up (rather than erroring) is safe here: a larger UMEM than the exact ring
+/// size is just a bigger pool of spare TX frames, never fewer than what the ring needs.
+fn umem_frame_count(rx_size: usize, tx_size: usize) -> usize {
+    rx_size
+        .saturating_add(tx_size)
+        .saturating_mul(2)
+        .checked_next_power_of_two()
+        .unwrap_or(1usize << 63)
+}
+
 pub struct TxLoopConfigBuilder {
     zero_copy: bool,
     maybe_src_mac: Option<MacAddress>,
@@ -128,7 +144,7 @@ impl TxLoopBuilder<OwnedUmem> {
             RingSizes::default()
         });
 
-        let frame_count = (rx_size + tx_size) * 2;
+        let frame_count = umem_frame_count(rx_size, tx_size);
 
         // try to allocate huge pages first, then fall back to regular pages
         const HUGE_2MB: usize = 2 * 1024 * 1024;
@@ -692,7 +708,47 @@ fn kick_error(e: std::io::Error) {
 
 #[cfg(test)]
 mod tests {
-    use crate::tx_loop::{Receiver, TryRecvError, TrySendError, channel};
+    use crate::{
+        tx_loop::{Receiver, TryRecvError, TrySendError, channel, umem_frame_count},
+        umem::PageAlignedMemory,
+    };
+
+    #[test]
+    fn test_umem_frame_count_is_always_a_nonzero_power_of_two() {
+        // (rx, tx) pairs include the exact zero case from the original issue, symmetric
+        // sizes whose sum is already a power of two, and legitimate ASYMMETRIC nonzero
+        // sizes (e.g. rx=4096/tx=512, a realistic ethtool -G configuration) whose sum is
+        // NOT a power of two -- this is the case the original zero-only guard missed.
+        for (rx, tx) in [
+            (0, 0),
+            (1024, 1024),
+            (1, 1),
+            (2048, 128),
+            (4096, 512),
+            (511, 512),
+            (65536, 32768),
+        ] {
+            let frame_count = umem_frame_count(rx, tx);
+            assert!(
+                frame_count.is_power_of_two(),
+                "umem_frame_count({rx}, {tx}) = {frame_count} is not a power of two"
+            );
+            assert!(frame_count >= (rx + tx) * 2);
+
+            // The real discriminator: this must not panic. On the pre-fix computation
+            // `(rx_size + tx_size) * 2`, (4096, 512) produces 9216, which is not a power
+            // of two and trips `debug_assert!(frame_count.is_power_of_two())` below.
+            let frame_size = 4096;
+            let memory = PageAlignedMemory::alloc(frame_size, frame_count)
+                .expect("frame_count must be usable for a real allocation");
+            assert_eq!(memory.len(), frame_size * frame_count);
+        }
+    }
+
+    #[test]
+    fn test_umem_frame_count_does_not_overflow() {
+        assert_eq!(umem_frame_count(usize::MAX, usize::MAX), 1usize << 63);
+    }
 
     #[test]
     fn test_send_full() {
