@@ -309,7 +309,7 @@ pretty_assertions = "1.4.1"
 proptest = "1.11"
 prost = "0.14.4"
 prost-types = "0.14.4"
-protobuf-src = "1.1.0"
+protobuf-src = "2.1.1"
 protosol = "=12.0.0"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.11"
