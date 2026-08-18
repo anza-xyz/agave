@@ -307,7 +307,7 @@ dependencies = [
 [[package]]
 name = "agave-scheduler-bindings"
 version = "5.0.0"
-source = "git+https://github.com/anza-xyz/agave-sdk?rev=128915a413a9903e31b75240649562205b92a388#128915a413a9903e31b75240649562205b92a388"
+source = "git+https://github.com/anza-xyz/agave-sdk?rev=c7ae1a6a99a018d2c8bffa7bb6f779225f4e7997#c7ae1a6a99a018d2c8bffa7bb6f779225f4e7997"
 
 [[package]]
 name = "agave-scheduling-utils"

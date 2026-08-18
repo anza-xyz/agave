@@ -4,9 +4,10 @@ use {
         shared::MAX_WORKERS,
     },
     agave_scheduler_bindings::{
-        PackToWorkerMessage, ProgressMessage, SharableTransactionBatchRegion,
-        SharableTransactionRegion, TpuToPackMessage, TransactionResponseRegion,
-        WorkerToPackMessage,
+        CheckResponseRegion, CheckWorkerToPackMessage, ExecutionResponseRegion,
+        ExecutionWorkerToPackMessage, PackToCheckWorkerMessage, PackToExecutionWorkerMessage,
+        ProgressMessage, SharableTransactionBatchRegion, SharableTransactionRegion,
+        TpuToPackMessage,
     },
     std::time::Duration,
     tempfile::NamedTempFile,
@@ -37,22 +38,28 @@ fn message_passing_on_all_queues() {
         remaining_cost_units: 12_000_000,
         latest_blockhash: [42; 32],
     };
-    let pack_to_worker = PackToWorkerMessage {
-        flags: 123,
+    let batch = SharableTransactionBatchRegion {
+        num_transactions: 5,
+        transactions_offset: 100,
+    };
+    let pack_to_check_worker = PackToCheckWorkerMessage { flags: 123, batch };
+    let pack_to_worker = PackToExecutionWorkerMessage {
+        flags: 1,
         max_working_slot: 100,
-        batch: SharableTransactionBatchRegion {
-            num_transactions: 5,
-            transactions_offset: 100,
+        batch,
+    };
+    let check_worker_to_pack = CheckWorkerToPackMessage {
+        batch,
+        processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
+        responses: CheckResponseRegion {
+            num_transaction_responses: 2,
+            transaction_responses_offset: 1,
         },
     };
-    let worker_to_pack = WorkerToPackMessage {
-        batch: SharableTransactionBatchRegion {
-            num_transactions: 5,
-            transactions_offset: 100,
-        },
+    let worker_to_pack = ExecutionWorkerToPackMessage {
+        batch,
         processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
-        responses: TransactionResponseRegion {
-            tag: 3,
+        responses: ExecutionResponseRegion {
             num_transaction_responses: 2,
             transaction_responses_offset: 1,
         },
@@ -70,19 +77,44 @@ fn message_passing_on_all_queues() {
             .try_write(progress_tracker)
             .unwrap();
 
-        // Receive a pack_to_check_worker message.
-        let msg = loop {
-            if let Some(msg) = session.pack_to_check_worker.try_read() {
-                break msg;
-            }
-        };
-        assert_eq!(msg, pack_to_worker);
+        assert_eq!(session.check_workers.len(), 2);
 
-        // Send a check_worker_to_pack message.
-        session
-            .check_worker_to_pack
-            .try_write(worker_to_pack)
-            .unwrap();
+        // Receive pack_to_check_worker messages.
+        let mut check_messages = Vec::new();
+        while check_messages.len() < session.check_workers.len() {
+            for worker in &session.check_workers {
+                if let Some(msg) = worker.pack_to_check_worker.try_read() {
+                    check_messages.push(msg);
+                }
+            }
+        }
+        assert_eq!(
+            check_messages,
+            vec![
+                pack_to_check_worker,
+                PackToCheckWorkerMessage {
+                    batch: SharableTransactionBatchRegion {
+                        num_transactions: pack_to_check_worker.batch.num_transactions + 1,
+                        ..pack_to_check_worker.batch
+                    },
+                    ..pack_to_check_worker
+                }
+            ]
+        );
+
+        // Send check_worker_to_pack messages.
+        for (i, worker) in session.check_workers.iter().enumerate() {
+            worker
+                .check_worker_to_pack
+                .try_write(CheckWorkerToPackMessage {
+                    batch: SharableTransactionBatchRegion {
+                        num_transactions: check_worker_to_pack.batch.num_transactions + i as u8,
+                        ..check_worker_to_pack.batch
+                    },
+                    ..check_worker_to_pack
+                })
+                .unwrap();
+        }
 
         // Receive pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
@@ -92,7 +124,7 @@ fn message_passing_on_all_queues() {
                 }
             };
             assert_eq!(
-                PackToWorkerMessage {
+                PackToExecutionWorkerMessage {
                     max_working_slot: pack_to_worker.max_working_slot + i as u64,
                     ..pack_to_worker
                 },
@@ -104,7 +136,7 @@ fn message_passing_on_all_queues() {
         for (i, worker) in session.workers.iter_mut().enumerate() {
             worker
                 .worker_to_pack
-                .try_write(WorkerToPackMessage {
+                .try_write(ExecutionWorkerToPackMessage {
                     batch: SharableTransactionBatchRegion {
                         num_transactions: worker_to_pack.batch.num_transactions + i as u8,
                         ..worker_to_pack.batch
@@ -119,6 +151,7 @@ fn message_passing_on_all_queues() {
             ipc,
             ClientLogon {
                 worker_count: 4,
+                check_worker_count: 2,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
                 tpu_to_pack_capacity: 65536,
@@ -149,25 +182,46 @@ fn message_passing_on_all_queues() {
         };
         assert_eq!(msg, progress_tracker);
 
-        // Send a pack_to_check_worker message.
-        session
-            .pack_to_check_worker
-            .try_write(pack_to_worker)
-            .unwrap();
+        // Send pack_to_check_worker messages.
+        for i in 0..2 {
+            session
+                .pack_to_check_worker
+                .try_write(PackToCheckWorkerMessage {
+                    batch: SharableTransactionBatchRegion {
+                        num_transactions: pack_to_check_worker.batch.num_transactions + i,
+                        ..pack_to_check_worker.batch
+                    },
+                    ..pack_to_check_worker
+                })
+                .unwrap();
+        }
 
-        // Receive a check_worker_to_pack message.
-        let msg = loop {
+        // Receive check_worker_to_pack messages.
+        let mut check_messages = Vec::new();
+        while check_messages.len() < 2 {
             if let Some(msg) = session.check_worker_to_pack.try_read() {
-                break msg;
+                check_messages.push(msg);
             }
-        };
-        assert_eq!(msg, worker_to_pack);
+        }
+        assert_eq!(
+            check_messages,
+            vec![
+                check_worker_to_pack,
+                CheckWorkerToPackMessage {
+                    batch: SharableTransactionBatchRegion {
+                        num_transactions: check_worker_to_pack.batch.num_transactions + 1,
+                        ..check_worker_to_pack.batch
+                    },
+                    ..check_worker_to_pack
+                }
+            ]
+        );
 
         // Send pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
             worker
                 .pack_to_worker
-                .try_write(PackToWorkerMessage {
+                .try_write(PackToExecutionWorkerMessage {
                     max_working_slot: pack_to_worker.max_working_slot + i as u64,
                     ..pack_to_worker
                 })
@@ -182,7 +236,7 @@ fn message_passing_on_all_queues() {
                 }
             };
             assert_eq!(
-                WorkerToPackMessage {
+                ExecutionWorkerToPackMessage {
                     batch: SharableTransactionBatchRegion {
                         num_transactions: worker_to_pack.batch.num_transactions + i as u8,
                         ..worker_to_pack.batch
@@ -205,6 +259,7 @@ fn check_worker_queues_use_dedicated_capacities() {
 
     let logon = ClientLogon {
         worker_count: 1,
+        check_worker_count: 1,
         allocator_size: 64 * 1024 * 1024,
         allocator_handles: 1,
         tpu_to_pack_capacity: 2,
@@ -219,14 +274,14 @@ fn check_worker_queues_use_dedicated_capacities() {
 
     assert!(
         files[3].metadata().unwrap().len()
-            >= u64::try_from(shaq::mpmc::minimum_file_size::<PackToWorkerMessage>(
+            >= u64::try_from(shaq::mpmc::minimum_file_size::<PackToCheckWorkerMessage>(
                 CHECK_REQUEST_CAPACITY
             ))
             .unwrap()
     );
     assert!(
         files[4].metadata().unwrap().len()
-            >= u64::try_from(shaq::mpmc::minimum_file_size::<WorkerToPackMessage>(
+            >= u64::try_from(shaq::mpmc::minimum_file_size::<CheckWorkerToPackMessage>(
                 CHECK_RESPONSE_CAPACITY
             ))
             .unwrap()
@@ -250,6 +305,7 @@ fn accept_worker_count_max() {
             ipc,
             ClientLogon {
                 worker_count: MAX_WORKERS,
+                check_worker_count: 1,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
                 tpu_to_pack_capacity: 65536,
@@ -287,6 +343,7 @@ fn reject_worker_count_low() {
             ipc,
             ClientLogon {
                 worker_count: 0,
+                check_worker_count: 1,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
                 tpu_to_pack_capacity: 65536,
@@ -327,6 +384,7 @@ fn reject_worker_count_high() {
             ipc,
             ClientLogon {
                 worker_count: 100,
+                check_worker_count: 1,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
                 tpu_to_pack_capacity: 65536,
@@ -343,6 +401,88 @@ fn reject_worker_count_high() {
             panic!();
         };
         assert_eq!(reason, "Worker count; count=100");
+    });
+
+    client_handle.join().unwrap();
+    server_handle.join().unwrap();
+}
+
+#[test]
+fn reject_check_worker_count_low() {
+    let ipc = NamedTempFile::new().unwrap();
+    std::fs::remove_file(ipc.path()).unwrap();
+    let mut server = Server::new(ipc.path()).unwrap();
+
+    let server_handle = std::thread::spawn(move || {
+        let res = server.accept();
+        let Err(AgaveHandshakeError::CheckWorkerCount(count)) = res else {
+            panic!();
+        };
+        assert_eq!(count, 0);
+    });
+    let client_handle = std::thread::spawn(move || {
+        let res = connect(
+            ipc,
+            ClientLogon {
+                worker_count: 1,
+                check_worker_count: 0,
+                allocator_size: 1024 * 1024 * 1024,
+                allocator_handles: 3,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
+                pack_to_check_worker_capacity: 1024,
+                check_worker_to_pack_capacity: 1024,
+            },
+            Duration::from_secs(1),
+        );
+        let Err(ClientHandshakeError::Rejected(reason)) = res else {
+            panic!();
+        };
+        assert_eq!(reason, "Check worker count; count=0");
+    });
+
+    client_handle.join().unwrap();
+    server_handle.join().unwrap();
+}
+
+#[test]
+fn reject_check_worker_count_high() {
+    let ipc = NamedTempFile::new().unwrap();
+    std::fs::remove_file(ipc.path()).unwrap();
+    let mut server = Server::new(ipc.path()).unwrap();
+
+    let server_handle = std::thread::spawn(move || {
+        let res = server.accept();
+        let Err(AgaveHandshakeError::CheckWorkerCount(count)) = res else {
+            panic!();
+        };
+        assert_eq!(count, 100);
+    });
+    let client_handle = std::thread::spawn(move || {
+        let res = connect(
+            ipc,
+            ClientLogon {
+                worker_count: 1,
+                check_worker_count: 100,
+                allocator_size: 1024 * 1024 * 1024,
+                allocator_handles: 3,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
+                pack_to_check_worker_capacity: 1024,
+                check_worker_to_pack_capacity: 1024,
+            },
+            Duration::from_secs(1),
+        );
+        let Err(ClientHandshakeError::Rejected(reason)) = res else {
+            panic!();
+        };
+        assert_eq!(reason, "Check worker count; count=100");
     });
 
     client_handle.join().unwrap();

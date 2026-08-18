@@ -181,7 +181,7 @@ agave-math-utils = { path = "math-utils", version = "=4.4.0-alpha.2", features =
 agave-precompiles = { path = "precompiles", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-random = { path = "random", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
-agave-scheduler-bindings = { git = "https://github.com/anza-xyz/agave-sdk", rev = "128915a413a9903e31b75240649562205b92a388" }
+agave-scheduler-bindings = { git = "https://github.com/anza-xyz/agave-sdk", rev = "c7ae1a6a99a018d2c8bffa7bb6f779225f4e7997" }
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-transaction-view = "6.1.0"

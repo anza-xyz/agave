@@ -3,7 +3,7 @@ use {
         ClientHandshakeError, ClientLogon, ClientSession, ClientWorkerSession,
         shared::{LOGON_FAILURE, MAX_WORKERS, VERSION},
     },
-    agave_scheduler_bindings::{PackToWorkerMessage, WorkerToPackMessage},
+    agave_scheduler_bindings::{CheckWorkerToPackMessage, PackToCheckWorkerMessage},
     libc::CMSG_LEN,
     nix::sys::socket::{self, ControlMessageOwned, MsgFlags, UnixAddr},
     rts_alloc::Allocator,
@@ -171,11 +171,11 @@ pub fn setup_session(
         progress_tracker: unsafe { shaq::spsc::Consumer::join(progress_tracker_file)? },
         // SAFETY: the server initialized this FD as a matching MPMC consumer.
         pack_to_check_worker: unsafe {
-            shaq::mpmc::Producer::<PackToWorkerMessage>::join(pack_to_check_worker_file)?
+            shaq::mpmc::Producer::<PackToCheckWorkerMessage>::join(pack_to_check_worker_file)?
         },
         // SAFETY: the server initialized this FD as a matching MPMC producer.
         check_worker_to_pack: unsafe {
-            shaq::mpmc::Consumer::<WorkerToPackMessage>::join(check_worker_to_pack_file)?
+            shaq::mpmc::Consumer::<CheckWorkerToPackMessage>::join(check_worker_to_pack_file)?
         },
         workers: worker_files
             .chunks(2)
