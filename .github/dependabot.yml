@@ -3,16 +3,11 @@ updates:
   - package-ecosystem: cargo
     directories:
       - "/"
-      - "/ci/xtask"
-      - "/programs/sbf"
     schedule:
       interval: daily
       time: "08:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 10
-    groups:
-      per-dependency:
-        group-by: dependency-name
+    open-pull-requests-limit: 6
     cooldown:
       default-days: 7
       # crates published by anza-team bypass the cooldown
@@ -28,6 +23,8 @@ updates:
   - package-ecosystem: cargo
     directories:
       - "/dev-bins"
+      - "/ci/xtask"
+      - "/programs/sbf"
     schedule:
       interval: daily
       time: "14:00"
