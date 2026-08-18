@@ -1175,6 +1175,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic-wait"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a55b94919229f2c42292fd71ffa4b75e83193bffdd77b1e858cd55fd2d0b0ea8"
+dependencies = [
+ "libc",
+ "windows-sys 0.42.0",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9057,6 +9067,7 @@ dependencies = [
  "agave-votor-messages",
  "anyhow",
  "assert_matches",
+ "atomic-wait",
  "bitflags 2.13.1",
  "bs58",
  "bytes",
@@ -9065,6 +9076,7 @@ dependencies = [
  "chrono-humanize",
  "criterion",
  "crossbeam-channel",
+ "crossbeam-utils",
  "dashmap",
  "eager",
  "fs_extra",
@@ -9087,6 +9099,7 @@ dependencies = [
  "rocksdb",
  "scopeguard",
  "serde",
+ "shuttle",
  "smallvec",
  "solana-account 4.5.0",
  "solana-accounts-db",
@@ -13435,6 +13448,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "749f0da9cc72d82e600d8d2e44cadd0b9eedb9038f71a1c58556ac1c5791813b"
 dependencies = [
  "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a3e1820f08b8513f676f7ab6c1f99ff312fb97b553d30ff4dd86f9f15728aa7"
+dependencies = [
+ "windows_aarch64_gnullvm 0.42.2",
+ "windows_aarch64_msvc 0.42.2",
+ "windows_i686_gnu 0.42.2",
+ "windows_i686_msvc 0.42.2",
+ "windows_x86_64_gnu 0.42.2",
+ "windows_x86_64_gnullvm 0.42.2",
+ "windows_x86_64_msvc 0.42.2",
 ]
 
 [[package]]
