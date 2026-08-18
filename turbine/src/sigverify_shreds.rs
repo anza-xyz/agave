@@ -184,13 +184,15 @@ fn run_shred_sigverify<const K: usize>(
     // path once a shred is repaired.
     // For backward compatibility we need to allow trailing bytes in the packet
     // after the shred payload, but have to exclude them here from the deduper.
+    // The retransmitter signature is hop-specific, so it is also excluded from
+    // the deduper.
     stats.num_duplicates += thread_pool.install(|| {
         shred_buffer
             .par_iter_mut()
             .flatten()
             .filter(|packet| {
                 !packet.meta().discard()
-                    && shred::wire::get_shred(packet.as_ref())
+                    && shred::wire::get_shred_without_retransmitter_signature(packet.as_ref())
                         .map(|shred| deduper.dedup(shred))
                         .unwrap_or(true)
                     && !packet.meta().repair()
@@ -610,6 +612,46 @@ mod tests {
         solana_time_utils::timestamp,
         test_case::test_matrix,
     };
+
+    #[test]
+    fn test_dedup_ignores_retransmitter_signature() {
+        let mut rng = rand::rng();
+        let leader_keypair = Keypair::new();
+        let shredder = Shredder::new(1, 0, 1, 0).unwrap();
+        let entries = create_ticks(1, 1, Hash::new_unique());
+        let (shreds_data, _) = shredder.entries_to_merkle_shreds_for_tests(
+            &leader_keypair,
+            &entries,
+            true, // is_last_in_slot
+            Hash::new_unique(),
+            0,
+            0,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
+        let mut shred_packet = shreds_data[0].payload().to_packet(None);
+        let mut other_packet = shreds_data[0].payload().to_packet(None);
+        shred::wire::resign_shred(
+            shred::wire::get_shred_mut(shred_packet.buffer_mut()).unwrap(),
+            &Keypair::new(),
+        )
+        .unwrap();
+        shred::wire::resign_shred(
+            shred::wire::get_shred_mut(other_packet.buffer_mut()).unwrap(),
+            &Keypair::new(),
+        )
+        .unwrap();
+        assert_ne!(shred_packet.data(..), other_packet.data(..));
+
+        let deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 1024);
+        let shred_bytes =
+            shred::wire::get_shred_without_retransmitter_signature(&shred_packet).unwrap();
+        let other_bytes =
+            shred::wire::get_shred_without_retransmitter_signature(&other_packet).unwrap();
+        assert_eq!(shred_bytes, other_bytes);
+        assert!(!deduper.dedup(shred_bytes));
+        assert!(deduper.dedup(other_bytes));
+    }
 
     #[test]
     fn test_sigverify_shreds_verify_batches() {
