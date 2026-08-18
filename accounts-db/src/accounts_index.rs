@@ -35,7 +35,7 @@ use {
         path::PathBuf,
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     },
 };
@@ -80,14 +80,6 @@ pub type ReclaimsSlotList<T> = Vec<SlotListItem<T>>;
 /// Reclaimed slot-list items, each with the slot of the newest surviving entry for that account
 pub type ReclaimsWithNewestSlot<T> = Vec<(SlotListItem<T>, Slot)>;
 pub type SlotListItem<T> = (Slot, T);
-
-// The ref count cannot be higher than the total number of storages, and we should never have more
-// than 1 million storages. A 32-bit ref count should be *significantly* more than enough.
-// (We already effectively limit the number of storages to 2^32 since the storage ID type is a u32.)
-// The majority of accounts should only exist in one storage, so the most common ref count is '1'.
-// Heavily updated accounts should still have a ref count that is < 100.
-pub type RefCount = u32;
-pub type AtomicRefCount = AtomicU32;
 
 /// values returned from `insert_new_if_missing_into_primary_index()`
 #[derive(Default, Debug, PartialEq, Eq)]

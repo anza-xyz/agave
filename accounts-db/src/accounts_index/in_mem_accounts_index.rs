@@ -1,7 +1,6 @@
 use {
     super::{
-        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, SlotListItem,
-        UpsertReclaim,
+        DiskIndexValue, IndexValue, ReclaimsSlotList, SlotList, SlotListItem, UpsertReclaim,
         account_map_entry::{
             AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry, SlotListWriteGuard,
         },
@@ -185,7 +184,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         keys.into_iter().collect()
     }
 
-    fn load_from_disk(&self, pubkey: &Pubkey) -> Option<(SlotList<U>, RefCount)> {
+    fn load_from_disk(&self, pubkey: &Pubkey) -> Option<SlotList<U>> {
         self.bucket.as_ref().and_then(|disk| {
             let m = Measure::start("load_disk_found_count");
             let entry_disk = disk.read_value(pubkey);
@@ -199,10 +198,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     Self::update_stat(&self.stats().load_disk_missing_count, 1);
                 }
             }
-            entry_disk.map(|(slot_list, ref_count)| {
-                // SAFETY: ref_count must've come from in-mem first, so converting back is safe.
-                (slot_list, ref_count as RefCount)
-            })
+            entry_disk.map(|(slot_list, _ref_count)| slot_list)
         })
     }
 
@@ -211,7 +207,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Cache entries from this function will always not be dirty.
     fn load_account_entry_from_disk(&self, pubkey: &Pubkey) -> Option<AccountMapEntry<T>> {
         let entry_disk = self.load_from_disk(pubkey)?; // returns None if not on disk
-        let entry_cache = self.disk_to_cache_entry(entry_disk.0);
+        let entry_cache = self.disk_to_cache_entry(entry_disk);
         debug_assert!(!entry_cache.dirty());
         Some(entry_cache)
     }
@@ -350,7 +346,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 match entry_disk {
                     Some(entry_disk) => {
                         // on disk
-                        if self.remove_if_slot_list_empty_value(entry_disk.0.is_empty()) {
+                        if self.remove_if_slot_list_empty_value(entry_disk.is_empty()) {
                             // not in cache, but on disk, so just delete from disk
                             self.delete_disk_key(vacant.key());
                             true
@@ -382,7 +378,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             Entry::Vacant(vacant) => {
                 // Disk-only entry: load the entry from disk and drain slot list into reclaims
                 // then delete the entry from disk.
-                if let Some((slot_list, _ref_count)) = self.load_from_disk(vacant.key()) {
+                if let Some(slot_list) = self.load_from_disk(vacant.key()) {
                     reclaims.extend(
                         slot_list
                             .into_iter()
@@ -2454,7 +2450,7 @@ mod tests {
             assert!(!entry.dirty()); // write-through clears dirty
         });
 
-        let (slot_list, _) = index
+        let slot_list = index
             .load_from_disk(&pubkey)
             .expect("upsert should have written entry to disk");
         assert_eq!(slot_list, SlotList::from([(slot, info)]));
