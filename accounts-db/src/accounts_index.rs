@@ -2529,49 +2529,6 @@ mod tests {
     }
 
     #[test]
-    fn test_unref() {
-        let value = true;
-        let key = solana_pubkey::new_rand();
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        let slot1 = 1;
-
-        index.upsert_simple_test(&key, slot1, value);
-
-        index.get_and_then(&key, |entry| {
-            let entry = entry.unwrap();
-            // check refcount BEFORE the unref
-            assert_eq!(entry.ref_count(), 1);
-            // first time, ref count was at 1, we can unref once. Unref should return 1.
-            assert_eq!(entry.unref(), 1);
-            // check refcount AFTER the unref
-            assert_eq!(entry.ref_count(), 0);
-            (false, ())
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "decremented ref count below zero")]
-    fn test_illegal_unref() {
-        let value = true;
-        let key = solana_pubkey::new_rand();
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        let slot1 = 1;
-
-        index.upsert_simple_test(&key, slot1, value);
-
-        index.get_and_then(&key, |entry| {
-            let entry = entry.unwrap();
-            // make ref count be zero
-            assert_eq!(entry.unref(), 1);
-            assert_eq!(entry.ref_count(), 0);
-
-            // unref when already at zero should panic
-            entry.unref();
-            (false, ())
-        });
-    }
-
-    #[test]
     fn test_clean_rooted_entries_return() {
         let value = true;
         let key = solana_pubkey::new_rand();
@@ -2611,7 +2568,7 @@ mod tests {
         assert_eq!(gc, ReclaimsWithNewestSlot::from([((slot1, value), slot2)]));
         // The reclaimed slot1 entry was unref'd at reclaim, leaving one ref for slot2
         assert_eq!(
-            index.get_and_then(&key, |entry| (false, entry.unwrap().ref_count())),
+            index.get_and_then(&key, |entry| (false, entry.unwrap().slot_list_lock_read_len())),
             1
         );
     }

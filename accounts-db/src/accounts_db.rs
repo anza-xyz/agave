@@ -5654,8 +5654,7 @@ impl AccountsDb {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
                     if let Some(account_entry) = account_entry {
                         let list_r = account_entry.slot_list_read_lock();
-                        info!(" key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
-                        info!("      slots: {list_r:?}");
+                        info!(" key: {pubkey} slots: {list_r:?}");
                     }
                     let add_to_in_mem_cache = false;
                     (add_to_in_mem_cache, ())

@@ -1865,7 +1865,7 @@ mod tests {
 
     #[test]
     fn test_gather_possible_evict_candidates_with_max_evictions() {
-        let ref_count = 1;
+        let slot_list_len = 1;
         let current_age = 100;
         let ages_to_scan = 0;
         let total_entries = 256;
@@ -1878,7 +1878,7 @@ mod tests {
                 let one_element_slot_list = SlotList::from([(0, 0)]);
                 let one_element_slot_list_entry = Box::new(AccountMapEntry::new(
                     one_element_slot_list,
-                    ref_count,
+                    slot_list_len as u32,
                     AccountMapEntryMeta::default(),
                 ));
                 if i % 2 == 0 {
@@ -1900,7 +1900,7 @@ mod tests {
 
         for key in to_evict.0.iter() {
             let entry = map.get(key).unwrap();
-            assert_eq!(entry.ref_count(), ref_count);
+            assert_eq!(entry.slot_list_lock_read_len(), slot_list_len);
             assert!(InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
                 current_age,
                 entry,

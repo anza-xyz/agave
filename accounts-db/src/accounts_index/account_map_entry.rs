@@ -51,10 +51,6 @@ impl<T: IndexValue> AccountMapEntry<T> {
         }
     }
 
-    pub fn ref_count(&self) -> RefCount {
-        self.ref_count.load(Ordering::Acquire)
-    }
-
     pub fn addref(&self) {
         let previous = self.ref_count.fetch_add(1, Ordering::Release);
         // ensure ref count does not overflow
