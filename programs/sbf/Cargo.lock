@@ -8897,7 +8897,7 @@ name = "solana-sbf-rust-sysvar"
 version = "4.4.0-alpha.0"
 dependencies = [
  "solana-account-info",
- "solana-define-syscall 3.0.0",
+ "solana-define-syscall 5.2.0",
  "solana-instruction",
  "solana-instructions-sysvar 4.0.0",
  "solana-msg",
