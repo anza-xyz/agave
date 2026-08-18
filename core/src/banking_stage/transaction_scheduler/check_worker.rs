@@ -133,7 +133,7 @@ pub(crate) mod external {
             PackToCheckWorkerMessage, SharablePubkeys, check_message_flags, processed_codes,
             worker_message_types::{
                 CheckResponse, fee_payer_balance_flags, parsing_and_sanitization_flags,
-                resolve_flags, status_check_flags,
+                resolve_flags, scheduling_details_flags, status_check_flags,
             },
         },
         agave_scheduling_utils::{
@@ -148,6 +148,7 @@ pub(crate) mod external {
         arrayvec::ArrayVec,
         solana_account::ReadableAccount,
         solana_clock::Slot,
+        solana_cost_model::cost_model::CostModel,
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{
@@ -156,6 +157,7 @@ pub(crate) mod external {
         },
         solana_runtime_transaction::{
             runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
+            transaction_meta::TransactionMeta,
         },
         solana_svm::transaction_error_metrics::TransactionErrorMetrics,
         solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
@@ -304,6 +306,16 @@ pub(crate) mod external {
             let (parsing_and_resolve_results, txs, max_ages) =
                 Self::translate_transaction_batch(&batch, &root_bank);
 
+            if message.flags & check_message_flags::CALCULATE_SCHEDULING_DETAILS != 0 {
+                Self::check_scheduling_details(
+                    &parsing_results,
+                    &parsing_and_resolve_results,
+                    &txs,
+                    response_slice,
+                    &working_bank,
+                );
+            }
+
             if message.flags & check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
                 self.check_resolve_pubkeys(
                     &parsing_results,
@@ -360,6 +372,9 @@ pub(crate) mod external {
                 }
 
                 let response = &mut responses[transaction_index];
+                if response.scheduling_details_flags & scheduling_details_flags::FAILED != 0 {
+                    continue;
+                }
                 response.resolve_flags |= resolve_flags::PERFORMED;
                 if parsing_and_resolve_results.is_err() {
                     response.resolve_flags |= resolve_flags::FAILED;
@@ -513,6 +528,12 @@ pub(crate) mod external {
                 } else {
                     0
                 };
+            let initial_scheduling_details_flags =
+                if message.flags & check_message_flags::CALCULATE_SCHEDULING_DETAILS != 0 {
+                    scheduling_details_flags::REQUESTED
+                } else {
+                    0
+                };
 
             for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
                 let parsing_and_sanitization_flags = if parsing_result.is_err() {
@@ -528,7 +549,12 @@ pub(crate) mod external {
                         status_check_flags: initial_status_check_flags,
                         fee_payer_balance_flags: initial_fee_payer_balance_flags,
                         resolve_flags: initial_resolve_flags,
+                        scheduling_details_flags: initial_scheduling_details_flags,
                         included_slot: 0,
+                        transaction_fee: 0,
+                        prioritization_fee: 0,
+                        estimated_cost_units: 0,
+                        allocated_accounts_data_size: 0,
                         balance_slot: 0,
                         fee_payer_balance: 0,
                         resolution_slot: 0,
@@ -551,7 +577,8 @@ pub(crate) mod external {
         fn validate_message_flags(flags: u16) -> bool {
             const ALLOWED_CHECK_FLAGS: u16 = check_message_flags::STATUS_CHECKS
                 | check_message_flags::LOAD_FEE_PAYER_BALANCE
-                | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES;
+                | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES
+                | check_message_flags::CALCULATE_SCHEDULING_DETAILS;
 
             flags != 0 && flags & !ALLOWED_CHECK_FLAGS == 0
         }
@@ -584,6 +611,63 @@ pub(crate) mod external {
                 response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
                 response.fee_payer_balance = fee_payer_balance;
                 response.balance_slot = working_bank.slot();
+            }
+        }
+
+        fn check_scheduling_details(
+            parsing_results: &[Result<(), TransactionViewError>],
+            parsing_and_resolve_results: &[Result<(), PacketHandlingError>],
+            txs: &[Tx],
+            responses: &mut [CheckResponse],
+            working_bank: &Bank,
+        ) {
+            assert_eq!(parsing_results.len(), parsing_and_resolve_results.len());
+            assert_eq!(parsing_results.len(), responses.len());
+
+            let mut resolved_transaction_iter = txs.iter();
+            for (transaction_index, (parsing_result, parsing_and_resolve_result)) in parsing_results
+                .iter()
+                .zip(parsing_and_resolve_results.iter())
+                .enumerate()
+            {
+                if parsing_result.is_err() {
+                    continue;
+                }
+
+                let response = &mut responses[transaction_index];
+                response.scheduling_details_flags |= scheduling_details_flags::PERFORMED;
+                if parsing_and_resolve_result.is_err() {
+                    response.scheduling_details_flags |= scheduling_details_flags::FAILED;
+                    continue;
+                }
+
+                let transaction = resolved_transaction_iter.next().expect(
+                    "resolved_transaction_iter must contain an element for each successfully \
+                     translated transaction",
+                );
+                let Ok(configuration) =
+                    transaction.transaction_configuration(&working_bank.feature_set)
+                else {
+                    response.scheduling_details_flags |= scheduling_details_flags::FAILED;
+                    continue;
+                };
+
+                let fee_details = solana_fee::calculate_fee_details(
+                    transaction,
+                    working_bank.fee_structure().lamports_per_signature,
+                    configuration.priority_fee_lamports,
+                    working_bank.fee_features(),
+                );
+                response.transaction_fee = fee_details.transaction_fee();
+                response.prioritization_fee = fee_details.prioritization_fee();
+                let cost = CostModel::calculate_cost_for_executed_transaction(
+                    transaction,
+                    u64::from(configuration.compute_unit_limit),
+                    configuration.loaded_accounts_data_size_limit,
+                    &working_bank.feature_set,
+                );
+                response.estimated_cost_units = cost.sum();
+                response.allocated_accounts_data_size = cost.allocated_accounts_data_size();
             }
         }
 
@@ -736,13 +820,16 @@ pub(crate) mod external {
                 responses_region::CheckResponsesPtr,
             },
             solana_account::AccountSharedData,
+            solana_compute_budget_interface::ComputeBudgetInstruction,
             solana_keypair::Keypair,
             solana_leader_schedule::SlotLeader,
             solana_ledger::genesis_utils::GenesisConfigInfo,
+            solana_message::Message,
             solana_runtime::{bank::Bank, bank_forks::BankForks},
             solana_sdk_ids::system_program,
             solana_signer::Signer,
             solana_system_transaction::transfer,
+            solana_transaction::Transaction,
             std::{
                 sync::{Arc, RwLock},
                 time::Duration,
@@ -1018,6 +1105,95 @@ pub(crate) mod external {
             );
             assert_eq!(responses[0].balance_slot, test_frame.bank.slot());
             assert_eq!(responses[0].fee_payer_balance, fee_payer_balance);
+            assert_eq!(responses[0].scheduling_details_flags, 0);
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_scheduling_details() {
+            let mut test_frame = setup_check_worker_test_frame();
+            let fee_payer = Keypair::new();
+            let allocated_account = Keypair::new();
+            let allocated_accounts_data_size = 1_234;
+            let transaction = Transaction::new(
+                &[&fee_payer, &allocated_account],
+                Message::new(
+                    &[
+                        solana_system_interface::instruction::create_account(
+                            &fee_payer.pubkey(),
+                            &allocated_account.pubkey(),
+                            1,
+                            allocated_accounts_data_size,
+                            &Pubkey::new_unique(),
+                        ),
+                        ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
+                    ],
+                    Some(&fee_payer.pubkey()),
+                ),
+                test_frame.bank.confirmed_last_blockhash(),
+            );
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transaction).unwrap()]);
+
+            test_frame.send_message(PackToCheckWorkerMessage {
+                flags: check_message_flags::CALCULATE_SCHEDULING_DETAILS,
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            let responses = test_frame.check_responses(&response.responses);
+
+            assert_eq!(responses.len(), 1);
+            assert_eq!(
+                responses[0].scheduling_details_flags,
+                scheduling_details_flags::REQUESTED | scheduling_details_flags::PERFORMED
+            );
+            assert_eq!(
+                responses[0].transaction_fee,
+                2 * test_frame.bank.fee_structure().lamports_per_signature
+            );
+            assert!(responses[0].prioritization_fee > 0);
+            assert!(responses[0].estimated_cost_units > 0);
+            assert_eq!(
+                responses[0].allocated_accounts_data_size,
+                allocated_accounts_data_size
+            );
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_scheduling_details_failure_skips_pubkey_resolution() {
+            let mut test_frame = setup_check_worker_test_frame();
+            let fee_payer = Keypair::new();
+            let transaction = Transaction::new(
+                &[&fee_payer],
+                Message::new(
+                    &[ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0)],
+                    Some(&fee_payer.pubkey()),
+                ),
+                test_frame.bank.confirmed_last_blockhash(),
+            );
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transaction).unwrap()]);
+
+            test_frame.send_message(PackToCheckWorkerMessage {
+                flags: check_message_flags::CALCULATE_SCHEDULING_DETAILS
+                    | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES,
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            let responses = test_frame.check_responses(&response.responses);
+
+            assert_eq!(responses.len(), 1);
+            assert_eq!(
+                responses[0].scheduling_details_flags,
+                scheduling_details_flags::REQUESTED
+                    | scheduling_details_flags::PERFORMED
+                    | scheduling_details_flags::FAILED
+            );
+            assert_eq!(responses[0].resolve_flags, resolve_flags::REQUESTED);
+            assert_eq!(responses[0].resolved_pubkeys.num_pubkeys, 0);
 
             test_frame.free_batch(batch);
         }
