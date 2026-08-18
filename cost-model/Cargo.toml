@@ -24,7 +24,6 @@ agave-unstable-api = []
 dev-context-only-utils = [
     "dep:solana-hash",
     "dep:solana-message",
-    "dep:solana-signature",
     "dep:solana-transaction",
     "solana-compute-budget-interface/dev-context-only-utils",
 ]
@@ -53,7 +52,6 @@ solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-signature = { workspace = true, optional = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, optional = true }

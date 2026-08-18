@@ -76,7 +76,9 @@ use {
         stake_utils,
         transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::writable_accounts,
+    },
     solana_shred_version::compute_shred_version,
     solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::program as system_program,
@@ -487,7 +489,7 @@ fn compute_slot_cost(
                 num_programs += transaction.message().instructions().len();
 
                 let tx_cost = CostModel::calculate_cost(&transaction, &feature_set);
-                let result = cost_tracker.try_add(&tx_cost);
+                let result = cost_tracker.try_add(&tx_cost, writable_accounts(&transaction));
                 if result.is_err() {
                     println!(
                         "Slot: {slot}, CostModel rejected transaction {transaction:?}, reason \
