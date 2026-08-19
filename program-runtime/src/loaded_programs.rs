@@ -614,12 +614,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 search_for.retain(|program_to_load| {
                     if let Some(second_level) = entries.get(program_to_load.program_id) {
                         for entry in second_level.iter().rev() {
-                            // Second level is sorted by highest deployment slot.
-                            // If we're already past the target slot, it's not in here.
-                            if entry.deployment_slot < program_to_load.deployed_on_or_after_slot {
-                                break;
-                            }
-
                             // The entry must have been deployed in the slot reported by
                             // the caller's own program account, and by the same loader.
                             if program_to_load.deployed_on_or_after_slot != entry.deployment_slot
