@@ -108,6 +108,9 @@ pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// This ensures that the number of `madvise` system calls is minimized and, as such, that large interruptions
 /// to the processing loop are avoided.
 const CHANNEL_CONSUME_CAPACITY: usize = 1024;
+/// Avoid waking the gossip worker pool when a packet batch is too small to
+/// amortize Rayon's scheduling and work-stealing overhead.
+const MIN_PARALLEL_GOSSIP_PACKETS: usize = 16;
 /// Channel capacity for gossip channels.
 ///
 /// A hard limit on incoming gossip messages.
@@ -2359,38 +2362,39 @@ impl ClusterInfo {
         let context = context.load();
         let stakes = context.stakes.as_ref();
         let is_full_alpenglow_epoch = context.is_full_alpenglow_epoch;
+        let verify_packet = |packet| {
+            verify_packet(
+                packet,
+                stakes,
+                &self.stats,
+                &self.sigverify_cache,
+                is_full_alpenglow_epoch,
+            )
+        };
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
-            thread_pool.install(|| {
-                if packet_buf.len() == 1 {
-                    packet_buf[0]
-                        .par_iter()
-                        .filter_map(|packet| {
-                            verify_packet(
-                                packet,
-                                stakes,
-                                &self.stats,
-                                &self.sigverify_cache,
-                                is_full_alpenglow_epoch,
-                            )
-                        })
-                        .collect()
-                } else {
-                    packet_buf
-                        .par_iter()
-                        .flatten()
-                        .filter_map(|packet| {
-                            verify_packet(
-                                packet,
-                                stakes,
-                                &self.stats,
-                                &self.sigverify_cache,
-                                is_full_alpenglow_epoch,
-                            )
-                        })
-                        .collect()
-                }
-            })
+            if num_packets < MIN_PARALLEL_GOSSIP_PACKETS {
+                packet_buf
+                    .iter()
+                    .flatten()
+                    .filter_map(&verify_packet)
+                    .collect()
+            } else {
+                thread_pool.install(|| {
+                    if packet_buf.len() == 1 {
+                        packet_buf[0]
+                            .par_iter()
+                            .filter_map(&verify_packet)
+                            .collect()
+                    } else {
+                        packet_buf
+                            .par_iter()
+                            .flatten()
+                            .filter_map(&verify_packet)
+                            .collect()
+                    }
+                })
+            }
         };
         if let Err(TrySendError::Full(_)) = sender.try_send(packets_verified) {
             self.stats.gossip_packets_dropped_count.add_relaxed(

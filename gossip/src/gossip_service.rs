@@ -94,7 +94,7 @@ impl GossipService {
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let thread_pool = Arc::new(
             ThreadPoolBuilder::new()
-                .num_threads(get_thread_count().min(16))
+                .num_threads(get_thread_count().min(8))
                 .thread_name(|i| format!("solGossipWork{i:02}"))
                 .build()
                 .unwrap(),
