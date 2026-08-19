@@ -242,6 +242,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
     fn scheduling_common_mut(&mut self) -> &mut SchedulingCommon<Tx> {
         &mut self.common
     }
+
+    fn has_in_flight_transactions(&self) -> bool {
+        self.common.in_flight_tracker.has_in_flight_transactions()
+    }
 }
 
 fn try_schedule_transaction<Tx: TransactionWithMeta>(
