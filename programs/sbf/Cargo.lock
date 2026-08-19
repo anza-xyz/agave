@@ -6513,7 +6513,6 @@ dependencies = [
  "solana-hash 4.6.0",
  "solana-measure",
  "solana-merkle-tree",
- "solana-message",
  "solana-packet 4.3.0",
  "solana-perf",
  "solana-runtime-transaction",
@@ -9795,15 +9794,12 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "4.4.0-alpha.0"
 dependencies = [
- "agave-transaction-view",
  "assert_matches",
- "bytes",
  "solana-clock",
  "solana-hash 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
  "solana-svm-transaction",
- "solana-transaction",
  "static_assertions",
 ]
 
@@ -9828,7 +9824,6 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-svm",
  "solana-svm-timings",
- "solana-transaction",
  "solana-transaction-error",
  "solana-unified-scheduler-logic",
  "static_assertions",

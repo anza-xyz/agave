@@ -11373,7 +11373,6 @@ dependencies = [
  "solana-svm",
  "solana-svm-timings",
  "solana-system-transaction",
- "solana-transaction",
  "solana-transaction-error",
  "solana-unified-scheduler-logic",
  "solana-unified-scheduler-pool",
