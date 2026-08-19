@@ -5897,7 +5897,6 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(validator_keys.clone()),
         node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
-        ticks_per_slot: 8,
         slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH * 2,
         stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         poh_config: PohConfig {
@@ -6069,7 +6068,6 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
         ),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
-        ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
