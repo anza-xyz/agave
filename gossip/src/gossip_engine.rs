@@ -70,7 +70,20 @@ impl Deadlines {
     }
 }
 
-pub(crate) struct GossipEngine;
+pub(crate) struct GossipEngine<S> {
+    pub(crate) cluster_info: Arc<ClusterInfo>,
+    pub(crate) epoch_specs: Option<Box<dyn EpochSpecs>>,
+    pub(crate) workers: Arc<ThreadPool>,
+    pub(crate) context: Arc<GossipContext>,
+    pub(crate) command_endpoint: Arc<Sender<GossipCommand>>,
+    pub(crate) commands: Receiver<GossipCommand>,
+    pub(crate) inbound: Receiver<Vec<ValidatedGossipMessage>>,
+    pub(crate) outbound: S,
+    pub(crate) receiver_stats: Arc<StreamerReceiveStats>,
+    pub(crate) validators: Option<HashSet<Pubkey>>,
+    pub(crate) check_duplicate_instance: bool,
+    pub(crate) exit: Arc<AtomicBool>,
+}
 
 // Boxing commands here would allocate on every engine-bound vote merely to
 // shrink this short-lived stack value.
@@ -82,25 +95,25 @@ enum EngineEvent {
     Disconnected,
 }
 
-impl GossipEngine {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn spawn(
-        cluster_info: Arc<ClusterInfo>,
-        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
-        thread_pool: Arc<ThreadPool>,
-        context: Arc<GossipContext>,
-        command_sender: Arc<Sender<GossipCommand>>,
-        command_receiver: Receiver<GossipCommand>,
-        receiver: Receiver<Vec<ValidatedGossipMessage>>,
-        sender: impl ChannelSend<PacketBatch>,
-        receiver_stats: Arc<StreamerReceiveStats>,
-        gossip_validators: Option<HashSet<Pubkey>>,
-        should_check_duplicate_instance: bool,
-        exit: Arc<AtomicBool>,
-    ) -> JoinHandle<()> {
+impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
+    pub(crate) fn spawn(self) -> JoinHandle<()> {
         Builder::new()
             .name("solGossipEngine".to_string())
             .spawn(move || {
+                let Self {
+                    cluster_info,
+                    mut epoch_specs,
+                    workers,
+                    context,
+                    command_endpoint,
+                    commands,
+                    inbound,
+                    outbound,
+                    receiver_stats,
+                    validators,
+                    check_duplicate_instance,
+                    exit,
+                } = self;
                 let recycler = PacketBatchRecycler::default();
                 let mut deadlines = Deadlines::new(&cluster_info);
                 let mut packet_buf = Vec::with_capacity(1024);
@@ -109,10 +122,10 @@ impl GossipEngine {
                 while !exit.load(Ordering::Relaxed) {
                     let timeout = deadlines.tick.saturating_duration_since(Instant::now());
                     let event = crossbeam_channel::select_biased! {
-                        recv(command_receiver) -> command => {
+                        recv(commands) -> command => {
                             command.map_or(EngineEvent::Disconnected, EngineEvent::Command)
                         },
-                        recv(receiver) -> packets => {
+                        recv(inbound) -> packets => {
                             packets.map_or(EngineEvent::Disconnected, EngineEvent::Packets)
                         },
                         default(timeout) => EngineEvent::Tick,
@@ -120,23 +133,23 @@ impl GossipEngine {
                     match event {
                         EngineEvent::Command(command) => {
                             cluster_info.process_command(command);
-                            for command in command_receiver.try_iter().take(1024 - 1) {
+                            for command in commands.try_iter().take(1024 - 1) {
                                 cluster_info.process_command(command);
                             }
                         }
                         EngineEvent::Packets(packets) => {
                             packet_buf.push(packets);
-                            packet_buf.extend(receiver.try_iter().take(1024 - 1));
+                            packet_buf.extend(inbound.try_iter().take(1024 - 1));
                             let context_snapshot = context.load();
                             let _timer =
                                 ScopedTimer::from(&cluster_info.stats.gossip_listen_loop_time);
                             let result = cluster_info.process_packets(
                                 &mut packet_buf,
-                                &thread_pool,
+                                &workers,
                                 &recycler,
-                                &sender,
+                                &outbound,
                                 &context_snapshot.stakes,
-                                should_check_duplicate_instance,
+                                check_duplicate_instance,
                             );
                             packet_buf.clear();
                             cluster_info
@@ -196,14 +209,14 @@ impl GossipEngine {
 
                     let generate_pull = Deadlines::claim(&mut deadlines.pull, now, PULL_INTERVAL);
                     let _ = cluster_info.run_gossip(
-                        &thread_pool,
-                        gossip_validators.as_ref(),
+                        &workers,
+                        validators.as_ref(),
                         &recycler,
                         &stakes,
-                        &sender,
+                        &outbound,
                         generate_pull,
                     );
-                    cluster_info.handle_purge(&thread_pool, &stakes);
+                    cluster_info.handle_purge(&workers, &stakes);
                     if !entrypoints_processed {
                         entrypoints_processed = cluster_info.process_entrypoints();
                     }
@@ -213,12 +226,12 @@ impl GossipEngine {
                         cluster_info.refresh_push_active_set(
                             &recycler,
                             &stakes,
-                            gossip_validators.as_ref(),
-                            &sender,
+                            validators.as_ref(),
+                            &outbound,
                         );
                     }
                 }
-                cluster_info.clear_command_sender(&command_sender);
+                cluster_info.clear_command_sender(&command_endpoint);
             })
             .unwrap()
     }

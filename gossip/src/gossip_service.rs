@@ -108,20 +108,21 @@ impl GossipService {
         );
         let (response_sender, response_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let t_engine = GossipEngine::spawn(
-            Arc::clone(cluster_info),
+        let t_engine = GossipEngine {
+            cluster_info: Arc::clone(cluster_info),
             epoch_specs,
-            thread_pool,
-            Arc::clone(&context),
-            command_sender,
-            command_receiver,
-            listen_receiver,
-            response_sender.clone(),
-            Arc::clone(&gossip_receiver_stats),
-            gossip_validators,
-            should_check_duplicate_instance,
-            exit.clone(),
-        );
+            workers: thread_pool,
+            context: Arc::clone(&context),
+            command_endpoint: command_sender,
+            commands: command_receiver,
+            inbound: listen_receiver,
+            outbound: response_sender.clone(),
+            receiver_stats: Arc::clone(&gossip_receiver_stats),
+            validators: gossip_validators,
+            check_duplicate_instance: should_check_duplicate_instance,
+            exit: exit.clone(),
+        }
+        .spawn();
         drop(response_sender);
         let gossip_responder_socket = match xdp_sender {
             Some(xdp_sender) => GossipResponderSocket::Xdp(xdp_sender),
@@ -478,6 +479,7 @@ mod tests {
     use {
         super::*,
         crate::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
+        solana_hash::Hash,
         std::sync::{Arc, atomic::AtomicBool},
     };
 
@@ -501,7 +503,10 @@ mod tests {
                 None,
                 exit.clone(),
             );
+            let full = (1, Hash::new_unique());
+            c.push_snapshot_hashes(full, Vec::new()).unwrap();
             c.flush_push_queue();
+            assert_eq!(c.get_snapshot_hashes_for_node(&c.id()).unwrap().full, full);
             exit.store(true, Ordering::Relaxed);
             service.join().unwrap();
         }
