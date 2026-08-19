@@ -193,6 +193,8 @@ pub enum Error {
     InvalidMerkleRoot,
     #[error("Invalid num coding shreds: {0}")]
     InvalidNumCodingShreds(u16),
+    #[error("Invalid num data shreds: {0}")]
+    InvalidNumDataShreds(u16),
     #[error("Invalid parent_offset: {parent_offset}, slot: {slot}")]
     InvalidParentOffset { slot: Slot, parent_offset: u16 },
     #[error("Invalid parent slot: {parent_slot}, slot: {slot}")]
