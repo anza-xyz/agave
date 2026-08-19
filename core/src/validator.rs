@@ -1914,7 +1914,7 @@ impl Validator {
                 && logrotate_flag.load(Ordering::Relaxed)
             {
                 info!("Received SIGUSR1, reopening {}", logfile.display());
-                agave_logger::redirect_stderr(logfile);
+                agave_logger::reopen(logfile);
                 // Reset the flag to `false` to allow detection of the
                 // signal again and to avoid hitting this case every
                 // iteration
