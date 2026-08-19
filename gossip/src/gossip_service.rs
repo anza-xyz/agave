@@ -6,6 +6,7 @@ use {
         cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
+        gossip_context::GossipContext,
     },
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
@@ -55,6 +56,14 @@ impl GossipService {
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        let stakes = epoch_specs
+            .as_mut()
+            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
+            .unwrap_or_default();
+        let context = Arc::new(GossipContext::new(
+            stakes,
+            cluster_info.is_full_alpenglow_epoch(),
+        ));
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         trace!(
@@ -81,7 +90,7 @@ impl GossipService {
         let (consume_sender, listen_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
-            epoch_specs.as_ref().map(|es| es.clone_box()),
+            Arc::clone(&context),
             request_receiver,
             consume_sender,
             exit.clone(),
@@ -89,14 +98,15 @@ impl GossipService {
         let (response_sender, response_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_listen = cluster_info.clone().listen(
-            epoch_specs.as_ref().map(|es| es.clone_box()),
+            Arc::clone(&context),
             listen_receiver,
             response_sender.clone(),
             should_check_duplicate_instance,
             exit.clone(),
         );
         let t_gossip = cluster_info.clone().gossip(
-            epoch_specs.as_ref().map(|es| es.clone_box()),
+            epoch_specs,
+            Arc::clone(&context),
             response_sender,
             gossip_validators,
             exit.clone(),
@@ -122,12 +132,13 @@ impl GossipService {
                 move || {
                     while !exit.load(Ordering::Relaxed) {
                         sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
-                        let stakes = epoch_specs
-                            .as_mut()
-                            .map(|es| es.current_epoch_staked_nodes())
-                            .unwrap_or_default();
+                        let context = context.load();
 
-                        submit_gossip_stats(&cluster_info.stats, &cluster_info.gossip, &stakes);
+                        submit_gossip_stats(
+                            &cluster_info.stats,
+                            &cluster_info.gossip,
+                            &context.stakes,
+                        );
                         gossip_receiver_stats.report();
                     }
                 }

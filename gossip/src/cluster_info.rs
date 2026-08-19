@@ -30,6 +30,7 @@ use {
         duplicate_shred::DuplicateShred,
         epoch_slots::EpochSlots,
         epoch_specs::EpochSpecs,
+        gossip_context::GossipContext,
         gossip_error::GossipError,
         gossip_identity::GossipIdentity,
         gossip_ingress::ValidatedGossipMessage,
@@ -243,7 +244,7 @@ impl ClusterInfo {
 
     /// Returns `true` iff the migration status has been wired AND the cluster
     /// has completed the full Alpenglow epoch transition.
-    fn is_full_alpenglow_epoch(&self) -> bool {
+    pub(crate) fn is_full_alpenglow_epoch(&self) -> bool {
         self.migration_status
             .get()
             .is_some_and(|m| m.is_full_alpenglow_epoch())
@@ -1488,9 +1489,10 @@ impl ClusterInfo {
     }
 
     /// randomly pick a node and ask them for updates asynchronously
-    pub fn gossip(
+    pub(crate) fn gossip(
         self: Arc<Self>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
+        context: Arc<GossipContext>,
         sender: impl ChannelSend<PacketBatch>,
         gossip_validators: Option<HashSet<Pubkey>>,
         exit: Arc<AtomicBool>,
@@ -1536,6 +1538,7 @@ impl ClusterInfo {
                         .as_mut()
                         .map(|es| es.current_epoch_staked_nodes())
                         .unwrap_or_default();
+                    context.update(Arc::clone(&stakes), self.is_full_alpenglow_epoch());
 
                     let _ = self.run_gossip(
                         &thread_pool,
@@ -2140,7 +2143,7 @@ impl ClusterInfo {
     fn run_socket_consume(
         &self,
         thread_pool: &ThreadPool,
-        epoch_specs: Option<&mut Box<dyn EpochSpecs>>,
+        context: &GossipContext,
         receiver: &PacketBatchReceiver,
         sender: &impl ChannelSend<Vec<ValidatedGossipMessage>>,
         packet_buf: &mut Vec<PacketBatch>,
@@ -2183,10 +2186,9 @@ impl ClusterInfo {
                 stats.packets_received_verified_count.add_relaxed(1);
             })
         }
-        let stakes = epoch_specs
-            .map(|es| es.current_epoch_staked_nodes())
-            .unwrap_or_default();
-        let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
+        let context = context.load();
+        let stakes = &context.stakes;
+        let is_full_alpenglow_epoch = context.is_full_alpenglow_epoch;
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
             thread_pool.install(|| {
@@ -2235,7 +2237,7 @@ impl ClusterInfo {
     fn run_listen(
         &self,
         recycler: &PacketBatchRecycler,
-        epoch_specs: &mut Option<Box<dyn EpochSpecs>>,
+        context: &GossipContext,
         receiver: &Receiver<Vec<ValidatedGossipMessage>>,
         response_sender: &impl ChannelSend<PacketBatch>,
         thread_pool: &ThreadPool,
@@ -2253,10 +2255,8 @@ impl ClusterInfo {
                 break;
             }
         }
-        let stakes = epoch_specs
-            .as_deref_mut()
-            .map(|es| es.current_epoch_staked_nodes())
-            .unwrap_or_default();
+        let context = context.load();
+        let stakes = &context.stakes;
         self.process_packets(
             packet_buf,
             thread_pool,
@@ -2274,7 +2274,7 @@ impl ClusterInfo {
 
     pub(crate) fn start_socket_consume_thread(
         self: Arc<Self>,
-        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
+        context: Arc<GossipContext>,
         receiver: PacketBatchReceiver,
         sender: impl ChannelSend<Vec<ValidatedGossipMessage>>,
         exit: Arc<AtomicBool>,
@@ -2289,7 +2289,7 @@ impl ClusterInfo {
             while !exit.load(Ordering::Relaxed) {
                 let result = self.run_socket_consume(
                     &thread_pool,
-                    epoch_specs.as_mut(),
+                    &context,
                     &receiver,
                     &sender,
                     &mut packet_buf,
@@ -2312,7 +2312,7 @@ impl ClusterInfo {
 
     pub(crate) fn listen(
         self: Arc<Self>,
-        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
+        context: Arc<GossipContext>,
         requests_receiver: Receiver<Vec<ValidatedGossipMessage>>,
         response_sender: impl ChannelSend<PacketBatch>,
         should_check_duplicate_instance: bool,
@@ -2331,7 +2331,7 @@ impl ClusterInfo {
                 while !exit.load(Ordering::Relaxed) {
                     let result = self.run_listen(
                         &recycler,
-                        &mut epoch_specs,
+                        &context,
                         &requests_receiver,
                         &response_sender,
                         &thread_pool,
