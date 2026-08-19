@@ -300,14 +300,15 @@ where
         now: &Instant,
     ) -> Result<usize, SchedulerError> {
         let scheduled = match decision {
-            BufferedPacketsDecision::Consume(_bank) => {
+            BufferedPacketsDecision::Consume(bank) => {
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(
-                    self.scheduler
-                        .schedule(&mut self.container, scheduling_budget,)?
-                );
+                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
+                    &mut self.container,
+                    bank.slot(),
+                    scheduling_budget,
+                )?);
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
@@ -898,6 +899,7 @@ mod tests {
         finished_consume_work_sender
             .send(FinishedConsumeWork {
                 work: ConsumeWork {
+                    slot: 0,
                     batch_id: TransactionBatchId::new(0),
                     ids: vec![],
                     transactions: vec![],
@@ -959,6 +961,7 @@ mod tests {
 
         test_receive_then_schedule(&mut scheduler_controller);
         let consume_work = consume_work_receivers[0].try_recv().unwrap();
+        assert_eq!(consume_work.slot, bank.slot());
         assert_eq!(consume_work.ids.len(), 2);
         assert_eq!(consume_work.transactions.len(), 2);
         let message_hashes = consume_work

@@ -39,6 +39,8 @@ impl MaxAge {
 /// Message: [Scheduler -> Worker]
 /// Transactions to be consumed (i.e. executed, recorded, and committed)
 pub struct ConsumeWork<Tx> {
+    #[allow(dead_code)] // Read by consume workers in the follow-up change.
+    pub slot: Slot,
     pub batch_id: TransactionBatchId,
     pub ids: Vec<TransactionId>,
     pub transactions: Vec<Tx>,
