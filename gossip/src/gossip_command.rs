@@ -9,16 +9,17 @@ use {
 
 /// Domain operations submitted by local validator services to the gossip
 /// engine. Stateful label selection stays on the engine thread.
+///
+/// Only commands whose caller needs the outcome, or needs to know the command
+/// has been applied, carry a `completed` channel. Ordering between commands is
+/// already guaranteed by the channel.
 // Keep transactions inline: votes are frequent enough that a smaller enum is
 // not worth an extra heap allocation for every vote.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum GossipCommand {
     Publish(Box<CrdsValue>),
     LowestSlot(Slot),
-    EpochSlots {
-        slots: Vec<Slot>,
-        completed: Sender<()>,
-    },
+    EpochSlots(Vec<Slot>),
     RefreshContact(Sender<()>),
     Vote {
         slot: Slot,
@@ -28,12 +29,10 @@ pub(crate) enum GossipCommand {
     RefreshVote {
         transaction: Transaction,
         slot: Slot,
-        completed: Sender<()>,
     },
     DuplicateShred {
         keypair: Arc<Keypair>,
         chunks: Vec<DuplicateShred>,
-        completed: Sender<()>,
     },
     Flush(Sender<()>),
 }

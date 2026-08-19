@@ -58,6 +58,8 @@ impl ValidatedGossipMessage {
         }
     }
 
+    /// Keeps only the CRDS values matching `predicate`, returning how many were
+    /// dropped. Messages that carry no CRDS values drop nothing.
     pub(crate) fn retain_crds_values(
         &mut self,
         predicate: impl FnMut(&CrdsValue) -> bool,

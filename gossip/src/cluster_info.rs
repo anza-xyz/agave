@@ -13,8 +13,6 @@
 //!
 //! Bank needs to provide an interface for us to query the stake weight
 
-#[cfg(test)]
-use rayon::ThreadPoolBuilder;
 use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
@@ -107,7 +105,7 @@ pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// we limit the number of packet batches that are pulled from the corresponding channel on each iteration.
 /// This ensures that the number of `madvise` system calls is minimized and, as such, that large interruptions
 /// to the processing loop are avoided.
-const CHANNEL_CONSUME_CAPACITY: usize = 1024;
+pub(crate) const CHANNEL_CONSUME_CAPACITY: usize = 1024;
 /// Avoid waking the gossip worker pool when a packet batch is too small to
 /// amortize Rayon's scheduling and work-stealing overhead.
 const MIN_PARALLEL_GOSSIP_PACKETS: usize = 16;
@@ -216,18 +214,25 @@ impl ClusterInfo {
         let _ = self.command_sender.compare_and_swap(sender, None);
     }
 
-    fn command_sender(&self) -> Option<Arc<Sender<GossipCommand>>> {
-        self.command_sender.load_full()
+    /// Hands `command` to the engine, or applies it inline when no engine is
+    /// running. Any `completed` channel the command carries is answered either
+    /// way, so callers can always wait on it.
+    fn submit_command(&self, command: GossipCommand) {
+        let command = match self.command_sender.load_full() {
+            Some(sender) => match sender.send(command) {
+                Ok(()) => return,
+                Err(err) => err.0,
+            },
+            None => command,
+        };
+        self.process_command(command);
     }
 
     pub(crate) fn process_command(&self, command: GossipCommand) {
         match command {
             GossipCommand::Publish(value) => self.insert_local_value(*value),
             GossipCommand::LowestSlot(slot) => self.push_lowest_slot_direct(slot),
-            GossipCommand::EpochSlots { slots, completed } => {
-                self.push_epoch_slots_direct(&slots);
-                let _ = completed.send(());
-            }
+            GossipCommand::EpochSlots(slots) => self.push_epoch_slots_direct(&slots),
             GossipCommand::RefreshContact(completed) => {
                 self.refresh_my_gossip_contact_info();
                 let _ = completed.send(());
@@ -240,21 +245,11 @@ impl ClusterInfo {
                 let result = self.push_vote_direct(slot, transaction);
                 let _ = completed.send(result);
             }
-            GossipCommand::RefreshVote {
-                transaction,
-                slot,
-                completed,
-            } => {
-                self.refresh_vote_direct(transaction, slot);
-                let _ = completed.send(());
+            GossipCommand::RefreshVote { transaction, slot } => {
+                self.refresh_vote_direct(transaction, slot)
             }
-            GossipCommand::DuplicateShred {
-                keypair,
-                chunks,
-                completed,
-            } => {
-                self.gossip.insert_duplicate_shred(&keypair, chunks);
-                let _ = completed.send(());
+            GossipCommand::DuplicateShred { keypair, chunks } => {
+                self.gossip.insert_duplicate_shred(&keypair, chunks)
             }
             GossipCommand::Flush(completed) => {
                 let _ = completed.send(());
@@ -679,17 +674,12 @@ impl ClusterInfo {
     }
 
     fn publish_contact_info(&self) {
-        if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(1);
-            if sender
-                .send(GossipCommand::RefreshContact(completed))
-                .is_ok()
-                && receiver.recv().is_ok()
-            {
-                return;
-            }
+        let (completed, receiver) = bounded(1);
+        self.submit_command(GossipCommand::RefreshContact(completed));
+        if receiver.recv().is_err() {
+            // The engine stopped before it could apply the refresh.
+            self.refresh_my_gossip_contact_info();
         }
-        self.refresh_my_gossip_contact_info();
     }
 
     fn lookup_epoch_slots(&self, ix: EpochSlotsIndex) -> EpochSlots {
@@ -883,12 +873,7 @@ impl ClusterInfo {
     }
 
     pub fn push_lowest_slot(&self, min: Slot) {
-        if let Some(sender) = self.command_sender()
-            && sender.send(GossipCommand::LowestSlot(min)).is_ok()
-        {
-            return;
-        }
-        self.push_lowest_slot_direct(min);
+        self.submit_command(GossipCommand::LowestSlot(min));
     }
 
     fn push_lowest_slot_direct(&self, min: Slot) {
@@ -925,18 +910,7 @@ impl ClusterInfo {
     }
 
     pub fn push_epoch_slots(&self, update: &[Slot]) {
-        if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(1);
-            let command = GossipCommand::EpochSlots {
-                slots: update.to_vec(),
-                completed,
-            };
-            if sender.send(command).is_ok() {
-                let _ = receiver.recv();
-                return;
-            }
-        }
-        self.push_epoch_slots_direct(update);
+        self.submit_command(GossipCommand::EpochSlots(update.to_vec()));
     }
 
     fn push_epoch_slots_direct(&self, mut update: &[Slot]) {
@@ -1014,19 +988,7 @@ impl ClusterInfo {
     }
 
     fn push_message(&self, message: CrdsValue) {
-        if let Some(sender) = self.command_sender() {
-            match sender.send(GossipCommand::Publish(Box::new(message))) {
-                Ok(()) => return,
-                Err(err) => {
-                    let GossipCommand::Publish(message) = err.0 else {
-                        unreachable!()
-                    };
-                    self.insert_local_value(*message);
-                    return;
-                }
-            }
-        }
-        self.insert_local_value(message);
+        self.submit_command(GossipCommand::Publish(Box::new(message)));
     }
 
     pub fn push_snapshot_hashes(
@@ -1111,28 +1073,15 @@ impl ClusterInfo {
     pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         let slot = tower.last().copied().expect("Cannot push empty vote");
-        let result = if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(1);
-            let command = GossipCommand::Vote {
-                slot,
-                transaction: vote,
-                completed,
-            };
-            match sender.send(command) {
-                Ok(()) => receiver
-                    .recv()
-                    .expect("gossip engine stopped while publishing vote"),
-                Err(err) => {
-                    let GossipCommand::Vote { transaction, .. } = err.0 else {
-                        unreachable!()
-                    };
-                    self.push_vote_direct(slot, transaction)
-                }
-            }
-        } else {
-            self.push_vote_direct(slot, vote)
-        };
-        let Err(vote) = result else {
+        let (completed, receiver) = bounded(1);
+        self.submit_command(GossipCommand::Vote {
+            slot,
+            transaction: vote,
+            completed,
+        });
+        // A receive error means the engine stopped before applying the vote, so
+        // there is nothing to check.
+        let Ok(Err(vote)) = receiver.recv() else {
             return;
         };
         // In this case we have restarted with a mangled/missing tower and are attempting
@@ -1164,30 +1113,10 @@ impl ClusterInfo {
     }
 
     pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
-        if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(1);
-            let command = GossipCommand::RefreshVote {
-                transaction: refresh_vote,
-                slot: refresh_vote_slot,
-                completed,
-            };
-            match sender.send(command) {
-                Ok(()) => {
-                    receiver
-                        .recv()
-                        .expect("gossip engine stopped while refreshing vote");
-                    return;
-                }
-                Err(err) => {
-                    let GossipCommand::RefreshVote { transaction, .. } = err.0 else {
-                        unreachable!()
-                    };
-                    self.refresh_vote_direct(transaction, refresh_vote_slot);
-                    return;
-                }
-            }
-        }
-        self.refresh_vote_direct(refresh_vote, refresh_vote_slot);
+        self.submit_command(GossipCommand::RefreshVote {
+            transaction: refresh_vote,
+            slot: refresh_vote_slot,
+        });
     }
 
     fn refresh_vote_direct(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
@@ -1296,33 +1225,7 @@ impl ClusterInfo {
             self.my_shred_version(),
         )?
         .collect();
-        if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(1);
-            let command = GossipCommand::DuplicateShred {
-                keypair,
-                chunks,
-                completed,
-            };
-            match sender.send(command) {
-                Ok(()) => {
-                    receiver
-                        .recv()
-                        .expect("gossip engine stopped while publishing duplicate shred");
-                    return Ok(());
-                }
-                Err(err) => {
-                    let GossipCommand::DuplicateShred {
-                        keypair, chunks, ..
-                    } = err.0
-                    else {
-                        unreachable!()
-                    };
-                    self.gossip.insert_duplicate_shred(&keypair, chunks);
-                    return Ok(());
-                }
-            }
-        }
-        self.gossip.insert_duplicate_shred(&keypair, chunks);
+        self.submit_command(GossipCommand::DuplicateShred { keypair, chunks });
         Ok(())
     }
 
@@ -1571,14 +1474,13 @@ impl ClusterInfo {
             .chain(pings)
     }
 
+    /// Blocks until every command submitted before this call has been applied.
     pub fn flush_push_queue(&self) {
-        if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(1);
-            if sender.send(GossipCommand::Flush(completed)).is_ok() {
-                let _ = receiver.recv();
-            }
-        }
+        let (completed, receiver) = bounded(1);
+        self.submit_command(GossipCommand::Flush(completed));
+        let _ = receiver.recv();
     }
+
     fn new_push_requests(
         &self,
         stakes: &HashMap<Pubkey, u64>,
@@ -2359,9 +2261,9 @@ impl ClusterInfo {
                 stats.packets_received_verified_count.add_relaxed(1);
             })
         }
-        let context = context.load();
-        let stakes = context.stakes.as_ref();
-        let is_full_alpenglow_epoch = context.is_full_alpenglow_epoch;
+        let snapshot = context.load();
+        let stakes = snapshot.stakes.as_ref();
+        let is_full_alpenglow_epoch = snapshot.is_full_alpenglow_epoch;
         let verify_packet = |packet| {
             verify_packet(
                 packet,
@@ -2718,6 +2620,7 @@ mod tests {
         },
         itertools::izip,
         rand::{SeedableRng, rngs::StdRng},
+        rayon::ThreadPoolBuilder,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
