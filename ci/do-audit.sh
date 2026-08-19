@@ -55,6 +55,16 @@ default_cargo_audit_extra_args=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
+
+  # Crate:     h2
+  # Version:   0.4.13
+  # Title:     h2 unbounded empty DATA frames
+  # Date:      2026-08-17
+  # ID:        RUSTSEC-2026-0258
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0258
+  # Solution:  Upgrade to >=0.4.16
+  # Agave Ok:  Bigtable is the only use and is being considered a trusted peer
+  --ignore RUSTSEC-2026-0258
 )
 
 xtask_cargo_audit_extra_args=(
