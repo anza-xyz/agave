@@ -94,8 +94,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
                 "Enables faster starting of ledger-tool by skipping shrink. This option is for \
                  use during testing.",
             ),
-        Arg::with_name("accounts_db_verify_slot_lists")
-            .long("accounts-db-verify-slot-lists")
+        Arg::with_name("accounts_db_verify_index")
+            .long("accounts-db-verify-index")
             .help(
                 "Debug option to scan all AppendVecs and verify account index slot lists prior to \
                  clean",
@@ -379,7 +379,7 @@ pub fn get_accounts_db_config(
         )
         .ok(),
         max_ancient_storages: value_t!(arg_matches, "accounts_db_max_ancient_storages", usize).ok(),
-        exhaustively_verify_slot_lists: arg_matches.is_present("accounts_db_verify_slot_lists"),
+        exhaustively_verify_index: arg_matches.is_present("accounts_db_verify_index"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,

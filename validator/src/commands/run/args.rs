@@ -952,8 +952,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("accounts_db_verify_slot_lists")
-            .long("accounts-db-verify-slot-lists")
+        Arg::with_name("accounts_db_verify_index")
+            .long("accounts-db-verify-index")
             .help(
                 "Debug option to scan all append vecs and verify account index slot lists prior \
                  to clean",
