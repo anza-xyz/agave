@@ -72,6 +72,20 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
     }
 }
 
+impl StaticTransactionWithMeta for RuntimeTransaction<SanitizedVersionedTransaction> {
+    fn to_versioned_transaction(&self) -> VersionedTransaction {
+        VersionedTransaction {
+            signatures: self.transaction.signatures().to_vec(),
+            message: self.transaction.get_message().message.clone(),
+        }
+    }
+
+    fn serialized_size(&self) -> usize {
+        wincode::serialized_size(&self.to_versioned_transaction())
+            .expect("versioned transaction serialization should succeed") as usize
+    }
+}
+
 impl RuntimeTransaction<SanitizedTransaction> {
     /// Create a new `RuntimeTransaction<SanitizedTransaction>` from an
     /// unsanitized `VersionedTransaction`.
@@ -179,12 +193,15 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_message::{
-            Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
+            AddressLookupTableAccount, Message, MessageHeader, SimpleAddressLoader,
+            VersionedMessage,
             compiled_instruction::CompiledInstruction,
+            v0::{self, LoadedAddresses},
         },
         solana_sdk_ids::vote,
         solana_signature::Signature,
         solana_signer::Signer,
+        solana_svm_transaction::svm_message::SVMMessage,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
     };
@@ -374,25 +391,84 @@ mod tests {
 
     #[test]
     fn test_serialized_size() {
-        let transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
+        let statically_loaded_transaction =
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 non_vote_sanitized_versioned_transaction(),
                 MessageHash::Compute,
                 None,
             )
-            .unwrap(),
+            .unwrap();
+
+        let static_versioned_transaction = statically_loaded_transaction.to_versioned_transaction();
+        let expected = wincode::serialized_size(&static_versioned_transaction).unwrap();
+        assert_eq!(
+            statically_loaded_transaction.serialized_size(),
+            expected as usize
+        );
+
+        let transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
+            statically_loaded_transaction,
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
         )
         .unwrap();
 
-        let expected = wincode::serialized_size(&transaction.to_versioned_transaction()).unwrap();
         assert_eq!(transaction.serialized_size(), expected as usize);
         assert_eq!(
             expected,
             wincode::serialize(&transaction.to_versioned_transaction())
                 .unwrap()
                 .len() as u64
+        );
+    }
+
+    #[test]
+    fn test_to_versioned_transaction_is_resolution_invariant() {
+        let reserved_key_set = ReservedAccountKeys::empty_key_set();
+        let fee_payer = Pubkey::new_unique();
+        let source = Pubkey::new_unique();
+        let dest = Pubkey::new_unique();
+        let original_transaction = VersionedTransaction {
+            signatures: vec![Signature::default(); 2],
+            message: VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &fee_payer,
+                    &[system_instruction::transfer(&source, &dest, 1)],
+                    &[AddressLookupTableAccount {
+                        key: Pubkey::new_unique(),
+                        addresses: vec![dest],
+                    }],
+                    Hash::default(),
+                )
+                .unwrap(),
+            ),
+        };
+
+        let statically_loaded_transaction =
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+                SanitizedVersionedTransaction::try_from(original_transaction.clone()).unwrap(),
+                MessageHash::Compute,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            statically_loaded_transaction.to_versioned_transaction(),
+            original_transaction
+        );
+
+        let dynamically_loaded_transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
+            statically_loaded_transaction,
+            SimpleAddressLoader::Enabled(LoadedAddresses {
+                writable: vec![dest],
+                readonly: vec![],
+            }),
+            &reserved_key_set,
+        )
+        .unwrap();
+        assert_eq!(dynamically_loaded_transaction.account_keys()[3], dest);
+        assert_eq!(
+            dynamically_loaded_transaction.to_versioned_transaction(),
+            original_transaction
         );
     }
 

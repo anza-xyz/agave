@@ -391,6 +391,8 @@ mod tests {
                 None,
             )
             .unwrap();
+            let unresolved_versioned_transaction = runtime_transaction.to_versioned_transaction();
+
             let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 runtime_transaction,
                 loaded_addresses,
@@ -400,6 +402,7 @@ mod tests {
 
             let versioned_transaction = runtime_transaction.to_versioned_transaction();
             assert_eq!(original_transaction, versioned_transaction);
+            assert_eq!(unresolved_versioned_transaction, versioned_transaction);
         }
 
         let reserved_key_set = ReservedAccountKeys::empty_key_set();
@@ -550,6 +553,11 @@ mod tests {
             None,
         )
         .unwrap();
+        assert_eq!(
+            runtime_transaction.serialized_size(),
+            serialized_transaction.len()
+        );
+
         let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
             runtime_transaction,
             None,
