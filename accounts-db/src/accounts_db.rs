@@ -4181,7 +4181,6 @@ impl AccountsDb {
         &self,
         accounts: &impl StorableAccounts<'a>,
         store_account: &BitVec,
-        update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         if !self.account_indexes.is_empty() {
             let len = accounts.len();
@@ -4205,14 +4204,11 @@ impl AccountsDb {
             };
 
             let threshold = 1;
-            if matches!(
-                update_index_thread_selection,
-                UpdateIndexThreadSelection::PoolWithThreshold,
-            ) && len > threshold
-            {
-                let chunk_size = len.div_ceil(self.thread_pool_foreground.current_num_threads());
+            if len > threshold {
+                let thread_pool = &self.thread_pool_foreground;
+                let chunk_size = len.div_ceil(thread_pool.current_num_threads());
                 let batches = 1 + len / chunk_size;
-                self.thread_pool_foreground.install(|| {
+                thread_pool.install(|| {
                     (0..batches).into_par_iter().for_each(|batch| {
                         let start = batch * chunk_size;
                         let end = std::cmp::min(start + chunk_size, len);
@@ -4528,7 +4524,6 @@ impl AccountsDb {
     pub(crate) fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        update_index_thread_selection: UpdateIndexThreadSelection,
         ancestors: &Ancestors,
     ) {
         // If all transactions in a batch are errored,
@@ -4545,11 +4540,7 @@ impl AccountsDb {
 
         // Update the secondary index
         let update_secondary_index_time = Measure::start("update_secondary_index");
-        self.update_secondary_index_cached_accounts(
-            &accounts,
-            &store_account,
-            update_index_thread_selection,
-        );
+        self.update_secondary_index_cached_accounts(&accounts, &store_account);
         let update_secondary_index_us = update_secondary_index_time.end_as_us();
 
         let stats = &self.store_accounts_unfrozen_stats;
@@ -5709,13 +5700,6 @@ enum MarkAccountsObsolete {
     No,
 }
 
-pub enum UpdateIndexThreadSelection {
-    /// Use current thread only
-    Inline,
-    /// Use a thread-pool if the number of updates exceeds a threshold
-    PoolWithThreshold,
-}
-
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountStorageEntry {
@@ -5844,18 +5828,10 @@ impl AccountsDb {
         }
 
         // Pre-populate new zero-lamport accounts with single-lamport placeholders.
-        self.store_accounts_unfrozen(
-            (slot, pre_populate_zero_lamport.as_slice()),
-            UpdateIndexThreadSelection::PoolWithThreshold,
-            &ancestors,
-        );
+        self.store_accounts_unfrozen((slot, pre_populate_zero_lamport.as_slice()), &ancestors);
 
         // Then store the actual accounts provided by the caller.
-        self.store_accounts_unfrozen(
-            accounts,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-            &ancestors,
-        );
+        self.store_accounts_unfrozen(accounts, &ancestors);
     }
 
     #[allow(clippy::needless_range_loop)]

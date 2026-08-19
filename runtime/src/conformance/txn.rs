@@ -114,7 +114,7 @@ pub fn execute_txn(
     // Populate the accounts DB with the input accounts at the parent slot.
     let bank_accounts = new_accounts_for_tests_single_threaded();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    bank_accounts.store_accounts_seq((parent_slot, accounts), BankId::default(), None, &ancestors);
+    bank_accounts.store_accounts((parent_slot, accounts), BankId::default(), None, &ancestors);
     bank_accounts.accounts_db.add_root(parent_slot);
     let bank_rc = BankRc::new(bank_accounts);
 
