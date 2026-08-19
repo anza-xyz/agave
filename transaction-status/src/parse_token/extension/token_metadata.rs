@@ -27,10 +27,10 @@ pub(in crate::parse_token) fn parse_token_metadata_instruction(
             check_num_token_accounts(account_indexes, 4)?;
             let Initialize { name, symbol, uri } = metadata;
             let value = json!({
-                "metadata": account_keys[account_indexes[0] as usize].to_string(),
-                "updateAuthority": account_keys[account_indexes[1] as usize].to_string(),
-                "mint": account_keys[account_indexes[2] as usize].to_string(),
-                "mintAuthority": account_keys[account_indexes[3] as usize].to_string(),
+                "metadata": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "updateAuthority": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string(),
+                "mintAuthority": account_key(account_keys, account_indexes, 3, ParsableProgram::SplToken)?.to_string(),
                 "name": name,
                 "symbol": symbol,
                 "uri": uri,
@@ -44,8 +44,8 @@ pub(in crate::parse_token) fn parse_token_metadata_instruction(
             check_num_token_accounts(account_indexes, 2)?;
             let UpdateField { field, value } = update;
             let value = json!({
-                "metadata": account_keys[account_indexes[0] as usize].to_string(),
-                "updateAuthority": account_keys[account_indexes[1] as usize].to_string(),
+                "metadata": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "updateAuthority": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "field": token_metadata_field_to_string(field),
                 "value": value,
             });
@@ -58,8 +58,8 @@ pub(in crate::parse_token) fn parse_token_metadata_instruction(
             check_num_token_accounts(account_indexes, 2)?;
             let RemoveKey { key, idempotent } = remove;
             let value = json!({
-                "metadata": account_keys[account_indexes[0] as usize].to_string(),
-                "updateAuthority": account_keys[account_indexes[1] as usize].to_string(),
+                "metadata": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "updateAuthority": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "key": key,
                 "idempotent": *idempotent,
             });
@@ -72,8 +72,8 @@ pub(in crate::parse_token) fn parse_token_metadata_instruction(
             check_num_token_accounts(account_indexes, 2)?;
             let UpdateAuthority { new_authority } = update;
             let value = json!({
-                "metadata": account_keys[account_indexes[0] as usize].to_string(),
-                "updateAuthority": account_keys[account_indexes[1] as usize].to_string(),
+                "metadata": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "updateAuthority": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "newAuthority": Option::<Pubkey>::from(*new_authority).map(|v| v.to_string()),
             });
             Ok(ParsedInstructionEnum {
@@ -85,7 +85,7 @@ pub(in crate::parse_token) fn parse_token_metadata_instruction(
             check_num_token_accounts(account_indexes, 1)?;
             let Emit { start, end } = emit;
             let mut value = json!({
-                "metadata": account_keys[account_indexes[0] as usize].to_string(),
+                "metadata": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
             });
             let map = value.as_object_mut().unwrap();
             if let Some(start) = *start {
