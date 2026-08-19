@@ -13,14 +13,57 @@ use {
 /// Which of the two kinds of shred this is.
 ///
 /// The discriminants are the legacy standalone encoding of the shred type, kept distinct from every
-/// valid [`ShredVariant`] byte so that the two can never be confused on the wire.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// valid [`ShredVariant`] byte so that the two can never be confused on the wire. They are also the
+/// wincode tags, so reading a shred type off the wire and matching a Rust variant cannot drift
+/// apart.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SchemaRead, SchemaWrite)]
+#[wincode(tag_encoding = "u8")]
 #[repr(u8)]
 pub enum ShredType {
     /// Carries ledger entries.
+    #[wincode(tag = 0b1010_0101)]
     Data = 0b1010_0101,
     /// Carries Reed-Solomon erasure codes for the data shreds of its FEC set.
+    #[wincode(tag = 0b0101_1010)]
     Code = 0b0101_1010,
+}
+
+/// Mask of the low nibble of the variant byte, which carries `proof_size`.
+const PROOF_SIZE_MASK: u8 = 0x0f;
+
+/// The high nibble of the variant byte: the kind, and whether a retransmitter signature follows.
+///
+/// A wincode tag covers a whole byte, so this cannot be read straight off the wire — the low nibble
+/// is `proof_size`, not part of the tag. Masking the nibble off first and handing wincode the
+/// remaining byte keeps the four encodings declared in one table that both directions use, instead
+/// of a match arm per encoding per direction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
+#[wincode(tag_encoding = "u8")]
+enum VariantClass {
+    #[wincode(tag = 0x60)]
+    Code,
+    #[wincode(tag = 0x70)]
+    CodeResigned,
+    #[wincode(tag = 0x90)]
+    Data,
+    #[wincode(tag = 0xb0)]
+    DataResigned,
+}
+
+impl VariantClass {
+    /// Reads the class out of a variant byte, discarding its `proof_size` nibble.
+    fn from_variant_byte(byte: u8) -> Result<Self, ParseError> {
+        wincode::deserialize(&[byte & !PROOF_SIZE_MASK])
+            .map_err(|_| ParseError::InvalidVariant(byte))
+    }
+
+    /// The byte this class occupies with a `proof_size` of zero.
+    fn to_variant_byte(self) -> u8 {
+        let mut byte = [0u8];
+        wincode::serialize_into(&mut byte[..], &self)
+            .expect("a tag encoded as one byte fits in one byte");
+        byte[0]
+    }
 }
 
 /// The kind of a shred plus the two layout bits that accompany it.
@@ -81,24 +124,17 @@ impl ShredVariant {
 impl From<ShredVariant> for u8 {
     #[inline]
     fn from(variant: ShredVariant) -> u8 {
-        match variant {
+        let class = match variant {
             ShredVariant::MerkleCode {
-                proof_size,
-                resigned: false,
-            } => proof_size | 0x60,
-            ShredVariant::MerkleCode {
-                proof_size,
-                resigned: true,
-            } => proof_size | 0x70,
+                resigned: false, ..
+            } => VariantClass::Code,
+            ShredVariant::MerkleCode { resigned: true, .. } => VariantClass::CodeResigned,
             ShredVariant::MerkleData {
-                proof_size,
-                resigned: false,
-            } => proof_size | 0x90,
-            ShredVariant::MerkleData {
-                proof_size,
-                resigned: true,
-            } => proof_size | 0xb0,
-        }
+                resigned: false, ..
+            } => VariantClass::Data,
+            ShredVariant::MerkleData { resigned: true, .. } => VariantClass::DataResigned,
+        };
+        class.to_variant_byte() | (variant.proof_size() & PROOF_SIZE_MASK)
     }
 }
 
@@ -107,30 +143,27 @@ impl TryFrom<u8> for ShredVariant {
 
     #[inline]
     fn try_from(byte: u8) -> Result<Self, Self::Error> {
-        // The two legacy ShredType encodings must never be read as a variant.
-        if byte == ShredType::Code as u8 || byte == ShredType::Data as u8 {
-            return Err(ParseError::InvalidVariant(byte));
-        }
-        let proof_size = byte & 0x0f;
-        match byte & 0xf0 {
-            0x60 => Ok(Self::MerkleCode {
+        // The legacy ShredType encodings need no special case: their nibbles, 0xa0 and 0x50, are
+        // not among the tags below.
+        let proof_size = byte & PROOF_SIZE_MASK;
+        Ok(match VariantClass::from_variant_byte(byte)? {
+            VariantClass::Code => Self::MerkleCode {
                 proof_size,
                 resigned: false,
-            }),
-            0x70 => Ok(Self::MerkleCode {
+            },
+            VariantClass::CodeResigned => Self::MerkleCode {
                 proof_size,
                 resigned: true,
-            }),
-            0x90 => Ok(Self::MerkleData {
+            },
+            VariantClass::Data => Self::MerkleData {
                 proof_size,
                 resigned: false,
-            }),
-            0xb0 => Ok(Self::MerkleData {
+            },
+            VariantClass::DataResigned => Self::MerkleData {
                 proof_size,
                 resigned: true,
-            }),
-            _ => Err(ParseError::InvalidVariant(byte)),
-        }
+            },
+        })
     }
 }
 

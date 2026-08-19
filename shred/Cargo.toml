@@ -16,7 +16,7 @@ dev-context-only-utils = ["dep:bs58"]
 bs58 = { workspace = true, features = ["alloc"], optional = true }
 bytes = { workspace = true }
 solana-clock = { workspace = true }
-solana-hash = { workspace = true, features = ["decode"] }
+solana-hash = { workspace = true, features = ["decode", "wincode"] }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-signature = { workspace = true, features = ["verify", "wincode"] }

@@ -31,9 +31,15 @@
 //! # Cost
 //!
 //! Parsing materializes only the header scalars: 19 bytes of common header plus 5 or 6 for the
-//! kind's own. The signature, Merkle root, proof and retransmitter signature stay in the buffer and
-//! are handed out as references. All the offsets those references need are derived once, by
-//! [`Layout`], from the three bits of layout information in the variant byte.
+//! kind's own. Everything else stays in the buffer and is handed out by [`ShredView`] as a
+//! reference into it — the signature, the body, the chained Merkle root, the proof entries, the
+//! retransmitter signature.
+//!
+//! No byte offset is stored, and only one ([`OFFSET_OF_VARIANT`](layout::OFFSET_OF_VARIANT), needed
+//! to pick a kind before there is anything to walk) is written down. [`ShredView::read`] walks the
+//! sections in wire order with wincode, taking each from the reader as it comes, so the reader's
+//! cursor is the offset. Section *sizes* likewise come from the wincode schemas of the types that
+//! occupy them, not from literals.
 //!
 //! # Example
 //!
@@ -80,14 +86,16 @@ pub mod policy;
 pub mod shred;
 pub mod shred_variant;
 pub mod state;
+pub mod view;
 
 pub use crate::{
     error::{InvalidDataSize, ParseError, Reject},
     header::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
     kind::{Code, Data, ShredKind},
-    layout::Layout,
+    layout::ProofEntry,
     policy::AdmissionPolicy,
     shred::{CodeShred, DataShred, Nonce, Shred, ShredParsed, parse},
     shred_variant::{ShredType, ShredVariant},
     state::{Admissible, Parsed, Resigned, ShredState, Verified},
+    view::ShredView,
 };

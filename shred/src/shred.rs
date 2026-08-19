@@ -3,13 +3,12 @@ use {
         error::{InvalidDataSize, ParseError, Reject},
         header::{CommonHeader, ShredFlags},
         kind::{Code, Data, ShredKind},
-        layout::{
-            Layout, OFFSET_OF_VARIANT, SIZE_OF_MERKLE_ROOT, SIZE_OF_NONCE, SIZE_OF_SIGNATURE,
-        },
+        layout::{OFFSET_OF_VARIANT, ProofEntry, SIZE_OF_NONCE, SIZE_OF_SIGNATURE},
         merkle,
         policy::{self, AdmissionPolicy},
         shred_variant::{ShredType, ShredVariant},
         state::{Admissible, Parsed, Resigned, ShredState, Verified},
+        view::ShredView,
     },
     bytes::{Bytes, BytesMut},
     solana_clock::Slot,
@@ -19,7 +18,6 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     std::{fmt, marker::PhantomData},
-    wincode::ZeroCopy,
 };
 
 /// The nonce a repair response carries after the shred, tying it to the request it answers.
@@ -35,9 +33,6 @@ pub struct Shred<K: ShredKind, S: ShredState> {
     bytes: Bytes,
     common: CommonHeader,
     header: K::Header,
-    /// Derived from `common.variant` at parse time and never changed, so every range it yields is
-    /// in bounds of `bytes`.
-    layout: Layout,
     _state: PhantomData<S>,
 }
 
@@ -91,14 +86,6 @@ impl ShredParsed {
             Self::Code(shred) => shred.common(),
         }
     }
-
-    /// The resolved byte layout.
-    pub fn layout(&self) -> Layout {
-        match self {
-            Self::Data(shred) => shred.layout(),
-            Self::Code(shred) => shred.layout(),
-        }
-    }
 }
 
 impl<K: ShredKind> Shred<K, Parsed> {
@@ -114,8 +101,6 @@ impl<K: ShredKind> Shred<K, Parsed> {
                 found,
             });
         }
-        let layout =
-            K::layout(variant).ok_or(ParseError::InvalidProofSize(variant.proof_size()))?;
         if bytes.len() < K::SIZE_OF_PAYLOAD {
             return Err(ParseError::TooShort {
                 len: bytes.len(),
@@ -134,15 +119,12 @@ impl<K: ShredKind> Shred<K, Parsed> {
             }
             len => return Err(ParseError::TrailingBytes(len)),
         };
-        // The signature occupies bytes 0..64 and is read on demand, so deserialization starts at
-        // the variant byte.
-        let (common, header): (CommonHeader, K::Header) =
-            wincode::deserialize(&bytes[OFFSET_OF_VARIANT..])?;
+        let view = ShredView::<K>::read(&bytes)?;
+        let (common, header) = (view.common, view.header);
         let shred = Self {
             bytes,
             common,
             header,
-            layout,
             _state: PhantomData,
         };
         Ok((shred, nonce))
@@ -202,13 +184,22 @@ impl<K: ShredKind> Shred<K, Verified> {
     /// The signature covers the shred's Merkle leaf region, pending the root recomputation in
     /// [`merkle`].
     pub fn resign(mut self, keypair: &Keypair) -> Result<Shred<K, Resigned>, Reject> {
-        let Some(range) = self.layout.retransmitter_signature() else {
-            return Err(Reject::NotResignable);
+        let signature = {
+            let view = self.view();
+            if view.retransmitter_signature.is_none() {
+                return Err(Reject::NotResignable);
+            }
+            keypair.sign_message(view.merkle_leaf)
         };
-        let signature = keypair.sign_message(&self.bytes[self.layout.merkle_leaf()]);
+        // The retransmitter signature is the shred's last section.
+        let start = self
+            .bytes
+            .len()
+            .checked_sub(SIZE_OF_SIGNATURE)
+            .expect("a resigned shred is longer than the signature it ends with");
         // `Bytes` is immutable, so this copies unless we hold the only reference to the buffer.
         let mut buffer = BytesMut::from(std::mem::take(&mut self.bytes));
-        buffer[range].copy_from_slice(signature.as_ref());
+        buffer[start..].copy_from_slice(signature.as_ref());
         self.bytes = buffer.freeze();
         Ok(self.transition())
     }
@@ -228,10 +219,14 @@ impl<K: ShredKind, S: ShredState> Shred<K, S> {
         &self.header
     }
 
-    /// The resolved byte layout.
+    /// The shred's sections, borrowed from its bytes.
+    ///
+    /// Walking the sections is a handful of cursor advances with no hashing and no copying, so
+    /// this is cheap enough to call per accessor; call it once and keep the view when reading
+    /// several sections.
     #[inline]
-    pub fn layout(&self) -> Layout {
-        self.layout
+    pub fn view(&self) -> ShredView<'_, K> {
+        ShredView::read(&self.bytes).expect("the bytes parsed as this kind of shred already")
     }
 
     /// The slot this shred belongs to.
@@ -267,38 +262,31 @@ impl<K: ShredKind, S: ShredState> Shred<K, S> {
     /// The leader's signature over the Merkle root, borrowed from the shred's bytes.
     #[inline]
     pub fn signature(&self) -> &Signature {
-        Signature::from_bytes(&self.bytes[..SIZE_OF_SIGNATURE])
-            .expect("a signature is 64 bytes of alignment 1, and the length is checked at parse")
+        self.view().signature
     }
 
     /// The Merkle root of the preceding erasure batch.
     #[inline]
-    pub fn chained_merkle_root(&self) -> Hash {
-        let bytes =
-            <[u8; SIZE_OF_MERKLE_ROOT]>::try_from(&self.bytes[self.layout.chained_merkle_root()])
-                .expect("the layout yields a 32-byte range in bounds of the shred");
-        Hash::new_from_array(bytes)
+    pub fn chained_merkle_root(&self) -> &Hash {
+        self.view().chained_merkle_root
     }
 
-    /// The flattened Merkle proof, borrowed from the shred's bytes.
+    /// The Merkle proof witnessing this shred's leaf in its FEC set's tree.
     #[inline]
-    pub fn merkle_proof(&self) -> &[u8] {
-        &self.bytes[self.layout.merkle_proof()]
+    pub fn merkle_proof(&self) -> &[ProofEntry] {
+        self.view().merkle_proof
     }
 
     /// The retransmitter's signature, if this shred's variant carries one.
     #[inline]
     pub fn retransmitter_signature(&self) -> Option<&Signature> {
-        let range = self.layout.retransmitter_signature()?;
-        let signature = Signature::from_bytes(&self.bytes[range])
-            .expect("a signature is 64 bytes of alignment 1, and the layout range is in bounds");
-        Some(signature)
+        self.view().retransmitter_signature
     }
 
     /// The erasure-coded region of the shred.
     #[inline]
     pub fn erasure_shard(&self) -> &[u8] {
-        &self.bytes[self.layout.erasure_shard()]
+        self.view().erasure_shard
     }
 
     /// This shred's index among its FEC set's erasure shards, which is its leaf index in the FEC
@@ -332,7 +320,6 @@ impl<K: ShredKind, S: ShredState> Shred<K, S> {
             bytes: self.bytes,
             common: self.common,
             header: self.header,
-            layout: self.layout,
             _state: PhantomData,
         }
     }
@@ -367,11 +354,12 @@ impl<S: ShredState> Shred<Data, S> {
     /// time.
     pub fn data(&self) -> Result<&[u8], InvalidDataSize> {
         let size = usize::from(self.header.size);
-        let body = self.layout.body();
-        if !(body.start..=body.end).contains(&size) {
-            return Err(InvalidDataSize { size });
-        }
-        Ok(&self.bytes[body.start..size])
+        let body = self.view().body;
+        let data_len = size
+            .checked_sub(Data::SIZE_OF_HEADERS)
+            .filter(|len| *len <= body.len())
+            .ok_or(InvalidDataSize { size })?;
+        Ok(&body[..data_len])
     }
 }
 
@@ -410,7 +398,6 @@ impl<K: ShredKind, S: ShredState> Clone for Shred<K, S> {
             bytes: self.bytes.clone(),
             common: self.common,
             header: self.header,
-            layout: self.layout,
             _state: PhantomData,
         }
     }
@@ -462,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_fixture_matches_expected_layout() {
+    fn parse_fixture_matches_expected_sections() {
         let (parsed, nonce) = parse(fixture::data_shred()).unwrap();
         assert_matches!(nonce, None);
         let ShredParsed::Data(shred) = parsed else {
@@ -484,22 +471,41 @@ mod tests {
             Some(fixture::FIXTURE_SLOT.saturating_sub(1))
         );
 
-        // Hand-computed from the README's formula: 1203 - 88 - 32 - 6 * 20 - 0.
-        let layout = shred.layout();
-        assert_eq!(layout.payload_len(), 1203);
-        assert_eq!(layout.capacity(), 963);
-        assert_eq!(
-            layout.headers(),
-            0..SIZE_OF_COMMON_HEADER + SIZE_OF_DATA_HEADER
-        );
-        assert_eq!(layout.body(), 88..1051);
-        assert_eq!(layout.chained_merkle_root(), 1051..1083);
-        assert_eq!(layout.merkle_proof(), 1083..1203);
-        assert_eq!(layout.retransmitter_signature(), None);
-        assert_eq!(layout.erasure_shard(), 64..1051);
-        assert_eq!(layout.merkle_leaf(), 64..1083);
-        assert_eq!(shred.merkle_proof().len(), 120);
+        // Section sizes, hand-computed from the README's formula: 1203 - 88 - 32 - 6 * 20 - 0.
+        let view = shred.view();
+        assert_eq!(SIZE_OF_COMMON_HEADER + SIZE_OF_DATA_HEADER, 88);
+        assert_eq!(view.body.len(), 963);
+        assert_eq!(view.merkle_proof.len(), 6);
+        assert_matches!(view.retransmitter_signature, None);
+        assert_eq!(view.erasure_shard.len(), 987);
+        assert_eq!(view.merkle_leaf.len(), 1019);
         assert_eq!(shred.erasure_shard_index(), Some(0));
+
+        // Each borrowed section points into the shred's own buffer rather than a copy of it.
+        let bytes = shred.bytes();
+        assert_eq!(bytes.as_ptr(), view.signature.as_ref().as_ptr());
+        assert_eq!(
+            bytes[88..1051].as_ptr(),
+            view.body.as_ptr(),
+            "the body follows the 88 bytes of headers"
+        );
+    }
+
+    #[test]
+    fn shred_type_tags_are_the_legacy_wire_bytes() {
+        for (shred_type, byte) in [
+            (ShredType::Data, 0b1010_0101),
+            (ShredType::Code, 0b0101_1010),
+        ] {
+            let bytes = wincode::serialize(&shred_type).unwrap();
+            assert_eq!(bytes, [byte]);
+            assert_eq!(
+                wincode::deserialize::<ShredType>(&bytes).unwrap(),
+                shred_type
+            );
+        }
+        // Every valid variant byte must be rejected as a shred type, and vice versa.
+        assert_matches!(wincode::deserialize::<ShredType>(&[0x96]), Err(_));
     }
 
     #[test]
@@ -523,16 +529,11 @@ mod tests {
     }
 
     #[test]
-    fn proof_shape_rejects_partial_entries_and_shallow_proofs() {
-        // A partial trailing entry cannot be a proof.
-        assert_matches!(
-            merkle::check_proof_shape(0, &[0u8; 21]),
-            Err(Reject::InvalidMerkleProof)
-        );
+    fn proof_shape_rejects_shallow_proofs() {
         // Two entries witness at most four leaves.
-        assert_matches!(merkle::check_proof_shape(3, &[0u8; 40]), Ok(()));
+        assert_matches!(merkle::check_proof_shape(3, &[[0u8; 20]; 2]), Ok(()));
         assert_matches!(
-            merkle::check_proof_shape(4, &[0u8; 40]),
+            merkle::check_proof_shape(4, &[[0u8; 20]; 2]),
             Err(Reject::InvalidMerkleProof)
         );
     }

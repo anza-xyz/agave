@@ -5,11 +5,13 @@
 use {
     solana_keypair::Keypair,
     solana_shred::{
-        AdmissionPolicy, Layout, ShredParsed, ShredVariant, fixture,
-        layout::{SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE},
+        AdmissionPolicy, Data, ShredParsed, ShredView, fixture,
+        layout::{
+            SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE,
+            SIZE_OF_SIGNATURE,
+        },
         parse,
     },
-    std::ops::Range,
 };
 
 fn main() {
@@ -31,11 +33,10 @@ fn main() {
         "   slot={} index={} version={} fec_set_index={}",
         common.slot, common.index, common.version, common.fec_set_index,
     );
-    print_layout(parsed.layout(), variant);
-
     let ShredParsed::Data(shred) = parsed else {
         panic!("the fixture is a data shred");
     };
+    print_sections(shred.view());
     println!(
         "   parent_offset={} flags={:#010b} reference_tick={} data={} bytes",
         shred.parent_offset(),
@@ -89,34 +90,45 @@ fn main() {
     }
 }
 
-fn print_layout(layout: Layout, variant: ShredVariant) {
-    let row = |name: &str, range: Range<usize>| {
-        println!(
-            "             {name:<24} {:>4}..{:<4} {:>4} bytes",
-            range.start,
-            range.end,
-            range.len()
-        );
+/// Prints the shred's sections in wire order, in the order `ShredView` reads them.
+///
+/// The offsets are not stored anywhere: they are the running total of the section lengths, which is
+/// exactly how the view's cursor arrives at them.
+fn print_sections(view: ShredView<'_, Data>) {
+    let mut offset = 0usize;
+    let mut row = |name: &str, len: usize| {
+        let end = offset.saturating_add(len);
+        println!("             {name:<28} {offset:>4}..{end:<4} {len:>4} bytes");
+        offset = end;
     };
-    println!("             capacity={} bytes", layout.capacity());
-    row("headers", layout.headers());
-    row("body", layout.body());
-    row("chained_merkle_root", layout.chained_merkle_root());
+    row("signature", view.signature.as_ref().len());
+    row(
+        "common header (past signature)",
+        SIZE_OF_COMMON_HEADER.saturating_sub(SIZE_OF_SIGNATURE),
+    );
+    row("data header", SIZE_OF_DATA_HEADER);
+    row("body", view.body.len());
+    row(
+        "chained_merkle_root",
+        view.chained_merkle_root.as_ref().len(),
+    );
     row(
         &format!(
             "merkle_proof ({} x {SIZE_OF_MERKLE_PROOF_ENTRY})",
-            variant.proof_size()
+            view.merkle_proof.len()
         ),
-        layout.merkle_proof(),
+        view.merkle_proof
+            .len()
+            .saturating_mul(SIZE_OF_MERKLE_PROOF_ENTRY),
     );
-    match layout.retransmitter_signature() {
-        Some(range) => row("retransmitter_signature", range),
-        None => println!("             {:<24} absent", "retransmitter_signature"),
+    match view.retransmitter_signature {
+        Some(signature) => row("retransmitter_signature", signature.as_ref().len()),
+        None => println!("             {:<28} absent", "retransmitter_signature"),
     }
-    row("erasure_shard", layout.erasure_shard());
-    row("merkle_leaf (hashed)", layout.merkle_leaf());
     println!(
-        "             payload_len={} (+{SIZE_OF_NONCE} if repaired)",
-        layout.payload_len(),
+        "             spanning sections: erasure_shard={} bytes, merkle_leaf={} bytes",
+        view.erasure_shard.len(),
+        view.merkle_leaf.len(),
     );
+    println!("             payload_len={offset} (+{SIZE_OF_NONCE} if repaired)");
 }

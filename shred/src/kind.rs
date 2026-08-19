@@ -9,11 +9,11 @@ use {
         error::Reject,
         header::{CodeHeader, CommonHeader, DataHeader},
         layout::{
-            self, Layout, SIZE_OF_CODE_HEADER, SIZE_OF_CODE_PAYLOAD, SIZE_OF_COMMON_HEADER,
+            self, SIZE_OF_CODE_HEADER, SIZE_OF_CODE_PAYLOAD, SIZE_OF_COMMON_HEADER,
             SIZE_OF_DATA_HEADER, SIZE_OF_DATA_PAYLOAD,
         },
         policy::{self, AdmissionPolicy, DATA_SHREDS_PER_FEC_BLOCK},
-        shred_variant::{ShredType, ShredVariant},
+        shred_variant::ShredType,
     },
     solana_clock::Slot,
     std::fmt::Debug,
@@ -37,20 +37,6 @@ pub trait ShredKind: sealed::Sealed + 'static {
     const SIZE_OF_HEADERS: usize;
     /// Where this kind's erasure-coded region starts.
     const ERASURE_SHARD_START: usize;
-
-    /// Resolves the byte layout of a shred of this kind carrying `variant`.
-    ///
-    /// Returns `None` when `variant.proof_size()` is too large for the payload to hold the
-    /// trailer.
-    fn layout(variant: ShredVariant) -> Option<Layout> {
-        Layout::try_new(
-            Self::SIZE_OF_PAYLOAD,
-            Self::SIZE_OF_HEADERS,
-            Self::ERASURE_SHARD_START,
-            variant.proof_size(),
-            variant.resigned(),
-        )
-    }
 
     /// Index of this shred's erasure shard within its FEC set, which is also the index of its leaf
     /// in the FEC set's Merkle tree. Data shards come first, then code shards.
