@@ -17,7 +17,7 @@ use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{Crds, Cursor, GossipRoute},
+        crds::{self, Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
@@ -239,7 +239,7 @@ impl ClusterInfo {
 
     pub(crate) fn apply_command(&self, command: GossipCommand) {
         match command {
-            GossipCommand::Publish(value) => self.insert_local_value(*value),
+            GossipCommand::Publish(value) => self.insert_local_value("publish", *value),
             GossipCommand::LowestSlot(slot) => self.apply_lowest_slot(slot),
             GossipCommand::EpochSlots(slots) => self.apply_epoch_slots(&slots),
             GossipCommand::RefreshContact(completed) => {
@@ -466,12 +466,6 @@ impl ClusterInfo {
             gossip_crds
                 .get_nodes()
                 .filter_map(|v| {
-                    // Don't save:
-                    // 1. Our ContactInfo. No point
-                    // 2. Entrypoint ContactInfo. This will avoid adopting the incorrect shred
-                    //    version on restart if the entrypoint shred version changes.  Also
-                    //    there's not much point in saving entrypoint ContactInfo since by
-                    //    definition that information is already available
                     let contact_info = v.value.contact_info().unwrap();
                     if contact_info.pubkey() != &self_pubkey
                         && contact_info
@@ -485,14 +479,11 @@ impl ClusterInfo {
                 })
                 .collect::<Vec<_>>()
         };
-
         if nodes.is_empty() {
             return;
         }
-
         let filename = self.contact_info_path.join("contact-info.bin");
         let tmp_filename = &filename.with_extension("tmp");
-
         match File::create(tmp_filename) {
             Ok(file) => {
                 let mut writer = BufWriter::new(file);
@@ -517,7 +508,6 @@ impl ClusterInfo {
                 return;
             }
         }
-
         match fs::rename(tmp_filename, &filename) {
             Ok(()) => {
                 info!(
@@ -566,20 +556,14 @@ impl ClusterInfo {
             nodes.len(),
             filename.display()
         );
-        let now = timestamp();
         let self_shred_version = self.my_shred_version();
-        let mut gossip_crds = self.gossip.crds.write().unwrap();
-        for node in nodes {
-            if node
-                .contact_info()
-                .is_none_or(|contact_info| contact_info.shred_version() != self_shred_version)
-            {
-                continue;
-            }
-            if let Err(err) = gossip_crds.insert(node, now, GossipRoute::LocalMessage) {
-                warn!("crds insert failed {err:?}");
-            }
-        }
+        self.insert_local_values(
+            "restore_contact_info",
+            nodes.into_iter().filter(|node| {
+                node.contact_info()
+                    .is_some_and(|contact_info| contact_info.shred_version() == self_shred_version)
+            }),
+        );
     }
 
     pub fn id(&self) -> Pubkey {
@@ -595,38 +579,41 @@ impl ClusterInfo {
         self.publish_contact_info();
     }
 
-    pub fn set_gossip_socket(&self, gossip_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.identity
-            .update_contact_info(|contact_info| contact_info.set_gossip(gossip_addr))?;
+    /// Mutates the advertised contact record and republishes it. Every
+    /// contact-info mutation must go through here so the CRDS table never
+    /// keeps a stale copy.
+    fn update_and_publish_contact_info(
+        &self,
+        update: impl FnOnce(&mut ContactInfo) -> Result<(), ContactInfoError>,
+    ) -> Result<(), ContactInfoError> {
+        self.identity.update_contact_info(update)?;
         self.publish_contact_info();
         Ok(())
+    }
+
+    pub fn set_gossip_socket(&self, gossip_addr: SocketAddr) -> Result<(), ContactInfoError> {
+        self.update_and_publish_contact_info(|contact_info| contact_info.set_gossip(gossip_addr))
     }
 
     pub fn set_tvu_socket(&self, tvu_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.identity.update_contact_info(|contact_info| {
+        self.update_and_publish_contact_info(|contact_info| {
             contact_info.set_tvu(contact_info::Protocol::UDP, tvu_addr)
-        })?;
-        self.publish_contact_info();
-        Ok(())
+        })
     }
 
     pub fn set_tpu_quic(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.identity.update_contact_info(|contact_info| {
+        self.update_and_publish_contact_info(|contact_info| {
             contact_info.set_tpu(contact_info::Protocol::QUIC, tpu_addr)
-        })?;
-        self.publish_contact_info();
-        Ok(())
+        })
     }
 
     pub fn set_tpu_forwards_quic(
         &self,
         tpu_forwards_addr: SocketAddr,
     ) -> Result<(), ContactInfoError> {
-        self.identity.update_contact_info(|contact_info| {
+        self.update_and_publish_contact_info(|contact_info| {
             contact_info.set_tpu_forwards(contact_info::Protocol::QUIC, tpu_forwards_addr)
-        })?;
-        self.publish_contact_info();
-        Ok(())
+        })
     }
 
     pub fn set_tpu_vote(
@@ -634,11 +621,9 @@ impl ClusterInfo {
         protocol: contact_info::Protocol,
         tpu_vote_addr: SocketAddr,
     ) -> Result<(), ContactInfoError> {
-        self.identity.update_contact_info(|contact_info| {
+        self.update_and_publish_contact_info(|contact_info| {
             contact_info.set_tpu_vote(protocol, tpu_vote_addr)
-        })?;
-        self.publish_contact_info();
-        Ok(())
+        })
     }
 
     pub fn lookup_contact_info<R>(
@@ -724,15 +709,7 @@ impl ClusterInfo {
             format_string!(),
             "RPC Address", "", "Age(ms)", "Node identifier", "Version", "RPC", "PubSub", "ShredVer"
         );
-        let header_bottom: String = output
-            .chars()
-            .map(|s| match s {
-                '|' => '+',
-                '\n' => '\n',
-                _ => '-',
-            })
-            .collect();
-        output.push_str(&header_bottom);
+        push_header_rule(&mut output);
         let now = timestamp();
         let my_pubkey = self.id();
         let mut num_nodes = 0usize;
@@ -799,15 +776,7 @@ impl ClusterInfo {
             "Alpeng",
             "ShredVer"
         );
-        let header_bottom: String = output
-            .chars()
-            .map(|s| match s {
-                '|' => '+',
-                '\n' => '\n',
-                _ => '-',
-            })
-            .collect();
-        output.push_str(&header_bottom);
+        push_header_rule(&mut output);
 
         let now = timestamp();
         let mut total_spy_nodes = 0usize;
@@ -876,21 +845,16 @@ impl ClusterInfo {
                 CrdsData::LowestSlot(0, LowestSlot::new(self_pubkey, min, now)),
                 &self_keypair,
             );
-            self.insert_local_value(entry);
+            self.insert_local_value("lowest_slot", entry);
         }
     }
 
-    fn insert_local_value(&self, value: CrdsValue) {
-        let now = timestamp();
-        if let Err(err) =
-            self.gossip
-                .crds
-                .write()
-                .unwrap()
-                .insert(value, now, GossipRoute::LocalMessage)
-        {
-            error!("failed to publish local CRDS value: {err:?}");
-        }
+    fn insert_local_value(&self, what: &str, value: CrdsValue) {
+        self.insert_local_values(what, [value]);
+    }
+
+    fn insert_local_values(&self, what: &str, values: impl IntoIterator<Item = CrdsValue>) {
+        crds::insert_local_values(&mut self.gossip.crds.write().unwrap(), what, values);
     }
 
     pub fn push_epoch_slots(&self, update: &[Slot]) {
@@ -954,13 +918,7 @@ impl ClusterInfo {
             epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
             reset = true;
         }
-        let mut gossip_crds = self.gossip.crds.write().unwrap();
-        let now = timestamp();
-        for entry in entries {
-            if let Err(err) = gossip_crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_epoch_slots failed: {err:?}");
-            }
-        }
+        self.insert_local_values("push_epoch_slots", entries);
     }
 
     fn time_gossip_read_lock<'a>(
@@ -1004,10 +962,7 @@ impl ClusterInfo {
         let vote = Vote::new(self_pubkey, vote, now).unwrap();
         let vote = CrdsData::Vote(vote_index, vote);
         let vote = CrdsValue::new(vote, self_keypair);
-        let mut gossip_crds = self.gossip.crds.write().unwrap();
-        if let Err(err) = gossip_crds.insert(vote, now, GossipRoute::LocalMessage) {
-            error!("push_vote failed: {err:?}");
-        }
+        self.insert_local_value("push_vote", vote);
     }
 
     /// If there are less than `MAX_LOCKOUT_HISTORY` votes present, returns the next index
@@ -1352,14 +1307,8 @@ impl ClusterInfo {
     }
 
     pub(crate) fn refresh_my_gossip_contact_info(&self) {
-        let now = timestamp();
-        let node = self.identity.refreshed_crds_value(now);
-        if let Err(err) = {
-            let mut gossip_crds = self.gossip.crds.write().unwrap();
-            gossip_crds.insert(node, now, GossipRoute::LocalMessage)
-        } {
-            error!("refresh_my_gossip_contact_info failed: {err:?}");
-        }
+        let node = self.identity.refreshed_crds_value(timestamp());
+        self.insert_local_value("refresh_my_gossip_contact_info", node);
     }
 
     // If the network entrypoint hasn't been discovered yet, add it to the crds table
@@ -2435,6 +2384,20 @@ pub fn push_messages_to_peer_for_tests(
     let sock = bind_to_localhost_unique().expect("should bind");
     packet::send_to(&packet_batch, &sock, socket_addr_space)?;
     Ok(())
+}
+
+/// Appends a `---+---` rule matching the column layout of the header already
+/// in `output`.
+fn push_header_rule(output: &mut String) {
+    let rule: String = output
+        .chars()
+        .map(|c| match c {
+            '|' => '+',
+            '\n' => '\n',
+            _ => '-',
+        })
+        .collect();
+    output.push_str(&rule);
 }
 
 // Checks shred-version of a pull-request caller and returns false if the

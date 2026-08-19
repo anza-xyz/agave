@@ -55,6 +55,21 @@ use {
     },
 };
 
+/// Inserts locally-originated values, logging the ones the table rejects.
+/// `what` names the caller for the log line.
+pub(crate) fn insert_local_values(
+    crds: &mut Crds,
+    what: &str,
+    values: impl IntoIterator<Item = CrdsValue>,
+) {
+    let now = solana_time_utils::timestamp();
+    for value in values {
+        if let Err(err) = crds.insert(value, now, GossipRoute::LocalMessage) {
+            error!("{what} failed to insert local CRDS value: {err:?}");
+        }
+    }
+}
+
 pub(crate) const CRDS_SHARDS_BITS: u32 = 12;
 // Number of vote slots to track in an lru-cache for metrics.
 const VOTE_SLOTS_METRICS_CAP: usize = 100;

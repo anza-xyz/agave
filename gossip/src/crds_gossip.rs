@@ -7,7 +7,7 @@
 use {
     crate::{
         cluster_info_metrics::GossipStats,
-        crds::{Crds, GossipRoute},
+        crds::{self, Crds},
         crds_data::CrdsData,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -26,7 +26,6 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_time_utils::timestamp,
     std::{
         cmp,
         collections::{HashMap, HashSet},
@@ -131,12 +130,7 @@ impl CrdsGossip {
             let data = CrdsData::DuplicateShred(index, chunk);
             CrdsValue::new(data, keypair)
         });
-        let now = timestamp();
-        for entry in entries {
-            if let Err(err) = crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_duplicate_shred failed: {err:?}");
-            }
-        }
+        crds::insert_local_values(&mut crds, "push_duplicate_shred", entries);
     }
 
     /// Add the `from` to the peer's filter of nodes.
@@ -379,6 +373,7 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 mod test {
     use {
         super::*,
+        crate::crds::GossipRoute,
         crate::{
             cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
             contact_info::ContactInfo,
