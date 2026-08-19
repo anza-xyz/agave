@@ -501,12 +501,14 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        txn_indexes: Option<&'a [Option<usize>]>,
         ancestors: &Ancestors,
     ) {
         self._store_accounts(
             accounts,
             bank_id,
             transactions,
+            txn_indexes,
             UpdateIndexThreadSelection::Inline,
             ancestors,
         );
@@ -521,12 +523,14 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        txn_indexes: Option<&'a [Option<usize>]>,
         ancestors: &Ancestors,
     ) {
         self._store_accounts(
             accounts,
             bank_id,
             transactions,
+            txn_indexes,
             UpdateIndexThreadSelection::PoolWithThreshold,
             ancestors,
         );
@@ -542,11 +546,22 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        txn_indexes: Option<&'a [Option<usize>]>,
         update_index_thread_selection: UpdateIndexThreadSelection,
         ancestors: &Ancestors,
     ) {
         let accounts_db = &self.accounts_db;
         if accounts_db.has_accounts_update_notifier() {
+            // One entry per account, as produced by `collect_accounts_to_store`.
+            // The lookup below falls open to `None` instead of panicking a store
+            // over what is only a geyser hint, which would also quietly mislabel
+            // a caller that supplied one entry per *transaction* — so assert the
+            // shape here, where tests can catch it.
+            debug_assert!(
+                txn_indexes.is_none_or(|indexes| indexes.len() == accounts.len()),
+                "txn_indexes must have one entry per account being stored",
+            );
+
             let mut current_write_version = accounts_db
                 .write_version
                 .fetch_add(accounts.len() as u64, Ordering::AcqRel);
@@ -554,6 +569,8 @@ impl Accounts {
             for index in 0..accounts.len() {
                 let transaction = transactions
                     .map(|txs| *txs.get(index).expect("txs must be present if provided"));
+                let txn_index =
+                    txn_indexes.and_then(|indexes| indexes.get(index).copied().flatten());
                 accounts.account_for_geyser(index, |pubkey, account_shared_data| {
                     accounts_db.notify_account_at_accounts_update(
                         slot,
@@ -562,6 +579,7 @@ impl Accounts {
                         &transaction,
                         pubkey,
                         current_write_version,
+                        txn_index,
                     );
                 });
                 current_write_version = current_write_version.saturating_add(1);

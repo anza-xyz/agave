@@ -15,6 +15,7 @@ impl AccountsDb {
         txn: &Option<&SanitizedTransaction>,
         pubkey: &Pubkey,
         write_version: u64,
+        txn_index: Option<usize>,
     ) {
         if let Some(accounts_update_notifier) = &self.accounts_update_notifier {
             accounts_update_notifier.notify_account_update(
@@ -24,6 +25,7 @@ impl AccountsDb {
                 txn,
                 pubkey,
                 write_version,
+                txn_index,
             );
         }
     }
@@ -58,6 +60,10 @@ mod tests {
     #[derive(Debug, Default)]
     struct GeyserTestPlugin {
         pub accounts_notified: DashMap<Pubkey, Vec<(Slot, u64, AccountSharedData)>>,
+        /// `txn_index` of each runtime notification, keyed by pubkey and in
+        /// notification order. Kept separate from `accounts_notified` so the
+        /// existing assertions on that map are unaffected.
+        pub txn_indexes_notified: DashMap<Pubkey, Vec<Option<usize>>>,
         pub is_startup_done: AtomicBool,
     }
 
@@ -75,12 +81,17 @@ mod tests {
             _txn: &Option<&SanitizedTransaction>,
             pubkey: &Pubkey,
             write_version: u64,
+            txn_index: Option<usize>,
         ) {
             self.accounts_notified.entry(*pubkey).or_default().push((
                 slot,
                 write_version,
                 account.clone(),
             ));
+            self.txn_indexes_notified
+                .entry(*pubkey)
+                .or_default()
+                .push(txn_index);
         }
 
         /// Notified when the AccountsDb is initialized at start when restored
@@ -173,6 +184,74 @@ mod tests {
         assert!(notifier.is_startup_done.load(Ordering::Relaxed));
     }
 
+    /// The per-account `txn_indexes` slice must be reported positionally, and an
+    /// entry may be `None` for an account whose index isn't known.
+    ///
+    /// This drives the store path directly to isolate that lookup, so it passes
+    /// indexes without the matching transactions — a combination the runtime
+    /// never produces, since `Bank::commit_transactions` derives both from the
+    /// same "is geyser active" condition. The pairing is covered end-to-end by
+    /// `bank::tests::test_commit_transactions_notifies_geyser_txn_index`.
+    #[test]
+    fn test_notify_account_at_accounts_update_txn_indexes() {
+        let notifier = Arc::new(GeyserTestPlugin::default());
+        let mut accounts_db = AccountsDb::default_for_tests();
+        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        let accounts = Accounts::new(Arc::new(accounts_db));
+
+        let slot = 0;
+        let bank_id = 100;
+        let ancestors = Ancestors::from(vec![slot]);
+        let owner = *AccountSharedData::default().owner();
+
+        // Three accounts stored together, each labelled with a different index.
+        let key1 = solana_pubkey::new_rand();
+        let key2 = solana_pubkey::new_rand();
+        let key3 = solana_pubkey::new_rand();
+        let account1 = AccountSharedData::new(1, 1, &owner);
+        let account2 = AccountSharedData::new(2, 1, &owner);
+        let account3 = AccountSharedData::new(3, 1, &owner);
+        accounts.store_accounts_seq(
+            (
+                slot,
+                &[(&key1, &account1), (&key2, &account2), (&key3, &account3)][..],
+            ),
+            bank_id,
+            None,
+            Some(&[Some(4), None, Some(9)]),
+            &ancestors,
+        );
+
+        assert_eq!(
+            *notifier.txn_indexes_notified.get(&key1).unwrap(),
+            vec![Some(4)]
+        );
+        assert_eq!(
+            *notifier.txn_indexes_notified.get(&key2).unwrap(),
+            vec![None]
+        );
+        assert_eq!(
+            *notifier.txn_indexes_notified.get(&key3).unwrap(),
+            vec![Some(9)]
+        );
+
+        // Absent indexes report `None` for every account.
+        let key4 = solana_pubkey::new_rand();
+        let account4 = AccountSharedData::new(4, 1, &owner);
+        accounts.store_accounts_seq(
+            (slot, &[(&key4, &account4)][..]),
+            bank_id,
+            None,
+            None,
+            &ancestors,
+        );
+
+        assert_eq!(
+            *notifier.txn_indexes_notified.get(&key4).unwrap(),
+            vec![None]
+        );
+    }
+
     #[test]
     fn test_notify_account_at_accounts_update() {
         let notifier = Arc::new(GeyserTestPlugin::default());
@@ -194,6 +273,7 @@ mod tests {
             (slot0, &[(&key1, &account1)][..]),
             bank_id0,
             None,
+            None,
             &ancestors,
         );
 
@@ -204,6 +284,7 @@ mod tests {
         accounts.store_accounts_seq(
             (slot0, &[(&key2, &account2)][..]),
             bank_id0,
+            None,
             None,
             &ancestors,
         );
@@ -217,6 +298,7 @@ mod tests {
             (slot1, &[(&key1, &account1)][..]),
             bank_id1,
             None,
+            None,
             &ancestors,
         );
 
@@ -227,6 +309,7 @@ mod tests {
         accounts.store_accounts_seq(
             (slot1, &[(&key3, &account3)][..]),
             bank_id1,
+            None,
             None,
             &ancestors,
         );
@@ -285,11 +368,13 @@ mod tests {
             (slot_open, [(&address, &account_open)].as_slice()),
             106,
             None,
+            None,
             &Ancestors::from(vec![slot_open]),
         );
         accounts.store_accounts_seq(
             (slot_close, [(&address, &account_close)].as_slice()),
             107,
+            None,
             None,
             &Ancestors::from(vec![slot_open, slot_close]),
         );
