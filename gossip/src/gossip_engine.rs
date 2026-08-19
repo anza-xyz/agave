@@ -91,130 +91,158 @@ enum EngineEvent {
     Disconnected,
 }
 
+/// State the engine owns for the lifetime of the thread, kept out of
+/// [`GossipEngine`] so the caller only supplies dependencies.
+struct LoopState {
+    recycler: PacketBatchRecycler,
+    deadlines: Deadlines,
+    packet_buf: Vec<Vec<ValidatedGossipMessage>>,
+    entrypoints_processed: bool,
+}
+
+impl LoopState {
+    fn new() -> Self {
+        Self {
+            recycler: PacketBatchRecycler::default(),
+            deadlines: Deadlines::new(),
+            packet_buf: Vec::with_capacity(MAX_INGRESS_BATCHES_PER_TURN),
+            entrypoints_processed: false,
+        }
+    }
+}
+
 impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
     pub(crate) fn spawn(self) -> JoinHandle<()> {
         Builder::new()
             .name("solGossipEngine".to_string())
-            .spawn(move || {
-                let Self {
-                    cluster_info,
-                    mut epoch_specs,
-                    workers,
-                    context,
-                    command_endpoint,
-                    commands,
-                    inbound,
-                    outbound,
-                    validators,
-                    check_duplicate_instance,
-                    exit,
-                } = self;
-                let _writer_lease = cluster_info.acquire_writer_lease();
-                let recycler = PacketBatchRecycler::default();
-                let mut deadlines = Deadlines::new();
-                let mut packet_buf = Vec::with_capacity(MAX_INGRESS_BATCHES_PER_TURN);
-                let mut entrypoints_processed = false;
-
-                while !exit.load(Ordering::Relaxed) {
-                    let timeout = deadlines
-                        .tick
-                        .deadline()
-                        .saturating_duration_since(Instant::now());
-                    // Prioritize local CRDS mutations.
-                    let event = crossbeam_channel::select_biased! {
-                        recv(commands) -> command => {
-                            command.map_or(EngineEvent::Disconnected, EngineEvent::Command)
-                        },
-                        recv(inbound) -> packets => {
-                            packets.map_or(EngineEvent::Disconnected, EngineEvent::Packets)
-                        },
-                        default(timeout) => EngineEvent::Tick,
-                    };
-                    match event {
-                        EngineEvent::Command(command) => {
-                            cluster_info.apply_command(command);
-                            for command in commands.try_iter().take(MAX_COMMANDS_PER_TURN - 1) {
-                                cluster_info.apply_command(command);
-                            }
-                        }
-                        EngineEvent::Packets(packets) => {
-                            buffer_ingress(packets, &inbound, &mut packet_buf);
-                            let context_snapshot = context.load();
-                            let _timer =
-                                ScopedTimer::from(&cluster_info.stats.gossip_listen_loop_time);
-                            let result = cluster_info.process_packets(
-                                &mut packet_buf,
-                                &workers,
-                                &recycler,
-                                &outbound,
-                                &context_snapshot.stakes,
-                                check_duplicate_instance,
-                            );
-                            packet_buf.clear();
-                            cluster_info
-                                .stats
-                                .gossip_listen_loop_iterations_since_last_report
-                                .add_relaxed(1);
-                            if let Err(err) = result {
-                                match err {
-                                    GossipError::DuplicateNodeInstance => {
-                                        error!(
-                                            "duplicate running instances of the same validator \
-                                             node: {}",
-                                            cluster_info.id()
-                                        );
-                                        exit.store(true, Ordering::Relaxed);
-                                        std::process::exit(1);
-                                    }
-                                    _ => error!("gossip engine failed to process messages: {err}"),
-                                }
-                            }
-                        }
-                        EngineEvent::Tick => {}
-                        EngineEvent::Disconnected => break,
-                    }
-
-                    let now = Instant::now();
-                    if !deadlines.tick.claim(now) {
-                        continue;
-                    }
-
-                    let stakes = epoch_specs
-                        .as_mut()
-                        .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
-                        .unwrap_or_default();
-                    context.update(Arc::clone(&stakes), cluster_info.is_full_alpenglow_epoch());
-
-                    let generate_pull = deadlines.pull.claim(now);
-                    let _ = cluster_info.run_gossip(
-                        &workers,
-                        validators.as_ref(),
-                        &recycler,
-                        &stakes,
-                        &outbound,
-                        generate_pull,
-                    );
-                    cluster_info.handle_purge(&workers, &stakes);
-                    if !entrypoints_processed {
-                        entrypoints_processed = cluster_info.process_entrypoints();
-                    }
-
-                    if deadlines.push_refresh.claim(now) {
-                        cluster_info.refresh_my_gossip_contact_info();
-                        cluster_info.refresh_push_active_set(
-                            &recycler,
-                            &stakes,
-                            validators.as_ref(),
-                            &outbound,
-                        );
-                    }
-                }
-                cluster_info.detach_command_endpoint(&command_endpoint);
-                drop(command_endpoint);
-                for command in commands {
-                    cluster_info.apply_command(command);
-                }
-            })
+            .spawn(move || self.run())
             .unwrap()
+    }
+
+    fn run(mut self) {
+        // Lease a cloned handle: `self` is moved into `drain_commands` while
+        // the lease is still held.
+        let cluster_info = Arc::clone(&self.cluster_info);
+        let _writer_lease = cluster_info.acquire_writer_lease();
+        let mut state = LoopState::new();
+        while !self.exit.load(Ordering::Relaxed) {
+            match self.next_event(state.deadlines.tick.deadline()) {
+                EngineEvent::Command(command) => self.apply_commands(command),
+                EngineEvent::Packets(packets) => self.process_ingress(packets, &mut state),
+                EngineEvent::Tick => (),
+                EngineEvent::Disconnected => break,
+            }
+            let now = Instant::now();
+            if state.deadlines.tick.claim(now) {
+                self.run_gossip_round(now, &mut state);
+            }
+        }
+        self.drain_commands();
+    }
+
+    /// Blocks for a command, a batch of validated packets, or the tick deadline.
+    fn next_event(&self, tick_deadline: Instant) -> EngineEvent {
+        let timeout = tick_deadline.saturating_duration_since(Instant::now());
+        let commands = &self.commands;
+        let inbound = &self.inbound;
+        // Prioritize local CRDS mutations.
+        crossbeam_channel::select_biased! {
+            recv(commands) -> command => {
+                command.map_or(EngineEvent::Disconnected, EngineEvent::Command)
+            },
+            recv(inbound) -> packets => {
+                packets.map_or(EngineEvent::Disconnected, EngineEvent::Packets)
+            },
+            default(timeout) => EngineEvent::Tick,
+        }
+    }
+
+    /// Applies `first` and whatever else is already queued behind it.
+    fn apply_commands(&self, first: GossipCommand) {
+        self.cluster_info.apply_command(first);
+        for command in self.commands.try_iter().take(MAX_COMMANDS_PER_TURN - 1) {
+            self.cluster_info.apply_command(command);
+        }
+    }
+
+    /// Merges `packets` with whatever else has arrived and processes the batch.
+    fn process_ingress(&self, packets: Vec<ValidatedGossipMessage>, state: &mut LoopState) {
+        buffer_ingress(packets, &self.inbound, &mut state.packet_buf);
+        let context_snapshot = self.context.load();
+        let _timer = ScopedTimer::from(&self.cluster_info.stats.gossip_listen_loop_time);
+        let result = self.cluster_info.process_packets(
+            &mut state.packet_buf,
+            &self.workers,
+            &state.recycler,
+            &self.outbound,
+            &context_snapshot.stakes,
+            self.check_duplicate_instance,
+        );
+        state.packet_buf.clear();
+        self.cluster_info
+            .stats
+            .gossip_listen_loop_iterations_since_last_report
+            .add_relaxed(1);
+        match result {
+            Ok(()) => (),
+            Err(GossipError::DuplicateNodeInstance) => {
+                error!(
+                    "duplicate running instances of the same validator node: {}",
+                    self.cluster_info.id()
+                );
+                self.exit.store(true, Ordering::Relaxed);
+                std::process::exit(1);
+            }
+            Err(err) => error!("gossip engine failed to process messages: {err}"),
+        }
+    }
+
+    /// One gossip round: refresh the policy snapshot, push and pull, purge, and
+    /// periodically refresh the active set.
+    fn run_gossip_round(&mut self, now: Instant, state: &mut LoopState) {
+        let stakes = self
+            .epoch_specs
+            .as_mut()
+            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
+            .unwrap_or_default();
+        self.context.update(
+            Arc::clone(&stakes),
+            self.cluster_info.is_full_alpenglow_epoch(),
+        );
+
+        let generate_pull = state.deadlines.pull.claim(now);
+        let _ = self.cluster_info.run_gossip(
+            &self.workers,
+            self.validators.as_ref(),
+            &state.recycler,
+            &stakes,
+            &self.outbound,
+            generate_pull,
+        );
+        self.cluster_info.handle_purge(&self.workers, &stakes);
+        if !state.entrypoints_processed {
+            state.entrypoints_processed = self.cluster_info.process_entrypoints();
+        }
+
+        if state.deadlines.push_refresh.claim(now) {
+            self.cluster_info.refresh_my_gossip_contact_info();
+            self.cluster_info.refresh_push_active_set(
+                &state.recycler,
+                &stakes,
+                self.validators.as_ref(),
+                &self.outbound,
+            );
+        }
+    }
+
+    /// Detaches the endpoint and applies whatever is still queued, so callers
+    /// racing shutdown are never left waiting on a reply.
+    fn drain_commands(self) {
+        self.cluster_info
+            .detach_command_endpoint(&self.command_endpoint);
+        drop(self.command_endpoint);
+        for command in self.commands {
+            self.cluster_info.apply_command(command);
+        }
     }
 }
