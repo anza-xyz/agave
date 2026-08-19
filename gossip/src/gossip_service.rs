@@ -134,7 +134,7 @@ impl GossipService {
 
                         submit_gossip_stats(
                             &cluster_info.stats,
-                            &cluster_info.gossip,
+                            cluster_info.gossip(),
                             &context.stakes,
                         );
                         gossip_receiver_stats.report();

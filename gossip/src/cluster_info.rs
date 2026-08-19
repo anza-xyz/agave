@@ -172,7 +172,7 @@ pub enum ClusterInfoError {
 
 pub struct ClusterInfo {
     /// The network
-    pub gossip: CrdsGossip,
+    gossip: CrdsGossip,
     identity: GossipIdentity,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
@@ -194,6 +194,10 @@ pub struct ClusterInfo {
 }
 
 impl ClusterInfo {
+    pub(crate) fn gossip(&self) -> &CrdsGossip {
+        &self.gossip
+    }
+
     pub fn new(
         contact_info: ContactInfo,
         keypair: Arc<Keypair>,
@@ -304,6 +308,46 @@ impl ClusterInfo {
         } {
             error!("ClusterInfo.insert_info: {err:?}");
         }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn insert_crds_value_for_tests(
+        &self,
+        value: CrdsValue,
+    ) -> Result<(), crate::crds::CrdsError> {
+        self.gossip
+            .crds
+            .write()
+            .unwrap()
+            .insert(value, timestamp(), GossipRoute::LocalMessage)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn lowest_slot_for_tests(&self, pubkey: Pubkey) -> Option<LowestSlot> {
+        self.gossip
+            .crds
+            .read()
+            .unwrap()
+            .get::<&LowestSlot>(pubkey)
+            .cloned()
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn gossip_counters_for_tests(&self) -> (usize, usize, usize, usize) {
+        (
+            self.gossip.push.num_old.load(Ordering::Relaxed),
+            self.gossip.push.num_total.load(Ordering::Relaxed),
+            self.gossip.push.num_pushes.load(Ordering::Relaxed),
+            self.gossip.pull.num_pulls.load(Ordering::Relaxed),
+        )
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn reset_gossip_counters_for_tests(&self) {
+        self.gossip.push.num_old.store(0, Ordering::Relaxed);
+        self.gossip.push.num_total.store(0, Ordering::Relaxed);
+        self.gossip.push.num_pushes.store(0, Ordering::Relaxed);
+        self.gossip.pull.num_pulls.store(0, Ordering::Relaxed);
     }
 
     pub fn set_entrypoint(&self, entrypoint: ContactInfo) {
