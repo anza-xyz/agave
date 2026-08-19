@@ -183,7 +183,6 @@ pub struct ClusterInfo {
     ping_cache: Mutex<PingCache>,
     pull_request_budget: KeyedRateLimiter<IpAddr>,
     pub(crate) stats: GossipStats,
-    local_message_pending_push_queue: Mutex<Vec<CrdsValue>>,
     contact_debug_interval: u64, // milliseconds, 0 = disabled
     contact_save_interval: u64,  // milliseconds, 0 = disabled
     contact_info_path: PathBuf,
@@ -241,7 +240,6 @@ impl ClusterInfo {
                 let _ = completed.send(());
             }
             GossipCommand::Flush(completed) => {
-                self.flush_push_queue_direct();
                 let _ = completed.send(());
             }
         }
@@ -273,7 +271,6 @@ impl ClusterInfo {
                 GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT,
             ),
             stats: GossipStats::default(),
-            local_message_pending_push_queue: Mutex::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             contact_info_path: PathBuf::default(),
             contact_save_interval: 0, // disabled
@@ -1007,18 +1004,12 @@ impl ClusterInfo {
                     let GossipCommand::Publish(message) = err.0 else {
                         unreachable!()
                     };
-                    self.local_message_pending_push_queue
-                        .lock()
-                        .unwrap()
-                        .push(message);
+                    self.insert_local_value(message);
                     return;
                 }
             }
         }
-        self.local_message_pending_push_queue
-            .lock()
-            .unwrap()
-            .push(message);
+        self.insert_local_value(message);
     }
 
     pub fn push_snapshot_hashes(
@@ -1571,19 +1562,6 @@ impl ClusterInfo {
                 return;
             }
         }
-        self.flush_push_queue_direct();
-    }
-
-    fn flush_push_queue_direct(&self) {
-        let entries: Vec<CrdsValue> =
-            std::mem::take(&mut *self.local_message_pending_push_queue.lock().unwrap());
-        if !entries.is_empty() {
-            let mut gossip_crds = self.gossip.crds.write().unwrap();
-            let now = timestamp();
-            for entry in entries {
-                let _ = gossip_crds.insert(entry, now, GossipRoute::LocalMessage);
-            }
-        }
     }
     fn new_push_requests(
         &self,
@@ -1593,7 +1571,6 @@ impl ClusterInfo {
         let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let (entries, push_messages, num_pushes) = {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
-            self.flush_push_queue_direct();
             self.gossip
                 .new_push_messages(&self_id, timestamp(), stakes, |value| {
                     should_retain_crds_value(
