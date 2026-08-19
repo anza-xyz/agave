@@ -16,6 +16,7 @@ use {
         shred::{
             self,
             layout::{get_shred, resign_packet},
+            tracer::{self as shred_tracer, ShredTraceStage},
             wire::is_retransmitter_signed_variant,
         },
         sigverify_shreds::{LruCache, SlotPubkeys, verify_shreds},
@@ -189,11 +190,14 @@ fn run_shred_sigverify<const K: usize>(
             .par_iter_mut()
             .flatten()
             .filter(|packet| {
-                !packet.meta().discard()
-                    && shred::wire::get_shred(packet.as_ref())
-                        .map(|shred| deduper.dedup(shred))
-                        .unwrap_or(true)
-                    && !packet.meta().repair()
+                if packet.meta().discard() {
+                    return false;
+                }
+                let Some(shred) = shred::wire::get_shred(packet.as_ref()) else {
+                    return !packet.meta().repair();
+                };
+                shred_tracer::maybe_trace(ShredTraceStage::PreSigverify, shred);
+                deduper.dedup(shred) && !packet.meta().repair()
             })
             .map(|mut packet| packet.meta_mut().set_discard(true))
             .count()
@@ -242,6 +246,11 @@ fn run_shred_sigverify<const K: usize>(
         .iter()
         .flat_map(|batch| batch.iter())
         .filter(|packet| !packet.meta().discard())
+        .inspect(|packet| {
+            if let Some(shred) = get_shred(*packet) {
+                shred_tracer::maybe_emit_verified_trace(shred, None);
+            }
+        })
         .filter_map(|packet| {
             extract_shred_and_location(packet, repair_nonce_location_lookup, stats)
         })
