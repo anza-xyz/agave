@@ -230,6 +230,27 @@ fn should_fallback_to_tar_unpack<R: io::Read>(entry: &tar::Entry<'_, R>) -> bool
     ) || entry.header().as_ustar().is_none() && entry.path_bytes().ends_with(b"/")
 }
 
+/// Open a directory handle for reading.
+///
+/// On Windows, directories must be opened with `FILE_FLAG_BACKUP_SEMANTICS`
+/// (0x02000000), otherwise `File::open` fails with `ERROR_ACCESS_DENIED`
+/// (os error 5). The flag is a no-op for regular files and does not grant any
+/// additional access rights beyond what the caller already has.
+#[cfg(windows)]
+fn open_dir_for_read(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_dir_for_read(path: &Path) -> io::Result<File> {
+    File::open(path)
+}
+
 // return Err on file system error
 // return Some((path, open_dir)) if path is good
 // return None if we should skip this file
@@ -282,7 +303,7 @@ fn sanitize_path_and_open_dir(
             // ignore return value here
             validate_inside_dst(dst, parent)?;
 
-            let opened_dir = Arc::new(File::open(parent)?);
+            let opened_dir = Arc::new(open_dir_for_read(parent)?);
             open_dirs.insert(insert_at, (parent.to_path_buf(), opened_dir.clone()));
             opened_dir
         }
@@ -1012,5 +1033,29 @@ mod tests {
             )
         });
         assert_matches!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_open_dir_for_read_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = open_dir_for_read(temp_dir.path()).unwrap();
+        // The handle must be usable; drop should succeed without panicking.
+        assert!(file.metadata().unwrap().is_dir());
+    }
+
+    #[test]
+    fn test_open_dir_for_read_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("file");
+        std::fs::write(&file_path, b"data").unwrap();
+        let file = open_dir_for_read(&file_path).unwrap();
+        assert!(file.metadata().unwrap().is_file());
+    }
+
+    #[test]
+    fn test_open_dir_for_read_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let missing = temp_dir.path().join("missing");
+        assert!(open_dir_for_read(&missing).is_err());
     }
 }
