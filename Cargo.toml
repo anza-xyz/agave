@@ -325,7 +325,7 @@ rpassword = "7.5"
 rts-alloc = { version = "4.0.0" }
 rusb = "0.9"
 rustls = { version = "0.23.43", features = ["std"], default-features = false }
-rustls-webpki = { version = "0.103.13", default-features = false, features = ["std"] }
+rustls-webpki = { version = "0.103.14", default-features = false, features = ["std"] }
 scopeguard = "1.2.0"
 semver = "1.0.28"
 seqlock = "0.2.0"
