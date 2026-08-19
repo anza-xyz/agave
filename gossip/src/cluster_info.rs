@@ -673,7 +673,7 @@ impl ClusterInfo {
 
     fn publish_contact_info(&self) {
         if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(0);
+            let (completed, receiver) = bounded(1);
             if sender
                 .send(GossipCommand::RefreshContact(completed))
                 .is_ok()
@@ -919,7 +919,7 @@ impl ClusterInfo {
 
     pub fn push_epoch_slots(&self, update: &[Slot]) {
         if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(0);
+            let (completed, receiver) = bounded(1);
             let command = GossipCommand::EpochSlots {
                 slots: update.to_vec(),
                 completed,
@@ -1105,7 +1105,7 @@ impl ClusterInfo {
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         let slot = tower.last().copied().expect("Cannot push empty vote");
         let result = if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(0);
+            let (completed, receiver) = bounded(1);
             let command = GossipCommand::Vote {
                 slot,
                 transaction: vote,
@@ -1158,7 +1158,7 @@ impl ClusterInfo {
 
     pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
         if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(0);
+            let (completed, receiver) = bounded(1);
             let command = GossipCommand::RefreshVote {
                 transaction: refresh_vote,
                 slot: refresh_vote_slot,
@@ -1290,7 +1290,7 @@ impl ClusterInfo {
         )?
         .collect();
         if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(0);
+            let (completed, receiver) = bounded(1);
             let command = GossipCommand::DuplicateShred {
                 keypair,
                 chunks,
@@ -1566,7 +1566,7 @@ impl ClusterInfo {
 
     pub fn flush_push_queue(&self) {
         if let Some(sender) = self.command_sender() {
-            let (completed, receiver) = bounded(0);
+            let (completed, receiver) = bounded(1);
             if sender.send(GossipCommand::Flush(completed)).is_ok() {
                 let _ = receiver.recv();
                 return;

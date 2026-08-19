@@ -499,6 +499,7 @@ mod tests {
                 None,
                 exit.clone(),
             );
+            c.flush_push_queue();
             exit.store(true, Ordering::Relaxed);
             service.join().unwrap();
         }
