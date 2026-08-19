@@ -1,7 +1,7 @@
 use {
     crate::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
-        cluster_info_metrics::{ScopedTimer, submit_gossip_stats},
+        cluster_info_metrics::ScopedTimer,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         epoch_specs::EpochSpecs,
         gossip_command::GossipCommand,
@@ -100,6 +100,7 @@ impl GossipEngine {
                 let recycler = PacketBatchRecycler::default();
                 let mut deadlines = Deadlines::new(&cluster_info);
                 let mut packet_buf = Vec::with_capacity(1024);
+                let mut entrypoints_processed = false;
 
                 while !exit.load(Ordering::Relaxed) {
                     let timeout = deadlines.tick.saturating_duration_since(Instant::now());
@@ -170,7 +171,7 @@ impl GossipEngine {
                     context.update(Arc::clone(&stakes), cluster_info.is_full_alpenglow_epoch());
 
                     if Deadlines::claim(&mut deadlines.metrics, now, METRICS_INTERVAL) {
-                        submit_gossip_stats(&cluster_info.stats, cluster_info.gossip(), &stakes);
+                        cluster_info.submit_stats(&stakes);
                         receiver_stats.report();
                     }
 
@@ -199,7 +200,9 @@ impl GossipEngine {
                         generate_pull,
                     );
                     cluster_info.handle_purge(&thread_pool, &stakes);
-                    cluster_info.process_entrypoints();
+                    if !entrypoints_processed {
+                        entrypoints_processed = cluster_info.process_entrypoints();
+                    }
 
                     if Deadlines::claim(&mut deadlines.push_refresh, now, PUSH_REFRESH_INTERVAL) {
                         cluster_info.refresh_my_gossip_contact_info();

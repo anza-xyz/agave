@@ -101,8 +101,7 @@ use {
 
 /// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
-/// Capacity for the [`ClusterInfo::run_socket_consume`] and [`ClusterInfo::run_listen`]
-/// intermediate packet batch buffers.
+/// Capacity for intermediate packet batch buffers in the gossip ingress pipeline.
 ///
 /// To avoid the overhead of dropping large sets of packet batches in each processing loop,
 /// we limit the number of packet batches that are pulled from the corresponding channel on each iteration.
@@ -197,8 +196,8 @@ pub struct ClusterInfo {
 }
 
 impl ClusterInfo {
-    pub(crate) fn gossip(&self) -> &CrdsGossip {
-        &self.gossip
+    pub(crate) fn submit_stats(&self, stakes: &HashMap<Pubkey, u64>) {
+        crate::cluster_info_metrics::submit_gossip_stats(&self.stats, &self.gossip, stakes);
     }
 
     pub(crate) fn set_command_sender(&self, sender: Sender<GossipCommand>) {
