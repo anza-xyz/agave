@@ -27,7 +27,7 @@ use {
             CrdsTimeouts, ProcessPullStats, PullRequest, get_max_bloom_filter_bytes,
         },
         crds_value::{CrdsValue, CrdsValueLabel},
-        duplicate_shred::DuplicateShred,
+        duplicate_shred::{self, DuplicateShred},
         epoch_slots::EpochSlots,
         gossip_command::GossipCommand,
         gossip_context::GossipContext,
@@ -230,6 +230,14 @@ impl ClusterInfo {
                 completed,
             } => {
                 self.refresh_vote_direct(transaction, slot);
+                let _ = completed.send(());
+            }
+            GossipCommand::DuplicateShred {
+                keypair,
+                chunks,
+                completed,
+            } => {
+                self.gossip.insert_duplicate_shred(&keypair, chunks);
                 let _ = completed.send(());
             }
             GossipCommand::Flush(completed) => {
@@ -1261,14 +1269,52 @@ impl ClusterInfo {
             // Alpenglow does not propagate duplicate-shred proofs via gossip.
             return Ok(());
         }
-        self.gossip.push_duplicate_shred(
-            &self.keypair(),
-            shred,
-            other_payload,
+        let keypair = self.keypair();
+        if self
+            .gossip
+            .contains_duplicate_shred(&keypair.pubkey(), shred.slot())
+        {
+            return Ok(());
+        }
+        // Shred parsing and verification, proof serialization, and chunk allocation are all
+        // deliberately done before the engine takes the CRDS write lock.
+        let chunks = duplicate_shred::from_shred(
+            shred.clone(),
+            keypair.pubkey(),
+            Vec::from(other_payload),
             None::<fn(Slot) -> Option<Pubkey>>, // Leader schedule
+            timestamp(),
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
             self.my_shred_version(),
-        )?;
+        )?
+        .collect();
+        if let Some(sender) = self.command_sender.get() {
+            let (completed, receiver) = bounded(0);
+            let command = GossipCommand::DuplicateShred {
+                keypair,
+                chunks,
+                completed,
+            };
+            match sender.send(command) {
+                Ok(()) => {
+                    receiver
+                        .recv()
+                        .expect("gossip engine stopped while publishing duplicate shred");
+                    return Ok(());
+                }
+                Err(err) => {
+                    let GossipCommand::DuplicateShred {
+                        keypair, chunks, ..
+                    } = err.0
+                    else {
+                        unreachable!()
+                    };
+                    self.gossip.insert_duplicate_shred(&keypair, chunks);
+                    return Ok(());
+                }
+            }
+        }
+        self.gossip.insert_duplicate_shred(&keypair, chunks);
         Ok(())
     }
 

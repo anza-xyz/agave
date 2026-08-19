@@ -1,6 +1,10 @@
 use {
-    crate::crds_value::CrdsValue, crossbeam_channel::Sender, solana_clock::Slot,
+    crate::{crds_value::CrdsValue, duplicate_shred::DuplicateShred},
+    crossbeam_channel::Sender,
+    solana_clock::Slot,
+    solana_keypair::Keypair,
     solana_transaction::Transaction,
+    std::sync::Arc,
 };
 
 /// Domain operations submitted by local validator services to the gossip
@@ -21,6 +25,11 @@ pub(crate) enum GossipCommand {
     RefreshVote {
         transaction: Transaction,
         slot: Slot,
+        completed: Sender<()>,
+    },
+    DuplicateShred {
+        keypair: Arc<Keypair>,
+        chunks: Vec<DuplicateShred>,
         completed: Sender<()>,
     },
     Flush(Sender<()>),
