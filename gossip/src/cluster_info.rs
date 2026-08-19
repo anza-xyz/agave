@@ -453,78 +453,48 @@ impl ClusterInfo {
 
     pub fn save_contact_info(&self) {
         let _st = ScopedTimer::from(&self.stats.save_contact_info_time);
-        let nodes = {
-            let entrypoint_gossip_addrs = self
-                .entrypoints
-                .read()
-                .unwrap()
-                .iter()
-                .filter_map(ContactInfo::gossip)
-                .collect::<HashSet<_>>();
-            let self_pubkey = self.id();
-            let gossip_crds = self.gossip.crds.read().unwrap();
-            gossip_crds
-                .get_nodes()
-                .filter_map(|v| {
-                    let contact_info = v.value.contact_info().unwrap();
-                    if contact_info.pubkey() != &self_pubkey
-                        && contact_info
-                            .gossip()
-                            .map(|addr| !entrypoint_gossip_addrs.contains(&addr))
-                            .unwrap_or_default()
-                    {
-                        return Some(v.value.clone());
-                    }
-                    None
-                })
-                .collect::<Vec<_>>()
-        };
+        let nodes = self.contact_infos_to_save();
         if nodes.is_empty() {
             return;
         }
         let filename = self.contact_info_path.join("contact-info.bin");
-        let tmp_filename = &filename.with_extension("tmp");
-        match File::create(tmp_filename) {
-            Ok(file) => {
-                let mut writer = BufWriter::new(file);
-                if let Err(err) = wincode::config::serialize_into(
-                    &mut writer,
-                    &nodes,
-                    ContactInfoFileConfig::new(),
-                ) {
-                    warn!(
-                        "Failed to serialize contact info info {}: {}",
-                        tmp_filename.display(),
-                        err
-                    );
-                    return;
-                }
-                if let Err(err) = writer.flush() {
-                    warn!("Failed to save contact info: {err}");
-                }
-            }
-            Err(err) => {
-                warn!("Failed to create {}: {}", tmp_filename.display(), err);
-                return;
-            }
+        if write_contact_info_file(&filename, &nodes) {
+            info!(
+                "Saved contact info for {} nodes into {}",
+                nodes.len(),
+                filename.display()
+            );
         }
-        match fs::rename(tmp_filename, &filename) {
-            Ok(()) => {
-                info!(
-                    "Saved contact info for {} nodes into {}",
-                    nodes.len(),
-                    filename.display()
-                );
-            }
-            Err(err) => {
-                warn!(
-                    "Failed to rename {} to {}: {}",
-                    tmp_filename.display(),
-                    filename.display(),
-                    err
-                );
-            }
-        }
+    }
+
+    /// Every peer worth persisting: not ourselves, and not an entrypoint.
+    fn contact_infos_to_save(&self) -> Vec<CrdsValue> {
+        let entrypoint_gossip_addrs = self
+            .entrypoints
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(ContactInfo::gossip)
+            .collect::<HashSet<_>>();
+        let self_pubkey = self.id();
+        let gossip_crds = self.gossip.crds.read().unwrap();
+        gossip_crds
+            .get_nodes()
+            .filter(|v| {
+                // Don't save:
+                // 1. Our ContactInfo. No point
+                // 2. Entrypoint ContactInfo. This will avoid adopting the incorrect shred
+                //    version on restart if the entrypoint shred version changes.  Also
+                //    there's not much point in saving entrypoint ContactInfo since by
+                //    definition that information is already available
+                let contact_info = v.value.contact_info().unwrap();
+                contact_info.pubkey() != &self_pubkey
+                    && contact_info
+                        .gossip()
+                        .is_some_and(|addr| !entrypoint_gossip_addrs.contains(&addr))
+            })
+            .map(|v| v.value.clone())
+            .collect()
     }
 
     pub fn restore_contact_info(&mut self, contact_info_path: &Path, contact_save_interval: u64) {
@@ -861,22 +831,36 @@ impl ClusterInfo {
         self.submit_command(GossipCommand::EpochSlots(update.to_vec()));
     }
 
-    fn apply_epoch_slots(&self, mut update: &[Slot]) {
+    fn apply_epoch_slots(&self, update: &[Slot]) {
         let self_keypair = self.keypair();
-        let self_pubkey = self_keypair.pubkey();
-        let current_slots: Vec<_> = {
-            let gossip_crds =
-                self.time_gossip_read_lock("lookup_epoch_slots", &self.stats.epoch_slots_lookup);
-            (0..crds_data::MAX_EPOCH_SLOTS)
-                .filter_map(|ix| {
-                    let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
-                    let crds_value = gossip_crds.get::<&CrdsValue>(&label)?;
-                    let epoch_slots = crds_value.epoch_slots()?;
-                    let first_slot = epoch_slots.first_slot()?;
-                    Some((epoch_slots.wallclock, first_slot, ix))
-                })
-                .collect()
-        };
+        let current_slots = self.current_epoch_slots(&self_keypair.pubkey());
+        self.warn_if_epoch_slots_filling(update, &current_slots);
+        let entries = self.build_epoch_slots_entries(update, &current_slots, &self_keypair);
+        self.insert_local_values("push_epoch_slots", entries);
+    }
+
+    /// The `(wallclock, first_slot, index)` of every epoch-slots record this
+    /// node currently advertises.
+    fn current_epoch_slots(&self, self_pubkey: &Pubkey) -> Vec<(u64, Slot, EpochSlotsIndex)> {
+        let gossip_crds =
+            self.time_gossip_read_lock("lookup_epoch_slots", &self.stats.epoch_slots_lookup);
+        (0..crds_data::MAX_EPOCH_SLOTS)
+            .filter_map(|ix| {
+                let label = CrdsValueLabel::EpochSlots(ix, *self_pubkey);
+                let crds_value = gossip_crds.get::<&CrdsValue>(&label)?;
+                let epoch_slots = crds_value.epoch_slots()?;
+                let first_slot = epoch_slots.first_slot()?;
+                Some((epoch_slots.wallclock, first_slot, ix))
+            })
+            .collect()
+    }
+
+    /// Warns when the epoch-slots ring is full and no longer spans a full epoch.
+    fn warn_if_epoch_slots_filling(
+        &self,
+        update: &[Slot],
+        current_slots: &[(u64, Slot, EpochSlotsIndex)],
+    ) {
         let min_slot: Slot = current_slots
             .iter()
             .map(|(_wallclock, slot, _index)| *slot)
@@ -884,7 +868,6 @@ impl ClusterInfo {
             .unwrap_or_default();
         let max_slot: Slot = update.iter().max().cloned().unwrap_or(0);
         let total_slots = max_slot as isize - min_slot as isize;
-        // WARN if CRDS is not storing at least a full epoch worth of slots
         if DEFAULT_SLOTS_PER_EPOCH as isize > total_slots
             && crds_data::MAX_EPOCH_SLOTS as usize <= current_slots.len()
         {
@@ -895,11 +878,23 @@ impl ClusterInfo {
                 current_slots.len()
             );
         }
-        let mut reset = false;
+    }
+
+    /// Packs `update` into epoch-slots records, continuing from the newest
+    /// existing index and wrapping around the ring as it fills.
+    fn build_epoch_slots_entries(
+        &self,
+        mut update: &[Slot],
+        current_slots: &[(u64, Slot, EpochSlotsIndex)],
+        self_keypair: &Keypair,
+    ) -> Vec<CrdsValue> {
+        let self_pubkey = self_keypair.pubkey();
         let mut epoch_slot_index = match current_slots.iter().max() {
             Some((_wallclock, _slot, index)) => *index,
             None => 0,
         };
+        // The first record extends the newest existing one; the rest start empty.
+        let mut reset = false;
         let mut entries = Vec::default();
         while !update.is_empty() {
             let now = timestamp();
@@ -912,13 +907,12 @@ impl ClusterInfo {
             update = &update[n..];
             if n > 0 {
                 let epoch_slots = CrdsData::EpochSlots(epoch_slot_index, slots);
-                let entry = CrdsValue::new(epoch_slots, &self_keypair);
-                entries.push(entry);
+                entries.push(CrdsValue::new(epoch_slots, self_keypair));
             }
             epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
             reset = true;
         }
-        self.insert_local_values("push_epoch_slots", entries);
+        entries
     }
 
     fn time_gossip_read_lock<'a>(
@@ -2384,6 +2378,44 @@ pub fn push_messages_to_peer_for_tests(
     let sock = bind_to_localhost_unique().expect("should bind");
     packet::send_to(&packet_batch, &sock, socket_addr_space)?;
     Ok(())
+}
+
+/// Serializes `nodes` to a sibling temp file and renames it over `filename`.
+/// Returns whether the file was replaced; failures are logged, not propagated.
+fn write_contact_info_file(filename: &Path, nodes: &[CrdsValue]) -> bool {
+    let tmp_filename = &filename.with_extension("tmp");
+    match File::create(tmp_filename) {
+        Ok(file) => {
+            let mut writer = BufWriter::new(file);
+            if let Err(err) =
+                wincode::config::serialize_into(&mut writer, &nodes, ContactInfoFileConfig::new())
+            {
+                warn!(
+                    "Failed to serialize contact info info {}: {}",
+                    tmp_filename.display(),
+                    err
+                );
+                return false;
+            }
+            if let Err(err) = writer.flush() {
+                warn!("Failed to save contact info: {err}");
+            }
+        }
+        Err(err) => {
+            warn!("Failed to create {}: {}", tmp_filename.display(), err);
+            return false;
+        }
+    }
+    if let Err(err) = fs::rename(tmp_filename, filename) {
+        warn!(
+            "Failed to rename {} to {}: {}",
+            tmp_filename.display(),
+            filename.display(),
+            err
+        );
+        return false;
+    }
+    true
 }
 
 /// Appends a `---+---` rule matching the column layout of the header already
