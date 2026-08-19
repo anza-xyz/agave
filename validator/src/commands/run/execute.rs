@@ -719,7 +719,7 @@ pub fn execute(
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
         skip_initial_hash_calc: false,
-        exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        exhaustively_verify_slot_lists: matches.is_present("accounts_db_verify_slot_lists"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),

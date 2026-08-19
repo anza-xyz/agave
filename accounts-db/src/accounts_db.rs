@@ -946,8 +946,8 @@ pub struct AccountsDb {
 
     pub(crate) active_stats: ActiveStats,
 
-    /// debug feature to scan every append vec and verify refcounts are equal
-    exhaustively_verify_refcounts: bool,
+    /// debug feature to scan every append vec and verify slot lists are equal
+    exhaustively_verify_slot_lists: bool,
 
     /// storage format to use for new storages
     accounts_file_provider: AccountsFileProvider,
@@ -1105,7 +1105,7 @@ impl AccountsDb {
             ),
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
-            exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
+            exhaustively_verify_slot_lists: accounts_db_config.exhaustively_verify_slot_lists,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
             thread_pool_foreground,
             thread_pool_background,
@@ -1499,13 +1499,13 @@ impl AccountsDb {
         added_to_shrink_count
     }
 
-    /// called with cli argument to verify refcounts are correct on all accounts
+    /// called with cli argument to verify slot_lists are correct on all accounts
     /// this is very slow
     /// this function will call Rayon par_iter, so you will want to have thread pool installed if
     /// you want to call this without consuming all the cores on the CPU.
-    fn exhaustively_verify_refcounts(&self, max_slot_inclusive: Option<Slot>) {
-        info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive:?}");
-        let pubkey_refcount = DashMap::<Pubkey, Vec<Slot>>::default();
+    fn exhaustively_verify_slot_lists(&self, max_slot_inclusive: Option<Slot>) {
+        info!("exhaustively verifying slot lists as of slot: {max_slot_inclusive:?}");
+        let pubkey_slot_lists = DashMap::<Pubkey, Vec<Slot>, PubkeyHasherBuilder>::default();
         let mut storages = self.storage.all_storages();
         // Flush is not running while we verify, so storages are stable. With no slot bound we
         // verify every storage; otherwise we drop storages newer than the bound.
@@ -1520,7 +1520,7 @@ impl AccountsDb {
                 storage
                     .scan_accounts(reader.as_mut(), |_offset, account| {
                         let pk = account.pubkey();
-                        match pubkey_refcount.entry(*pk) {
+                        match pubkey_slot_lists.entry(*pk) {
                             dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
                                 if !occupied_entry.get().iter().any(|s| s == &slot) {
                                     occupied_entry.get_mut().push(slot);
@@ -1534,7 +1534,7 @@ impl AccountsDb {
                     .expect("must scan accounts storage");
             },
         );
-        let total = pubkey_refcount.len();
+        let total = pubkey_slot_lists.len();
         if total == 0 {
             return;
         }
@@ -1542,68 +1542,55 @@ impl AccountsDb {
         let threads = rayon::current_num_threads();
         let per_batch = total.div_ceil(threads);
         (0..=threads).into_par_iter().for_each(|attempt| {
-            pubkey_refcount
+            pubkey_slot_lists
                 .iter()
                 .skip(attempt * per_batch)
                 .take(per_batch)
                 .for_each(|entry| {
-                    if failed.load(Ordering::Relaxed) {
-                        return;
-                    }
-
+                    let mut storage_slots = entry.value().clone();
+                    storage_slots.sort_unstable();
                     self.accounts_index
                         .get_and_then(entry.key(), |index_entry| {
-                            if let Some(index_entry) = index_entry {
-                                match (index_entry.ref_count() as usize).cmp(&entry.value().len()) {
-                                    std::cmp::Ordering::Equal => {
-                                        // ref counts match, nothing to do here
-                                    }
-                                    std::cmp::Ordering::Greater => {
-                                        let slot_list = index_entry.slot_list_read_lock();
-                                        let num_too_new = slot_list
-                                            .iter()
-                                            .filter(|(slot, _)| {
-                                                max_slot_inclusive.is_some_and(
-                                                    |max_slot_inclusive| *slot > max_slot_inclusive,
-                                                )
-                                            })
-                                            .count();
-
-                                        if ((index_entry.ref_count() as usize) - num_too_new)
-                                            > entry.value().len()
-                                        {
-                                            failed.store(true, Ordering::Relaxed);
-                                            error!(
-                                                "exhaustively_verify_refcounts: {} refcount too \
-                                                 large: {}, should be: {}, {:?}, {:?}, too_new: \
-                                                 {num_too_new}",
-                                                entry.key(),
-                                                index_entry.ref_count(),
-                                                entry.value().len(),
-                                                *entry.value(),
-                                                slot_list
-                                            );
-                                        }
-                                    }
-                                    std::cmp::Ordering::Less => {
-                                        error!(
-                                            "exhaustively_verify_refcounts: {} refcount too \
-                                             small: {}, should be: {}, {:?}, {:?}",
-                                            entry.key(),
-                                            index_entry.ref_count(),
-                                            entry.value().len(),
-                                            *entry.value(),
-                                            index_entry.slot_list_read_lock()
-                                        );
-                                    }
-                                }
+                            let Some(index_entry) = index_entry else {
+                                failed.store(true, Ordering::Relaxed);
+                                error!(
+                                    "exhaustively_verify_slot_lists: {} has no index entry, \
+                                     storages: {storage_slots:?}",
+                                    entry.key(),
+                                );
+                                return (false, ());
                             };
+                            let slot_list = index_entry.slot_list_read_lock();
+                            // Slots newer than `max_slot_inclusive` are in the index but were
+                            // excluded from the storage scan, so exclude them from the comparison
+                            // too.
+                            let mut index_slots = slot_list
+                                .iter()
+                                .map(|(slot, _)| *slot)
+                                .filter(|slot| {
+                                    max_slot_inclusive.is_none_or(|max_slot_inclusive| {
+                                        *slot <= max_slot_inclusive
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            index_slots.sort_unstable();
+
+                            if index_slots != storage_slots {
+                                failed.store(true, Ordering::Relaxed);
+                                error!(
+                                    "exhaustively_verify_slot_lists: {} index slot list does not \
+                                     match storages: index: {index_slots:?}, storages: \
+                                     {storage_slots:?}, slot list: {:?}",
+                                    entry.key(),
+                                    slot_list,
+                                );
+                            }
                             (false, ())
                         });
                 });
         });
         if failed.load(Ordering::Relaxed) {
-            panic!("exhaustively_verify_refcounts failed");
+            panic!("exhaustively_verify_slot_lists failed");
         }
     }
 
@@ -1612,14 +1599,14 @@ impl AccountsDb {
     // Only remove those accounts where the entire rooted history of the account
     // can be purged because there are no live append vecs in the ancestors
     pub fn clean_accounts(&self, max_clean_root_inclusive: Option<Slot>, is_startup: bool) {
-        if self.exhaustively_verify_refcounts {
-            //at startup use all cores to verify refcounts
+        if self.exhaustively_verify_slot_lists {
+            //at startup use all cores to verify slot lists
             if is_startup {
-                self.exhaustively_verify_refcounts(max_clean_root_inclusive);
+                self.exhaustively_verify_slot_lists(max_clean_root_inclusive);
             } else {
                 // otherwise, use the background thread pool
                 self.thread_pool_background
-                    .install(|| self.exhaustively_verify_refcounts(max_clean_root_inclusive));
+                    .install(|| self.exhaustively_verify_slot_lists(max_clean_root_inclusive));
             }
         }
 

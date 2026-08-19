@@ -2454,8 +2454,8 @@ fn test_full_clean_refcount_first() {
 }
 
 #[test]
-#[should_panic(expected = "exhaustively_verify_refcounts failed")]
-fn test_exhaustively_verify_refcounts_small_dataset_detects_mismatch() {
+#[should_panic(expected = "exhaustively_verify_slot_lists failed")]
+fn test_exhaustively_verify_slot_lists_small_dataset_detects_mismatch() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 0;
     let pubkey = Pubkey::new_unique();
@@ -2464,12 +2464,14 @@ fn test_exhaustively_verify_refcounts_small_dataset_detects_mismatch() {
     accounts.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(slot);
 
+    // add a slot list entry for a slot that doesn't contain this pubkey
     accounts.accounts_index.get_and_then(&pubkey, |entry| {
-        entry.unwrap().addref();
+        let mut slot_list = entry.unwrap().slot_list_write_lock();
+        slot_list.push((slot + 1, AccountInfo::default()));
         (false, ())
     });
 
-    accounts.exhaustively_verify_refcounts(Some(slot));
+    accounts.exhaustively_verify_slot_lists(Some(slot + 1));
 }
 
 #[test]
