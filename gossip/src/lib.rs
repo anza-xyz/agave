@@ -22,6 +22,7 @@ pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;
 mod gossip_identity;
+mod gossip_ingress;
 pub mod gossip_service;
 pub mod node;
 #[macro_use]

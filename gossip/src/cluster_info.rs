@@ -32,6 +32,7 @@ use {
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
         gossip_identity::GossipIdentity,
+        gossip_ingress::ValidatedGossipMessage,
         ping_pong::Pong,
         protocol::{
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
@@ -63,7 +64,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_streamer::{
@@ -2001,7 +2001,7 @@ impl ClusterInfo {
 
     fn process_packets(
         &self,
-        packets: &mut Vec<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        packets: &mut Vec<Vec<ValidatedGossipMessage>>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
         response_sender: &impl ChannelSend<PacketBatch>,
@@ -2019,7 +2019,7 @@ impl ClusterInfo {
                 discard_different_shred_version(msg, self_shred_version, &gossip_crds, &self.stats)
             };
             if packets.len() < 4 && packets.iter().map(Vec::len).sum::<usize>() < 16 {
-                for (_, msg) in packets.iter_mut().flatten() {
+                for msg in packets.iter_mut().flatten() {
                     discard_different_shred_version(msg);
                 }
             } else {
@@ -2027,7 +2027,7 @@ impl ClusterInfo {
                     packets
                         .par_iter_mut()
                         .flatten()
-                        .for_each(|(_, msg)| discard_different_shred_version(msg))
+                        .for_each(discard_different_shred_version)
                 })
             }
         }
@@ -2068,7 +2068,8 @@ impl ClusterInfo {
         let mut prune_messages = vec![];
         let mut ping_messages = vec![];
         let mut pong_messages = vec![];
-        for (from_addr, packet) in packets.drain(..).flatten() {
+        for message in packets.drain(..).flatten() {
+            let (from_addr, packet) = message.into_parts();
             match packet {
                 Protocol::PullRequest(filter, caller) => {
                     if !check_pull_request_shred_version(self_shred_version, &caller) {
@@ -2141,7 +2142,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         epoch_specs: Option<&mut Box<dyn EpochSpecs>>,
         receiver: &PacketBatchReceiver,
-        sender: &impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        sender: &impl ChannelSend<Vec<ValidatedGossipMessage>>,
         packet_buf: &mut Vec<PacketBatch>,
     ) -> Result<(), GossipError> {
         let mut num_packets = 0;
@@ -2165,31 +2166,21 @@ impl ClusterInfo {
             stats: &GossipStats,
             sigverify_cache: &SigVerifyCache,
             is_full_alpenglow_epoch: bool,
-        ) -> Option<(SocketAddr, Protocol)> {
+        ) -> Option<ValidatedGossipMessage> {
             let result: wincode::ReadResult<Protocol> = packet
                 .data(..)
                 .ok_or(wincode::ReadError::Custom("packet discarded"))
                 .and_then(deserialize_protocol);
-            let mut protocol: Protocol = stats.record_received_packet(result)?;
-            protocol.sanitize().ok()?;
-            if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) =
-                &mut protocol
-            {
-                values.retain(|value| {
-                    should_retain_crds_value(
-                        value,
-                        stakes,
-                        GossipFilterDirection::Ingress,
-                        is_full_alpenglow_epoch,
-                    )
-                });
-                if values.is_empty() {
-                    return None;
-                }
-            }
-            protocol.verify(sigverify_cache).then(|| {
+            let protocol: Protocol = stats.record_received_packet(result)?;
+            ValidatedGossipMessage::new(
+                packet.meta().socket_addr(),
+                protocol,
+                stakes,
+                is_full_alpenglow_epoch,
+                sigverify_cache,
+            )
+            .inspect(|_| {
                 stats.packets_received_verified_count.add_relaxed(1);
-                (packet.meta().socket_addr(), protocol)
             })
         }
         let stakes = epoch_specs
@@ -2245,11 +2236,11 @@ impl ClusterInfo {
         &self,
         recycler: &PacketBatchRecycler,
         epoch_specs: &mut Option<Box<dyn EpochSpecs>>,
-        receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        receiver: &Receiver<Vec<ValidatedGossipMessage>>,
         response_sender: &impl ChannelSend<PacketBatch>,
         thread_pool: &ThreadPool,
         should_check_duplicate_instance: bool,
-        packet_buf: &mut Vec<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        packet_buf: &mut Vec<Vec<ValidatedGossipMessage>>,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.gossip_listen_loop_time);
         for pkts in receiver
@@ -2285,7 +2276,7 @@ impl ClusterInfo {
         self: Arc<Self>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         receiver: PacketBatchReceiver,
-        sender: impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        sender: impl ChannelSend<Vec<ValidatedGossipMessage>>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         let thread_pool = ThreadPoolBuilder::new()
@@ -2322,7 +2313,7 @@ impl ClusterInfo {
     pub(crate) fn listen(
         self: Arc<Self>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
-        requests_receiver: Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        requests_receiver: Receiver<Vec<ValidatedGossipMessage>>,
         response_sender: impl ChannelSend<PacketBatch>,
         should_check_duplicate_instance: bool,
         exit: Arc<AtomicBool>,
@@ -2499,31 +2490,29 @@ fn check_pull_request_shred_version(self_shred_version: u16, caller: &CrdsValue)
 // Discards CrdsValues in PushMessages and PullResponses from nodes with
 // different shred-version.
 fn discard_different_shred_version(
-    msg: &mut Protocol,
+    message: &mut ValidatedGossipMessage,
     self_shred_version: u16,
     crds: &Crds,
     stats: &GossipStats,
 ) {
-    let (values, skip_shred_version_counter) = match msg {
-        Protocol::PullResponse(_, values) => (values, &stats.skip_pull_response_shred_version),
-        Protocol::PushMessage(_, values) => (values, &stats.skip_push_message_shred_version),
+    let skip_shred_version_counter = match message.protocol() {
+        Protocol::PullResponse(..) => &stats.skip_pull_response_shred_version,
+        Protocol::PushMessage(..) => &stats.skip_push_message_shred_version,
         // Shred-version on pull-request callers can be checked without a lock
         // on CRDS table and is so verified separately (by
         // check_pull_request_shred_version).
-        Protocol::PullRequest(..) => return,
         // No CRDS values in Prune, Ping and Pong messages.
-        Protocol::PruneMessage(_, _) | Protocol::PingMessage(_) | Protocol::PongMessage(_) => {
-            return;
-        }
+        Protocol::PullRequest(..)
+        | Protocol::PruneMessage(..)
+        | Protocol::PingMessage(_)
+        | Protocol::PongMessage(_) => return,
     };
-    let num_values = values.len();
-    values.retain(|value| match value.data() {
+    let num_skipped = message.retain_crds_values(|value| match value.data() {
         CrdsData::ContactInfo(ci) => ci.shred_version() == self_shred_version,
         // for any other CRDS types we check if we store anything already
         // for this pubkey, if we do we allow more values in
         _ => crds.get_records(&value.pubkey()).next().is_some(),
     });
-    let num_skipped = num_values - values.len();
     if num_skipped != 0 {
         skip_shred_version_counter.add_relaxed(num_skipped as u64);
     }
@@ -2650,6 +2639,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
+        solana_sanitize::Sanitize,
         solana_signer::Signer,
         solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
         solana_vote_program::{
@@ -2664,6 +2654,11 @@ mod tests {
             sync::Arc,
         },
     };
+
+    fn test_message(protocol: Protocol) -> ValidatedGossipMessage {
+        ValidatedGossipMessage::new_unchecked("127.0.0.1:1234".parse().unwrap(), protocol)
+    }
+
     const DEFAULT_NUM_QUIC_ENDPOINTS: NonZeroUsize =
         NonZeroUsize::new(DEFAULT_QUIC_ENDPOINTS).unwrap();
 
@@ -3864,9 +3859,9 @@ mod tests {
         let ci = CrdsValue::new(CrdsData::ContactInfo(contact_info), &keypair);
 
         // Test push message with matching shred version
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![ci.clone()]);
+        let mut msg = test_message(Protocol::PushMessage(keypair.pubkey(), vec![ci.clone()]));
         discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, values) = msg {
+        if let Protocol::PushMessage(_, values) = msg.protocol() {
             assert_eq!(values.len(), 1);
         }
 
@@ -3878,18 +3873,21 @@ mod tests {
         );
 
         // Test push message with non-matching shred version
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![ci_wrong_shred_version]);
+        let mut msg = test_message(Protocol::PushMessage(
+            keypair.pubkey(),
+            vec![ci_wrong_shred_version],
+        ));
         discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, values) = msg {
+        if let Protocol::PushMessage(_, values) = msg.protocol() {
             assert_eq!(values.len(), 0);
         }
 
         // Test EpochSlot w/o previous CI with matching shred version/pubkey -> should be rejected
         let epoch_slots = EpochSlots::new_rand(&mut rng, Some(keypair.pubkey()));
         let es = CrdsValue::new_unsigned(CrdsData::EpochSlots(0, epoch_slots));
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![es]);
+        let mut msg = test_message(Protocol::PushMessage(keypair.pubkey(), vec![es]));
         discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
+        if let Protocol::PushMessage(_, values) = msg.protocol() {
             assert_eq!(values.len(), 0);
         }
 
@@ -3911,9 +3909,9 @@ mod tests {
         // Test insert EpochSlot w/ previous ContactInfo w/ matching shred version but different pubkey -> should be rejected
         let epoch_slots = EpochSlots::new_rand(&mut rng, Some(keypair.pubkey()));
         let es: CrdsValue = CrdsValue::new_unsigned(CrdsData::EpochSlots(0, epoch_slots));
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![es.clone()]);
+        let mut msg = test_message(Protocol::PushMessage(keypair.pubkey(), vec![es.clone()]));
         discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
+        if let Protocol::PushMessage(_, values) = msg.protocol() {
             assert_eq!(values.len(), 0);
         }
 
@@ -3923,9 +3921,9 @@ mod tests {
                 .is_ok()
         );
 
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![es]);
+        let mut msg = test_message(Protocol::PushMessage(keypair.pubkey(), vec![es]));
         discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
+        if let Protocol::PushMessage(_, values) = msg.protocol() {
             assert_eq!(values.len(), 1);
         }
 
@@ -3962,9 +3960,9 @@ mod tests {
                 &keypair4,
             ),
         ];
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), entries);
+        let mut msg = test_message(Protocol::PushMessage(keypair.pubkey(), entries));
         discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
+        if let Protocol::PushMessage(_, values) = msg.protocol() {
             // Only reject ContactInfo with invalid shred version. EpochSlot with associated ContactInfo is already in the table
             assert_eq!(values.len(), 3);
         }
@@ -4003,9 +4001,9 @@ mod tests {
                 &keypair,
             ),
         ];
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), entries);
+        let mut msg = test_message(Protocol::PushMessage(keypair.pubkey(), entries));
         discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
+        if let Protocol::PushMessage(_, values) = msg.protocol() {
             // Reject ContactInfo with invalid shred version and EpochSlot with no associated ContactInfo in the table
             assert_eq!(values.len(), 2);
         }
