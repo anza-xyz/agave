@@ -106,8 +106,6 @@ pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// This ensures that the number of `madvise` system calls is minimized and, as such, that large interruptions
 /// to the processing loop are avoided.
 pub(crate) const CHANNEL_CONSUME_CAPACITY: usize = 1024;
-/// Avoid waking the gossip worker pool when a packet batch is too small to
-/// amortize Rayon's scheduling and work-stealing overhead.
 const MIN_PARALLEL_GOSSIP_PACKETS: usize = 16;
 /// Channel capacity for gossip channels.
 ///
@@ -194,8 +192,7 @@ pub struct ClusterInfo {
     /// Alpenglow migration status
     migration_status: OnceLock<Arc<MigrationStatus>>,
     command_sender: ArcSwapOption<Sender<GossipCommand>>,
-    /// Held by the engine for its whole life, so a caller that falls back to
-    /// applying a command itself cannot write while the engine still is.
+    /// Prevents inline fallback from racing the engine.
     command_lock: Mutex<()>,
 }
 
@@ -221,9 +218,7 @@ impl ClusterInfo {
         self.command_lock.lock().unwrap()
     }
 
-    /// Hands `command` to the engine, or applies it inline when no engine can
-    /// take it. Any `completed` channel the command carries is answered either
-    /// way, so callers can always wait on it.
+    /// Sends to the engine, falling back to inline processing after shutdown.
     fn submit_command(&self, command: GossipCommand) {
         let command = match self.command_sender.load_full() {
             Some(sender) => match sender.send(command) {
@@ -686,7 +681,6 @@ impl ClusterInfo {
         let (completed, receiver) = bounded(1);
         self.submit_command(GossipCommand::RefreshContact(completed));
         if receiver.recv().is_err() {
-            // The engine stopped before it could apply the refresh.
             self.refresh_my_gossip_contact_info();
         }
     }
@@ -1088,8 +1082,7 @@ impl ClusterInfo {
             transaction: vote,
             completed,
         });
-        // A receive error means the engine stopped before applying the vote, so
-        // there is nothing to check.
+        // Shutdown before the vote was applied.
         let Ok(Err(vote)) = receiver.recv() else {
             return;
         };
@@ -1222,8 +1215,7 @@ impl ClusterInfo {
         {
             return Ok(());
         }
-        // Shred parsing and verification, proof serialization, and chunk allocation are all
-        // deliberately done before the engine takes the CRDS write lock.
+        // Keep expensive preparation outside the CRDS write lock.
         let chunks = duplicate_shred::from_shred(
             shred.clone(),
             keypair.pubkey(),

@@ -103,7 +103,7 @@ impl CrdsGossip {
         };
         let pubkey = keypair.pubkey();
         let mut crds = self.crds.write().unwrap();
-        // Preparation and insertion can race with repeated reports before the engine starts.
+        // Recheck because preparation can race with another report.
         if contains_duplicate_shred(&crds, &pubkey, shred_slot) {
             return;
         }

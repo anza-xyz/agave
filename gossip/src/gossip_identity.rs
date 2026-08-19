@@ -7,19 +7,13 @@ use {
     std::sync::{Arc, Mutex},
 };
 
-/// A coherent view of the node identity used by gossip and the rest of the
-/// validator. The advertised contact record and the keypair must always refer
-/// to the same pubkey.
+/// Keypair and contact record for the same pubkey.
 struct IdentitySnapshot {
     keypair: Arc<Keypair>,
     contact_info: ContactInfo,
 }
 
-/// Owns the node's signing identity and advertised contact record.
-///
-/// Readers load both from one atomic snapshot. Updates are rare and serialized
-/// so concurrent socket updates and identity rotation cannot lose each other's
-/// changes.
+/// Atomically publishes identity snapshots and serializes updates.
 pub(crate) struct GossipIdentity {
     snapshot: ArcSwap<IdentitySnapshot>,
     update_lock: Mutex<()>,
@@ -76,9 +70,7 @@ impl GossipIdentity {
         result
     }
 
-    /// Refreshes and signs the contact record from one coherent identity
-    /// snapshot. The refreshed contact record is also published to readers of
-    /// `my_contact_info`.
+    /// Refreshes, signs, and publishes the contact record from one snapshot.
     pub(crate) fn refreshed_crds_value(&self, now: u64) -> CrdsValue {
         let _update_lock = self.update_lock.lock().unwrap();
         let snapshot = self.snapshot.load_full();

@@ -7,14 +7,8 @@ use {
     std::sync::Arc,
 };
 
-/// Domain operations submitted by local validator services to the gossip
-/// engine. Stateful label selection stays on the engine thread.
-///
-/// Only commands whose caller needs the outcome, or needs to know the command
-/// has been applied, carry a `completed` channel. Ordering between commands is
-/// already guaranteed by the channel.
-// Keep transactions inline: votes are frequent enough that a smaller enum is
-// not worth an extra heap allocation for every vote.
+/// Gossip mutations serialized by the engine.
+// Keep frequent votes inline to avoid a per-vote allocation.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum GossipCommand {
     Publish(Box<CrdsValue>),

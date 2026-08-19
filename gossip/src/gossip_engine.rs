@@ -107,8 +107,7 @@ pub(crate) struct GossipEngine<S> {
     pub(crate) exit: Arc<AtomicBool>,
 }
 
-// Boxing commands here would allocate on every engine-bound vote merely to
-// shrink this short-lived stack value.
+// Avoid a per-vote allocation.
 #[allow(clippy::large_enum_variant)]
 enum EngineEvent {
     Command(GossipCommand),
@@ -147,8 +146,7 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                         .tick
                         .deadline
                         .saturating_duration_since(Instant::now());
-                    // Commands are preferred over packets: they are the only
-                    // way local services reach the CRDS table.
+                    // Prioritize local CRDS mutations.
                     let event = crossbeam_channel::select_biased! {
                         recv(commands) -> command => {
                             command.map_or(EngineEvent::Disconnected, EngineEvent::Command)
@@ -255,12 +253,8 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                         );
                     }
                 }
-                // Detach the endpoint so later commands run inline, then apply
-                // whatever is queued. A caller that loaded the endpoint before
-                // it was detached can still be inside `send`, so drain until
-                // this thread holds the only endpoint: dropping the receiver
-                // any earlier would discard that command and leave the caller
-                // waiting on a completion that never arrives.
+                // Drain senders that raced with endpoint detachment; dropping
+                // earlier could strand callers waiting for completion.
                 cluster_info.clear_command_sender(&command_endpoint);
                 loop {
                     for command in commands.try_iter() {

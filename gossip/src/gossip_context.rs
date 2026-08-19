@@ -4,14 +4,13 @@ use {
     std::{collections::HashMap, sync::Arc},
 };
 
-/// Policy inputs shared by all stages of the gossip runtime.
+/// Network policy shared across gossip stages.
 pub(crate) struct GossipContextSnapshot {
     pub(crate) stakes: Arc<HashMap<Pubkey, u64>>,
     pub(crate) is_full_alpenglow_epoch: bool,
 }
 
-/// Publishes one coherent network-policy snapshot to validation, protocol,
-/// and metrics threads.
+/// Atomically publishes coherent network-policy snapshots.
 pub(crate) struct GossipContext {
     snapshot: ArcSwap<GossipContextSnapshot>,
 }

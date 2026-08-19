@@ -10,12 +10,8 @@ use {
     std::{collections::HashMap, net::SocketAddr},
 };
 
-/// A decoded message that has passed every validation step which is
-/// independent of the local CRDS table.
-///
-/// This is the only message type accepted by the protocol-processing thread.
-/// Its fields stay private so unverified values cannot be substituted after
-/// the marker has been created.
+/// A decoded message validated independently of local CRDS state.
+/// Only this type crosses the ingress-to-engine boundary.
 pub(crate) struct ValidatedGossipMessage {
     from_addr: SocketAddr,
     protocol: Protocol,
@@ -58,8 +54,7 @@ impl ValidatedGossipMessage {
         }
     }
 
-    /// Keeps only the CRDS values matching `predicate`, returning how many were
-    /// dropped. Messages that carry no CRDS values drop nothing.
+    /// Retains matching CRDS values and returns the number dropped.
     pub(crate) fn retain_crds_values(
         &mut self,
         predicate: impl FnMut(&CrdsValue) -> bool,

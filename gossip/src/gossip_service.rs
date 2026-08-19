@@ -515,8 +515,7 @@ mod tests {
 
     #[test]
     fn test_commands_survive_exit() {
-        // Whether the engine or the caller ends up applying a command
-        // submitted during shutdown, it must not be dropped.
+        // Commands racing with shutdown must not be dropped.
         const ROUNDS: Slot = 5;
         let kp = Keypair::new();
         let tn = Node::new_localhost_with_pubkey(&kp.pubkey());
