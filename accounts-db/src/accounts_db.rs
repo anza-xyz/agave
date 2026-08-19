@@ -64,7 +64,7 @@ use {
         utils::{self, create_account_shared_data},
     },
     agave_fs::buffered_reader::RequiredLenBufFileRead,
-    ahash::HashMapExt,
+    ahash::{HashMapExt as _, HashSetExt as _},
     bv::BitVec,
     dashmap::{DashMap, DashSet},
     log::*,
@@ -83,7 +83,7 @@ use {
     std::{
         borrow::Cow,
         boxed::Box,
-        collections::{BTreeSet, HashMap, HashSet, VecDeque},
+        collections::{BTreeSet, HashSet, VecDeque},
         io, iter, mem,
         num::Saturating,
         ops::RangeBounds,
@@ -3267,8 +3267,7 @@ impl AccountsDb {
         // pubkey. Hold the Arc<CachedAccount> to keep the data alive even if the cache flushes
         // between now and step 3 (Arc clone is just a refcount bump).
         let cached_pubkeys = self.accounts_cache.cached_pubkeys();
-        let mut cached_versions =
-            HashMap::with_capacity_and_hasher(cached_pubkeys.len(), PubkeyHasherBuilder::default());
+        let mut cached_versions = ahash::HashMap::with_capacity(cached_pubkeys.len());
         for pubkey in cached_pubkeys {
             if config.is_aborted() {
                 break;
@@ -4030,7 +4029,7 @@ impl AccountsDb {
         // confident that the entire state for this slot has been flushed to the storage
         // already.
         let mut scan_storages_elapsed = Measure::start("scan_storages_elapsed");
-        let mut stored_keys = HashSet::new();
+        let mut stored_keys = ahash::HashSet::new();
         if let Some(storage) = self
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(remove_slot)
@@ -4408,8 +4407,7 @@ impl AccountsDb {
             .last()
             .and_then(|&root| self.accounts_cache.slot_cache(root))
             .map_or(0, |slot_cache| slot_cache.len() * 2);
-        let mut written_accounts =
-            HashSet::with_capacity_and_hasher(dedup_capacity, PubkeyHasherBuilder::default());
+        let mut written_accounts = ahash::HashSet::with_capacity(dedup_capacity);
 
         // Iterate from newest root to oldest root being flushed in this batch
         for &root in flushed_roots.iter().rev() {
@@ -4417,7 +4415,7 @@ impl AccountsDb {
             let to_flush = if !cleaned {
                 PubkeysToStore::All
             } else {
-                let mut flush_keys = HashSet::default();
+                let mut flush_keys = ahash::HashSet::default();
                 if let Some(slot_cache) = self.accounts_cache.slot_cache(root) {
                     for entry in slot_cache.iter() {
                         let pubkey = *entry.key();
@@ -4793,7 +4791,7 @@ impl AccountsDb {
                 // Cache only has one version per key, don't need to worry about versioning
                 Some((*loaded_account.pubkey(), loaded_account.take_account()))
             },
-            |accum: &mut HashMap<_, _>, stored_account, data| {
+            |accum: &mut ahash::HashMap<_, _>, stored_account, data| {
                 // SAFETY: We called scan_account_storage() with
                 // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
                 let data = data.unwrap();
@@ -5416,7 +5414,7 @@ impl AccountsDb {
         ancestors: &Ancestors,
     ) -> (BitVec, WriteAccountsToCacheStats) {
         let len = accounts_and_meta_to_store.len();
-        let mut pubkey_set = HashSet::with_capacity_and_hasher(len, PubkeyHasherBuilder::default());
+        let mut pubkey_set = ahash::HashSet::with_capacity(len);
         let mut stats = WriteAccountsToCacheStats {
             num_initial_accounts_to_store: len as u64,
             ..Default::default()
@@ -5990,7 +5988,7 @@ impl AccountsDb {
                 .populate_and_retrieve_duplicate_keys_from_startup(|slot_keys| {
                     total_duplicate_slot_keys.fetch_add(slot_keys.len() as u64, Ordering::Relaxed);
                     let unique_keys =
-                        HashSet::<Pubkey>::from_iter(slot_keys.iter().map(|(_, key)| *key));
+                        ahash::HashSet::<Pubkey>::from_iter(slot_keys.iter().map(|(_, key)| *key));
                     let unique_pubkeys_by_bin_inner = unique_keys.into_iter().collect::<Vec<_>>();
                     total_num_unique_duplicate_keys
                         .fetch_add(unique_pubkeys_by_bin_inner.len() as u64, Ordering::Relaxed);
@@ -6364,7 +6362,7 @@ enum PubkeysToStore {
     All,
     /// Store only these pubkeys (the newest version of each, per `select_pubkeys_to_store`),
     /// purging the rest from the index and reclaiming older versions.
-    Only(HashSet<Pubkey, PubkeyHasherBuilder>),
+    Only(ahash::HashSet<Pubkey>),
 }
 
 /// Specify whether obsolete accounts should be marked or not during reclaims
