@@ -20,10 +20,13 @@ export RUSTFLAGS="-D warnings -A incomplete_features"
 # sort
 if [[ -n $CI ]]; then
   # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check > /dev/null
+  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check --no-format > /dev/null
 else
-  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check
+  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check --no-format
 fi
+
+# format toml files
+taplo fmt --check --diff
 
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree

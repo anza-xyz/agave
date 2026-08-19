@@ -39,7 +39,10 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 rayon = { workspace = true }
-solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-bucket-map = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 
 [lints]

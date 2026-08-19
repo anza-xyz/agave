@@ -17,9 +17,9 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "solana-core/dev-context-only-utils",
-    "solana-ledger/dev-context-only-utils",
-    "solana-runtime/dev-context-only-utils",
+  "solana-core/dev-context-only-utils",
+  "solana-ledger/dev-context-only-utils",
+  "solana-runtime/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -76,7 +76,10 @@ tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 solana-sdk-ids = { workspace = true }
-solana-test-validator = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-test-validator = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 
 [lints]
 workspace = true

@@ -22,17 +22,17 @@ name = "solana_cost_model"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "dep:solana-hash",
-    "dep:solana-message",
-    "dep:solana-signature",
-    "dep:solana-transaction",
-    "solana-compute-budget-interface/dev-context-only-utils",
+  "dep:solana-hash",
+  "dep:solana-message",
+  "dep:solana-signature",
+  "dep:solana-transaction",
+  "solana-compute-budget-interface/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-pubkey/frozen-abi",
-    "solana-vote-program/frozen-abi",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-pubkey/frozen-abi",
+  "solana-vote-program/frozen-abi",
 ]
 
 [dependencies]
@@ -43,10 +43,10 @@ solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-hash = { workspace = true, optional = true }
 solana-message = { workspace = true, optional = true }
@@ -64,15 +64,23 @@ solana-vote-program = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = [
+  "agave-unstable-api",
+] }
 itertools = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
-solana-cost-model = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-cost-model = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-vote = { path = "../vote", features = ["agave-unstable-api"] }

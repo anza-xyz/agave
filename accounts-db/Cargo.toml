@@ -22,22 +22,22 @@ name = "solana_accounts_db"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "dep:solana-keypair",
-    "dep:solana-rent",
-    "dep:solana-signer",
-    "dep:solana-stake-interface",
-    "dep:solana-vote-program",
-    "solana-account/wincode",
-    "solana-transaction/dev-context-only-utils",
+  "dep:qualifier_attr",
+  "dep:solana-keypair",
+  "dep:solana-rent",
+  "dep:solana-signer",
+  "dep:solana-stake-interface",
+  "dep:solana-vote-program",
+  "solana-account/wincode",
+  "solana-transaction/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dev-context-only-utils",
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-fee-calculator/frozen-abi",
-    "solana-nonce/frozen-abi",
-    "solana-vote-program/frozen-abi",
+  "dev-context-only-utils",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-fee-calculator/frozen-abi",
+  "solana-nonce/frozen-abi",
+  "solana-vote-program/frozen-abi",
 ]
 
 [dependencies]
@@ -58,18 +58,18 @@ serde = { workspace = true, features = ["rc"] }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
 solana-address-lookup-table-interface = { workspace = true, features = [
-    "bincode",
-    "bytemuck",
+  "bincode",
+  "bytemuck",
 ] }
 solana-bucket-map = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true, features = ["serde", "wincode"] }
 solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-hash = { workspace = true, features = ["serde", "wincode", "rand"] }
 solana-keypair = { workspace = true, optional = true }
@@ -86,8 +86,8 @@ solana-reward-info = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
 solana-stake-interface = { workspace = true, optional = true, features = [
-    "serde",
-    "wincode",
+  "serde",
+  "wincode",
 ] }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
@@ -104,14 +104,19 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = [
+  "agave-unstable-api",
+] }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
 memoffset = { workspace = true }
 rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
-solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-accounts-db = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 solana-instruction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }

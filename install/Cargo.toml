@@ -29,12 +29,12 @@ dirs-next = { workspace = true }
 indicatif = { workspace = true }
 nix = { workspace = true, features = ["signal"] }
 reqwest = { workspace = true, features = [
-    "blocking",
-    "brotli",
-    "deflate",
-    "gzip",
-    "rustls-tls",
-    "json",
+  "blocking",
+  "brotli",
+  "deflate",
+  "gzip",
+  "rustls-tls",
+  "json",
 ] }
 scopeguard = { workspace = true }
 semver = { workspace = true }

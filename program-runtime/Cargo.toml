@@ -23,15 +23,18 @@ name = "solana_program_runtime"
 agave-unstable-api = []
 conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
 dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "dep:solana-message",
-    "solana-epoch-schedule/wincode",
+  "dep:qualifier_attr",
+  "dep:solana-message",
+  "solana-epoch-schedule/wincode",
 ]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []
 sbpf-debugger = ["solana-sbpf/debugger"]
-shuttle-test = ["solana-sbpf/shuttle-test", "solana-svm-type-overrides/shuttle-test"]
+shuttle-test = [
+  "solana-sbpf/shuttle-test",
+  "solana-svm-type-overrides/shuttle-test",
+]
 svm-internal = ["dep:qualifier_attr"]
 
 [dependencies]
@@ -50,10 +53,10 @@ solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
+  "frozen-abi",
 ] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
@@ -92,16 +95,19 @@ solana-instruction = { workspace = true, features = ["bincode"] }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-keypair = { workspace = true }
 solana-precompile-error = { workspace = true }
-solana-program-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-program-runtime = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = [
-    "agave-unstable-api",
-    "bincode",
-    "dev-context-only-utils",
+  "agave-unstable-api",
+  "bincode",
+  "dev-context-only-utils",
 ] }
 test-case = { workspace = true }
 

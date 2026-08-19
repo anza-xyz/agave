@@ -30,7 +30,10 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+agave-bls-cert-verify = { path = ".", features = [
+  "agave-unstable-api",
+  "dev-context-only-utils",
+] }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-hash = { workspace = true }
