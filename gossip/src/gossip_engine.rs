@@ -10,10 +10,9 @@ use {
         gossip_ingress::ValidatedGossipMessage,
     },
     crossbeam_channel::Receiver,
-    rayon::ThreadPoolBuilder,
+    rayon::ThreadPool,
     solana_perf::packet::{PacketBatch, PacketBatchRecycler},
     solana_pubkey::Pubkey,
-    solana_rayon_threadlimit::get_thread_count,
     solana_streamer::streamer::{ChannelSend, StreamerReceiveStats},
     std::{
         collections::HashSet,
@@ -85,6 +84,7 @@ impl GossipEngine {
     pub(crate) fn spawn(
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
+        thread_pool: Arc<ThreadPool>,
         context: Arc<GossipContext>,
         command_receiver: Receiver<GossipCommand>,
         receiver: Receiver<Vec<ValidatedGossipMessage>>,
@@ -94,11 +94,6 @@ impl GossipEngine {
         should_check_duplicate_instance: bool,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(get_thread_count().min(8))
-            .thread_name(|i| format!("solGossipWork{i:02}"))
-            .build()
-            .unwrap();
         Builder::new()
             .name("solGossipEngine".to_string())
             .spawn(move || {

@@ -9,6 +9,7 @@ use {
         gossip_engine::GossipEngine,
     },
     crossbeam_channel::{Sender, bounded},
+    rayon::ThreadPoolBuilder,
     solana_keypair::Keypair,
     solana_net_utils::{
         DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace,
@@ -17,6 +18,7 @@ use {
     },
     solana_perf::{packet::PacketBatch, recycler::Recycler},
     solana_pubkey::Pubkey,
+    solana_rayon_threadlimit::get_thread_count,
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -89,7 +91,15 @@ impl GossipService {
         );
         let (consume_sender, listen_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
+        let thread_pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(get_thread_count().min(16))
+                .thread_name(|i| format!("solGossipWork{i:02}"))
+                .build()
+                .unwrap(),
+        );
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
+            Arc::clone(&thread_pool),
             Arc::clone(&context),
             request_receiver,
             consume_sender,
@@ -100,6 +110,7 @@ impl GossipService {
         let t_engine = GossipEngine::spawn(
             Arc::clone(cluster_info),
             epoch_specs,
+            thread_pool,
             Arc::clone(&context),
             command_receiver,
             listen_receiver,

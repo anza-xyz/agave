@@ -13,6 +13,8 @@
 //!
 //! Bank needs to provide an interface for us to query the stake weight
 
+#[cfg(test)]
+use rayon::ThreadPoolBuilder;
 use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
@@ -48,7 +50,7 @@ use {
     crossbeam_channel::{Sender, TrySendError, bounded},
     itertools::{Either, Itertools},
     rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
-    rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
+    rayon::{ThreadPool, prelude::*},
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
@@ -64,7 +66,6 @@ use {
         packet::{Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch},
     },
     solana_pubkey::Pubkey,
-    solana_rayon_threadlimit::get_thread_count,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_streamer::{
@@ -2392,16 +2393,12 @@ impl ClusterInfo {
 
     pub(crate) fn start_socket_consume_thread(
         self: Arc<Self>,
+        thread_pool: Arc<ThreadPool>,
         context: Arc<GossipContext>,
         receiver: PacketBatchReceiver,
         sender: impl ChannelSend<Vec<ValidatedGossipMessage>>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(get_thread_count().min(8))
-            .thread_name(|i| format!("solGossipCons{i:02}"))
-            .build()
-            .unwrap();
         let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
         let run_consume = move || {
             while !exit.load(Ordering::Relaxed) {
