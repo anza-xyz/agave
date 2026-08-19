@@ -7233,6 +7233,7 @@ dependencies = [
  "solana-system-interface 3.3.0",
  "solana-transaction",
  "solana-transaction-error",
+ "test-case",
 ]
 
 [[package]]
