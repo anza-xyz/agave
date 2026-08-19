@@ -747,7 +747,6 @@ impl ClusterInfo {
                 let node_rpc = node
                     .rpc()
                     .filter(|addr| self.socket_addr_space.check(addr))?;
-                let node_version = self.get_node_version(node.pubkey());
                 let rpc_addr = node_rpc.ip();
                 Some(format!(
                     format_string!(),
@@ -759,11 +758,7 @@ impl ClusterInfo {
                     },
                     now.saturating_sub(last_updated),
                     node.pubkey().to_string(),
-                    if let Some(node_version) = node_version {
-                        node_version.to_string()
-                    } else {
-                        "-".to_string()
-                    },
+                    node.version().to_string(),
                     self.addr_to_string(&Some(rpc_addr), &node.rpc()),
                     self.addr_to_string(&Some(rpc_addr), &node.rpc_pubsub()),
                     node.shred_version(),
@@ -828,7 +823,6 @@ impl ClusterInfo {
                     total_spy_nodes = total_spy_nodes.saturating_add(1);
                 }
 
-                let node_version = self.get_node_version(node.pubkey());
                 let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                 format!(
                     format_string!(),
@@ -846,11 +840,7 @@ impl ClusterInfo {
                     },
                     now.saturating_sub(last_updated),
                     node.pubkey().to_string(),
-                    if let Some(node_version) = node_version {
-                        node_version.to_string()
-                    } else {
-                        "-".to_string()
-                    },
+                    node.version().to_string(),
                     self.addr_to_string(&ip_addr, &node.gossip()),
                     self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
                     self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
