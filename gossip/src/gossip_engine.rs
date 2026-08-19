@@ -1,7 +1,7 @@
 use {
     crate::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
-        cluster_info_metrics::ScopedTimer,
+        cluster_info_metrics::{ScopedTimer, submit_gossip_stats},
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         epoch_specs::EpochSpecs,
         gossip_command::GossipCommand,
@@ -14,7 +14,7 @@ use {
     solana_perf::packet::{PacketBatch, PacketBatchRecycler},
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_streamer::streamer::ChannelSend,
+    solana_streamer::streamer::{ChannelSend, StreamerReceiveStats},
     std::{
         collections::HashSet,
         sync::{
@@ -28,11 +28,13 @@ use {
 
 const PULL_INTERVAL: Duration = Duration::from_millis(GOSSIP_SLEEP_MILLIS * 5);
 const PUSH_REFRESH_INTERVAL: Duration = Duration::from_millis(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2);
+const METRICS_INTERVAL: Duration = Duration::from_secs(2);
 
 struct Deadlines {
     tick: Instant,
     pull: Instant,
     push_refresh: Instant,
+    metrics: Instant,
     contact_trace: Option<Instant>,
     contact_save: Option<Instant>,
 }
@@ -44,6 +46,7 @@ impl Deadlines {
             tick: now,
             pull: now,
             push_refresh: now,
+            metrics: now + METRICS_INTERVAL,
             contact_trace: cluster_info
                 .contact_debug_interval()
                 .map(|period| now + period),
@@ -86,6 +89,7 @@ impl GossipEngine {
         command_receiver: Receiver<GossipCommand>,
         receiver: Receiver<Vec<ValidatedGossipMessage>>,
         sender: impl ChannelSend<PacketBatch>,
+        receiver_stats: Arc<StreamerReceiveStats>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
         exit: Arc<AtomicBool>,
@@ -169,6 +173,11 @@ impl GossipEngine {
                         .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
                         .unwrap_or_default();
                     context.update(Arc::clone(&stakes), cluster_info.is_full_alpenglow_epoch());
+
+                    if Deadlines::claim(&mut deadlines.metrics, now, METRICS_INTERVAL) {
+                        submit_gossip_stats(&cluster_info.stats, cluster_info.gossip(), &stakes);
+                        receiver_stats.report();
+                    }
 
                     if let Some(period) = cluster_info.contact_debug_interval()
                         && Deadlines::claim_optional(&mut deadlines.contact_trace, now, period)

@@ -3,7 +3,6 @@
 use {
     crate::{
         cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
-        cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
         gossip_context::GossipContext,
@@ -39,8 +38,6 @@ use {
         time::{Duration, Instant},
     },
 };
-
-const SUBMIT_GOSSIP_STATS_INTERVAL: Duration = Duration::from_secs(2);
 
 pub struct GossipService {
     thread_hdls: Vec<JoinHandle<()>>,
@@ -107,6 +104,7 @@ impl GossipService {
             command_receiver,
             listen_receiver,
             response_sender.clone(),
+            Arc::clone(&gossip_receiver_stats),
             gossip_validators,
             should_check_duplicate_instance,
             exit.clone(),
@@ -126,32 +124,7 @@ impl GossipService {
             response_receiver,
             stats_reporter_sender,
         );
-        let t_metrics = Builder::new()
-            .name("solGossipMetr".to_string())
-            .spawn({
-                let cluster_info = cluster_info.clone();
-                move || {
-                    while !exit.load(Ordering::Relaxed) {
-                        sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
-                        let context = context.load();
-
-                        submit_gossip_stats(
-                            &cluster_info.stats,
-                            cluster_info.gossip(),
-                            &context.stakes,
-                        );
-                        gossip_receiver_stats.report();
-                    }
-                }
-            })
-            .unwrap();
-        let thread_hdls = vec![
-            t_receiver,
-            t_responder,
-            t_socket_consume,
-            t_engine,
-            t_metrics,
-        ];
+        let thread_hdls = vec![t_receiver, t_responder, t_socket_consume, t_engine];
         Self { thread_hdls }
     }
 
