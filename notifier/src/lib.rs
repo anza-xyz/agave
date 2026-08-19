@@ -232,10 +232,16 @@ impl Notifier {
                     from,
                 }) => {
                     let url = format!(
-                        "https://{account}:{token}@api.twilio.com/2010-04-01/Accounts/{account}/Messages.json"
+                        "https://api.twilio.com/2010-04-01/Accounts/{account}/Messages.json"
                     );
                     let params = [("To", to), ("From", from), ("Body", &msg.to_string())];
-                    if let Err(err) = self.client.post(url).form(&params).send() {
+                    if let Err(err) = self
+                        .client
+                        .post(url)
+                        .basic_auth(account, Some(token))
+                        .form(&params)
+                        .send()
+                    {
                         warn!("Failed to send Twilio message: {err:?}");
                     }
                 }
