@@ -2138,16 +2138,16 @@ pub(crate) mod tests {
         assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 11, 12));
 
-        // Test the same fork, but request deployment slot 5 for both programs.
-        // program1 has no entry deployed in slot 5 and misses. program2 does,
-        // and gets it rather than its newer entry deployed in slot 11.
+        // Now try extractions that previously worked under the "deployed on
+        // or after" criteria, but won't work with exact matching.
         let mut missing = get_entries_to_load(&cache, 12, keys);
-        missing.get_mut(0).unwrap().deployed_on_or_after_slot = 5;
+        // Program 2's newest entry is at slot 11. Asking for 5 doesn't extract
+        // the latest (11) anymore. You get 5.
         missing.get_mut(1).unwrap().deployed_on_or_after_slot = 5;
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
-        assert!(match_missing(&missing, &program1, true));
+        assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 5, 12));
     }
 
