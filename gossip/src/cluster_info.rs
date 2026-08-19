@@ -88,7 +88,7 @@ use {
         rc::Rc,
         result::Result,
         sync::{
-            Arc, Mutex, OnceLock, RwLock, RwLockReadGuard,
+            Arc, Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard,
             atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle},
@@ -194,6 +194,9 @@ pub struct ClusterInfo {
     /// Alpenglow migration status
     migration_status: OnceLock<Arc<MigrationStatus>>,
     command_sender: ArcSwapOption<Sender<GossipCommand>>,
+    /// Held by the engine for its whole life, so a caller that falls back to
+    /// applying a command itself cannot write while the engine still is.
+    command_lock: Mutex<()>,
 }
 
 impl ClusterInfo {
@@ -214,8 +217,12 @@ impl ClusterInfo {
         let _ = self.command_sender.compare_and_swap(sender, None);
     }
 
-    /// Hands `command` to the engine, or applies it inline when no engine is
-    /// running. Any `completed` channel the command carries is answered either
+    pub(crate) fn lock_commands(&self) -> MutexGuard<'_, ()> {
+        self.command_lock.lock().unwrap()
+    }
+
+    /// Hands `command` to the engine, or applies it inline when no engine can
+    /// take it. Any `completed` channel the command carries is answered either
     /// way, so callers can always wait on it.
     fn submit_command(&self, command: GossipCommand) {
         let command = match self.command_sender.load_full() {
@@ -225,6 +232,7 @@ impl ClusterInfo {
             },
             None => command,
         };
+        let _command_lock = self.lock_commands();
         self.process_command(command);
     }
 
@@ -291,6 +299,7 @@ impl ClusterInfo {
             sigverify_cache: SigVerifyCache::new(),
             migration_status: OnceLock::new(),
             command_sender: ArcSwapOption::empty(),
+            command_lock: Mutex::new(()),
         };
         me.refresh_my_gossip_contact_info();
         me
