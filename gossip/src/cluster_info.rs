@@ -31,6 +31,7 @@ use {
         epoch_slots::EpochSlots,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
+        gossip_identity::GossipIdentity,
         ping_pong::Pong,
         protocol::{
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
@@ -42,7 +43,6 @@ use {
         weighted_shuffle::WeightedShuffle,
     },
     agave_votor_messages::migration::MigrationStatus,
-    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, TrySendError},
     itertools::{Either, Itertools},
     rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
@@ -176,14 +176,12 @@ pub enum ClusterInfoError {
 pub struct ClusterInfo {
     /// The network
     pub gossip: CrdsGossip,
-    /// set the keypair that will be used to sign crds values generated. It is unset only in tests.
-    keypair: ArcSwap<Keypair>,
+    identity: GossipIdentity,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
     /// Additional pubkeys to preserve during CRDS table trimming.
     known_validators: OnceLock<HashSet<Pubkey>>,
     outbound_budget: DataBudget,
-    my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
     pull_request_budget: KeyedRateLimiter<IpAddr>,
     pub(crate) stats: GossipStats,
@@ -204,14 +202,12 @@ impl ClusterInfo {
         keypair: Arc<Keypair>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        assert_eq!(contact_info.pubkey(), &keypair.pubkey());
         let me = Self {
             gossip: CrdsGossip::default(),
-            keypair: ArcSwap::from(keypair),
+            identity: GossipIdentity::new(contact_info, keypair),
             entrypoints: RwLock::default(),
             known_validators: OnceLock::new(),
             outbound_budget: DataBudget::default(),
-            my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
                 GOSSIP_PING_CACHE_TTL,
                 GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
@@ -276,7 +272,7 @@ impl ClusterInfo {
         gossip_validators: Option<&HashSet<Pubkey>>,
         sender: &impl ChannelSend<PacketBatch>,
     ) {
-        let shred_version = self.my_contact_info.read().unwrap().shred_version();
+        let shred_version = self.identity.shred_version();
         let mut pings = Vec::new();
         self.gossip.refresh_push_active_set(
             &self.keypair(),
@@ -468,43 +464,37 @@ impl ClusterInfo {
     }
 
     pub fn id(&self) -> Pubkey {
-        self.keypair.load().pubkey()
+        self.identity.id()
     }
 
     pub fn keypair(&self) -> Arc<Keypair> {
-        self.keypair.load_full()
+        self.identity.keypair()
     }
 
     pub fn set_keypair(&self, new_keypair: Arc<Keypair>) {
-        let id = new_keypair.pubkey();
-        self.keypair.store(new_keypair);
-        self.my_contact_info.write().unwrap().hot_swap_pubkey(id);
+        self.identity.set_keypair(new_keypair);
         self.refresh_my_gossip_contact_info();
     }
 
     pub fn set_gossip_socket(&self, gossip_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .unwrap()
-            .set_gossip(gossip_addr)?;
+        self.identity
+            .update_contact_info(|contact_info| contact_info.set_gossip(gossip_addr))?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
 
     pub fn set_tvu_socket(&self, tvu_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .unwrap()
-            .set_tvu(contact_info::Protocol::UDP, tvu_addr)?;
+        self.identity.update_contact_info(|contact_info| {
+            contact_info.set_tvu(contact_info::Protocol::UDP, tvu_addr)
+        })?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
 
     pub fn set_tpu_quic(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .unwrap()
-            .set_tpu(contact_info::Protocol::QUIC, tpu_addr)?;
+        self.identity.update_contact_info(|contact_info| {
+            contact_info.set_tpu(contact_info::Protocol::QUIC, tpu_addr)
+        })?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
@@ -513,10 +503,9 @@ impl ClusterInfo {
         &self,
         tpu_forwards_addr: SocketAddr,
     ) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .unwrap()
-            .set_tpu_forwards(contact_info::Protocol::QUIC, tpu_forwards_addr)?;
+        self.identity.update_contact_info(|contact_info| {
+            contact_info.set_tpu_forwards(contact_info::Protocol::QUIC, tpu_forwards_addr)
+        })?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
@@ -526,10 +515,9 @@ impl ClusterInfo {
         protocol: contact_info::Protocol,
         tpu_vote_addr: SocketAddr,
     ) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .unwrap()
-            .set_tpu_vote(protocol, tpu_vote_addr)?;
+        self.identity.update_contact_info(|contact_info| {
+            contact_info.set_tpu_vote(protocol, tpu_vote_addr)
+        })?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
@@ -569,11 +557,11 @@ impl ClusterInfo {
     }
 
     pub fn my_contact_info(&self) -> ContactInfo {
-        self.my_contact_info.read().unwrap().clone()
+        self.identity.contact_info()
     }
 
     pub fn my_shred_version(&self) -> u16 {
-        self.my_contact_info.read().unwrap().shred_version()
+        self.identity.shred_version()
     }
 
     fn lookup_epoch_slots(&self, ix: EpochSlotsIndex) -> EpochSlots {
@@ -1218,16 +1206,11 @@ impl ClusterInfo {
     }
 
     fn refresh_my_gossip_contact_info(&self) {
-        let keypair = self.keypair();
-        let node = {
-            let mut node = self.my_contact_info.write().unwrap();
-            node.set_wallclock(timestamp());
-            node.clone()
-        };
-        let node = CrdsValue::new(CrdsData::ContactInfo(node), &keypair);
+        let now = timestamp();
+        let node = self.identity.refreshed_crds_value(now);
         if let Err(err) = {
             let mut gossip_crds = self.gossip.crds.write().unwrap();
-            gossip_crds.insert(node, timestamp(), GossipRoute::LocalMessage)
+            gossip_crds.insert(node, now, GossipRoute::LocalMessage)
         } {
             error!("refresh_my_gossip_contact_info failed: {err:?}");
         }

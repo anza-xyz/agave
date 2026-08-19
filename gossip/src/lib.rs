@@ -21,6 +21,7 @@ pub mod duplicate_shred_listener;
 pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;
+mod gossip_identity;
 pub mod gossip_service;
 pub mod node;
 #[macro_use]
