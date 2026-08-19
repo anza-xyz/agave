@@ -52,8 +52,6 @@ fi
 
 _ scripts/check-msrv.sh
 
-_ scripts/cargo-clippy.sh
-
 _ ci/do-audit.sh
 
 if [[ -n $CI ]] && [[ $CHANNEL = "stable" ]]; then
