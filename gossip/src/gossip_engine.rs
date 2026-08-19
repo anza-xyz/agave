@@ -246,3 +246,52 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*, crate::contact_info::ContactInfo, crossbeam_channel::bounded,
+        rayon::ThreadPoolBuilder, solana_keypair::Keypair, solana_net_utils::SocketAddrSpace,
+        solana_signer::Signer, std::collections::HashMap,
+    };
+
+    #[test]
+    fn drain_commands_applies_queued_commands() {
+        let keypair = Arc::new(Keypair::new());
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::new_localhost(&keypair.pubkey(), 0),
+            keypair,
+            SocketAddrSpace::Unspecified,
+        ));
+        let (command_sender, commands) = bounded(1);
+        let command_endpoint = cluster_info.attach_command_endpoint(command_sender);
+        command_endpoint
+            .send(GossipCommand::LowestSlot(42))
+            .unwrap();
+        let (_inbound_sender, inbound) = bounded(1);
+        let (outbound, _outbound_receiver) = bounded(1);
+        let engine = GossipEngine {
+            cluster_info: Arc::clone(&cluster_info),
+            epoch_specs: None,
+            workers: Arc::new(ThreadPoolBuilder::new().num_threads(1).build().unwrap()),
+            context: Arc::new(GossipContext::new(Arc::new(HashMap::new()), false)),
+            command_endpoint,
+            commands,
+            inbound,
+            outbound,
+            validators: None,
+            check_duplicate_instance: false,
+            exit: Arc::new(AtomicBool::new(false)),
+        };
+
+        engine.drain_commands();
+
+        assert_eq!(
+            cluster_info
+                .lowest_slot_for_tests(cluster_info.id())
+                .unwrap()
+                .lowest,
+            42
+        );
+    }
+}

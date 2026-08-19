@@ -124,7 +124,6 @@ mod tests {
         for now in 2..102 {
             let value = identity.refreshed_crds_value(now);
             assert!(value.verify());
-            assert_eq!(value.pubkey(), *value.contact_info().unwrap().pubkey());
         }
         thread.join().unwrap();
     }

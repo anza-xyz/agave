@@ -3094,7 +3094,6 @@ mod tests {
             &SocketAddrSpace::Unspecified,
         );
         //check that all types of gossip messages are signed correctly
-        cluster_info.flush_gossip_commands();
         let (entries, push_messages, _) = cluster_info.gossip.new_push_messages(
             &cluster_info.id(),
             timestamp(),
@@ -3730,7 +3729,6 @@ mod tests {
                 .push_duplicate_shred(&shred1, shred2.payload())
                 .is_ok()
         );
-        cluster_info.flush_gossip_commands();
         let entries = cluster_info.get_duplicate_shreds(&mut cursor);
         // One duplicate shred proof is split into 3 chunks.
         assert_eq!(3, entries.len());
@@ -3750,7 +3748,6 @@ mod tests {
                 .push_duplicate_shred(&shred3, shred4.payload())
                 .is_ok()
         );
-        cluster_info.flush_gossip_commands();
         let entries1 = cluster_info.get_duplicate_shreds(&mut cursor);
         // One duplicate shred proof is split into 3 chunks.
         assert_eq!(3, entries1.len());

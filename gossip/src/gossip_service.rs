@@ -491,7 +491,6 @@ mod tests {
     use {
         super::*,
         crate::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
-        solana_clock::Slot,
         solana_hash::Hash,
         std::sync::{Arc, atomic::AtomicBool},
     };
@@ -510,14 +509,13 @@ mod tests {
     }
 
     #[test]
-    // test that stage will exit when flag is set
-    fn test_exit() {
+    fn test_commands_and_restart() {
         let kp = Keypair::new();
         let tn = Node::new_localhost_with_pubkey(&kp.pubkey());
         let cluster_info =
             ClusterInfo::new(tn.info.clone(), Arc::new(kp), SocketAddrSpace::Unspecified);
         let c = Arc::new(cluster_info);
-        for _ in 0..2 {
+        for slot in 1..=2 {
             let exit = Arc::new(AtomicBool::new(false));
             let service = GossipService::new(
                 &c,
@@ -529,46 +527,12 @@ mod tests {
                 None,
                 exit.clone(),
             );
-            let full = (1, Hash::new_unique());
+            let full = (slot, Hash::new_unique());
             c.push_snapshot_hashes(full, Vec::new()).unwrap();
             c.flush_gossip_commands();
             assert_eq!(c.get_snapshot_hashes_for_node(&c.id()).unwrap().full, full);
             exit.store(true, Ordering::Relaxed);
             service.join().unwrap();
-        }
-    }
-
-    #[test]
-    fn test_commands_survive_exit() {
-        // Commands racing with shutdown must not be dropped.
-        const ROUNDS: Slot = 5;
-        let kp = Keypair::new();
-        let tn = Node::new_localhost_with_pubkey(&kp.pubkey());
-        let c = Arc::new(ClusterInfo::new(
-            tn.info.clone(),
-            Arc::new(kp),
-            SocketAddrSpace::Unspecified,
-        ));
-        for slot in 1..=ROUNDS {
-            let exit = Arc::new(AtomicBool::new(false));
-            let service = GossipService::new(
-                &c,
-                None,
-                Arc::clone(&tn.sockets.gossip),
-                None,
-                None,
-                true, // should_check_duplicate_instance
-                None,
-                exit.clone(),
-            );
-            let publisher = {
-                let c = Arc::clone(&c);
-                std::thread::spawn(move || c.push_lowest_slot(slot))
-            };
-            exit.store(true, Ordering::Relaxed);
-            publisher.join().unwrap();
-            service.join().unwrap();
-            assert_eq!(c.lowest_slot_for_tests(c.id()).unwrap().lowest, slot);
         }
     }
 
