@@ -36,6 +36,15 @@ use {
     },
 };
 
+/// Whether `pubkey` already has a duplicate-shred proof for `slot`.
+fn contains_duplicate_shred(crds: &Crds, pubkey: &Pubkey, slot: Slot) -> bool {
+    crds.get_records(pubkey)
+        .any(|value| match value.value.data() {
+            CrdsData::DuplicateShred(_, value) => value.slot == slot,
+            _ => false,
+        })
+}
+
 #[derive(Default)]
 pub struct CrdsGossip {
     pub crds: RwLock<Crds>,
@@ -85,14 +94,7 @@ impl CrdsGossip {
     }
 
     pub(crate) fn contains_duplicate_shred(&self, pubkey: &Pubkey, slot: Slot) -> bool {
-        self.crds
-            .read()
-            .unwrap()
-            .get_records(pubkey)
-            .any(|value| match value.value.data() {
-                CrdsData::DuplicateShred(_, value) => value.slot == slot,
-                _ => false,
-            })
+        contains_duplicate_shred(&self.crds.read().unwrap(), pubkey, slot)
     }
 
     pub(crate) fn insert_duplicate_shred(&self, keypair: &Keypair, chunks: Vec<DuplicateShred>) {
@@ -102,13 +104,7 @@ impl CrdsGossip {
         let pubkey = keypair.pubkey();
         let mut crds = self.crds.write().unwrap();
         // Preparation and insertion can race with repeated reports before the engine starts.
-        if crds
-            .get_records(&pubkey)
-            .any(|value| match value.value.data() {
-                CrdsData::DuplicateShred(_, value) => value.slot == shred_slot,
-                _ => false,
-            })
-        {
+        if contains_duplicate_shred(&crds, &pubkey, shred_slot) {
             return;
         }
         // Find the index of oldest duplicate shred.
