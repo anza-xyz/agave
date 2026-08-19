@@ -1,10 +1,10 @@
 use {
     crate::{
-        cluster_info::{CHANNEL_CONSUME_CAPACITY, ClusterInfo, GOSSIP_SLEEP_MILLIS},
+        cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         cluster_info_metrics::ScopedTimer,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         epoch_specs::EpochSpecs,
-        gossip_command::{GOSSIP_COMMAND_CAPACITY, GossipCommand},
+        gossip_command::GossipCommand,
         gossip_context::GossipContext,
         gossip_error::GossipError,
         gossip_ingress::ValidatedGossipMessage,
@@ -21,7 +21,7 @@ use {
             Arc,
             atomic::{AtomicBool, Ordering},
         },
-        thread::{Builder, JoinHandle, yield_now},
+        thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
@@ -29,6 +29,28 @@ use {
 const TICK_INTERVAL: Duration = Duration::from_millis(GOSSIP_SLEEP_MILLIS);
 const PULL_INTERVAL: Duration = Duration::from_millis(GOSSIP_SLEEP_MILLIS * 5);
 const PUSH_REFRESH_INTERVAL: Duration = Duration::from_millis(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2);
+const MAX_COMMANDS_PER_TURN: usize = 256;
+const MAX_INGRESS_BATCHES_PER_TURN: usize = 1024;
+const TARGET_INGRESS_MESSAGES_PER_TURN: usize = 64 * 1024;
+
+fn buffer_ingress(
+    first: Vec<ValidatedGossipMessage>,
+    inbound: &Receiver<Vec<ValidatedGossipMessage>>,
+    buffer: &mut Vec<Vec<ValidatedGossipMessage>>,
+) {
+    let mut num_messages = first.len();
+    buffer.push(first);
+    while buffer.len() < MAX_INGRESS_BATCHES_PER_TURN
+        && num_messages < TARGET_INGRESS_MESSAGES_PER_TURN
+    {
+        let Ok(messages) = inbound.try_recv() else {
+            break;
+        };
+        num_messages = num_messages.saturating_add(messages.len());
+        buffer.push(messages);
+    }
+}
+
 struct Deadlines {
     tick: Periodic,
     pull: Periodic,
@@ -87,10 +109,10 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                     check_duplicate_instance,
                     exit,
                 } = self;
-                let _command_lock = cluster_info.lock_commands();
+                let _writer_lease = cluster_info.acquire_writer_lease();
                 let recycler = PacketBatchRecycler::default();
                 let mut deadlines = Deadlines::new();
-                let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
+                let mut packet_buf = Vec::with_capacity(MAX_INGRESS_BATCHES_PER_TURN);
                 let mut entrypoints_processed = false;
 
                 while !exit.load(Ordering::Relaxed) {
@@ -110,15 +132,13 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                     };
                     match event {
                         EngineEvent::Command(command) => {
-                            cluster_info.process_command(command);
-                            for command in commands.try_iter().take(GOSSIP_COMMAND_CAPACITY - 1) {
-                                cluster_info.process_command(command);
+                            cluster_info.apply_command(command);
+                            for command in commands.try_iter().take(MAX_COMMANDS_PER_TURN - 1) {
+                                cluster_info.apply_command(command);
                             }
                         }
                         EngineEvent::Packets(packets) => {
-                            packet_buf.push(packets);
-                            packet_buf
-                                .extend(inbound.try_iter().take(CHANNEL_CONSUME_CAPACITY - 1));
+                            buffer_ingress(packets, &inbound, &mut packet_buf);
                             let context_snapshot = context.load();
                             let _timer =
                                 ScopedTimer::from(&cluster_info.stats.gossip_listen_loop_time);
@@ -189,17 +209,10 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                         );
                     }
                 }
-                // Drain senders that raced with endpoint detachment; dropping
-                // earlier could strand callers waiting for completion.
-                cluster_info.clear_command_sender(&command_endpoint);
-                loop {
-                    for command in commands.try_iter() {
-                        cluster_info.process_command(command);
-                    }
-                    if Arc::strong_count(&command_endpoint) == 1 {
-                        break;
-                    }
-                    yield_now();
+                cluster_info.detach_command_endpoint(&command_endpoint);
+                drop(command_endpoint);
+                for command in commands {
+                    cluster_info.apply_command(command);
                 }
             })
             .unwrap()

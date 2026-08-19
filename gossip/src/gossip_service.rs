@@ -67,7 +67,7 @@ impl GossipService {
             cluster_info.is_full_alpenglow_epoch(),
         ));
         let (command_sender, command_receiver) = bounded(GOSSIP_COMMAND_CAPACITY);
-        let command_sender = cluster_info.set_command_sender(command_sender);
+        let command_sender = cluster_info.attach_command_endpoint(command_sender);
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         trace!(
@@ -117,13 +117,12 @@ impl GossipService {
             command_endpoint: command_sender,
             commands: command_receiver,
             inbound: listen_receiver,
-            outbound: response_sender.clone(),
+            outbound: response_sender,
             validators: gossip_validators,
             check_duplicate_instance: should_check_duplicate_instance,
             exit: exit.clone(),
         }
         .spawn();
-        drop(response_sender);
         let t_housekeeping = GossipHousekeeper {
             cluster_info: Arc::clone(cluster_info),
             context,
@@ -498,6 +497,19 @@ mod tests {
     };
 
     #[test]
+    #[should_panic(expected = "gossip engine already attached")]
+    fn test_rejects_multiple_command_endpoints() {
+        let keypair = Keypair::new();
+        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
+        let cluster_info =
+            ClusterInfo::new(node.info, Arc::new(keypair), SocketAddrSpace::Unspecified);
+        let (sender, _receiver) = bounded(1);
+        cluster_info.attach_command_endpoint(sender);
+        let (sender, _receiver) = bounded(1);
+        cluster_info.attach_command_endpoint(sender);
+    }
+
+    #[test]
     // test that stage will exit when flag is set
     fn test_exit() {
         let kp = Keypair::new();
@@ -519,7 +531,7 @@ mod tests {
             );
             let full = (1, Hash::new_unique());
             c.push_snapshot_hashes(full, Vec::new()).unwrap();
-            c.flush_push_queue();
+            c.flush_gossip_commands();
             assert_eq!(c.get_snapshot_hashes_for_node(&c.id()).unwrap().full, full);
             exit.store(true, Ordering::Relaxed);
             service.join().unwrap();

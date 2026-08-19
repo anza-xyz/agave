@@ -226,7 +226,7 @@ mod test {
         let node_info = Node::new_localhost_with_pubkey(&pubkey);
         let cluster_info = ClusterInfo::new(node_info.info, keypair, SocketAddrSpace::Unspecified);
         ClusterSlotsService::update_lowest_slot(5, &cluster_info);
-        cluster_info.flush_push_queue();
+        cluster_info.flush_gossip_commands();
         let lowest = cluster_info.lowest_slot_for_tests(pubkey).unwrap();
         assert_eq!(lowest.lowest, 5);
     }

@@ -77,7 +77,7 @@ use {
     std::{
         borrow::Borrow,
         collections::{HashMap, HashSet},
-        fmt::Debug,
+        fmt::{Debug, Write as _},
         fs::{self, File},
         io::{BufReader, BufWriter, Write},
         iter::repeat,
@@ -99,13 +99,8 @@ use {
 
 /// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
-/// Capacity for intermediate packet batch buffers in the gossip ingress pipeline.
-///
-/// To avoid the overhead of dropping large sets of packet batches in each processing loop,
-/// we limit the number of packet batches that are pulled from the corresponding channel on each iteration.
-/// This ensures that the number of `madvise` system calls is minimized and, as such, that large interruptions
-/// to the processing loop are avoided.
-pub(crate) const CHANNEL_CONSUME_CAPACITY: usize = 1024;
+/// Maximum UDP packet batches verified in one pass.
+const MAX_PACKET_BATCHES_PER_VERIFY: usize = 1024;
 const MIN_PARALLEL_GOSSIP_PACKETS: usize = 16;
 /// Channel capacity for gossip channels.
 ///
@@ -191,9 +186,9 @@ pub struct ClusterInfo {
     sigverify_cache: SigVerifyCache,
     /// Alpenglow migration status
     migration_status: OnceLock<Arc<MigrationStatus>>,
-    command_sender: ArcSwapOption<Sender<GossipCommand>>,
+    command_endpoint: ArcSwapOption<Sender<GossipCommand>>,
     /// Prevents inline fallback from racing the engine.
-    command_lock: Mutex<()>,
+    writer_lease: Mutex<()>,
 }
 
 impl ClusterInfo {
@@ -201,41 +196,52 @@ impl ClusterInfo {
         crate::cluster_info_metrics::submit_gossip_stats(&self.stats, &self.gossip, stakes);
     }
 
-    pub(crate) fn set_command_sender(
+    pub(crate) fn attach_command_endpoint(
         &self,
         sender: Sender<GossipCommand>,
     ) -> Arc<Sender<GossipCommand>> {
         let sender = Arc::new(sender);
-        self.command_sender.store(Some(Arc::clone(&sender)));
+        let previous = self
+            .command_endpoint
+            .compare_and_swap(&None::<Arc<_>>, Some(Arc::clone(&sender)));
+        assert!(previous.is_none(), "gossip engine already attached");
         sender
     }
 
-    pub(crate) fn clear_command_sender(&self, sender: &Arc<Sender<GossipCommand>>) {
-        let _ = self.command_sender.compare_and_swap(sender, None);
+    pub(crate) fn detach_command_endpoint(&self, sender: &Arc<Sender<GossipCommand>>) {
+        let _ = self.command_endpoint.compare_and_swap(sender, None);
     }
 
-    pub(crate) fn lock_commands(&self) -> MutexGuard<'_, ()> {
-        self.command_lock.lock().unwrap()
+    pub(crate) fn acquire_writer_lease(&self) -> MutexGuard<'_, ()> {
+        self.writer_lease.lock().unwrap()
     }
 
-    /// Sends to the engine, falling back to inline processing after shutdown.
+    /// Sends to the engine, or applies inline when no engine is attached.
     fn submit_command(&self, command: GossipCommand) {
-        let command = match self.command_sender.load_full() {
+        let command = match self.command_endpoint.load_full() {
             Some(sender) => match sender.send(command) {
                 Ok(()) => return,
                 Err(err) => err.0,
             },
             None => command,
         };
-        let _command_lock = self.lock_commands();
-        self.process_command(command);
+        let _writer_lease = self.acquire_writer_lease();
+        self.apply_command(command);
     }
 
-    pub(crate) fn process_command(&self, command: GossipCommand) {
+    fn submit_and_wait<R>(&self, make_command: impl FnOnce(Sender<R>) -> GossipCommand) -> R {
+        let (completed, receiver) = bounded(1);
+        self.submit_command(make_command(completed));
+        receiver
+            .recv()
+            .expect("gossip command processor stopped without replying")
+    }
+
+    pub(crate) fn apply_command(&self, command: GossipCommand) {
         match command {
             GossipCommand::Publish(value) => self.insert_local_value(*value),
-            GossipCommand::LowestSlot(slot) => self.push_lowest_slot_direct(slot),
-            GossipCommand::EpochSlots(slots) => self.push_epoch_slots_direct(&slots),
+            GossipCommand::LowestSlot(slot) => self.apply_lowest_slot(slot),
+            GossipCommand::EpochSlots(slots) => self.apply_epoch_slots(&slots),
             GossipCommand::RefreshContact(completed) => {
                 self.refresh_my_gossip_contact_info();
                 let _ = completed.send(());
@@ -245,16 +251,16 @@ impl ClusterInfo {
                 transaction,
                 completed,
             } => {
-                let result = self.push_vote_direct(slot, transaction);
+                let result = self.apply_vote(slot, transaction);
                 let _ = completed.send(result);
             }
             GossipCommand::RefreshVote { transaction, slot } => {
-                self.refresh_vote_direct(transaction, slot)
+                self.apply_vote_refresh(transaction, slot)
             }
             GossipCommand::DuplicateShred { keypair, chunks } => {
                 self.gossip.insert_duplicate_shred(&keypair, chunks)
             }
-            GossipCommand::Flush(completed) => {
+            GossipCommand::Barrier(completed) => {
                 let _ = completed.send(());
             }
         }
@@ -293,8 +299,8 @@ impl ClusterInfo {
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
             migration_status: OnceLock::new(),
-            command_sender: ArcSwapOption::empty(),
-            command_lock: Mutex::new(()),
+            command_endpoint: ArcSwapOption::empty(),
+            writer_lease: Mutex::new(()),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -678,11 +684,7 @@ impl ClusterInfo {
     }
 
     fn publish_contact_info(&self) {
-        let (completed, receiver) = bounded(1);
-        self.submit_command(GossipCommand::RefreshContact(completed));
-        if receiver.recv().is_err() {
-            self.refresh_my_gossip_contact_info();
-        }
+        self.submit_and_wait(GossipCommand::RefreshContact);
     }
 
     fn lookup_epoch_slots(&self, ix: EpochSlotsIndex) -> EpochSlots {
@@ -709,28 +711,20 @@ impl ClusterInfo {
     }
 
     pub fn rpc_info_trace(&self) -> String {
-        // This sets the format string for the table, defining the columns and their widths
-        // For reference, this is the header of the table:
-        // RPC Address       |Age(ms)|               Node identifier                |       Version       | RPC  |PubSub|ShredVer
+        self.rpc_info_trace_from(&self.all_peers())
+    }
+
+    fn rpc_info_trace_from(&self, peers: &[(ContactInfo, u64)]) -> String {
         macro_rules! format_string {
             () => {
                 "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^6}|{:^8}\n"
             };
         }
-        // Make sure format_string above has enough room for each column's title
-        let header = format!(
+        let mut output = format!(
             format_string!(),
-            "RPC Address",
-            "", // this is for "me" marker
-            "Age(ms)",
-            "Node identifier",
-            "Version",
-            "RPC",
-            "PubSub",
-            "ShredVer"
+            "RPC Address", "", "Age(ms)", "Node identifier", "Version", "RPC", "PubSub", "ShredVer"
         );
-        // header_bottom is a String representing the separator between header and data
-        let header_bottom: String = header
+        let header_bottom: String = output
             .chars()
             .map(|s| match s {
                 '|' => '+',
@@ -738,57 +732,61 @@ impl ClusterInfo {
                 _ => '-',
             })
             .collect();
+        output.push_str(&header_bottom);
         let now = timestamp();
         let my_pubkey = self.id();
-        let nodes: Vec<_> = self
-            .all_peers()
-            .into_iter()
-            .filter_map(|(node, last_updated)| {
-                let node_rpc = node
-                    .rpc()
-                    .filter(|addr| self.socket_addr_space.check(addr))?;
-                let rpc_addr = node_rpc.ip();
-                Some(format!(
-                    format_string!(),
-                    rpc_addr.to_string(),
-                    if node.pubkey() == &my_pubkey {
-                        "me"
-                    } else {
-                        ""
-                    },
-                    now.saturating_sub(last_updated),
-                    node.pubkey().to_string(),
-                    node.version().to_string(),
-                    self.addr_to_string(&Some(rpc_addr), &node.rpc()),
-                    self.addr_to_string(&Some(rpc_addr), &node.rpc_pubsub()),
-                    node.shred_version(),
-                ))
-            })
-            .collect();
-
-        format!(
-            "{}{}{}\nRPC Enabled Nodes: {}\n",
-            header,
-            header_bottom,
-            nodes.join(""),
-            nodes.len(),
-        )
+        let mut num_nodes = 0usize;
+        for (node, last_updated) in peers {
+            let Some(node_rpc) = node.rpc().filter(|addr| self.socket_addr_space.check(addr))
+            else {
+                continue;
+            };
+            num_nodes = num_nodes.saturating_add(1);
+            let rpc_addr = node_rpc.ip();
+            write!(
+                &mut output,
+                format_string!(),
+                rpc_addr.to_string(),
+                if node.pubkey() == &my_pubkey {
+                    "me"
+                } else {
+                    ""
+                },
+                now.saturating_sub(*last_updated),
+                node.pubkey().to_string(),
+                node.version().to_string(),
+                self.addr_to_string(&Some(rpc_addr), &node.rpc()),
+                self.addr_to_string(&Some(rpc_addr), &node.rpc_pubsub()),
+                node.shred_version(),
+            )
+            .unwrap();
+        }
+        writeln!(&mut output, "\nRPC Enabled Nodes: {num_nodes}").unwrap();
+        output
     }
 
     pub fn contact_info_trace(&self) -> String {
-        // This sets the format string for the table, defining the columns and their widths
-        // For reference, this is the header of the table:
-        // IP Address        |Age(ms)|               Node identifier                |       Version       |Gossip|TPUvote| TPU |TPUfwd| TVU |ServeR|Alpeng|ShredVer
+        self.contact_info_trace_from(&self.all_peers())
+    }
+
+    pub(crate) fn contact_info_traces(&self) -> (String, String) {
+        let peers = self.all_peers();
+        (
+            self.contact_info_trace_from(&peers),
+            self.rpc_info_trace_from(&peers),
+        )
+    }
+
+    fn contact_info_trace_from(&self, peers: &[(ContactInfo, u64)]) -> String {
         macro_rules! format_string {
             () => {
                 "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^7}|{:^5}|{:^6}|{:^5}|{:^6}|{:^6}|{:^8}\n"
             };
         }
-        // Make sure format_string above has enough room for each column's title
-        let header = format!(
+        let mut output = format!(
             format_string!(),
             "IP Address",
-            "", // this is for "me" marker
+            "",
             "Age(ms)",
             "Node identifier",
             "Version",
@@ -801,8 +799,7 @@ impl ClusterInfo {
             "Alpeng",
             "ShredVer"
         );
-        // header_bottom is a String representing the separator between header and data
-        let header_bottom: String = header
+        let header_bottom: String = output
             .chars()
             .map(|s| match s {
                 '|' => '+',
@@ -810,66 +807,60 @@ impl ClusterInfo {
                 _ => '-',
             })
             .collect();
+        output.push_str(&header_bottom);
 
         let now = timestamp();
         let mut total_spy_nodes = 0usize;
         let my_pubkey = self.id();
-        let nodes: Vec<_> = self
-            .all_peers()
-            .into_iter()
-            .map(|(node, last_updated)| {
-                let is_spy_node = Self::is_spy_node(&node, &self.socket_addr_space);
-                if is_spy_node {
-                    total_spy_nodes = total_spy_nodes.saturating_add(1);
-                }
-
-                let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
-                format!(
-                    format_string!(),
-                    node.gossip()
-                        .filter(|addr| self.socket_addr_space.check(addr))
-                        .as_ref()
-                        .map(SocketAddr::ip)
-                        .as_ref()
-                        .map(IpAddr::to_string)
-                        .unwrap_or_else(|| String::from("none")),
-                    if node.pubkey() == &my_pubkey {
-                        "me"
-                    } else {
-                        ""
-                    },
-                    now.saturating_sub(last_updated),
-                    node.pubkey().to_string(),
-                    node.version().to_string(),
-                    self.addr_to_string(&ip_addr, &node.gossip()),
-                    self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
-                    self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::QUIC)),
-                    self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.alpenglow()),
-                    node.shred_version(),
-                )
-            })
-            .collect();
-
-        format!(
-            "{header}{header_bottom}{}Nodes: {}{}",
-            nodes.join(""),
-            nodes.len().saturating_sub(total_spy_nodes),
-            if total_spy_nodes > 0 {
-                format!("\nSpies: {total_spy_nodes}")
-            } else {
-                "".to_string()
+        for (node, last_updated) in peers {
+            if Self::is_spy_node(node, &self.socket_addr_space) {
+                total_spy_nodes = total_spy_nodes.saturating_add(1);
             }
+            let gossip_addr = node.gossip();
+            let ip_addr = gossip_addr.map(|addr| addr.ip());
+            write!(
+                &mut output,
+                format_string!(),
+                gossip_addr
+                    .filter(|addr| self.socket_addr_space.check(addr))
+                    .map(|addr| addr.ip().to_string())
+                    .unwrap_or_else(|| String::from("none")),
+                if node.pubkey() == &my_pubkey {
+                    "me"
+                } else {
+                    ""
+                },
+                now.saturating_sub(*last_updated),
+                node.pubkey().to_string(),
+                node.version().to_string(),
+                self.addr_to_string(&ip_addr, &gossip_addr),
+                self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
+                self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
+                self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::QUIC)),
+                self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
+                self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
+                self.addr_to_string(&ip_addr, &node.alpenglow()),
+                node.shred_version(),
+            )
+            .unwrap();
+        }
+        write!(
+            &mut output,
+            "Nodes: {}",
+            peers.len().saturating_sub(total_spy_nodes)
         )
+        .unwrap();
+        if total_spy_nodes > 0 {
+            write!(&mut output, "\nSpies: {total_spy_nodes}").unwrap();
+        }
+        output
     }
 
     pub fn push_lowest_slot(&self, min: Slot) {
         self.submit_command(GossipCommand::LowestSlot(min));
     }
 
-    fn push_lowest_slot_direct(&self, min: Slot) {
+    fn apply_lowest_slot(&self, min: Slot) {
         let self_keypair = self.keypair();
         let self_pubkey = self_keypair.pubkey();
         let last = {
@@ -906,7 +897,7 @@ impl ClusterInfo {
         self.submit_command(GossipCommand::EpochSlots(update.to_vec()));
     }
 
-    fn push_epoch_slots_direct(&self, mut update: &[Slot]) {
+    fn apply_epoch_slots(&self, mut update: &[Slot]) {
         let self_keypair = self.keypair();
         let self_pubkey = self_keypair.pubkey();
         let current_slots: Vec<_> = {
@@ -1066,14 +1057,12 @@ impl ClusterInfo {
     pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         let slot = tower.last().copied().expect("Cannot push empty vote");
-        let (completed, receiver) = bounded(1);
-        self.submit_command(GossipCommand::Vote {
+        let result = self.submit_and_wait(|completed| GossipCommand::Vote {
             slot,
             transaction: vote,
             completed,
         });
-        // Shutdown before the vote was applied.
-        let Ok(Err(vote)) = receiver.recv() else {
+        let Err(vote) = result else {
             return;
         };
         // In this case we have restarted with a mangled/missing tower and are attempting
@@ -1092,7 +1081,7 @@ impl ClusterInfo {
         );
     }
 
-    fn push_vote_direct(&self, new_vote_slot: Slot, vote: Transaction) -> Result<(), Transaction> {
+    fn apply_vote(&self, new_vote_slot: Slot, vote: Transaction) -> Result<(), Transaction> {
         let self_keypair = self.keypair();
         // Find the oldest crds vote by wallclock that has a lower slot than the new vote
         // and recycle its vote-index. If the crds buffer is not full we instead add a new vote-index.
@@ -1111,7 +1100,7 @@ impl ClusterInfo {
         });
     }
 
-    fn refresh_vote_direct(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
+    fn apply_vote_refresh(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
         let self_keypair = self.keypair();
         let vote_index = {
             let gossip_crds =
@@ -1466,10 +1455,8 @@ impl ClusterInfo {
     }
 
     /// Blocks until every command submitted before this call has been applied.
-    pub fn flush_push_queue(&self) {
-        let (completed, receiver) = bounded(1);
-        self.submit_command(GossipCommand::Flush(completed));
-        let _ = receiver.recv();
+    pub fn flush_gossip_commands(&self) {
+        self.submit_and_wait(GossipCommand::Barrier);
     }
 
     fn new_push_requests(
@@ -2222,7 +2209,7 @@ impl ClusterInfo {
         {
             num_packets += packet_batch.len();
             packet_buf.push(packet_batch);
-            if packet_buf.len() == CHANNEL_CONSUME_CAPACITY {
+            if packet_buf.len() == MAX_PACKET_BATCHES_PER_VERIFY {
                 break;
             }
         }
@@ -2308,7 +2295,7 @@ impl ClusterInfo {
         sender: impl ChannelSend<Vec<ValidatedGossipMessage>>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
+        let mut packet_buf = Vec::with_capacity(MAX_PACKET_BATCHES_PER_VERIFY);
         let run_consume = move || {
             while !exit.load(Ordering::Relaxed) {
                 let result = self.run_socket_consume(
@@ -3112,7 +3099,7 @@ mod tests {
             &SocketAddrSpace::Unspecified,
         );
         //check that all types of gossip messages are signed correctly
-        cluster_info.flush_push_queue();
+        cluster_info.flush_gossip_commands();
         let (entries, push_messages, _) = cluster_info.gossip.new_push_messages(
             &cluster_info.id(),
             timestamp(),
@@ -3748,7 +3735,7 @@ mod tests {
                 .push_duplicate_shred(&shred1, shred2.payload())
                 .is_ok()
         );
-        cluster_info.flush_push_queue();
+        cluster_info.flush_gossip_commands();
         let entries = cluster_info.get_duplicate_shreds(&mut cursor);
         // One duplicate shred proof is split into 3 chunks.
         assert_eq!(3, entries.len());
@@ -3768,7 +3755,7 @@ mod tests {
                 .push_duplicate_shred(&shred3, shred4.payload())
                 .is_ok()
         );
-        cluster_info.flush_push_queue();
+        cluster_info.flush_gossip_commands();
         let entries1 = cluster_info.get_duplicate_shreds(&mut cursor);
         // One duplicate shred proof is split into 3 chunks.
         assert_eq!(3, entries1.len());

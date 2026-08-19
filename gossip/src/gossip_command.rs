@@ -28,7 +28,7 @@ pub(crate) enum GossipCommand {
         keypair: Arc<Keypair>,
         chunks: Vec<DuplicateShred>,
     },
-    Flush(Sender<()>),
+    Barrier(Sender<()>),
 }
 
 pub(crate) const GOSSIP_COMMAND_CAPACITY: usize = 256;

@@ -12,17 +12,10 @@ use {
 };
 
 const METRICS_INTERVAL: Duration = Duration::from_secs(2);
-/// How often the loop wakes to check its deadlines and the exit flag. All of
-/// its work is coarse periodic reporting, so this only bounds shutdown latency.
+/// Bounds shutdown latency.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-/// Periodic read-only reporting: metrics, the contact-info trace, and the
-/// contact-info save file.
-///
-/// None of this writes to the CRDS table, so it is kept off the engine thread
-/// where it would stall gossip ingress. Stakes come from the shared
-/// [`GossipContext`] snapshot so this thread reports the same epoch the engine
-/// and ingress threads are using.
+/// Runs read-only reporting off the engine thread.
 pub(crate) struct GossipHousekeeper {
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) context: Arc<GossipContext>,
@@ -57,11 +50,8 @@ impl GossipHousekeeper {
                         receiver_stats.report();
                     }
                     if contact_trace.as_mut().is_some_and(|due| due.claim(now)) {
-                        info!(
-                            "\n{}\n\n{}",
-                            cluster_info.contact_info_trace(),
-                            cluster_info.rpc_info_trace()
-                        );
+                        let (contact_info, rpc_info) = cluster_info.contact_info_traces();
+                        info!("\n{contact_info}\n\n{rpc_info}");
                     }
                     if contact_save.as_mut().is_some_and(|due| due.claim(now)) {
                         cluster_info.save_contact_info();
