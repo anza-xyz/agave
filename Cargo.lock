@@ -10349,6 +10349,22 @@ dependencies = [
 [[package]]
 name = "solana-shred"
 version = "4.4.0-alpha.0"
+dependencies = [
+ "assert_matches",
+ "bs58",
+ "bytes",
+ "solana-clock",
+ "solana-hash 4.6.0",
+ "solana-keypair",
+ "solana-pubkey 4.3.0",
+ "solana-shred",
+ "solana-signature",
+ "solana-signer",
+ "static_assertions",
+ "test-case",
+ "thiserror 2.0.20",
+ "wincode",
+]
 
 [[package]]
 name = "solana-shred-version"
