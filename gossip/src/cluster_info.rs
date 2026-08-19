@@ -29,7 +29,6 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
         epoch_slots::EpochSlots,
-        epoch_specs::EpochSpecs,
         gossip_context::GossipContext,
         gossip_error::GossipError,
         gossip_identity::GossipIdentity,
@@ -45,7 +44,7 @@ use {
         weighted_shuffle::WeightedShuffle,
     },
     agave_votor_messages::migration::MigrationStatus,
-    crossbeam_channel::{Receiver, TrySendError},
+    crossbeam_channel::TrySendError,
     itertools::{Either, Itertools},
     rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
@@ -91,7 +90,7 @@ use {
             Arc, Mutex, OnceLock, RwLock, RwLockReadGuard,
             atomic::{AtomicBool, Ordering},
         },
-        thread::{Builder, JoinHandle, sleep},
+        thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -99,9 +98,6 @@ use {
 
 /// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
-/// Interval between pull requests (in gossip rounds)
-const PULL_REQUEST_PERIOD: usize = 5;
-
 /// Capacity for the [`ClusterInfo::run_socket_consume`] and [`ClusterInfo::run_listen`]
 /// intermediate packet batch buffers.
 ///
@@ -254,6 +250,15 @@ impl ClusterInfo {
         self.contact_debug_interval = new;
     }
 
+    pub(crate) fn contact_debug_interval(&self) -> Option<Duration> {
+        (self.contact_debug_interval != 0)
+            .then(|| Duration::from_millis(self.contact_debug_interval))
+    }
+
+    pub(crate) fn contact_save_interval(&self) -> Option<Duration> {
+        (self.contact_save_interval != 0).then(|| Duration::from_millis(self.contact_save_interval))
+    }
+
     pub fn socket_addr_space(&self) -> &SocketAddrSpace {
         &self.socket_addr_space
     }
@@ -266,7 +271,7 @@ impl ClusterInfo {
         self.bind_ip_addrs.clone()
     }
 
-    fn refresh_push_active_set(
+    pub(crate) fn refresh_push_active_set(
         &self,
         recycler: &PacketBatchRecycler,
         stakes: &HashMap<Pubkey, u64>,
@@ -1206,7 +1211,7 @@ impl ClusterInfo {
             .collect()
     }
 
-    fn refresh_my_gossip_contact_info(&self) {
+    pub(crate) fn refresh_my_gossip_contact_info(&self) {
         let now = timestamp();
         let node = self.identity.refreshed_crds_value(now);
         if let Err(err) = {
@@ -1396,7 +1401,7 @@ impl ClusterInfo {
     }
 
     /// At random pick a node and try to get updated changes from them
-    fn run_gossip(
+    pub(crate) fn run_gossip(
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
@@ -1428,7 +1433,7 @@ impl ClusterInfo {
         Ok(())
     }
 
-    fn process_entrypoints(&self) -> bool {
+    pub(crate) fn process_entrypoints(&self) -> bool {
         let mut entrypoints = self.entrypoints.write().unwrap();
         if entrypoints.is_empty() {
             // No entrypoint specified.  Nothing more to process
@@ -1451,7 +1456,7 @@ impl ClusterInfo {
             .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
     }
 
-    fn handle_purge(&self, thread_pool: &ThreadPool, stakes: &HashMap<Pubkey, u64>) {
+    pub(crate) fn handle_purge(&self, thread_pool: &ThreadPool, stakes: &HashMap<Pubkey, u64>) {
         let self_pubkey = self.id();
         let timeouts = self
             .gossip
@@ -1486,91 +1491,6 @@ impl ClusterInfo {
         self.stats
             .trim_crds_table_purged_values_count
             .add_relaxed(num_purged as u64);
-    }
-
-    /// randomly pick a node and ask them for updates asynchronously
-    pub(crate) fn gossip(
-        self: Arc<Self>,
-        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
-        context: Arc<GossipContext>,
-        sender: impl ChannelSend<PacketBatch>,
-        gossip_validators: Option<HashSet<Pubkey>>,
-        exit: Arc<AtomicBool>,
-    ) -> JoinHandle<()> {
-        let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(std::cmp::min(get_thread_count(), 8))
-            .thread_name(|i| format!("solGossipRun{i:02}"))
-            .build()
-            .unwrap();
-        Builder::new()
-            .name("solGossip".to_string())
-            .spawn(move || {
-                let mut last_push = 0;
-                let mut last_contact_info_trace = timestamp();
-                let mut last_contact_info_save = timestamp();
-                let mut entrypoints_processed = false;
-                let recycler = PacketBatchRecycler::default();
-
-                for gossip_round in 0usize.. {
-                    if exit.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let start = timestamp();
-                    if self.contact_debug_interval != 0
-                        && start - last_contact_info_trace > self.contact_debug_interval
-                    {
-                        // Log contact info
-                        info!(
-                            "\n{}\n\n{}",
-                            self.contact_info_trace(),
-                            self.rpc_info_trace()
-                        );
-                        last_contact_info_trace = start;
-                    }
-
-                    if self.contact_save_interval != 0
-                        && start - last_contact_info_save > self.contact_save_interval
-                    {
-                        self.save_contact_info();
-                        last_contact_info_save = start;
-                    }
-                    let stakes = epoch_specs
-                        .as_mut()
-                        .map(|es| es.current_epoch_staked_nodes())
-                        .unwrap_or_default();
-                    context.update(Arc::clone(&stakes), self.is_full_alpenglow_epoch());
-
-                    let _ = self.run_gossip(
-                        &thread_pool,
-                        gossip_validators.as_ref(),
-                        &recycler,
-                        &stakes,
-                        &sender,
-                        // Make pull requests every PULL_REQUEST_PERIOD rounds
-                        gossip_round % PULL_REQUEST_PERIOD == 0,
-                    );
-                    self.handle_purge(&thread_pool, &stakes);
-                    entrypoints_processed = entrypoints_processed || self.process_entrypoints();
-                    //TODO: possibly tune this parameter
-                    //we saw a deadlock passing an self.read().unwrap().timeout into sleep
-                    if start - last_push > CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2 {
-                        self.refresh_my_gossip_contact_info();
-                        self.refresh_push_active_set(
-                            &recycler,
-                            &stakes,
-                            gossip_validators.as_ref(),
-                            &sender,
-                        );
-                        last_push = timestamp();
-                    }
-                    let elapsed = timestamp() - start;
-                    if GOSSIP_SLEEP_MILLIS > elapsed {
-                        let time_left = GOSSIP_SLEEP_MILLIS - elapsed;
-                        sleep(Duration::from_millis(time_left));
-                    }
-                }
-            })
-            .unwrap()
     }
 
     fn handle_batch_prune_messages(&self, messages: Vec<PruneData>, stakes: &HashMap<Pubkey, u64>) {
@@ -2002,7 +1922,7 @@ impl ClusterInfo {
         })
     }
 
-    fn process_packets(
+    pub(crate) fn process_packets(
         &self,
         packets: &mut Vec<Vec<ValidatedGossipMessage>>,
         thread_pool: &ThreadPool,
@@ -2233,45 +2153,6 @@ impl ClusterInfo {
         Ok(())
     }
 
-    /// Process messages from the network
-    fn run_listen(
-        &self,
-        recycler: &PacketBatchRecycler,
-        context: &GossipContext,
-        receiver: &Receiver<Vec<ValidatedGossipMessage>>,
-        response_sender: &impl ChannelSend<PacketBatch>,
-        thread_pool: &ThreadPool,
-        should_check_duplicate_instance: bool,
-        packet_buf: &mut Vec<Vec<ValidatedGossipMessage>>,
-    ) -> Result<(), GossipError> {
-        let _st = ScopedTimer::from(&self.stats.gossip_listen_loop_time);
-        for pkts in receiver
-            .recv()
-            .map(std::iter::once)?
-            .chain(receiver.try_iter())
-        {
-            packet_buf.push(pkts);
-            if packet_buf.len() == CHANNEL_CONSUME_CAPACITY {
-                break;
-            }
-        }
-        let context = context.load();
-        let stakes = &context.stakes;
-        self.process_packets(
-            packet_buf,
-            thread_pool,
-            recycler,
-            response_sender,
-            &stakes,
-            should_check_duplicate_instance,
-        )?;
-        packet_buf.clear();
-        self.stats
-            .gossip_listen_loop_iterations_since_last_report
-            .add_relaxed(1);
-        Ok(())
-    }
-
     pub(crate) fn start_socket_consume_thread(
         self: Arc<Self>,
         context: Arc<GossipContext>,
@@ -2308,55 +2189,6 @@ impl ClusterInfo {
         };
         let thread_name = String::from("solGossipConsum");
         Builder::new().name(thread_name).spawn(run_consume).unwrap()
-    }
-
-    pub(crate) fn listen(
-        self: Arc<Self>,
-        context: Arc<GossipContext>,
-        requests_receiver: Receiver<Vec<ValidatedGossipMessage>>,
-        response_sender: impl ChannelSend<PacketBatch>,
-        should_check_duplicate_instance: bool,
-        exit: Arc<AtomicBool>,
-    ) -> JoinHandle<()> {
-        let recycler = PacketBatchRecycler::default();
-        let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(get_thread_count().min(8))
-            .thread_name(|i| format!("solGossipWork{i:02}"))
-            .build()
-            .unwrap();
-        let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
-        Builder::new()
-            .name("solGossipListen".to_string())
-            .spawn(move || {
-                while !exit.load(Ordering::Relaxed) {
-                    let result = self.run_listen(
-                        &recycler,
-                        &context,
-                        &requests_receiver,
-                        &response_sender,
-                        &thread_pool,
-                        should_check_duplicate_instance,
-                        &mut packet_buf,
-                    );
-                    if let Err(err) = result {
-                        match err {
-                            GossipError::RecvError(_) => break,
-                            GossipError::DuplicateNodeInstance => {
-                                error!(
-                                    "duplicate running instances of the same validator node: {}",
-                                    self.id()
-                                );
-                                exit.store(true, Ordering::Relaxed);
-                                // TODO: Pass through Exit here so
-                                // that this will exit cleanly.
-                                std::process::exit(1);
-                            }
-                            _ => error!("gossip run_listen failed: {err}"),
-                        }
-                    }
-                }
-            })
-            .unwrap()
     }
 
     pub fn gossip_contact_info(id: Pubkey, gossip: SocketAddr, shred_version: u16) -> ContactInfo {
@@ -2652,6 +2484,7 @@ mod tests {
             ops::Deref,
             panic,
             sync::Arc,
+            thread::sleep,
         },
     };
 

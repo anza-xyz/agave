@@ -7,6 +7,7 @@ use {
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
         gossip_context::GossipContext,
+        gossip_engine::GossipEngine,
     },
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
@@ -97,20 +98,17 @@ impl GossipService {
         );
         let (response_sender, response_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let t_listen = cluster_info.clone().listen(
+        let t_engine = GossipEngine::spawn(
+            Arc::clone(cluster_info),
+            epoch_specs,
             Arc::clone(&context),
             listen_receiver,
             response_sender.clone(),
+            gossip_validators,
             should_check_duplicate_instance,
             exit.clone(),
         );
-        let t_gossip = cluster_info.clone().gossip(
-            epoch_specs,
-            Arc::clone(&context),
-            response_sender,
-            gossip_validators,
-            exit.clone(),
-        );
+        drop(response_sender);
         let gossip_responder_socket = match xdp_sender {
             Some(xdp_sender) => GossipResponderSocket::Xdp(xdp_sender),
             None => GossipResponderSocket::Udp {
@@ -148,8 +146,7 @@ impl GossipService {
             t_receiver,
             t_responder,
             t_socket_consume,
-            t_listen,
-            t_gossip,
+            t_engine,
             t_metrics,
         ];
         Self { thread_hdls }
