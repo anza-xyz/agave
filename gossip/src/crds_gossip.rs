@@ -130,7 +130,7 @@ impl CrdsGossip {
             let data = CrdsData::DuplicateShred(index, chunk);
             CrdsValue::new(data, keypair)
         });
-        crds::insert_local_values(&mut crds, "push_duplicate_shred", entries);
+        crds::insert_local_route_values(&mut crds, "publish_duplicate_shred", entries);
     }
 
     /// Add the `from` to the peer's filter of nodes.
@@ -373,10 +373,10 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 mod test {
     use {
         super::*,
-        crate::crds::GossipRoute,
         crate::{
             cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
             contact_info::ContactInfo,
+            crds::GossipRoute,
         },
         solana_sha256_hasher::hash,
         solana_time_utils::timestamp,

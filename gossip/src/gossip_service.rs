@@ -4,12 +4,12 @@ use {
     crate::{
         cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
         contact_info::ContactInfo,
+        engine_cluster_info::EngineClusterInfo,
         epoch_specs::EpochSpecs,
         gossip_command::GOSSIP_COMMAND_CAPACITY,
-        gossip_context::GossipContext,
         gossip_engine::GossipEngine,
-        gossip_engine_view::EngineView,
         gossip_housekeeper::GossipHousekeeper,
+        gossip_policy::GossipPolicy,
     },
     crossbeam_channel::{Sender, bounded},
     rayon::ThreadPoolBuilder,
@@ -63,13 +63,13 @@ impl GossipService {
             .as_mut()
             .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
             .unwrap_or_default();
-        let context = Arc::new(GossipContext::new(
+        let policy = Arc::new(GossipPolicy::new(
             stakes,
             cluster_info.is_full_alpenglow_epoch(),
         ));
         let (command_sender, command_receiver) = bounded(GOSSIP_COMMAND_CAPACITY);
         let command_sender = cluster_info.attach_command_endpoint(command_sender);
-        let (request_sender, request_receiver) =
+        let (ingress_packet_sender, ingress_packet_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         trace!(
             "GossipService: id: {}, listening on primary interface: {:?}, all available \
@@ -85,14 +85,14 @@ impl GossipService {
             gossip_sockets.clone(),
             cluster_info.bind_ip_addrs(),
             exit.clone(),
-            request_sender,
+            ingress_packet_sender,
             Recycler::default(),
             gossip_receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             false,
             false,
         );
-        let (consume_sender, listen_receiver) =
+        let (validated_sender, validated_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let thread_pool = Arc::new(
             ThreadPoolBuilder::new()
@@ -101,32 +101,32 @@ impl GossipService {
                 .build()
                 .unwrap(),
         );
-        let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
+        let t_ingress_validation = cluster_info.clone().start_ingress_validation_thread(
             Arc::clone(&thread_pool),
-            Arc::clone(&context),
-            request_receiver,
-            consume_sender,
+            Arc::clone(&policy),
+            ingress_packet_receiver,
+            validated_sender,
             exit.clone(),
         );
-        let (response_sender, response_receiver) =
+        let (outbound_sender, outbound_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_engine = GossipEngine {
-            cluster_info: EngineView::new(Arc::clone(cluster_info)),
+            cluster_info: EngineClusterInfo::new(Arc::clone(cluster_info)),
             epoch_specs,
-            workers: thread_pool,
-            context: Arc::clone(&context),
-            command_endpoint: command_sender,
-            commands: command_receiver,
-            inbound: listen_receiver,
-            outbound: response_sender,
-            validators: gossip_validators,
-            check_duplicate_instance: should_check_duplicate_instance,
+            thread_pool,
+            policy: Arc::clone(&policy),
+            command_sender,
+            command_receiver,
+            ingress_receiver: validated_receiver,
+            outbound_sender,
+            gossip_validators,
+            should_check_duplicate_instance,
             exit: exit.clone(),
         }
         .spawn();
         let t_housekeeping = GossipHousekeeper {
             cluster_info: Arc::clone(cluster_info),
-            context,
+            policy,
             receiver_stats: gossip_receiver_stats,
             exit: exit.clone(),
         }
@@ -142,13 +142,13 @@ impl GossipService {
         let t_responder = run_responder(
             "Gossip",
             gossip_responder_socket,
-            response_receiver,
+            outbound_receiver,
             stats_reporter_sender,
         );
         let thread_hdls = vec![
             t_receiver,
             t_responder,
-            t_socket_consume,
+            t_ingress_validation,
             t_engine,
             t_housekeeping,
         ];

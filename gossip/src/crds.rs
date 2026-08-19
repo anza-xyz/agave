@@ -55,17 +55,17 @@ use {
     },
 };
 
-/// Inserts locally-originated values, logging the ones the table rejects.
-/// `what` names the caller for the log line.
-pub(crate) fn insert_local_values(
+/// Inserts values through the local-message route and logs rejected values.
+/// `operation` identifies the caller in the log message.
+pub(crate) fn insert_local_route_values(
     crds: &mut Crds,
-    what: &str,
+    operation: &str,
     values: impl IntoIterator<Item = CrdsValue>,
 ) {
     let now = solana_time_utils::timestamp();
     for value in values {
         if let Err(err) = crds.insert(value, now, GossipRoute::LocalMessage) {
-            error!("{what} failed to insert local CRDS value: {err:?}");
+            error!("{operation} failed to insert local-route CRDS value: {err:?}");
         }
     }
 }

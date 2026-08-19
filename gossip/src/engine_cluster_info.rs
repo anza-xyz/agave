@@ -23,11 +23,11 @@ use {
 /// its own queue. The wrapped handle stays private to this module, which is
 /// what turns that hazard into a compile error rather than a review item.
 #[derive(Clone)]
-pub(crate) struct EngineView {
+pub(crate) struct EngineClusterInfo {
     cluster_info: Arc<ClusterInfo>,
 }
 
-impl EngineView {
+impl EngineClusterInfo {
     pub(crate) fn new(cluster_info: Arc<ClusterInfo>) -> Self {
         Self { cluster_info }
     }
@@ -56,46 +56,50 @@ impl EngineView {
         self.cluster_info.apply_command(command)
     }
 
-    pub(crate) fn process_packets(
+    pub(crate) fn handle_validated_messages(
         &self,
-        packets: &mut Vec<Vec<ValidatedGossipMessage>>,
+        message_batches: &mut Vec<Vec<ValidatedGossipMessage>>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
-        response_sender: &impl ChannelSend<PacketBatch>,
+        outbound_sender: &impl ChannelSend<PacketBatch>,
         stakes: &HashMap<Pubkey, u64>,
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
-        self.cluster_info.process_packets(
-            packets,
+        self.cluster_info.handle_validated_messages(
+            message_batches,
             thread_pool,
             recycler,
-            response_sender,
+            outbound_sender,
             stakes,
             should_check_duplicate_instance,
         )
     }
 
-    pub(crate) fn run_gossip(
+    pub(crate) fn send_gossip_requests(
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
         recycler: &PacketBatchRecycler,
         stakes: &HashMap<Pubkey, u64>,
-        sender: &impl ChannelSend<PacketBatch>,
+        outbound_sender: &impl ChannelSend<PacketBatch>,
         generate_pull_requests: bool,
     ) -> Result<(), GossipError> {
-        self.cluster_info.run_gossip(
+        self.cluster_info.send_gossip_requests(
             thread_pool,
             gossip_validators,
             recycler,
             stakes,
-            sender,
+            outbound_sender,
             generate_pull_requests,
         )
     }
 
-    pub(crate) fn handle_purge(&self, thread_pool: &ThreadPool, stakes: &HashMap<Pubkey, u64>) {
-        self.cluster_info.handle_purge(thread_pool, stakes)
+    pub(crate) fn purge_expired_crds(
+        &self,
+        thread_pool: &ThreadPool,
+        stakes: &HashMap<Pubkey, u64>,
+    ) {
+        self.cluster_info.purge_expired_crds(thread_pool, stakes)
     }
 
     pub(crate) fn process_entrypoints(&self) -> bool {
@@ -111,10 +115,14 @@ impl EngineView {
         recycler: &PacketBatchRecycler,
         stakes: &HashMap<Pubkey, u64>,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        sender: &impl ChannelSend<PacketBatch>,
+        outbound_sender: &impl ChannelSend<PacketBatch>,
     ) {
-        self.cluster_info
-            .refresh_push_active_set(recycler, stakes, gossip_validators, sender)
+        self.cluster_info.refresh_push_active_set(
+            recycler,
+            stakes,
+            gossip_validators,
+            outbound_sender,
+        )
     }
 }
 
@@ -126,7 +134,7 @@ mod tests {
     };
 
     #[test]
-    fn view_forwards_to_cluster_info() {
+    fn forwards_to_cluster_info() {
         let keypair = Arc::new(Keypair::new());
         let pubkey = keypair.pubkey();
         let cluster_info = Arc::new(ClusterInfo::new(
@@ -134,10 +142,10 @@ mod tests {
             keypair,
             SocketAddrSpace::Unspecified,
         ));
-        let view = EngineView::new(Arc::clone(&cluster_info));
+        let engine_cluster_info = EngineClusterInfo::new(Arc::clone(&cluster_info));
 
-        assert_eq!(view.id(), pubkey);
-        view.apply_command(GossipCommand::LowestSlot(7));
+        assert_eq!(engine_cluster_info.id(), pubkey);
+        engine_cluster_info.apply_command(GossipCommand::PublishLowestSlot(7));
         assert_eq!(
             cluster_info.lowest_slot_for_tests(pubkey).unwrap().lowest,
             7

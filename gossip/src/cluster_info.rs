@@ -30,10 +30,10 @@ use {
         duplicate_shred::{self, DuplicateShred},
         epoch_slots::EpochSlots,
         gossip_command::GossipCommand,
-        gossip_context::GossipContext,
         gossip_error::GossipError,
         gossip_identity::{ContactInfoChanged, GossipIdentity},
         gossip_ingress::ValidatedGossipMessage,
+        gossip_policy::GossipPolicy,
         ping_pong::Pong,
         protocol::{
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
@@ -99,8 +99,8 @@ use {
 
 /// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
-/// Maximum UDP packet batches verified in one pass.
-const MAX_PACKET_BATCHES_PER_VERIFY: usize = 1024;
+/// Maximum UDP packet batches validated in one pass.
+const MAX_PACKET_BATCHES_PER_VALIDATION: usize = 1024;
 const MIN_PARALLEL_GOSSIP_PACKETS: usize = 16;
 /// Channel capacity for gossip channels.
 ///
@@ -239,14 +239,16 @@ impl ClusterInfo {
 
     pub(crate) fn apply_command(&self, command: GossipCommand) {
         match command {
-            GossipCommand::Publish(value) => self.insert_local_value("publish", *value),
-            GossipCommand::LowestSlot(slot) => self.apply_lowest_slot(slot),
-            GossipCommand::EpochSlots(slots) => self.apply_epoch_slots(&slots),
-            GossipCommand::RefreshContact(completed) => {
+            GossipCommand::PublishValue(value) => {
+                self.insert_local_route_value("publish_value", *value)
+            }
+            GossipCommand::PublishLowestSlot(slot) => self.apply_lowest_slot(slot),
+            GossipCommand::PublishEpochSlots(slots) => self.apply_epoch_slots(&slots),
+            GossipCommand::PublishContactInfo(completed) => {
                 self.refresh_my_gossip_contact_info();
                 let _ = completed.send(());
             }
-            GossipCommand::Vote {
+            GossipCommand::PublishVote {
                 slot,
                 transaction,
                 completed,
@@ -257,7 +259,7 @@ impl ClusterInfo {
             GossipCommand::RefreshVote { transaction, slot } => {
                 self.apply_vote_refresh(transaction, slot)
             }
-            GossipCommand::DuplicateShred { keypair, chunks } => {
+            GossipCommand::PublishDuplicateShred { keypair, chunks } => {
                 self.gossip.insert_duplicate_shred(&keypair, chunks)
             }
             GossipCommand::Barrier(completed) => {
@@ -527,7 +529,7 @@ impl ClusterInfo {
             filename.display()
         );
         let self_shred_version = self.my_shred_version();
-        self.insert_local_values(
+        self.insert_local_route_values(
             "restore_contact_info",
             nodes.into_iter().filter(|node| {
                 node.contact_info()
@@ -642,7 +644,7 @@ impl ClusterInfo {
     }
 
     fn publish_contact_info(&self, _changed: ContactInfoChanged) {
-        self.submit_and_wait(GossipCommand::RefreshContact);
+        self.submit_and_wait(GossipCommand::PublishContactInfo);
     }
 
     fn lookup_epoch_slots(&self, ix: EpochSlotsIndex) -> EpochSlots {
@@ -798,53 +800,60 @@ impl ClusterInfo {
         output
     }
 
-    pub fn push_lowest_slot(&self, min: Slot) {
-        self.submit_command(GossipCommand::LowestSlot(min));
+    pub fn push_lowest_slot(&self, lowest_slot: Slot) {
+        self.submit_command(GossipCommand::PublishLowestSlot(lowest_slot));
     }
 
-    fn apply_lowest_slot(&self, min: Slot) {
+    fn apply_lowest_slot(&self, lowest_slot: Slot) {
         let self_keypair = self.keypair();
         let self_pubkey = self_keypair.pubkey();
-        let last = {
+        let current_lowest_slot = {
             let gossip_crds = self.gossip.crds.read().unwrap();
             gossip_crds
                 .get::<&LowestSlot>(self_pubkey)
                 .map(|x| x.lowest)
                 .unwrap_or_default()
         };
-        if min > last {
+        if lowest_slot > current_lowest_slot {
             let now = timestamp();
             let entry = CrdsValue::new(
-                CrdsData::LowestSlot(0, LowestSlot::new(self_pubkey, min, now)),
+                CrdsData::LowestSlot(0, LowestSlot::new(self_pubkey, lowest_slot, now)),
                 &self_keypair,
             );
-            self.insert_local_value("lowest_slot", entry);
+            self.insert_local_route_value("publish_lowest_slot", entry);
         }
     }
 
-    fn insert_local_value(&self, what: &str, value: CrdsValue) {
-        self.insert_local_values(what, [value]);
+    fn insert_local_route_value(&self, operation: &str, value: CrdsValue) {
+        self.insert_local_route_values(operation, [value]);
     }
 
-    fn insert_local_values(&self, what: &str, values: impl IntoIterator<Item = CrdsValue>) {
-        crds::insert_local_values(&mut self.gossip.crds.write().unwrap(), what, values);
+    fn insert_local_route_values(
+        &self,
+        operation: &str,
+        values: impl IntoIterator<Item = CrdsValue>,
+    ) {
+        crds::insert_local_route_values(&mut self.gossip.crds.write().unwrap(), operation, values);
     }
 
-    pub fn push_epoch_slots(&self, update: &[Slot]) {
-        self.submit_command(GossipCommand::EpochSlots(update.to_vec()));
+    pub fn push_epoch_slots(&self, new_slots: &[Slot]) {
+        self.submit_command(GossipCommand::PublishEpochSlots(new_slots.to_vec()));
     }
 
-    fn apply_epoch_slots(&self, update: &[Slot]) {
+    fn apply_epoch_slots(&self, new_slots: &[Slot]) {
         let self_keypair = self.keypair();
-        let current_slots = self.current_epoch_slots(&self_keypair.pubkey());
-        self.warn_if_epoch_slots_filling(update, &current_slots);
-        let entries = self.build_epoch_slots_entries(update, &current_slots, &self_keypair);
-        self.insert_local_values("push_epoch_slots", entries);
+        let record_metadata = self.epoch_slots_record_metadata(&self_keypair.pubkey());
+        self.warn_if_epoch_slots_filling(new_slots, &record_metadata);
+        let entries = self.build_epoch_slots_entries(new_slots, &record_metadata, &self_keypair);
+        self.insert_local_route_values("publish_epoch_slots", entries);
     }
 
     /// The `(wallclock, first_slot, index)` of every epoch-slots record this
     /// node currently advertises.
-    fn current_epoch_slots(&self, self_pubkey: &Pubkey) -> Vec<(u64, Slot, EpochSlotsIndex)> {
+    fn epoch_slots_record_metadata(
+        &self,
+        self_pubkey: &Pubkey,
+    ) -> Vec<(u64, Slot, EpochSlotsIndex)> {
         let gossip_crds =
             self.time_gossip_read_lock("lookup_epoch_slots", &self.stats.epoch_slots_lookup);
         (0..crds_data::MAX_EPOCH_SLOTS)
@@ -861,24 +870,24 @@ impl ClusterInfo {
     /// Warns when the epoch-slots ring is full and no longer spans a full epoch.
     fn warn_if_epoch_slots_filling(
         &self,
-        update: &[Slot],
-        current_slots: &[(u64, Slot, EpochSlotsIndex)],
+        new_slots: &[Slot],
+        record_metadata: &[(u64, Slot, EpochSlotsIndex)],
     ) {
-        let min_slot: Slot = current_slots
+        let min_slot: Slot = record_metadata
             .iter()
             .map(|(_wallclock, slot, _index)| *slot)
             .min()
             .unwrap_or_default();
-        let max_slot: Slot = update.iter().max().cloned().unwrap_or(0);
-        let total_slots = max_slot as isize - min_slot as isize;
-        if DEFAULT_SLOTS_PER_EPOCH as isize > total_slots
-            && crds_data::MAX_EPOCH_SLOTS as usize <= current_slots.len()
+        let max_slot: Slot = new_slots.iter().max().copied().unwrap_or(0);
+        let slot_span = max_slot as isize - min_slot as isize;
+        if DEFAULT_SLOTS_PER_EPOCH as isize > slot_span
+            && crds_data::MAX_EPOCH_SLOTS as usize <= record_metadata.len()
         {
             self.stats.epoch_slots_filled.add_relaxed(1);
             warn!(
                 "EPOCH_SLOTS are filling up FAST {}/{}",
-                total_slots,
-                current_slots.len()
+                slot_span,
+                record_metadata.len()
             );
         }
     }
@@ -887,33 +896,33 @@ impl ClusterInfo {
     /// existing index and wrapping around the ring as it fills.
     fn build_epoch_slots_entries(
         &self,
-        mut update: &[Slot],
-        current_slots: &[(u64, Slot, EpochSlotsIndex)],
+        mut new_slots: &[Slot],
+        record_metadata: &[(u64, Slot, EpochSlotsIndex)],
         self_keypair: &Keypair,
     ) -> Vec<CrdsValue> {
         let self_pubkey = self_keypair.pubkey();
-        let mut epoch_slot_index = match current_slots.iter().max() {
+        let mut epoch_slots_index = match record_metadata.iter().max() {
             Some((_wallclock, _slot, index)) => *index,
             None => 0,
         };
         // The first record extends the newest existing one; the rest start empty.
-        let mut reset = false;
+        let mut start_new_record = false;
         let mut entries = Vec::default();
-        while !update.is_empty() {
+        while !new_slots.is_empty() {
             let now = timestamp();
-            let mut slots = if !reset {
-                self.lookup_epoch_slots(epoch_slot_index)
-            } else {
+            let mut epoch_slots = if start_new_record {
                 EpochSlots::new(self_pubkey, now)
+            } else {
+                self.lookup_epoch_slots(epoch_slots_index)
             };
-            let n = slots.fill(update, now);
-            update = &update[n..];
-            if n > 0 {
-                let epoch_slots = CrdsData::EpochSlots(epoch_slot_index, slots);
-                entries.push(CrdsValue::new(epoch_slots, self_keypair));
+            let num_filled = epoch_slots.fill(new_slots, now);
+            new_slots = &new_slots[num_filled..];
+            if num_filled > 0 {
+                let data = CrdsData::EpochSlots(epoch_slots_index, epoch_slots);
+                entries.push(CrdsValue::new(data, self_keypair));
             }
-            epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
-            reset = true;
+            epoch_slots_index = (epoch_slots_index + 1) % crds_data::MAX_EPOCH_SLOTS;
+            start_new_record = true;
         }
         entries
     }
@@ -926,8 +935,8 @@ impl ClusterInfo {
         TimedGuard::new(self.gossip.crds.read().unwrap(), label, counter)
     }
 
-    fn push_message(&self, message: CrdsValue) {
-        self.submit_command(GossipCommand::Publish(Box::new(message)));
+    fn publish_value(&self, value: CrdsValue) {
+        self.submit_command(GossipCommand::PublishValue(Box::new(value)));
     }
 
     pub fn push_snapshot_hashes(
@@ -947,19 +956,19 @@ impl ClusterInfo {
             incremental,
             wallclock: timestamp(),
         });
-        self.push_message(CrdsValue::new(message, &self_keypair));
+        self.publish_value(CrdsValue::new(message, &self_keypair));
 
         Ok(())
     }
 
-    pub fn push_vote_at_index(&self, vote: Transaction, vote_index: u8, self_keypair: &Keypair) {
+    pub fn publish_vote_at_index(&self, vote: Transaction, vote_index: u8, self_keypair: &Keypair) {
         assert!(vote_index < MAX_VOTES);
         let self_pubkey = self_keypair.pubkey();
         let now = timestamp();
         let vote = Vote::new(self_pubkey, vote, now).unwrap();
         let vote = CrdsData::Vote(vote_index, vote);
         let vote = CrdsValue::new(vote, self_keypair);
-        self.insert_local_value("push_vote", vote);
+        self.insert_local_route_value("publish_vote", vote);
     }
 
     /// If there are less than `MAX_LOCKOUT_HISTORY` votes present, returns the next index
@@ -1009,7 +1018,7 @@ impl ClusterInfo {
     pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         let slot = tower.last().copied().expect("Cannot push empty vote");
-        let result = self.submit_and_wait(|completed| GossipCommand::Vote {
+        let result = self.submit_and_wait(|completed| GossipCommand::PublishVote {
             slot,
             transaction: vote,
             completed,
@@ -1041,7 +1050,7 @@ impl ClusterInfo {
             return Err(vote);
         };
         debug_assert!(vote_index < MAX_VOTES);
-        self.push_vote_at_index(vote, vote_index, &self_keypair);
+        self.publish_vote_at_index(vote, vote_index, &self_keypair);
         Ok(())
     }
 
@@ -1078,7 +1087,7 @@ impl ClusterInfo {
         // We don't write to an arbitrary index, because it may replace one of this validator's
         // existing votes on the network.
         if let Some(vote_index) = vote_index {
-            self.push_vote_at_index(refresh_vote, vote_index, &self_keypair);
+            self.publish_vote_at_index(refresh_vote, vote_index, &self_keypair);
         } else {
             // If you don't see a vote with the same slot yet, this means you probably
             // restarted, and need to repush and evict the oldest vote
@@ -1090,7 +1099,7 @@ impl ClusterInfo {
                 return;
             };
             debug_assert!(vote_index < MAX_VOTES);
-            self.push_vote_at_index(refresh_vote, vote_index, &self_keypair);
+            self.publish_vote_at_index(refresh_vote, vote_index, &self_keypair);
         }
     }
 
@@ -1157,7 +1166,7 @@ impl ClusterInfo {
             self.my_shred_version(),
         )?
         .collect();
-        self.submit_command(GossipCommand::DuplicateShred { keypair, chunks });
+        self.submit_command(GossipCommand::PublishDuplicateShred { keypair, chunks });
         Ok(())
     }
 
@@ -1305,7 +1314,7 @@ impl ClusterInfo {
 
     pub(crate) fn refresh_my_gossip_contact_info(&self) {
         let node = self.identity.refreshed_crds_value(timestamp());
-        self.insert_local_value("refresh_my_gossip_contact_info", node);
+        self.insert_local_route_value("publish_contact_info", node);
     }
 
     // If the network entrypoint hasn't been discovered yet, add it to the crds table
@@ -1457,8 +1466,8 @@ impl ClusterInfo {
             })
     }
 
-    // Generate new push and pull requests
-    fn generate_new_gossip_requests(
+    // Builds new push and pull requests.
+    fn build_gossip_requests(
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
@@ -1466,32 +1475,29 @@ impl ClusterInfo {
         generate_pull_requests: bool,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
-        // This will flush local pending push messages before generating
-        // pull-request bloom filters, preventing pull responses to return the
-        // same values back to the node itself. Note that packets will arrive
-        // and are processed out of order.
-        let out = self.new_push_requests(stakes);
+        let push_requests = self.new_push_requests(stakes);
         if generate_pull_requests {
-            let reqs = self.new_pull_requests(thread_pool, gossip_validators, stakes);
-            Either::Right(out.chain(reqs))
+            let pull_requests = self.new_pull_requests(thread_pool, gossip_validators, stakes);
+            Either::Right(push_requests.chain(pull_requests))
         } else {
-            Either::Left(out)
+            Either::Left(push_requests)
         }
     }
 
-    /// At random pick a node and try to get updated changes from them
-    pub(crate) fn run_gossip(
+    /// Sends push messages and, when due, pull requests to selected peers.
+    pub(crate) fn send_gossip_requests(
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
         recycler: &PacketBatchRecycler,
         stakes: &HashMap<Pubkey, u64>,
-        sender: &impl ChannelSend<PacketBatch>,
+        outbound_sender: &impl ChannelSend<PacketBatch>,
         generate_pull_requests: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.gossip_transmit_loop_time);
-        let mut packet_batch = RecycledPacketBatch::new_with_recycler(recycler, 0, "run_gossip");
-        self.generate_new_gossip_requests(
+        let mut packet_batch =
+            RecycledPacketBatch::new_with_recycler(recycler, 0, "send_gossip_requests");
+        self.build_gossip_requests(
             thread_pool,
             gossip_validators,
             stakes,
@@ -1500,7 +1506,8 @@ impl ClusterInfo {
         .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
         .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty()
-            && let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch.into())
+            && let Err(TrySendError::Full(packet_batch)) =
+                outbound_sender.try_send(packet_batch.into())
         {
             self.stats
                 .gossip_transmit_packets_dropped_count
@@ -1535,7 +1542,11 @@ impl ClusterInfo {
             .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
     }
 
-    pub(crate) fn handle_purge(&self, thread_pool: &ThreadPool, stakes: &HashMap<Pubkey, u64>) {
+    pub(crate) fn purge_expired_crds(
+        &self,
+        thread_pool: &ThreadPool,
+        stakes: &HashMap<Pubkey, u64>,
+    ) {
         let self_pubkey = self.id();
         let timeouts = self
             .gossip
@@ -2001,12 +2012,12 @@ impl ClusterInfo {
         })
     }
 
-    pub(crate) fn process_packets(
+    pub(crate) fn handle_validated_messages(
         &self,
-        packets: &mut Vec<Vec<ValidatedGossipMessage>>,
+        message_batches: &mut Vec<Vec<ValidatedGossipMessage>>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
-        response_sender: &impl ChannelSend<PacketBatch>,
+        outbound_sender: &impl ChannelSend<PacketBatch>,
         stakes: &HashMap<Pubkey, u64>,
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
@@ -2017,16 +2028,22 @@ impl ClusterInfo {
         let self_shred_version = self.my_shred_version();
         {
             let gossip_crds = self.gossip.crds.read().unwrap();
-            let discard_different_shred_version = |msg| {
-                discard_different_shred_version(msg, self_shred_version, &gossip_crds, &self.stats)
+            let discard_different_shred_version = |message| {
+                discard_different_shred_version(
+                    message,
+                    self_shred_version,
+                    &gossip_crds,
+                    &self.stats,
+                )
             };
-            if packets.len() < 4 && packets.iter().map(Vec::len).sum::<usize>() < 16 {
-                for msg in packets.iter_mut().flatten() {
-                    discard_different_shred_version(msg);
+            if message_batches.len() < 4 && message_batches.iter().map(Vec::len).sum::<usize>() < 16
+            {
+                for message in message_batches.iter_mut().flatten() {
+                    discard_different_shred_version(message);
                 }
             } else {
                 thread_pool.install(|| {
-                    packets
+                    message_batches
                         .par_iter_mut()
                         .flatten()
                         .for_each(discard_different_shred_version)
@@ -2063,16 +2080,16 @@ impl ClusterInfo {
                 false
             }
         };
-        // Split packets based on their types.
+        // Split messages based on their protocol variants.
         let mut pull_requests = vec![];
         let mut pull_responses = vec![];
         let mut push_messages = vec![];
         let mut prune_messages = vec![];
         let mut ping_messages = vec![];
         let mut pong_messages = vec![];
-        for message in packets.drain(..).flatten() {
-            let (from_addr, packet) = message.into_parts();
-            match packet {
+        for message in message_batches.drain(..).flatten() {
+            let (from_addr, protocol) = message.into_parts();
+            match protocol {
                 Protocol::PullRequest(filter, caller) => {
                     if !check_pull_request_shred_version(self_shred_version, &caller) {
                         self.stats.skip_pull_shred_version.add_relaxed(1);
@@ -2119,50 +2136,48 @@ impl ClusterInfo {
         let pings = pings
             .into_iter()
             .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
-        send_gossip_packets(pings, recycler, response_sender, &self.stats);
-        self.handle_batch_ping_messages(ping_messages, recycler, response_sender);
+        send_gossip_packets(pings, recycler, outbound_sender, &self.stats);
+        self.handle_batch_ping_messages(ping_messages, recycler, outbound_sender);
         self.handle_batch_prune_messages(prune_messages, stakes);
         self.handle_batch_push_messages(
             push_messages,
             thread_pool,
             recycler,
             stakes,
-            response_sender,
+            outbound_sender,
         );
         self.handle_batch_pull_responses(pull_responses, stakes);
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
         self.handle_batch_pong_messages(pong_messages, Instant::now());
-        self.handle_batch_pull_requests(pull_requests, recycler, stakes, response_sender);
+        self.handle_batch_pull_requests(pull_requests, recycler, stakes, outbound_sender);
         Ok(())
     }
 
-    // Consumes packets received from the socket, deserializing, sanitizing and
-    // verifying them and then sending them down the channel for the actual
-    // handling of requests/messages.
-    fn run_socket_consume(
+    // Validates packets received from the socket and forwards decoded messages.
+    fn validate_ingress(
         &self,
         thread_pool: &ThreadPool,
-        context: &GossipContext,
-        receiver: &PacketBatchReceiver,
-        sender: &impl ChannelSend<Vec<ValidatedGossipMessage>>,
-        packet_buf: &mut Vec<PacketBatch>,
+        policy: &GossipPolicy,
+        packet_receiver: &PacketBatchReceiver,
+        validated_sender: &impl ChannelSend<Vec<ValidatedGossipMessage>>,
+        packet_batches: &mut Vec<PacketBatch>,
     ) -> Result<(), GossipError> {
         let mut num_packets = 0;
-        for packet_batch in receiver
+        for packet_batch in packet_receiver
             .recv()
             .map(std::iter::once)?
-            .chain(receiver.try_iter())
+            .chain(packet_receiver.try_iter())
         {
             num_packets += packet_batch.len();
-            packet_buf.push(packet_batch);
-            if packet_buf.len() == MAX_PACKET_BATCHES_PER_VERIFY {
+            packet_batches.push(packet_batch);
+            if packet_batches.len() == MAX_PACKET_BATCHES_PER_VALIDATION {
                 break;
             }
         }
         self.stats
             .packets_received_count
             .add_relaxed(num_packets as u64);
-        fn verify_packet(
+        fn validate_packet(
             packet: PacketRef,
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
@@ -2185,11 +2200,11 @@ impl ClusterInfo {
                 stats.packets_received_verified_count.add_relaxed(1);
             })
         }
-        let snapshot = context.load();
+        let snapshot = policy.load();
         let stakes = snapshot.stakes.as_ref();
         let is_full_alpenglow_epoch = snapshot.is_full_alpenglow_epoch;
-        let verify_packet = |packet| {
-            verify_packet(
+        let validate_packet = |packet| {
+            validate_packet(
                 packet,
                 stakes,
                 &self.stats,
@@ -2197,59 +2212,59 @@ impl ClusterInfo {
                 is_full_alpenglow_epoch,
             )
         };
-        let packets_verified: Vec<_> = {
+        let validated_messages: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
             if num_packets < MIN_PARALLEL_GOSSIP_PACKETS {
-                packet_buf
+                packet_batches
                     .iter()
                     .flatten()
-                    .filter_map(&verify_packet)
+                    .filter_map(&validate_packet)
                     .collect()
             } else {
                 thread_pool.install(|| {
-                    if packet_buf.len() == 1 {
-                        packet_buf[0]
+                    if packet_batches.len() == 1 {
+                        packet_batches[0]
                             .par_iter()
-                            .filter_map(&verify_packet)
+                            .filter_map(&validate_packet)
                             .collect()
                     } else {
-                        packet_buf
+                        packet_batches
                             .par_iter()
                             .flatten()
-                            .filter_map(&verify_packet)
+                            .filter_map(&validate_packet)
                             .collect()
                     }
                 })
             }
         };
-        if let Err(TrySendError::Full(_)) = sender.try_send(packets_verified) {
+        if let Err(TrySendError::Full(_)) = validated_sender.try_send(validated_messages) {
             self.stats.gossip_packets_dropped_count.add_relaxed(
-                packet_buf
+                packet_batches
                     .iter()
                     .fold(0, |acc, packet_batch| acc + packet_batch.len()) as u64,
             );
         }
-        packet_buf.clear();
+        packet_batches.clear();
         Ok(())
     }
 
-    pub(crate) fn start_socket_consume_thread(
+    pub(crate) fn start_ingress_validation_thread(
         self: Arc<Self>,
         thread_pool: Arc<ThreadPool>,
-        context: Arc<GossipContext>,
-        receiver: PacketBatchReceiver,
-        sender: impl ChannelSend<Vec<ValidatedGossipMessage>>,
+        policy: Arc<GossipPolicy>,
+        packet_receiver: PacketBatchReceiver,
+        validated_sender: impl ChannelSend<Vec<ValidatedGossipMessage>>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let mut packet_buf = Vec::with_capacity(MAX_PACKET_BATCHES_PER_VERIFY);
-        let run_consume = move || {
+        let mut packet_batches = Vec::with_capacity(MAX_PACKET_BATCHES_PER_VALIDATION);
+        let validate_ingress = move || {
             while !exit.load(Ordering::Relaxed) {
-                let result = self.run_socket_consume(
+                let result = self.validate_ingress(
                     &thread_pool,
-                    &context,
-                    &receiver,
-                    &sender,
-                    &mut packet_buf,
+                    &policy,
+                    &packet_receiver,
+                    &validated_sender,
+                    &mut packet_batches,
                 );
                 match result {
                     // A recv operation can only fail if the sending end of a
@@ -2263,8 +2278,11 @@ impl ClusterInfo {
                 }
             }
         };
-        let thread_name = String::from("solGossipConsum");
-        Builder::new().name(thread_name).spawn(run_consume).unwrap()
+        let thread_name = String::from("solGossipValid");
+        Builder::new()
+            .name(thread_name)
+            .spawn(validate_ingress)
+            .unwrap()
     }
 
     pub fn gossip_contact_info(id: Pubkey, gossip: SocketAddr, shred_version: u16) -> ContactInfo {
@@ -2370,11 +2388,11 @@ pub fn push_messages_to_peer_for_tests(
     peer_gossip: SocketAddr,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<(), GossipError> {
-    let reqs: Vec<_> = split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, messages)
+    let requests: Vec<_> = split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, messages)
         .map(move |payload| (peer_gossip, Protocol::PushMessage(self_id, payload)))
         .collect();
     let packet_batch = make_gossip_packet_batch(
-        reqs,
+        requests,
         &PacketBatchRecycler::default(),
         &GossipStats::default(),
     );
@@ -2908,14 +2926,14 @@ mod tests {
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
         );
-        let mut reqs = cluster_info.generate_new_gossip_requests(
+        let mut gossip_requests = cluster_info.build_gossip_requests(
             &thread_pool,
             None,            // gossip_validators
             &HashMap::new(), // stakes
             true,            // generate_pull_requests
         );
         //assert none of the addrs are invalid.
-        assert!(reqs.all(|(addr, _)| {
+        assert!(gossip_requests.all(|(addr, _)| {
             ContactInfo::is_valid_address(&addr, &SocketAddrSpace::Unspecified)
         }));
     }

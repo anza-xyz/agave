@@ -11,11 +11,11 @@ use {
 // Keep frequent votes inline to avoid a per-vote allocation.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum GossipCommand {
-    Publish(Box<CrdsValue>),
-    LowestSlot(Slot),
-    EpochSlots(Vec<Slot>),
-    RefreshContact(Sender<()>),
-    Vote {
+    PublishValue(Box<CrdsValue>),
+    PublishLowestSlot(Slot),
+    PublishEpochSlots(Vec<Slot>),
+    PublishContactInfo(Sender<()>),
+    PublishVote {
         slot: Slot,
         transaction: Transaction,
         completed: Sender<Result<(), Transaction>>,
@@ -24,7 +24,7 @@ pub(crate) enum GossipCommand {
         transaction: Transaction,
         slot: Slot,
     },
-    DuplicateShred {
+    PublishDuplicateShred {
         keypair: Arc<Keypair>,
         chunks: Vec<DuplicateShred>,
     },

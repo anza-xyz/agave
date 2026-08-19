@@ -5,27 +5,27 @@ use {
 };
 
 /// Network policy shared across gossip stages.
-pub(crate) struct GossipContextSnapshot {
+pub(crate) struct GossipPolicySnapshot {
     pub(crate) stakes: Arc<HashMap<Pubkey, u64>>,
     pub(crate) is_full_alpenglow_epoch: bool,
 }
 
 /// Atomically publishes coherent network-policy snapshots.
-pub(crate) struct GossipContext {
-    snapshot: ArcSwap<GossipContextSnapshot>,
+pub(crate) struct GossipPolicy {
+    snapshot: ArcSwap<GossipPolicySnapshot>,
 }
 
-impl GossipContext {
+impl GossipPolicy {
     pub(crate) fn new(stakes: Arc<HashMap<Pubkey, u64>>, is_full_alpenglow_epoch: bool) -> Self {
         Self {
-            snapshot: ArcSwap::from_pointee(GossipContextSnapshot {
+            snapshot: ArcSwap::from_pointee(GossipPolicySnapshot {
                 stakes,
                 is_full_alpenglow_epoch,
             }),
         }
     }
 
-    pub(crate) fn load(&self) -> Arc<GossipContextSnapshot> {
+    pub(crate) fn load(&self) -> Arc<GossipPolicySnapshot> {
         self.snapshot.load_full()
     }
 
@@ -37,7 +37,7 @@ impl GossipContext {
         {
             return;
         }
-        self.snapshot.store(Arc::new(GossipContextSnapshot {
+        self.snapshot.store(Arc::new(GossipPolicySnapshot {
             stakes,
             is_full_alpenglow_epoch,
         }));
@@ -51,9 +51,9 @@ mod tests {
     #[test]
     fn update_reuses_unchanged_snapshot() {
         let stakes = Arc::new(HashMap::new());
-        let context = GossipContext::new(Arc::clone(&stakes), false);
-        let before = context.load();
-        context.update(stakes, false);
-        assert!(Arc::ptr_eq(&before, &context.load()));
+        let policy = GossipPolicy::new(Arc::clone(&stakes), false);
+        let before = policy.load();
+        policy.update(stakes, false);
+        assert!(Arc::ptr_eq(&before, &policy.load()));
     }
 }

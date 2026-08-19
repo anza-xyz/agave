@@ -23,7 +23,7 @@ impl Periodic {
         }
     }
 
-    pub(crate) fn claim(&mut self, now: Instant) -> bool {
+    pub(crate) fn claim_due(&mut self, now: Instant) -> bool {
         if now < self.deadline {
             return false;
         }
