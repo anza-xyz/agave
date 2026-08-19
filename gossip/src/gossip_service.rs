@@ -8,6 +8,7 @@ use {
         gossip_command::GOSSIP_COMMAND_CAPACITY,
         gossip_context::GossipContext,
         gossip_engine::GossipEngine,
+        gossip_housekeeper::GossipHousekeeper,
     },
     crossbeam_channel::{Sender, bounded},
     rayon::ThreadPoolBuilder,
@@ -117,13 +118,19 @@ impl GossipService {
             commands: command_receiver,
             inbound: listen_receiver,
             outbound: response_sender.clone(),
-            receiver_stats: Arc::clone(&gossip_receiver_stats),
             validators: gossip_validators,
             check_duplicate_instance: should_check_duplicate_instance,
             exit: exit.clone(),
         }
         .spawn();
         drop(response_sender);
+        let t_housekeeping = GossipHousekeeper {
+            cluster_info: Arc::clone(cluster_info),
+            context,
+            receiver_stats: gossip_receiver_stats,
+            exit: exit.clone(),
+        }
+        .spawn();
         let gossip_responder_socket = match xdp_sender {
             Some(xdp_sender) => GossipResponderSocket::Xdp(xdp_sender),
             None => GossipResponderSocket::Udp {
@@ -138,7 +145,13 @@ impl GossipService {
             response_receiver,
             stats_reporter_sender,
         );
-        let thread_hdls = vec![t_receiver, t_responder, t_socket_consume, t_engine];
+        let thread_hdls = vec![
+            t_receiver,
+            t_responder,
+            t_socket_consume,
+            t_engine,
+            t_housekeeping,
+        ];
         Self { thread_hdls }
     }
 

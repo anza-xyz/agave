@@ -8,12 +8,13 @@ use {
         gossip_context::GossipContext,
         gossip_error::GossipError,
         gossip_ingress::ValidatedGossipMessage,
+        gossip_timer::Periodic,
     },
     crossbeam_channel::{Receiver, Sender},
     rayon::ThreadPool,
     solana_perf::packet::{PacketBatch, PacketBatchRecycler},
     solana_pubkey::Pubkey,
-    solana_streamer::streamer::{ChannelSend, StreamerReceiveStats},
+    solana_streamer::streamer::ChannelSend,
     std::{
         collections::HashSet,
         sync::{
@@ -28,67 +29,20 @@ use {
 const TICK_INTERVAL: Duration = Duration::from_millis(GOSSIP_SLEEP_MILLIS);
 const PULL_INTERVAL: Duration = Duration::from_millis(GOSSIP_SLEEP_MILLIS * 5);
 const PUSH_REFRESH_INTERVAL: Duration = Duration::from_millis(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2);
-const METRICS_INTERVAL: Duration = Duration::from_secs(2);
-
-struct Periodic {
-    deadline: Instant,
-    period: Duration,
-}
-
-impl Periodic {
-    fn due_now(now: Instant, period: Duration) -> Self {
-        Self {
-            deadline: now,
-            period,
-        }
-    }
-
-    fn due_after(now: Instant, period: Duration) -> Self {
-        Self {
-            deadline: now + period,
-            period,
-        }
-    }
-
-    fn claim(&mut self, now: Instant) -> bool {
-        if now < self.deadline {
-            return false;
-        }
-        self.deadline = now + self.period;
-        true
-    }
-}
-
 struct Deadlines {
     tick: Periodic,
     pull: Periodic,
     push_refresh: Periodic,
-    metrics: Periodic,
-    contact_trace: Option<Periodic>,
-    contact_save: Option<Periodic>,
 }
 
 impl Deadlines {
-    fn new(cluster_info: &ClusterInfo) -> Self {
+    fn new() -> Self {
         let now = Instant::now();
         Self {
             tick: Periodic::due_now(now, TICK_INTERVAL),
             pull: Periodic::due_now(now, PULL_INTERVAL),
             push_refresh: Periodic::due_now(now, PUSH_REFRESH_INTERVAL),
-            metrics: Periodic::due_after(now, METRICS_INTERVAL),
-            contact_trace: cluster_info
-                .contact_debug_interval()
-                .map(|period| Periodic::due_after(now, period)),
-            contact_save: cluster_info
-                .contact_save_interval()
-                .map(|period| Periodic::due_after(now, period)),
         }
-    }
-
-    fn claim(periodic: &mut Option<Periodic>, now: Instant) -> bool {
-        periodic
-            .as_mut()
-            .is_some_and(|periodic| periodic.claim(now))
     }
 }
 
@@ -101,7 +55,6 @@ pub(crate) struct GossipEngine<S> {
     pub(crate) commands: Receiver<GossipCommand>,
     pub(crate) inbound: Receiver<Vec<ValidatedGossipMessage>>,
     pub(crate) outbound: S,
-    pub(crate) receiver_stats: Arc<StreamerReceiveStats>,
     pub(crate) validators: Option<HashSet<Pubkey>>,
     pub(crate) check_duplicate_instance: bool,
     pub(crate) exit: Arc<AtomicBool>,
@@ -130,21 +83,20 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                     commands,
                     inbound,
                     outbound,
-                    receiver_stats,
                     validators,
                     check_duplicate_instance,
                     exit,
                 } = self;
                 let _command_lock = cluster_info.lock_commands();
                 let recycler = PacketBatchRecycler::default();
-                let mut deadlines = Deadlines::new(&cluster_info);
+                let mut deadlines = Deadlines::new();
                 let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
                 let mut entrypoints_processed = false;
 
                 while !exit.load(Ordering::Relaxed) {
                     let timeout = deadlines
                         .tick
-                        .deadline
+                        .deadline()
                         .saturating_duration_since(Instant::now());
                     // Prioritize local CRDS mutations.
                     let event = crossbeam_channel::select_biased! {
@@ -212,22 +164,6 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                         .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
                         .unwrap_or_default();
                     context.update(Arc::clone(&stakes), cluster_info.is_full_alpenglow_epoch());
-
-                    if deadlines.metrics.claim(now) {
-                        cluster_info.submit_stats(&stakes);
-                        receiver_stats.report();
-                    }
-
-                    if Deadlines::claim(&mut deadlines.contact_trace, now) {
-                        info!(
-                            "\n{}\n\n{}",
-                            cluster_info.contact_info_trace(),
-                            cluster_info.rpc_info_trace()
-                        );
-                    }
-                    if Deadlines::claim(&mut deadlines.contact_save, now) {
-                        cluster_info.save_contact_info();
-                    }
 
                     let generate_pull = deadlines.pull.claim(now);
                     let _ = cluster_info.run_gossip(

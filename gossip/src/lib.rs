@@ -24,9 +24,11 @@ mod gossip_command;
 mod gossip_context;
 mod gossip_engine;
 pub mod gossip_error;
+mod gossip_housekeeper;
 mod gossip_identity;
 mod gossip_ingress;
 pub mod gossip_service;
+mod gossip_timer;
 pub mod node;
 #[macro_use]
 mod tlv;
