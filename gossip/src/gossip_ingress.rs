@@ -10,6 +10,14 @@ use {
     std::{collections::HashMap, net::SocketAddr},
 };
 
+/// The CRDS values a message carries, if its type carries any.
+fn crds_values(protocol: &mut Protocol) -> Option<&mut Vec<CrdsValue>> {
+    match protocol {
+        Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) => Some(values),
+        _ => None,
+    }
+}
+
 /// A decoded message validated independently of local CRDS state.
 /// Only this type crosses the ingress-to-engine boundary.
 pub(crate) struct ValidatedGossipMessage {
@@ -26,8 +34,7 @@ impl ValidatedGossipMessage {
         cache: &SigVerifyCache,
     ) -> Option<Self> {
         protocol.sanitize().ok()?;
-        if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) = &mut protocol
-        {
+        if let Some(values) = crds_values(&mut protocol) {
             values.retain(|value| {
                 should_retain_crds_value(
                     value,
@@ -59,9 +66,7 @@ impl ValidatedGossipMessage {
         &mut self,
         predicate: impl FnMut(&CrdsValue) -> bool,
     ) -> usize {
-        let (Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values)) =
-            &mut self.protocol
-        else {
+        let Some(values) = crds_values(&mut self.protocol) else {
             return 0;
         };
         let original_len = values.len();

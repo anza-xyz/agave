@@ -126,7 +126,7 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
         let _writer_lease = cluster_info.acquire_writer_lease();
         let mut state = LoopState::new();
         while !self.exit.load(Ordering::Relaxed) {
-            match self.next_event(state.deadlines.tick.deadline()) {
+            match self.next_event(state.deadlines.tick.deadline) {
                 EngineEvent::Command(command) => self.apply_commands(command),
                 EngineEvent::Packets(packets) => self.process_ingress(packets, &mut state),
                 EngineEvent::Tick => (),

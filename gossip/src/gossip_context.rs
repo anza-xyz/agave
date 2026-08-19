@@ -29,6 +29,7 @@ impl GossipContext {
         self.snapshot.load_full()
     }
 
+    /// Publishes a new snapshot, reusing the current one when nothing changed.
     pub(crate) fn update(&self, stakes: Arc<HashMap<Pubkey, u64>>, is_full_alpenglow_epoch: bool) {
         let current = self.snapshot.load();
         if Arc::ptr_eq(&current.stakes, &stakes)

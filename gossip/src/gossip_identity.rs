@@ -8,6 +8,7 @@ use {
 };
 
 /// Keypair and contact record for the same pubkey.
+#[derive(Clone)]
 struct IdentitySnapshot {
     keypair: Arc<Keypair>,
     contact_info: ContactInfo,
@@ -39,15 +40,22 @@ impl GossipIdentity {
         Arc::clone(&self.snapshot.load().keypair)
     }
 
-    pub(crate) fn set_keypair(&self, keypair: Arc<Keypair>) {
+    /// Serializes an update against the published snapshot and republishes it,
+    /// so concurrent socket updates and identity rotation cannot lose each
+    /// other's changes.
+    fn mutate<R>(&self, update: impl FnOnce(&mut IdentitySnapshot) -> R) -> R {
         let _update_lock = self.update_lock.lock().unwrap();
-        let snapshot = self.snapshot.load_full();
-        let mut contact_info = snapshot.contact_info.clone();
-        contact_info.hot_swap_pubkey(keypair.pubkey());
-        self.snapshot.store(Arc::new(IdentitySnapshot {
-            keypair,
-            contact_info,
-        }));
+        let mut next = (*self.snapshot.load_full()).clone();
+        let result = update(&mut next);
+        self.snapshot.store(Arc::new(next));
+        result
+    }
+
+    pub(crate) fn set_keypair(&self, keypair: Arc<Keypair>) {
+        self.mutate(|snapshot| {
+            snapshot.contact_info.hot_swap_pubkey(keypair.pubkey());
+            snapshot.keypair = keypair;
+        })
     }
 
     pub(crate) fn contact_info(&self) -> ContactInfo {
@@ -59,29 +67,18 @@ impl GossipIdentity {
     }
 
     pub(crate) fn update_contact_info<R>(&self, update: impl FnOnce(&mut ContactInfo) -> R) -> R {
-        let _update_lock = self.update_lock.lock().unwrap();
-        let snapshot = self.snapshot.load_full();
-        let mut contact_info = snapshot.contact_info.clone();
-        let result = update(&mut contact_info);
-        self.snapshot.store(Arc::new(IdentitySnapshot {
-            keypair: Arc::clone(&snapshot.keypair),
-            contact_info,
-        }));
-        result
+        self.mutate(|snapshot| update(&mut snapshot.contact_info))
     }
 
     /// Refreshes, signs, and publishes the contact record from one snapshot.
     pub(crate) fn refreshed_crds_value(&self, now: u64) -> CrdsValue {
-        let _update_lock = self.update_lock.lock().unwrap();
-        let snapshot = self.snapshot.load_full();
-        let mut contact_info = snapshot.contact_info.clone();
-        contact_info.set_wallclock(now);
-        let keypair = Arc::clone(&snapshot.keypair);
-        self.snapshot.store(Arc::new(IdentitySnapshot {
-            keypair: Arc::clone(&keypair),
-            contact_info: contact_info.clone(),
-        }));
-        CrdsValue::new(CrdsData::ContactInfo(contact_info), &keypair)
+        self.mutate(|snapshot| {
+            snapshot.contact_info.set_wallclock(now);
+            CrdsValue::new(
+                CrdsData::ContactInfo(snapshot.contact_info.clone()),
+                &snapshot.keypair,
+            )
+        })
     }
 }
 

@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 /// A deadline that rearms itself each time it is claimed.
 pub(crate) struct Periodic {
-    deadline: Instant,
+    pub(crate) deadline: Instant,
     period: Duration,
 }
 
@@ -21,10 +21,6 @@ impl Periodic {
             deadline: now + period,
             period,
         }
-    }
-
-    pub(crate) fn deadline(&self) -> Instant {
-        self.deadline
     }
 
     pub(crate) fn claim(&mut self, now: Instant) -> bool {
