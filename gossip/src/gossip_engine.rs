@@ -20,7 +20,7 @@ use {
             Arc,
             atomic::{AtomicBool, Ordering},
         },
-        thread::{Builder, JoinHandle},
+        thread::{Builder, JoinHandle, yield_now},
         time::{Duration, Instant},
     },
 };
@@ -136,6 +136,7 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                     check_duplicate_instance,
                     exit,
                 } = self;
+                let _command_lock = cluster_info.lock_commands();
                 let recycler = PacketBatchRecycler::default();
                 let mut deadlines = Deadlines::new(&cluster_info);
                 let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
@@ -254,7 +255,22 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                         );
                     }
                 }
+                // Detach the endpoint so later commands run inline, then apply
+                // whatever is queued. A caller that loaded the endpoint before
+                // it was detached can still be inside `send`, so drain until
+                // this thread holds the only endpoint: dropping the receiver
+                // any earlier would discard that command and leave the caller
+                // waiting on a completion that never arrives.
                 cluster_info.clear_command_sender(&command_endpoint);
+                loop {
+                    for command in commands.try_iter() {
+                        cluster_info.process_command(command);
+                    }
+                    if Arc::strong_count(&command_endpoint) == 1 {
+                        break;
+                    }
+                    yield_now();
+                }
             })
             .unwrap()
     }

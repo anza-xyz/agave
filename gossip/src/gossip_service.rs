@@ -479,6 +479,7 @@ mod tests {
     use {
         super::*,
         crate::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
+        solana_clock::Slot,
         solana_hash::Hash,
         std::sync::{Arc, atomic::AtomicBool},
     };
@@ -509,6 +510,41 @@ mod tests {
             assert_eq!(c.get_snapshot_hashes_for_node(&c.id()).unwrap().full, full);
             exit.store(true, Ordering::Relaxed);
             service.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_commands_survive_exit() {
+        // Whether the engine or the caller ends up applying a command
+        // submitted during shutdown, it must not be dropped.
+        const ROUNDS: Slot = 5;
+        let kp = Keypair::new();
+        let tn = Node::new_localhost_with_pubkey(&kp.pubkey());
+        let c = Arc::new(ClusterInfo::new(
+            tn.info.clone(),
+            Arc::new(kp),
+            SocketAddrSpace::Unspecified,
+        ));
+        for slot in 1..=ROUNDS {
+            let exit = Arc::new(AtomicBool::new(false));
+            let service = GossipService::new(
+                &c,
+                None,
+                Arc::clone(&tn.sockets.gossip),
+                None,
+                None,
+                true, // should_check_duplicate_instance
+                None,
+                exit.clone(),
+            );
+            let publisher = {
+                let c = Arc::clone(&c);
+                std::thread::spawn(move || c.push_lowest_slot(slot))
+            };
+            exit.store(true, Ordering::Relaxed);
+            publisher.join().unwrap();
+            service.join().unwrap();
+            assert_eq!(c.lowest_slot_for_tests(c.id()).unwrap().lowest, slot);
         }
     }
 
