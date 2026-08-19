@@ -5,6 +5,7 @@ use {
         cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
+        gossip_command::GOSSIP_COMMAND_CAPACITY,
         gossip_context::GossipContext,
         gossip_engine::GossipEngine,
     },
@@ -64,7 +65,7 @@ impl GossipService {
             stakes,
             cluster_info.is_full_alpenglow_epoch(),
         ));
-        let (command_sender, command_receiver) = bounded(GOSSIP_CHANNEL_CAPACITY);
+        let (command_sender, command_receiver) = bounded(GOSSIP_COMMAND_CAPACITY);
         cluster_info.set_command_sender(command_sender);
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);

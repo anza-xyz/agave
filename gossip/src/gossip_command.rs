@@ -9,8 +9,11 @@ use {
 
 /// Domain operations submitted by local validator services to the gossip
 /// engine. Stateful label selection stays on the engine thread.
+// Keep transactions inline: votes are frequent enough that a smaller enum is
+// not worth an extra heap allocation for every vote.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum GossipCommand {
-    Publish(CrdsValue),
+    Publish(Box<CrdsValue>),
     LowestSlot(Slot),
     EpochSlots {
         slots: Vec<Slot>,
@@ -34,3 +37,5 @@ pub(crate) enum GossipCommand {
     },
     Flush(Sender<()>),
 }
+
+pub(crate) const GOSSIP_COMMAND_CAPACITY: usize = 256;

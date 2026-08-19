@@ -214,7 +214,7 @@ impl ClusterInfo {
 
     pub(crate) fn process_command(&self, command: GossipCommand) {
         match command {
-            GossipCommand::Publish(value) => self.insert_local_value(value),
+            GossipCommand::Publish(value) => self.insert_local_value(*value),
             GossipCommand::LowestSlot(slot) => self.push_lowest_slot_direct(slot),
             GossipCommand::EpochSlots { slots, completed } => {
                 self.push_epoch_slots_direct(&slots);
@@ -1007,13 +1007,13 @@ impl ClusterInfo {
 
     fn push_message(&self, message: CrdsValue) {
         if let Some(sender) = self.command_sender() {
-            match sender.send(GossipCommand::Publish(message)) {
+            match sender.send(GossipCommand::Publish(Box::new(message))) {
                 Ok(()) => return,
                 Err(err) => {
                     let GossipCommand::Publish(message) = err.0 else {
                         unreachable!()
                     };
-                    self.insert_local_value(message);
+                    self.insert_local_value(*message);
                     return;
                 }
             }
@@ -1568,7 +1568,6 @@ impl ClusterInfo {
             let (completed, receiver) = bounded(1);
             if sender.send(GossipCommand::Flush(completed)).is_ok() {
                 let _ = receiver.recv();
-                return;
             }
         }
     }
@@ -2353,7 +2352,7 @@ impl ClusterInfo {
             })
         }
         let context = context.load();
-        let stakes = &context.stakes;
+        let stakes = context.stakes.as_ref();
         let is_full_alpenglow_epoch = context.is_full_alpenglow_epoch;
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
@@ -2364,7 +2363,7 @@ impl ClusterInfo {
                         .filter_map(|packet| {
                             verify_packet(
                                 packet,
-                                &stakes,
+                                stakes,
                                 &self.stats,
                                 &self.sigverify_cache,
                                 is_full_alpenglow_epoch,
@@ -2378,7 +2377,7 @@ impl ClusterInfo {
                         .filter_map(|packet| {
                             verify_packet(
                                 packet,
-                                &stakes,
+                                stakes,
                                 &self.stats,
                                 &self.sigverify_cache,
                                 is_full_alpenglow_epoch,

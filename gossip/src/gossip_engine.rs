@@ -72,6 +72,9 @@ impl Deadlines {
 
 pub(crate) struct GossipEngine;
 
+// Boxing commands here would allocate on every engine-bound vote merely to
+// shrink this short-lived stack value.
+#[allow(clippy::large_enum_variant)]
 enum EngineEvent {
     Command(GossipCommand),
     Packets(Vec<ValidatedGossipMessage>),
