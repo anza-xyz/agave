@@ -11,6 +11,8 @@
 //! with random hash functions.  So each subsequent request will have a different distribution
 //! of false positives.
 
+#[cfg(test)]
+use crate::crds::Crds;
 use {
     crate::{
         cluster_info_metrics::GossipStats,
@@ -49,9 +51,6 @@ use {
     },
     wincode::{SchemaRead, SchemaWrite},
 };
-
-#[cfg(test)]
-use crate::crds::Crds;
 
 pub const CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS: u64 = 15000;
 /// How long staked CRDS values are retained before being purged.

@@ -65,11 +65,11 @@ const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // log2(680k) = ~19.375.
 pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
 
-/// Synchronization boundary around the CRDS table.
+/// Owns the lock around the CRDS table.
 ///
-/// Keeping lock acquisition here prevents the synchronization primitive from
-/// leaking into the push and pull overlays and gives local publication a
-/// single place to add transactional operations.
+/// Guard acquisition lives here so call sites do not repeat the poisoning
+/// `unwrap`, and so operations that must span several table mutations have one
+/// place to live. Callers still choose read or write access explicitly.
 #[derive(Default)]
 pub struct CrdsStore {
     inner: RwLock<Crds>,
@@ -96,17 +96,18 @@ impl CrdsStore {
 
     /// Atomically inserts a batch of values produced by this node.
     ///
-    /// The batch is rejected without changing the store if any value would
-    /// fail to update the current table, or if multiple values have the same
-    /// label. Callers that intentionally publish several revisions of one
-    /// label should coalesce them before constructing the batch.
+    /// Values sharing a label are coalesced to the last one given. The batch is
+    /// rejected without changing the store if any survivor would fail to update
+    /// the current table.
     pub fn insert_local_batch(&self, values: Vec<CrdsValue>, now: u64) -> LocalBatchOutcome {
+        let values: Vec<CrdsValue> = values
+            .into_iter()
+            .map(|value| (value.label(), value))
+            .collect::<IndexMap<_, _>>()
+            .into_values()
+            .collect();
         let mut crds = self.write();
-        let mut labels = HashSet::with_capacity(values.len());
-        if values
-            .iter()
-            .any(|value| !labels.insert(value.label()) || !crds.upserts(value))
-        {
+        if values.iter().any(|value| !crds.upserts(value)) {
             return LocalBatchOutcome::Rejected;
         }
 
@@ -116,9 +117,12 @@ impl CrdsStore {
             match crds.insert_with_outcome(value, now, GossipRoute::LocalMessage) {
                 InsertOutcome::Inserted => inserted += 1,
                 InsertOutcome::Replaced => replaced += 1,
-                outcome => {
-                    unreachable!("preflight accepted local value but insert returned {outcome:?}")
-                }
+                // Labels are unique after coalescing and the write lock is
+                // held throughout, so the preflight above still holds.
+                outcome => debug_assert!(
+                    false,
+                    "preflight accepted local value but insert returned {outcome:?}"
+                ),
             }
         }
         LocalBatchOutcome::Committed { inserted, replaced }
@@ -176,8 +180,8 @@ pub enum InsertOutcome {
     Inserted,
     Replaced,
     DuplicatePush(/*num dups:*/ u8),
-    Duplicate,
-    Stale,
+    /// The table already holds this value, or a newer one for its label.
+    Rejected,
 }
 
 impl InsertOutcome {
@@ -189,7 +193,7 @@ impl InsertOutcome {
         match self {
             Self::Inserted | Self::Replaced => Ok(()),
             Self::DuplicatePush(num_dups) => Err(CrdsError::DuplicatePush(num_dups)),
-            Self::Duplicate | Self::Stale => Err(CrdsError::InsertFailed),
+            Self::Rejected => Err(CrdsError::InsertFailed),
         }
     }
 }
@@ -459,7 +463,7 @@ impl Crds {
                 // duplicate) by comparing value hashes.
                 if entry.get().value.hash() != value.value.hash() {
                     self.purged.push_back((*value.value.hash(), now));
-                    InsertOutcome::Stale
+                    InsertOutcome::Rejected
                 } else if matches!(route, GossipRoute::PushMessage(_)) {
                     let entry = entry.get_mut();
                     if entry.num_push_recv == Some(0) {
@@ -471,7 +475,7 @@ impl Crds {
                     entry.num_push_recv = Some(num_push_dups.saturating_add(1));
                     InsertOutcome::DuplicatePush(num_push_dups)
                 } else {
-                    InsertOutcome::Duplicate
+                    InsertOutcome::Rejected
                 }
             }
         }
@@ -1005,7 +1009,7 @@ mod tests {
         );
         assert_eq!(
             crds.insert_with_outcome(original, 11, GossipRoute::LocalMessage),
-            InsertOutcome::Duplicate
+            InsertOutcome::Rejected
         );
 
         contact_info.set_wallclock(20);
@@ -1019,7 +1023,7 @@ mod tests {
         let stale = CrdsValue::new_unsigned(CrdsData::from(contact_info));
         assert_eq!(
             crds.insert_with_outcome(stale, 21, GossipRoute::LocalMessage),
-            InsertOutcome::Stale
+            InsertOutcome::Rejected
         );
     }
 

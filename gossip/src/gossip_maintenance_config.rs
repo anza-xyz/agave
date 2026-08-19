@@ -3,14 +3,15 @@ use std::{
     time::Duration,
 };
 
-/// Configuration for periodic diagnostics and contact-info persistence.
-pub(crate) struct GossipMaintenance {
+/// Intervals and paths for periodic diagnostics and contact-info
+/// persistence. An interval of zero disables its task.
+pub(crate) struct GossipMaintenanceConfig {
     contact_debug_interval: Option<Duration>,
     contact_save_interval: Option<Duration>,
     contact_info_path: PathBuf,
 }
 
-impl GossipMaintenance {
+impl GossipMaintenanceConfig {
     pub(crate) fn new(contact_debug_interval_ms: u64) -> Self {
         Self {
             contact_debug_interval: Self::optional_interval(contact_debug_interval_ms),
@@ -51,7 +52,7 @@ mod tests {
 
     #[test]
     fn test_zero_disables_intervals() {
-        let mut maintenance = GossipMaintenance::new(0);
+        let mut maintenance = GossipMaintenanceConfig::new(0);
         maintenance.configure_contact_persistence(Path::new("contacts"), 0);
         assert_eq!(maintenance.contact_debug_interval(), None);
         assert_eq!(maintenance.contact_save_interval(), None);

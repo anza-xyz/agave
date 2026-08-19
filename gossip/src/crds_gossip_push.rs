@@ -11,6 +11,8 @@
 //!    the local nodes wallclock window they are dropped silently.
 //! 2. The prune set is stored in a Bloom filter.
 
+#[cfg(test)]
+use crate::crds::Crds;
 use {
     crate::{
         cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY,
@@ -39,9 +41,6 @@ use {
         },
     },
 };
-
-#[cfg(test)]
-use crate::crds::Crds;
 
 const CRDS_GOSSIP_PUSH_FANOUT: usize = 9;
 // With a fanout of 9, a 2000 node cluster should only take ~3.5 hops to converge.

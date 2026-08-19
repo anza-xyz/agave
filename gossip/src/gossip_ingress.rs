@@ -1,6 +1,7 @@
 use {
     crate::{
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
+        crds_value::CrdsValue,
         protocol::Protocol,
         sigverify_cache::SigVerifyCache,
     },
@@ -75,8 +76,37 @@ impl FilteredGossipMessage {
 }
 
 impl VerifiedGossipMessage {
-    pub(crate) fn protocol_mut(&mut self) -> &mut Protocol {
-        &mut self.protocol
+    /// Bypasses the validation stages. Tests that exercise the stages
+    /// themselves must go through [`SanitizedGossipMessage::new`].
+    #[cfg(test)]
+    pub(crate) fn new_unverified(from_addr: SocketAddr, protocol: Protocol) -> Self {
+        Self {
+            from_addr,
+            protocol,
+        }
+    }
+
+    /// Drops CRDS values that `predicate` rejects, and reports how many went.
+    ///
+    /// Removal is the only mutation offered on a verified message: every value
+    /// still present is one that `verify` accepted. Handing out `&mut Protocol`
+    /// instead would let a caller substitute values behind the marker.
+    pub(crate) fn retain_crds_values(
+        &mut self,
+        predicate: impl FnMut(&CrdsValue) -> bool,
+    ) -> usize {
+        let (Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values)) =
+            &mut self.protocol
+        else {
+            return 0;
+        };
+        let num_values = values.len();
+        values.retain(predicate);
+        num_values - values.len()
+    }
+
+    pub(crate) fn protocol(&self) -> &Protocol {
+        &self.protocol
     }
 
     pub(crate) fn into_parts(self) -> (SocketAddr, Protocol) {

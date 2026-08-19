@@ -1,16 +1,12 @@
 use {
-    crate::{
-        crds::{CrdsStore, InsertOutcome, LocalBatchOutcome},
-        crds_value::{CrdsValue, CrdsValueLabel},
-    },
-    indexmap::IndexMap,
+    crate::{crds::CrdsStore, crds_value::CrdsValue},
     std::sync::Mutex,
 };
 
-/// Owns the mechanics for publishing values produced by the local node.
+/// Queue of values produced by this node that are published on the next round.
 ///
-/// Callers decide whether a value should be published immediately or queued
-/// for the next push round; locking and CRDS merge routing stay here.
+/// Values that should reach CRDS immediately go straight to
+/// [`CrdsStore::insert_local`]; this type only owns the deferral.
 #[derive(Default)]
 pub(crate) struct LocalCrdsPublisher {
     pending: Mutex<Vec<CrdsValue>>,
@@ -21,36 +17,12 @@ impl LocalCrdsPublisher {
         self.pending.lock().unwrap().push(value);
     }
 
-    pub(crate) fn publish(&self, crds: &CrdsStore, value: CrdsValue, now: u64) -> InsertOutcome {
-        crds.insert_local(value, now)
-    }
-
-    pub(crate) fn publish_batch(
-        &self,
-        crds: &CrdsStore,
-        values: Vec<CrdsValue>,
-        now: u64,
-    ) -> LocalBatchOutcome {
-        let values = values
-            .into_iter()
-            .fold(
-                IndexMap::<CrdsValueLabel, CrdsValue>::new(),
-                |mut values, value| {
-                    values.insert(value.label(), value);
-                    values
-                },
-            )
-            .into_values()
-            .collect();
-        crds.insert_local_batch(values, now)
-    }
-
     pub(crate) fn flush(&self, crds: &CrdsStore, now: u64) {
         let values = std::mem::take(&mut *self.pending.lock().unwrap());
         for value in values {
             // A later revision of the same label may already have reached
             // CRDS. Duplicate and stale queued values are expected here.
-            let _ = self.publish(crds, value, now);
+            let _ = crds.insert_local(value, now);
         }
     }
 }
