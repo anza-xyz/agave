@@ -200,12 +200,17 @@ impl ClusterInfo {
         crate::cluster_info_metrics::submit_gossip_stats(&self.stats, &self.gossip, stakes);
     }
 
-    pub(crate) fn set_command_sender(&self, sender: Sender<GossipCommand>) {
-        self.command_sender.store(Some(Arc::new(sender)));
+    pub(crate) fn set_command_sender(
+        &self,
+        sender: Sender<GossipCommand>,
+    ) -> Arc<Sender<GossipCommand>> {
+        let sender = Arc::new(sender);
+        self.command_sender.store(Some(Arc::clone(&sender)));
+        sender
     }
 
-    pub(crate) fn clear_command_sender(&self) {
-        self.command_sender.store(None);
+    pub(crate) fn clear_command_sender(&self, sender: &Arc<Sender<GossipCommand>>) {
+        let _ = self.command_sender.compare_and_swap(sender, None);
     }
 
     fn command_sender(&self) -> Option<Arc<Sender<GossipCommand>>> {

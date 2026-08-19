@@ -66,7 +66,7 @@ impl GossipService {
             cluster_info.is_full_alpenglow_epoch(),
         ));
         let (command_sender, command_receiver) = bounded(GOSSIP_COMMAND_CAPACITY);
-        cluster_info.set_command_sender(command_sender);
+        let command_sender = cluster_info.set_command_sender(command_sender);
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         trace!(
@@ -113,6 +113,7 @@ impl GossipService {
             epoch_specs,
             thread_pool,
             Arc::clone(&context),
+            command_sender,
             command_receiver,
             listen_receiver,
             response_sender.clone(),

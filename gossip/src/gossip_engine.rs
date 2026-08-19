@@ -9,7 +9,7 @@ use {
         gossip_error::GossipError,
         gossip_ingress::ValidatedGossipMessage,
     },
-    crossbeam_channel::Receiver,
+    crossbeam_channel::{Receiver, Sender},
     rayon::ThreadPool,
     solana_perf::packet::{PacketBatch, PacketBatchRecycler},
     solana_pubkey::Pubkey,
@@ -89,6 +89,7 @@ impl GossipEngine {
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         thread_pool: Arc<ThreadPool>,
         context: Arc<GossipContext>,
+        command_sender: Arc<Sender<GossipCommand>>,
         command_receiver: Receiver<GossipCommand>,
         receiver: Receiver<Vec<ValidatedGossipMessage>>,
         sender: impl ChannelSend<PacketBatch>,
@@ -217,7 +218,7 @@ impl GossipEngine {
                         );
                     }
                 }
-                cluster_info.clear_command_sender();
+                cluster_info.clear_command_sender(&command_sender);
             })
             .unwrap()
     }
