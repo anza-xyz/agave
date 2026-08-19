@@ -211,6 +211,7 @@ impl GossipEngine {
                         );
                     }
                 }
+                cluster_info.clear_command_sender();
             })
             .unwrap()
     }

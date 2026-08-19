@@ -482,24 +482,26 @@ mod tests {
     #[test]
     // test that stage will exit when flag is set
     fn test_exit() {
-        let exit = Arc::new(AtomicBool::new(false));
         let kp = Keypair::new();
         let tn = Node::new_localhost_with_pubkey(&kp.pubkey());
         let cluster_info =
             ClusterInfo::new(tn.info.clone(), Arc::new(kp), SocketAddrSpace::Unspecified);
         let c = Arc::new(cluster_info);
-        let d = GossipService::new(
-            &c,
-            None,
-            tn.sockets.gossip,
-            None,
-            None,
-            true, // should_check_duplicate_instance
-            None,
-            exit.clone(),
-        );
-        exit.store(true, Ordering::Relaxed);
-        d.join().unwrap();
+        for _ in 0..2 {
+            let exit = Arc::new(AtomicBool::new(false));
+            let service = GossipService::new(
+                &c,
+                None,
+                Arc::clone(&tn.sockets.gossip),
+                None,
+                None,
+                true, // should_check_duplicate_instance
+                None,
+                exit.clone(),
+            );
+            exit.store(true, Ordering::Relaxed);
+            service.join().unwrap();
+        }
     }
 
     #[test]

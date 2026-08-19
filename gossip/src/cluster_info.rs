@@ -47,6 +47,7 @@ use {
         weighted_shuffle::WeightedShuffle,
     },
     agave_votor_messages::migration::MigrationStatus,
+    arc_swap::ArcSwapOption,
     crossbeam_channel::{Sender, TrySendError, bounded},
     itertools::{Either, Itertools},
     rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
@@ -192,7 +193,7 @@ pub struct ClusterInfo {
     sigverify_cache: SigVerifyCache,
     /// Alpenglow migration status
     migration_status: OnceLock<Arc<MigrationStatus>>,
-    command_sender: OnceLock<Sender<GossipCommand>>,
+    command_sender: ArcSwapOption<Sender<GossipCommand>>,
 }
 
 impl ClusterInfo {
@@ -201,7 +202,15 @@ impl ClusterInfo {
     }
 
     pub(crate) fn set_command_sender(&self, sender: Sender<GossipCommand>) {
-        assert!(self.command_sender.set(sender).is_ok());
+        self.command_sender.store(Some(Arc::new(sender)));
+    }
+
+    pub(crate) fn clear_command_sender(&self) {
+        self.command_sender.store(None);
+    }
+
+    fn command_sender(&self) -> Option<Arc<Sender<GossipCommand>>> {
+        self.command_sender.load_full()
     }
 
     pub(crate) fn process_command(&self, command: GossipCommand) {
@@ -279,7 +288,7 @@ impl ClusterInfo {
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
             migration_status: OnceLock::new(),
-            command_sender: OnceLock::new(),
+            command_sender: ArcSwapOption::empty(),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -663,7 +672,7 @@ impl ClusterInfo {
     }
 
     fn publish_contact_info(&self) {
-        if let Some(sender) = self.command_sender.get() {
+        if let Some(sender) = self.command_sender() {
             let (completed, receiver) = bounded(0);
             if sender
                 .send(GossipCommand::RefreshContact(completed))
@@ -867,7 +876,7 @@ impl ClusterInfo {
     }
 
     pub fn push_lowest_slot(&self, min: Slot) {
-        if let Some(sender) = self.command_sender.get()
+        if let Some(sender) = self.command_sender()
             && sender.send(GossipCommand::LowestSlot(min)).is_ok()
         {
             return;
@@ -909,7 +918,7 @@ impl ClusterInfo {
     }
 
     pub fn push_epoch_slots(&self, update: &[Slot]) {
-        if let Some(sender) = self.command_sender.get() {
+        if let Some(sender) = self.command_sender() {
             let (completed, receiver) = bounded(0);
             let command = GossipCommand::EpochSlots {
                 slots: update.to_vec(),
@@ -998,7 +1007,7 @@ impl ClusterInfo {
     }
 
     fn push_message(&self, message: CrdsValue) {
-        if let Some(sender) = self.command_sender.get() {
+        if let Some(sender) = self.command_sender() {
             match sender.send(GossipCommand::Publish(message)) {
                 Ok(()) => return,
                 Err(err) => {
@@ -1095,7 +1104,7 @@ impl ClusterInfo {
     pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         let slot = tower.last().copied().expect("Cannot push empty vote");
-        let result = if let Some(sender) = self.command_sender.get() {
+        let result = if let Some(sender) = self.command_sender() {
             let (completed, receiver) = bounded(0);
             let command = GossipCommand::Vote {
                 slot,
@@ -1148,7 +1157,7 @@ impl ClusterInfo {
     }
 
     pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
-        if let Some(sender) = self.command_sender.get() {
+        if let Some(sender) = self.command_sender() {
             let (completed, receiver) = bounded(0);
             let command = GossipCommand::RefreshVote {
                 transaction: refresh_vote,
@@ -1280,7 +1289,7 @@ impl ClusterInfo {
             self.my_shred_version(),
         )?
         .collect();
-        if let Some(sender) = self.command_sender.get() {
+        if let Some(sender) = self.command_sender() {
             let (completed, receiver) = bounded(0);
             let command = GossipCommand::DuplicateShred {
                 keypair,
@@ -1556,7 +1565,7 @@ impl ClusterInfo {
     }
 
     pub fn flush_push_queue(&self) {
-        if let Some(sender) = self.command_sender.get() {
+        if let Some(sender) = self.command_sender() {
             let (completed, receiver) = bounded(0);
             if sender.send(GossipCommand::Flush(completed)).is_ok() {
                 let _ = receiver.recv();
