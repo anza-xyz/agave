@@ -8,6 +8,7 @@ use {
         gossip_command::GOSSIP_COMMAND_CAPACITY,
         gossip_context::GossipContext,
         gossip_engine::GossipEngine,
+        gossip_engine_view::EngineView,
         gossip_housekeeper::GossipHousekeeper,
     },
     crossbeam_channel::{Sender, bounded},
@@ -110,7 +111,7 @@ impl GossipService {
         let (response_sender, response_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_engine = GossipEngine {
-            cluster_info: Arc::clone(cluster_info),
+            cluster_info: EngineView::new(Arc::clone(cluster_info)),
             epoch_specs,
             workers: thread_pool,
             context: Arc::clone(&context),

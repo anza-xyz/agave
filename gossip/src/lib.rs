@@ -23,6 +23,7 @@ pub mod epoch_specs;
 mod gossip_command;
 mod gossip_context;
 mod gossip_engine;
+mod gossip_engine_view;
 pub mod gossip_error;
 mod gossip_housekeeper;
 mod gossip_identity;

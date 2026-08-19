@@ -1,14 +1,10 @@
 use {
     crate::{
-        cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
-        cluster_info_metrics::ScopedTimer,
-        crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
-        epoch_specs::EpochSpecs,
-        gossip_command::GossipCommand,
-        gossip_context::GossipContext,
-        gossip_error::GossipError,
-        gossip_ingress::ValidatedGossipMessage,
-        gossip_timer::Periodic,
+        cluster_info::GOSSIP_SLEEP_MILLIS, cluster_info_metrics::ScopedTimer,
+        crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, epoch_specs::EpochSpecs,
+        gossip_command::GossipCommand, gossip_context::GossipContext,
+        gossip_engine_view::EngineView, gossip_error::GossipError,
+        gossip_ingress::ValidatedGossipMessage, gossip_timer::Periodic,
     },
     crossbeam_channel::{Receiver, Sender},
     rayon::ThreadPool,
@@ -69,7 +65,7 @@ impl Deadlines {
 }
 
 pub(crate) struct GossipEngine<S> {
-    pub(crate) cluster_info: Arc<ClusterInfo>,
+    pub(crate) cluster_info: EngineView,
     pub(crate) epoch_specs: Option<Box<dyn EpochSpecs>>,
     pub(crate) workers: Arc<ThreadPool>,
     pub(crate) context: Arc<GossipContext>,
@@ -120,9 +116,9 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
     }
 
     fn run(mut self) {
-        // Lease a cloned handle: `self` is moved into `drain_commands` while
-        // the lease is still held.
-        let cluster_info = Arc::clone(&self.cluster_info);
+        // Lease through a separate handle: `self` is moved into
+        // `drain_commands` while the lease is still held.
+        let cluster_info = self.cluster_info.clone();
         let _writer_lease = cluster_info.acquire_writer_lease();
         let mut state = LoopState::new();
         while !self.exit.load(Ordering::Relaxed) {
@@ -169,7 +165,7 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
     fn process_ingress(&self, packets: Vec<ValidatedGossipMessage>, state: &mut LoopState) {
         buffer_ingress(packets, &self.inbound, &mut state.packet_buf);
         let context_snapshot = self.context.load();
-        let _timer = ScopedTimer::from(&self.cluster_info.stats.gossip_listen_loop_time);
+        let _timer = ScopedTimer::from(&self.cluster_info.stats().gossip_listen_loop_time);
         let result = self.cluster_info.process_packets(
             &mut state.packet_buf,
             &self.workers,
@@ -180,7 +176,7 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
         );
         state.packet_buf.clear();
         self.cluster_info
-            .stats
+            .stats()
             .gossip_listen_loop_iterations_since_last_report
             .add_relaxed(1);
         match result {
@@ -250,9 +246,14 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::contact_info::ContactInfo, crossbeam_channel::bounded,
-        rayon::ThreadPoolBuilder, solana_keypair::Keypair, solana_net_utils::SocketAddrSpace,
-        solana_signer::Signer, std::collections::HashMap,
+        super::*,
+        crate::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+        crossbeam_channel::bounded,
+        rayon::ThreadPoolBuilder,
+        solana_keypair::Keypair,
+        solana_net_utils::SocketAddrSpace,
+        solana_signer::Signer,
+        std::collections::HashMap,
     };
 
     #[test]
@@ -271,7 +272,7 @@ mod tests {
         let (_inbound_sender, inbound) = bounded(1);
         let (outbound, _outbound_receiver) = bounded(1);
         let engine = GossipEngine {
-            cluster_info: Arc::clone(&cluster_info),
+            cluster_info: EngineView::new(Arc::clone(&cluster_info)),
             epoch_specs: None,
             workers: Arc::new(ThreadPoolBuilder::new().num_threads(1).build().unwrap()),
             context: Arc::new(GossipContext::new(Arc::new(HashMap::new()), false)),
