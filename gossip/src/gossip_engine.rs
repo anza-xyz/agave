@@ -1,10 +1,10 @@
 use {
     crate::{
-        cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
+        cluster_info::{CHANNEL_CONSUME_CAPACITY, ClusterInfo, GOSSIP_SLEEP_MILLIS},
         cluster_info_metrics::ScopedTimer,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         epoch_specs::EpochSpecs,
-        gossip_command::GossipCommand,
+        gossip_command::{GOSSIP_COMMAND_CAPACITY, GossipCommand},
         gossip_context::GossipContext,
         gossip_error::GossipError,
         gossip_ingress::ValidatedGossipMessage,
@@ -25,48 +25,70 @@ use {
     },
 };
 
+const TICK_INTERVAL: Duration = Duration::from_millis(GOSSIP_SLEEP_MILLIS);
 const PULL_INTERVAL: Duration = Duration::from_millis(GOSSIP_SLEEP_MILLIS * 5);
 const PUSH_REFRESH_INTERVAL: Duration = Duration::from_millis(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2);
 const METRICS_INTERVAL: Duration = Duration::from_secs(2);
 
+struct Periodic {
+    deadline: Instant,
+    period: Duration,
+}
+
+impl Periodic {
+    fn due_now(now: Instant, period: Duration) -> Self {
+        Self {
+            deadline: now,
+            period,
+        }
+    }
+
+    fn due_after(now: Instant, period: Duration) -> Self {
+        Self {
+            deadline: now + period,
+            period,
+        }
+    }
+
+    fn claim(&mut self, now: Instant) -> bool {
+        if now < self.deadline {
+            return false;
+        }
+        self.deadline = now + self.period;
+        true
+    }
+}
+
 struct Deadlines {
-    tick: Instant,
-    pull: Instant,
-    push_refresh: Instant,
-    metrics: Instant,
-    contact_trace: Option<Instant>,
-    contact_save: Option<Instant>,
+    tick: Periodic,
+    pull: Periodic,
+    push_refresh: Periodic,
+    metrics: Periodic,
+    contact_trace: Option<Periodic>,
+    contact_save: Option<Periodic>,
 }
 
 impl Deadlines {
     fn new(cluster_info: &ClusterInfo) -> Self {
         let now = Instant::now();
         Self {
-            tick: now,
-            pull: now,
-            push_refresh: now,
-            metrics: now + METRICS_INTERVAL,
+            tick: Periodic::due_now(now, TICK_INTERVAL),
+            pull: Periodic::due_now(now, PULL_INTERVAL),
+            push_refresh: Periodic::due_now(now, PUSH_REFRESH_INTERVAL),
+            metrics: Periodic::due_after(now, METRICS_INTERVAL),
             contact_trace: cluster_info
                 .contact_debug_interval()
-                .map(|period| now + period),
+                .map(|period| Periodic::due_after(now, period)),
             contact_save: cluster_info
                 .contact_save_interval()
-                .map(|period| now + period),
+                .map(|period| Periodic::due_after(now, period)),
         }
     }
 
-    fn claim(deadline: &mut Instant, now: Instant, period: Duration) -> bool {
-        if now < *deadline {
-            return false;
-        }
-        *deadline = now + period;
-        true
-    }
-
-    fn claim_optional(deadline: &mut Option<Instant>, now: Instant, period: Duration) -> bool {
-        deadline
+    fn claim(periodic: &mut Option<Periodic>, now: Instant) -> bool {
+        periodic
             .as_mut()
-            .is_some_and(|deadline| Self::claim(deadline, now, period))
+            .is_some_and(|periodic| periodic.claim(now))
     }
 }
 
@@ -116,11 +138,16 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                 } = self;
                 let recycler = PacketBatchRecycler::default();
                 let mut deadlines = Deadlines::new(&cluster_info);
-                let mut packet_buf = Vec::with_capacity(1024);
+                let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
                 let mut entrypoints_processed = false;
 
                 while !exit.load(Ordering::Relaxed) {
-                    let timeout = deadlines.tick.saturating_duration_since(Instant::now());
+                    let timeout = deadlines
+                        .tick
+                        .deadline
+                        .saturating_duration_since(Instant::now());
+                    // Commands are preferred over packets: they are the only
+                    // way local services reach the CRDS table.
                     let event = crossbeam_channel::select_biased! {
                         recv(commands) -> command => {
                             command.map_or(EngineEvent::Disconnected, EngineEvent::Command)
@@ -133,13 +160,14 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                     match event {
                         EngineEvent::Command(command) => {
                             cluster_info.process_command(command);
-                            for command in commands.try_iter().take(1024 - 1) {
+                            for command in commands.try_iter().take(GOSSIP_COMMAND_CAPACITY - 1) {
                                 cluster_info.process_command(command);
                             }
                         }
                         EngineEvent::Packets(packets) => {
                             packet_buf.push(packets);
-                            packet_buf.extend(inbound.try_iter().take(1024 - 1));
+                            packet_buf
+                                .extend(inbound.try_iter().take(CHANNEL_CONSUME_CAPACITY - 1));
                             let context_snapshot = context.load();
                             let _timer =
                                 ScopedTimer::from(&cluster_info.stats.gossip_listen_loop_time);
@@ -176,10 +204,9 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                     }
 
                     let now = Instant::now();
-                    if now < deadlines.tick {
+                    if !deadlines.tick.claim(now) {
                         continue;
                     }
-                    deadlines.tick = now + Duration::from_millis(GOSSIP_SLEEP_MILLIS);
 
                     let stakes = epoch_specs
                         .as_mut()
@@ -187,27 +214,23 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                         .unwrap_or_default();
                     context.update(Arc::clone(&stakes), cluster_info.is_full_alpenglow_epoch());
 
-                    if Deadlines::claim(&mut deadlines.metrics, now, METRICS_INTERVAL) {
+                    if deadlines.metrics.claim(now) {
                         cluster_info.submit_stats(&stakes);
                         receiver_stats.report();
                     }
 
-                    if let Some(period) = cluster_info.contact_debug_interval()
-                        && Deadlines::claim_optional(&mut deadlines.contact_trace, now, period)
-                    {
+                    if Deadlines::claim(&mut deadlines.contact_trace, now) {
                         info!(
                             "\n{}\n\n{}",
                             cluster_info.contact_info_trace(),
                             cluster_info.rpc_info_trace()
                         );
                     }
-                    if let Some(period) = cluster_info.contact_save_interval()
-                        && Deadlines::claim_optional(&mut deadlines.contact_save, now, period)
-                    {
+                    if Deadlines::claim(&mut deadlines.contact_save, now) {
                         cluster_info.save_contact_info();
                     }
 
-                    let generate_pull = Deadlines::claim(&mut deadlines.pull, now, PULL_INTERVAL);
+                    let generate_pull = deadlines.pull.claim(now);
                     let _ = cluster_info.run_gossip(
                         &workers,
                         validators.as_ref(),
@@ -221,7 +244,7 @@ impl<S: ChannelSend<PacketBatch>> GossipEngine<S> {
                         entrypoints_processed = cluster_info.process_entrypoints();
                     }
 
-                    if Deadlines::claim(&mut deadlines.push_refresh, now, PUSH_REFRESH_INTERVAL) {
+                    if deadlines.push_refresh.claim(now) {
                         cluster_info.refresh_my_gossip_contact_info();
                         cluster_info.refresh_push_active_set(
                             &recycler,
