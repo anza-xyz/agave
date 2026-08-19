@@ -29,6 +29,7 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
         epoch_slots::EpochSlots,
+        gossip_command::GossipCommand,
         gossip_context::GossipContext,
         gossip_error::GossipError,
         gossip_identity::GossipIdentity,
@@ -44,7 +45,7 @@ use {
         weighted_shuffle::WeightedShuffle,
     },
     agave_votor_messages::migration::MigrationStatus,
-    crossbeam_channel::TrySendError,
+    crossbeam_channel::{Sender, TrySendError, bounded},
     itertools::{Either, Itertools},
     rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
@@ -191,11 +192,31 @@ pub struct ClusterInfo {
     sigverify_cache: SigVerifyCache,
     /// Alpenglow migration status
     migration_status: OnceLock<Arc<MigrationStatus>>,
+    command_sender: OnceLock<Sender<GossipCommand>>,
 }
 
 impl ClusterInfo {
     pub(crate) fn gossip(&self) -> &CrdsGossip {
         &self.gossip
+    }
+
+    pub(crate) fn set_command_sender(&self, sender: Sender<GossipCommand>) {
+        assert!(self.command_sender.set(sender).is_ok());
+    }
+
+    pub(crate) fn process_command(&self, command: GossipCommand) {
+        match command {
+            GossipCommand::Publish(value) => self.insert_local_value(value),
+            GossipCommand::LowestSlot(slot) => self.push_lowest_slot_direct(slot),
+            GossipCommand::EpochSlots { slots, completed } => {
+                self.push_epoch_slots_direct(&slots);
+                let _ = completed.send(());
+            }
+            GossipCommand::Flush(completed) => {
+                self.flush_push_queue_direct();
+                let _ = completed.send(());
+            }
+        }
     }
 
     pub fn new(
@@ -232,6 +253,7 @@ impl ClusterInfo {
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
             migration_status: OnceLock::new(),
+            command_sender: OnceLock::new(),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -804,8 +826,16 @@ impl ClusterInfo {
         )
     }
 
-    // TODO: This has a race condition if called from more than one thread.
     pub fn push_lowest_slot(&self, min: Slot) {
+        if let Some(sender) = self.command_sender.get()
+            && sender.send(GossipCommand::LowestSlot(min)).is_ok()
+        {
+            return;
+        }
+        self.push_lowest_slot_direct(min);
+    }
+
+    fn push_lowest_slot_direct(&self, min: Slot) {
         let self_keypair = self.keypair();
         let self_pubkey = self_keypair.pubkey();
         let last = {
@@ -821,13 +851,39 @@ impl ClusterInfo {
                 CrdsData::LowestSlot(0, LowestSlot::new(self_pubkey, min, now)),
                 &self_keypair,
             );
-            self.push_message(entry);
+            self.insert_local_value(entry);
         }
     }
 
-    // TODO: If two threads call into this function then epoch_slot_index has a
-    // race condition and the threads will overwrite each other in crds table.
-    pub fn push_epoch_slots(&self, mut update: &[Slot]) {
+    fn insert_local_value(&self, value: CrdsValue) {
+        let now = timestamp();
+        if let Err(err) =
+            self.gossip
+                .crds
+                .write()
+                .unwrap()
+                .insert(value, now, GossipRoute::LocalMessage)
+        {
+            error!("failed to publish local CRDS value: {err:?}");
+        }
+    }
+
+    pub fn push_epoch_slots(&self, update: &[Slot]) {
+        if let Some(sender) = self.command_sender.get() {
+            let (completed, receiver) = bounded(0);
+            let command = GossipCommand::EpochSlots {
+                slots: update.to_vec(),
+                completed,
+            };
+            if sender.send(command).is_ok() {
+                let _ = receiver.recv();
+                return;
+            }
+        }
+        self.push_epoch_slots_direct(update);
+    }
+
+    fn push_epoch_slots_direct(&self, mut update: &[Slot]) {
         let self_keypair = self.keypair();
         let self_pubkey = self_keypair.pubkey();
         let current_slots: Vec<_> = {
@@ -902,6 +958,21 @@ impl ClusterInfo {
     }
 
     fn push_message(&self, message: CrdsValue) {
+        if let Some(sender) = self.command_sender.get() {
+            match sender.send(GossipCommand::Publish(message)) {
+                Ok(()) => return,
+                Err(err) => {
+                    let GossipCommand::Publish(message) = err.0 else {
+                        unreachable!()
+                    };
+                    self.local_message_pending_push_queue
+                        .lock()
+                        .unwrap()
+                        .push(message);
+                    return;
+                }
+            }
+        }
         self.local_message_pending_push_queue
             .lock()
             .unwrap()
@@ -1359,6 +1430,17 @@ impl ClusterInfo {
     }
 
     pub fn flush_push_queue(&self) {
+        if let Some(sender) = self.command_sender.get() {
+            let (completed, receiver) = bounded(0);
+            if sender.send(GossipCommand::Flush(completed)).is_ok() {
+                let _ = receiver.recv();
+                return;
+            }
+        }
+        self.flush_push_queue_direct();
+    }
+
+    fn flush_push_queue_direct(&self) {
         let entries: Vec<CrdsValue> =
             std::mem::take(&mut *self.local_message_pending_push_queue.lock().unwrap());
         if !entries.is_empty() {
@@ -1377,7 +1459,7 @@ impl ClusterInfo {
         let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let (entries, push_messages, num_pushes) = {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
-            self.flush_push_queue();
+            self.flush_push_queue_direct();
             self.gossip
                 .new_push_messages(&self_id, timestamp(), stakes, |value| {
                     should_retain_crds_value(

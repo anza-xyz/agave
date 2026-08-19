@@ -20,6 +20,7 @@ pub mod duplicate_shred_handler;
 pub mod duplicate_shred_listener;
 pub mod epoch_slots;
 pub mod epoch_specs;
+mod gossip_command;
 mod gossip_context;
 mod gossip_engine;
 pub mod gossip_error;

@@ -9,7 +9,7 @@ use {
         gossip_context::GossipContext,
         gossip_engine::GossipEngine,
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Sender, bounded},
     solana_keypair::Keypair,
     solana_net_utils::{
         DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace,
@@ -65,6 +65,8 @@ impl GossipService {
             stakes,
             cluster_info.is_full_alpenglow_epoch(),
         ));
+        let (command_sender, command_receiver) = bounded(GOSSIP_CHANNEL_CAPACITY);
+        cluster_info.set_command_sender(command_sender);
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         trace!(
@@ -102,6 +104,7 @@ impl GossipService {
             Arc::clone(cluster_info),
             epoch_specs,
             Arc::clone(&context),
+            command_receiver,
             listen_receiver,
             response_sender.clone(),
             gossip_validators,

@@ -4,6 +4,7 @@ use {
         cluster_info_metrics::ScopedTimer,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         epoch_specs::EpochSpecs,
+        gossip_command::GossipCommand,
         gossip_context::GossipContext,
         gossip_error::GossipError,
         gossip_ingress::ValidatedGossipMessage,
@@ -75,6 +76,7 @@ impl GossipEngine {
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         context: Arc<GossipContext>,
+        command_receiver: Receiver<GossipCommand>,
         receiver: Receiver<Vec<ValidatedGossipMessage>>,
         sender: impl ChannelSend<PacketBatch>,
         gossip_validators: Option<HashSet<Pubkey>>,
@@ -94,6 +96,9 @@ impl GossipEngine {
                 let mut packet_buf = Vec::with_capacity(1024);
 
                 while !exit.load(Ordering::Relaxed) {
+                    for command in command_receiver.try_iter().take(1024) {
+                        cluster_info.process_command(command);
+                    }
                     let timeout = deadlines.tick.saturating_duration_since(Instant::now());
                     match receiver.recv_timeout(timeout) {
                         Ok(packets) => {
