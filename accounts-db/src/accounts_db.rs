@@ -946,7 +946,7 @@ pub struct AccountsDb {
 
     pub(crate) active_stats: ActiveStats,
 
-    /// debug feature to scan every append vec and verify the index matches
+    /// debug feature to scan every storage and verify the index matches
     exhaustively_verify_index: bool,
 
     /// storage format to use for new storages
