@@ -11,7 +11,7 @@ use {
             consumer::Consumer, decision_maker::BufferedPacketsDecision, packet_bytes,
             scheduler_messages::MaxAge,
         },
-        transaction_priority::calculate_priority_and_cost,
+        transaction_priority::{TransactionPriorityResourceLimits, calculate_priority_and_cost},
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
@@ -93,8 +93,14 @@ pub(crate) fn precheck_transaction(
         .transaction_configuration(&working_bank.feature_set)
         .map_err(|_| IngressCheckError::PacketHandling(PacketHandlingError::ComputeBudget))?;
     let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
-    let (priority, cost) =
-        calculate_priority_and_cost(working_bank, &view, &transaction_configuration);
+    let transaction_bytes = view.serialized_size() as u64;
+    let (priority, cost) = calculate_priority_and_cost(
+        working_bank,
+        &view,
+        &transaction_configuration,
+        transaction_bytes,
+        TransactionPriorityResourceLimits::for_bank(working_bank),
+    );
     let state = TransactionState::new(view, max_age, priority, cost);
 
     let mut error_counters = TransactionErrorMetrics::default();
