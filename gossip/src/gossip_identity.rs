@@ -14,6 +14,14 @@ struct IdentitySnapshot {
     contact_info: ContactInfo,
 }
 
+/// Proof that the advertised contact record changed and owes CRDS a refresh.
+///
+/// Every [`GossipIdentity`] mutator returns one, and
+/// `ClusterInfo::publish_contact_info` consumes one, so a mutation that forgets
+/// to republish leaves an unused value the compiler warns about.
+#[must_use = "a contact-info change must be published with publish_contact_info"]
+pub(crate) struct ContactInfoChanged(());
+
 /// Atomically publishes identity snapshots and serializes updates.
 pub(crate) struct GossipIdentity {
     snapshot: ArcSwap<IdentitySnapshot>,
@@ -51,11 +59,12 @@ impl GossipIdentity {
         result
     }
 
-    pub(crate) fn set_keypair(&self, keypair: Arc<Keypair>) {
+    pub(crate) fn set_keypair(&self, keypair: Arc<Keypair>) -> ContactInfoChanged {
         self.mutate(|snapshot| {
             snapshot.contact_info.hot_swap_pubkey(keypair.pubkey());
             snapshot.keypair = keypair;
-        })
+        });
+        ContactInfoChanged(())
     }
 
     pub(crate) fn contact_info(&self) -> ContactInfo {
@@ -66,8 +75,12 @@ impl GossipIdentity {
         self.snapshot.load().contact_info.shred_version()
     }
 
-    pub(crate) fn update_contact_info<R>(&self, update: impl FnOnce(&mut ContactInfo) -> R) -> R {
-        self.mutate(|snapshot| update(&mut snapshot.contact_info))
+    pub(crate) fn update_contact_info<R>(
+        &self,
+        update: impl FnOnce(&mut ContactInfo) -> R,
+    ) -> (R, ContactInfoChanged) {
+        let result = self.mutate(|snapshot| update(&mut snapshot.contact_info));
+        (result, ContactInfoChanged(()))
     }
 
     /// Refreshes, signs, and publishes the contact record from one snapshot.
@@ -95,7 +108,7 @@ mod tests {
         let identity =
             GossipIdentity::new(ContactInfo::new_localhost(&keypair.pubkey(), 1), keypair);
         let replacement = Arc::new(Keypair::new());
-        identity.set_keypair(replacement.clone());
+        let _ = identity.set_keypair(replacement.clone());
 
         assert_eq!(identity.id(), replacement.pubkey());
         assert_eq!(identity.contact_info().pubkey(), &replacement.pubkey());
@@ -116,7 +129,7 @@ mod tests {
             std::thread::spawn(move || {
                 barrier.wait();
                 for _ in 0..100 {
-                    identity.set_keypair(Arc::new(Keypair::new()));
+                    let _ = identity.set_keypair(Arc::new(Keypair::new()));
                 }
             })
         };

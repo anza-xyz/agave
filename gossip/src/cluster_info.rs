@@ -32,7 +32,7 @@ use {
         gossip_command::GossipCommand,
         gossip_context::GossipContext,
         gossip_error::GossipError,
-        gossip_identity::GossipIdentity,
+        gossip_identity::{ContactInfoChanged, GossipIdentity},
         gossip_ingress::ValidatedGossipMessage,
         ping_pong::Pong,
         protocol::{
@@ -545,8 +545,8 @@ impl ClusterInfo {
     }
 
     pub fn set_keypair(&self, new_keypair: Arc<Keypair>) {
-        self.identity.set_keypair(new_keypair);
-        self.publish_contact_info();
+        let changed = self.identity.set_keypair(new_keypair);
+        self.publish_contact_info(changed);
     }
 
     /// Mutates the advertised contact record and republishes it. Every
@@ -556,8 +556,11 @@ impl ClusterInfo {
         &self,
         update: impl FnOnce(&mut ContactInfo) -> Result<(), ContactInfoError>,
     ) -> Result<(), ContactInfoError> {
-        self.identity.update_contact_info(update)?;
-        self.publish_contact_info();
+        let (result, changed) = self.identity.update_contact_info(update);
+        // A failed setter leaves the record untouched, so there is nothing to
+        // publish and the change token is dropped deliberately.
+        result?;
+        self.publish_contact_info(changed);
         Ok(())
     }
 
@@ -638,7 +641,7 @@ impl ClusterInfo {
         self.identity.shred_version()
     }
 
-    fn publish_contact_info(&self) {
+    fn publish_contact_info(&self, _changed: ContactInfoChanged) {
         self.submit_and_wait(GossipCommand::RefreshContact);
     }
 
