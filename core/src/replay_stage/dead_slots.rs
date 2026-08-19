@@ -12,6 +12,7 @@ use {
             },
         },
     },
+    agave_geyser_notifier_interface::slot_status_notifier::SlotStatusNotifier,
     agave_votor_messages::migration::MigrationStatus,
     solana_clock::Slot,
     solana_ledger::{
@@ -19,7 +20,7 @@ use {
         blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::BlockstoreProcessorError,
     },
-    solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
+    solana_rpc::rpc_subscriptions::RpcSubscriptions,
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
         bank::Bank,

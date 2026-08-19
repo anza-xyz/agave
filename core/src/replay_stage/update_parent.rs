@@ -220,7 +220,9 @@ pub(super) fn process_soft_dead_slots(
     blockstore: &Arc<Blockstore>,
     bank_forks: &RwLock<BankForks>,
     rpc_subscriptions: &Option<Arc<solana_rpc::rpc_subscriptions::RpcSubscriptions>>,
-    slot_status_notifier: &Option<solana_rpc::slot_status_notifier::SlotStatusNotifier>,
+    slot_status_notifier: &Option<
+        agave_geyser_notifier_interface::slot_status_notifier::SlotStatusNotifier,
+    >,
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     replay_vote_sender: &ReplayVoteSender,

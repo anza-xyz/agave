@@ -13,9 +13,9 @@
 //! the consumer side (see `agave-geyser-plugin-manager`). Gossip's only
 //! responsibility is to emit a snapshot per accepted CRDS insert.
 
-use crate::contact_info::{ContactInfo, Protocol};
-pub use agave_geyser_notifier_interface::contact_info_notifier::{
-    ContactInfoEvent, ContactInfoReceiver, ContactInfoSender, ContactInfoSnapshot,
+use {
+    crate::contact_info::{ContactInfo, Protocol},
+    agave_geyser_notifier_interface::contact_info_notifier::ContactInfoSnapshot,
 };
 
 impl From<&ContactInfo> for ContactInfoSnapshot {

@@ -51,7 +51,6 @@ use {
             in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
-        accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         append_vec::{self, AppendVec},
@@ -64,6 +63,9 @@ use {
         utils::{self, create_account_shared_data},
     },
     agave_fs::buffered_reader::RequiredLenBufFileRead,
+    agave_geyser_notifier_interface::accounts_update_notifier_interface::{
+        AccountForGeyser, AccountsUpdateNotifier,
+    },
     ahash::{HashMapExt as _, HashSetExt as _},
     bv::BitVec,
     dashmap::DashMap,

@@ -2,7 +2,6 @@ use {
     crate::{
         accounts_update_notifier::AccountsUpdateNotifierImpl,
         block_metadata_notifier::BlockMetadataNotifierImpl,
-        block_metadata_notifier_interface::BlockMetadataNotifierArc,
         deshred_transaction_notifier::DeshredTransactionNotifierImpl,
         entry_notifier::EntryNotifierImpl,
         geyser_plugin_manager::{GeyserPluginManager, GeyserPluginManagerRequest},
@@ -12,6 +11,7 @@ use {
     },
     agave_geyser_notifier_interface::{
         accounts_update_notifier_interface::AccountsUpdateNotifier,
+        block_metadata_notifier_interface::BlockMetadataNotifierArc,
         deshred_transaction_notifier_interface::DeshredTransactionNotifierArc,
         slot_notification::SlotNotification, slot_status_notifier::SlotStatusNotifier,
     },

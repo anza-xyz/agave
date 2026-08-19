@@ -8,14 +8,14 @@
 //! provided to the [`CompletedDataSetsService`].
 
 use {
+    agave_geyser_notifier_interface::deshred_transaction_notifier_interface::{
+        DeshredTransactionNotifier, DeshredTransactionNotifierArc,
+    },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore::{Blockstore, CompletedDataSetInfo},
         blockstore_meta::update_parent_info_from_slot_meta,
-        deshred_transaction_notifier_interface::{
-            DeshredTransactionNotifier, DeshredTransactionNotifierArc,
-        },
     },
     solana_measure::measure::Measure,
     solana_message::{VersionedMessage, v0::LoadedAddresses},
@@ -314,6 +314,7 @@ impl CompletedDataSetsService {
 pub mod test {
     use {
         super::*,
+        agave_geyser_notifier_interface::deshred_transaction_notifier_interface::UpdateParentInfo,
         crossbeam_channel::bounded,
         solana_entry::{
             block_component::{
@@ -328,7 +329,6 @@ pub mod test {
         solana_ledger::{
             blockstore,
             blockstore::Blockstore,
-            blockstore_meta::UpdateParentInfo,
             get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
         },

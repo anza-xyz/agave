@@ -32,6 +32,10 @@ use {
         voting_service::VoteOp,
         window_service::DuplicateSlotReceiver,
     },
+    agave_geyser_notifier_interface::{
+        block_metadata_notifier_interface::{BlockMetadataNotifierArc, BlockRewardInfo},
+        slot_status_notifier::SlotStatusNotifier,
+    },
     agave_votor::{
         event::{
             CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, SwitchBankEvent, VotorEvent,
@@ -53,9 +57,6 @@ use {
     smallvec::SmallVec,
     solana_accounts_db::contains::Contains,
     solana_clock::{BankId, Slot},
-    solana_geyser_plugin_manager::block_metadata_notifier_interface::{
-        BlockMetadataNotifierArc, BlockRewardInfo,
-    },
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -82,7 +83,6 @@ use {
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
         rpc_subscriptions::RpcSubscriptions,
-        slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
         bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions, bank_hash_details},

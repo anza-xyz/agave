@@ -1,7 +1,7 @@
 use {
-    crate::{
-        block_metadata_notifier_interface::{BlockMetadataNotifier, BlockRewardInfo},
-        geyser_plugin_manager::GeyserPluginManager,
+    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_notifier_interface::block_metadata_notifier_interface::{
+        BlockMetadataNotifier, BlockRewardInfo,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
@@ -197,8 +197,8 @@ mod tests {
     #[test]
     fn test_build_rewards_commission_representation() {
         use {
-            crate::block_metadata_notifier_interface::BlockRewardInfo, solana_pubkey::Pubkey,
-            solana_reward_info::RewardType,
+            agave_geyser_notifier_interface::block_metadata_notifier_interface::BlockRewardInfo,
+            solana_pubkey::Pubkey, solana_reward_info::RewardType,
         };
         let pubkey = Pubkey::from([9u8; 32]);
         let keyed_rewards = [(

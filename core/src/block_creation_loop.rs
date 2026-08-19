@@ -14,6 +14,7 @@ use {
         replay_stage::{Finalizer, ReplayStage},
     },
     agave_bls_sigverify::rewards::RewardInput,
+    agave_geyser_notifier_interface::slot_status_notifier::SlotStatusNotifier,
     agave_votor::{event::LeaderWindowInfo, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::{
         consensus_message::Block,
@@ -39,7 +40,7 @@ use {
         record_channels::RecordReceiver,
     },
     solana_pubkey::Pubkey,
-    solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
+    solana_rpc::rpc_subscriptions::RpcSubscriptions,
     solana_runtime::{
         bank::{Bank, NewBankOptions},
         bank_forks::{BankForks, SharableBanks},

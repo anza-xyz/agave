@@ -328,7 +328,10 @@ impl ClusterInfo {
     /// channel construction. Intended to be called once at startup when
     /// at least one Geyser plugin has opted into contact info
     /// notifications; leaving it unset is the zero-cost default.
-    pub fn set_contact_info_sender(&self, sender: crate::contact_info_notifier::ContactInfoSender) {
+    pub fn set_contact_info_sender(
+        &self,
+        sender: agave_geyser_notifier_interface::contact_info_notifier::ContactInfoSender,
+    ) {
         self.gossip
             .crds
             .write()

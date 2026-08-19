@@ -51,7 +51,7 @@ pub enum BankNotification {
     NewRootedChain(Vec<(Slot, BankId)>, Slot),
 }
 
-pub use agave_geyser_notifier_interface::slot_notification::SlotNotification;
+use agave_geyser_notifier_interface::slot_notification::SlotNotification;
 
 impl std::fmt::Debug for BankNotification {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

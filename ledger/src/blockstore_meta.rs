@@ -211,7 +211,7 @@ pub struct SlotMetaV3 {
 
 pub type SlotMeta = SlotMetaV3;
 
-pub use agave_geyser_notifier_interface::deshred_transaction_notifier_interface::UpdateParentInfo;
+use agave_geyser_notifier_interface::deshred_transaction_notifier_interface::UpdateParentInfo;
 
 /// Builds the [`UpdateParentInfo`] for a slot from its [`SlotMeta`], or `None`
 /// if the slot has no UpdateParent marker or no known parent.

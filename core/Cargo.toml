@@ -53,6 +53,7 @@ agave-bls-cert-verify = { workspace = true }
 agave-bls-sigverify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
+agave-geyser-notifier-interface = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-scheduler-bindings = { workspace = true }

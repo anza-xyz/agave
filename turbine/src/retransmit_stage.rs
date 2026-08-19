@@ -8,6 +8,7 @@ use {
             ClusterNodes, ClusterNodesCache, DATA_PLANE_FANOUT, Error, MAX_NUM_TURBINE_HOPS,
         },
     },
+    agave_geyser_notifier_interface::slot_status_notifier::SlotStatusNotifier,
     agave_votor::event::VotorEvent,
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError},
@@ -24,10 +25,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_perf::deduper::Deduper,
     solana_pubkey::Pubkey,
-    solana_rpc::{
-        max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions,
-        slot_status_notifier::SlotStatusNotifier,
-    },
+    solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions},
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},

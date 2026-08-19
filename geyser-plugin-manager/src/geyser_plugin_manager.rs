@@ -518,6 +518,9 @@ mod tests {
             },
             geyser_plugin_service::ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION,
         },
+        agave_geyser_notifier_interface::deshred_transaction_notifier_interface::{
+            DeshredTransactionNotifier, UpdateParentInfo,
+        },
         agave_geyser_plugin_interface::geyser_plugin_interface::{
             GeyserPlugin, ReplicaDeshredTransactionInfo, ReplicaDeshredTransactionInfoVersions,
             ReplicaDeshredUpdateParentInfoVersions, Result as PluginResult,
@@ -526,10 +529,6 @@ mod tests {
         libloading::Library,
         solana_clock::Slot,
         solana_hash::Hash,
-        solana_ledger::{
-            blockstore_meta::UpdateParentInfo,
-            deshred_transaction_notifier_interface::DeshredTransactionNotifier,
-        },
         solana_message::{Instruction, Message, VersionedMessage, v0::LoadedAddresses},
         solana_pubkey::Pubkey,
         solana_signature::Signature,

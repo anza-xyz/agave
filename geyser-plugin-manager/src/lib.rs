@@ -1,7 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 pub mod accounts_update_notifier;
 pub mod block_metadata_notifier;
-pub mod block_metadata_notifier_interface;
 pub mod contact_info_notifier;
 pub mod deshred_transaction_notifier;
 pub mod entry_notifier;
