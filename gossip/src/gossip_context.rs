@@ -31,9 +31,29 @@ impl GossipContext {
     }
 
     pub(crate) fn update(&self, stakes: Arc<HashMap<Pubkey, u64>>, is_full_alpenglow_epoch: bool) {
+        let current = self.snapshot.load();
+        if Arc::ptr_eq(&current.stakes, &stakes)
+            && current.is_full_alpenglow_epoch == is_full_alpenglow_epoch
+        {
+            return;
+        }
         self.snapshot.store(Arc::new(GossipContextSnapshot {
             stakes,
             is_full_alpenglow_epoch,
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_reuses_unchanged_snapshot() {
+        let stakes = Arc::new(HashMap::new());
+        let context = GossipContext::new(Arc::clone(&stakes), false);
+        let before = context.load();
+        context.update(stakes, false);
+        assert!(Arc::ptr_eq(&before, &context.load()));
     }
 }
