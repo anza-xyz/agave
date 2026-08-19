@@ -9,7 +9,7 @@ use {
         gossip_error::GossipError,
         gossip_ingress::ValidatedGossipMessage,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError},
+    crossbeam_channel::Receiver,
     rayon::ThreadPoolBuilder,
     solana_perf::packet::{PacketBatch, PacketBatchRecycler},
     solana_pubkey::Pubkey,
@@ -70,6 +70,13 @@ impl Deadlines {
 
 pub(crate) struct GossipEngine;
 
+enum EngineEvent {
+    Command(GossipCommand),
+    Packets(Vec<ValidatedGossipMessage>),
+    Tick,
+    Disconnected,
+}
+
 impl GossipEngine {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn spawn(
@@ -96,12 +103,24 @@ impl GossipEngine {
                 let mut packet_buf = Vec::with_capacity(1024);
 
                 while !exit.load(Ordering::Relaxed) {
-                    for command in command_receiver.try_iter().take(1024) {
-                        cluster_info.process_command(command);
-                    }
                     let timeout = deadlines.tick.saturating_duration_since(Instant::now());
-                    match receiver.recv_timeout(timeout) {
-                        Ok(packets) => {
+                    let event = crossbeam_channel::select_biased! {
+                        recv(command_receiver) -> command => {
+                            command.map_or(EngineEvent::Disconnected, EngineEvent::Command)
+                        },
+                        recv(receiver) -> packets => {
+                            packets.map_or(EngineEvent::Disconnected, EngineEvent::Packets)
+                        },
+                        default(timeout) => EngineEvent::Tick,
+                    };
+                    match event {
+                        EngineEvent::Command(command) => {
+                            cluster_info.process_command(command);
+                            for command in command_receiver.try_iter().take(1024 - 1) {
+                                cluster_info.process_command(command);
+                            }
+                        }
+                        EngineEvent::Packets(packets) => {
                             packet_buf.push(packets);
                             packet_buf.extend(receiver.try_iter().take(1024 - 1));
                             let context_snapshot = context.load();
@@ -135,8 +154,8 @@ impl GossipEngine {
                                 }
                             }
                         }
-                        Err(RecvTimeoutError::Timeout) => {}
-                        Err(RecvTimeoutError::Disconnected) => break,
+                        EngineEvent::Tick => {}
+                        EngineEvent::Disconnected => break,
                     }
 
                     let now = Instant::now();

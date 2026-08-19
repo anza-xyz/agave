@@ -212,6 +212,26 @@ impl ClusterInfo {
                 self.push_epoch_slots_direct(&slots);
                 let _ = completed.send(());
             }
+            GossipCommand::RefreshContact(completed) => {
+                self.refresh_my_gossip_contact_info();
+                let _ = completed.send(());
+            }
+            GossipCommand::Vote {
+                slot,
+                transaction,
+                completed,
+            } => {
+                let result = self.push_vote_direct(slot, transaction);
+                let _ = completed.send(result);
+            }
+            GossipCommand::RefreshVote {
+                transaction,
+                slot,
+                completed,
+            } => {
+                self.refresh_vote_direct(transaction, slot);
+                let _ = completed.send(());
+            }
             GossipCommand::Flush(completed) => {
                 self.flush_push_queue_direct();
                 let _ = completed.send(());
@@ -545,13 +565,13 @@ impl ClusterInfo {
 
     pub fn set_keypair(&self, new_keypair: Arc<Keypair>) {
         self.identity.set_keypair(new_keypair);
-        self.refresh_my_gossip_contact_info();
+        self.publish_contact_info();
     }
 
     pub fn set_gossip_socket(&self, gossip_addr: SocketAddr) -> Result<(), ContactInfoError> {
         self.identity
             .update_contact_info(|contact_info| contact_info.set_gossip(gossip_addr))?;
-        self.refresh_my_gossip_contact_info();
+        self.publish_contact_info();
         Ok(())
     }
 
@@ -559,7 +579,7 @@ impl ClusterInfo {
         self.identity.update_contact_info(|contact_info| {
             contact_info.set_tvu(contact_info::Protocol::UDP, tvu_addr)
         })?;
-        self.refresh_my_gossip_contact_info();
+        self.publish_contact_info();
         Ok(())
     }
 
@@ -567,7 +587,7 @@ impl ClusterInfo {
         self.identity.update_contact_info(|contact_info| {
             contact_info.set_tpu(contact_info::Protocol::QUIC, tpu_addr)
         })?;
-        self.refresh_my_gossip_contact_info();
+        self.publish_contact_info();
         Ok(())
     }
 
@@ -578,7 +598,7 @@ impl ClusterInfo {
         self.identity.update_contact_info(|contact_info| {
             contact_info.set_tpu_forwards(contact_info::Protocol::QUIC, tpu_forwards_addr)
         })?;
-        self.refresh_my_gossip_contact_info();
+        self.publish_contact_info();
         Ok(())
     }
 
@@ -590,7 +610,7 @@ impl ClusterInfo {
         self.identity.update_contact_info(|contact_info| {
             contact_info.set_tpu_vote(protocol, tpu_vote_addr)
         })?;
-        self.refresh_my_gossip_contact_info();
+        self.publish_contact_info();
         Ok(())
     }
 
@@ -634,6 +654,20 @@ impl ClusterInfo {
 
     pub fn my_shred_version(&self) -> u16 {
         self.identity.shred_version()
+    }
+
+    fn publish_contact_info(&self) {
+        if let Some(sender) = self.command_sender.get() {
+            let (completed, receiver) = bounded(0);
+            if sender
+                .send(GossipCommand::RefreshContact(completed))
+                .is_ok()
+                && receiver.recv().is_ok()
+            {
+                return;
+            }
+        }
+        self.refresh_my_gossip_contact_info();
     }
 
     fn lookup_epoch_slots(&self, ix: EpochSlotsIndex) -> EpochSlots {
@@ -1059,34 +1093,88 @@ impl ClusterInfo {
     }
 
     pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
-        let self_keypair = self.keypair();
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
-        // Find the oldest crds vote by wallclock that has a lower slot than `tower`
+        let slot = tower.last().copied().expect("Cannot push empty vote");
+        let result = if let Some(sender) = self.command_sender.get() {
+            let (completed, receiver) = bounded(0);
+            let command = GossipCommand::Vote {
+                slot,
+                transaction: vote,
+                completed,
+            };
+            match sender.send(command) {
+                Ok(()) => receiver
+                    .recv()
+                    .expect("gossip engine stopped while publishing vote"),
+                Err(err) => {
+                    let GossipCommand::Vote { transaction, .. } = err.0 else {
+                        unreachable!()
+                    };
+                    self.push_vote_direct(slot, transaction)
+                }
+            }
+        } else {
+            self.push_vote_direct(slot, vote)
+        };
+        let Err(vote) = result else {
+            return;
+        };
+        // In this case we have restarted with a mangled/missing tower and are attempting
+        // to push an old vote. This could be a slashable offense so better to panic here.
+        let (_, vote, hash, _) = vote_parser::parse_vote_transaction(&vote).unwrap();
+        panic!(
+            "Submitting old vote, switch: {}, vote slots: {:?}, tower: {:?}. The local tower.bin \
+             was out of date or missing, and we are attempting to submit slashable votes. Another \
+             possibility is that the node was not correctly started with wait for supermajority \
+             during a cluster restart, and then later started with wait for supermajority, \
+             causing the tower.bin to be pruned. To progress, either download a newer snapshot or \
+             set --wait-to-vote-slot higher than the last vote present in gossip",
+            hash.is_some(),
+            vote.slots(),
+            tower
+        );
+    }
+
+    fn push_vote_direct(&self, new_vote_slot: Slot, vote: Transaction) -> Result<(), Transaction> {
+        let self_keypair = self.keypair();
+        // Find the oldest crds vote by wallclock that has a lower slot than the new vote
         // and recycle its vote-index. If the crds buffer is not full we instead add a new vote-index.
-        let Some(vote_index) =
-            self.find_vote_index_to_evict(tower.last().copied().expect("Cannot push empty vote"))
-        else {
-            // In this case we have restarted with a mangled/missing tower and are attempting
-            // to push an old vote. This could be a slashable offense so better to panic here.
-            let (_, vote, hash, _) = vote_parser::parse_vote_transaction(&vote).unwrap();
-            panic!(
-                "Submitting old vote, switch: {}, vote slots: {:?}, tower: {:?}. The local \
-                 tower.bin was out of date or missing, and we are attempting to submit slashable \
-                 votes. Another possibility is that the node was not correctly started with wait \
-                 for supermajority during a cluster restart, and then later started with wait for \
-                 supermajority, causing the tower.bin to be pruned. To progress, either download \
-                 a newer snapshot or set --wait-to-vote-slot higher than the last vote present in \
-                 gossip",
-                hash.is_some(),
-                vote.slots(),
-                tower
-            );
+        let Some(vote_index) = self.find_vote_index_to_evict(new_vote_slot) else {
+            return Err(vote);
         };
         debug_assert!(vote_index < MAX_VOTES);
         self.push_vote_at_index(vote, vote_index, &self_keypair);
+        Ok(())
     }
 
     pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
+        if let Some(sender) = self.command_sender.get() {
+            let (completed, receiver) = bounded(0);
+            let command = GossipCommand::RefreshVote {
+                transaction: refresh_vote,
+                slot: refresh_vote_slot,
+                completed,
+            };
+            match sender.send(command) {
+                Ok(()) => {
+                    receiver
+                        .recv()
+                        .expect("gossip engine stopped while refreshing vote");
+                    return;
+                }
+                Err(err) => {
+                    let GossipCommand::RefreshVote { transaction, .. } = err.0 else {
+                        unreachable!()
+                    };
+                    self.refresh_vote_direct(transaction, refresh_vote_slot);
+                    return;
+                }
+            }
+        }
+        self.refresh_vote_direct(refresh_vote, refresh_vote_slot);
+    }
+
+    fn refresh_vote_direct(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
         let self_keypair = self.keypair();
         let vote_index = {
             let gossip_crds =
