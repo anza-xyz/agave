@@ -8,6 +8,7 @@ pub mod quic;
 pub mod quic_socket;
 pub mod recvmmsg;
 pub mod sendmmsg;
+mod sharded_session_data_storage;
 pub mod streamer;
 
 #[macro_use]
