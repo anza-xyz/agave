@@ -1124,7 +1124,7 @@ mod tests {
         crate::{
             account_info::{AccountInfo, StorageLocation},
             accounts_db::{
-                AccountsDbConfig, ShrinkCollectRefs,
+                AccountsDbConfig, ShrinkCollector,
                 tests::{ACCOUNTS_DB_CONFIG_APPEND_VEC, append_single_account_with_default_hash},
             },
             accounts_index::{ReclaimsSlotList, UpsertReclaim},
