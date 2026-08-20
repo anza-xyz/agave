@@ -986,20 +986,6 @@ pub fn default_num_foreground_threads() -> usize {
     get_thread_count()
 }
 
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
-    fn example() -> Self {
-        let accounts_db = AccountsDb::default_for_tests();
-        let key = Pubkey::default();
-        let some_data_len = 5;
-        let some_slot: Slot = 0;
-        let account = AccountSharedData::new(1, some_data_len, &key);
-        accounts_db.store_for_tests((some_slot, [(&key, &account)].as_slice()));
-        accounts_db.add_root_and_flush_write_cache(0);
-        accounts_db
-    }
-}
-
 impl AccountsDb {
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.

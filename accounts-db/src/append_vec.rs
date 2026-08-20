@@ -142,7 +142,6 @@ impl ReadWriteState {
 /// are serialized using `read_write_state`'s internal lock such that only one thread updates the
 /// file at a time. No restrictions are placed on reading. That is, one may read items from one
 /// thread while another is appending new items.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
 pub struct AppendVec {
     /// The file path where the data is stored.
