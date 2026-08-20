@@ -4754,11 +4754,10 @@ fn test_data_shred_recovery_after_absent_erasure_meta() {
         .unwrap();
     let num_data = data_shreds.len();
 
-    // One batch, ordered, all data shreds of the set but the last two (each
-    // probes the database and misses, marking the set absent), then the
-    // coding shred (creates the erasure meta in the tracker), then one more
-    // data shred. Recovery of the final missing data shred runs at the end
-    // of the batch and requires the erasure meta.
+    // One batch, ordered: all data shreds of the set but the last two.
+    // The first probes the database and records the absent erasure meta.
+    // subsequent data shreds hit the negative cache. The coding shred then
+    // creates the erasure meta in the tracker, followed by one more data shred.
     let shreds: Vec<_> = data_shreds[..num_data - 2]
         .iter()
         .chain(std::iter::once(&coding_shred))
