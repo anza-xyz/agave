@@ -10351,12 +10351,17 @@ name = "solana-shred"
 version = "4.4.0-alpha.0"
 dependencies = [
  "assert_matches",
- "bs58",
  "bytes",
+ "criterion",
+ "rand 0.9.4",
+ "reed-solomon-erasure",
  "solana-clock",
  "solana-hash 4.6.0",
  "solana-keypair",
+ "solana-ledger",
+ "solana-packet 4.3.0",
  "solana-pubkey 4.3.0",
+ "solana-sha256-hasher",
  "solana-shred",
  "solana-signature",
  "solana-signer",

@@ -2,12 +2,7 @@
 
 use {
     crate::error::ParseError,
-    std::mem::MaybeUninit,
-    wincode::{
-        SchemaRead, SchemaWrite, TypeMeta,
-        config::ConfigCore,
-        io::{Reader, Writer},
-    },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// Which of the two kinds of shred this is.
@@ -28,95 +23,57 @@ pub enum ShredType {
     Code = 0b0101_1010,
 }
 
-/// Mask of the low nibble of the variant byte, which carries `proof_size`.
-const PROOF_SIZE_MASK: u8 = 0x0f;
-
-/// The high nibble of the variant byte: the kind, and whether a retransmitter signature follows.
+/// The kind of a shred plus the one layout bit that accompanies it.
 ///
-/// A wincode tag covers a whole byte, so this cannot be read straight off the wire — the low nibble
-/// is `proof_size`, not part of the tag. Masking the nibble off first and handing wincode the
-/// remaining byte keeps the four encodings declared in one table that both directions use, instead
-/// of a match arm per encoding per direction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
-#[wincode(tag_encoding = "u8")]
-enum VariantClass {
-    #[wincode(tag = 0x60)]
-    Code,
-    #[wincode(tag = 0x70)]
-    CodeResigned,
-    #[wincode(tag = 0x90)]
-    Data,
-    #[wincode(tag = 0xb0)]
-    DataResigned,
-}
-
-impl VariantClass {
-    /// Reads the class out of a variant byte, discarding its `proof_size` nibble.
-    fn from_variant_byte(byte: u8) -> Result<Self, ParseError> {
-        wincode::deserialize(&[byte & !PROOF_SIZE_MASK])
-            .map_err(|_| ParseError::InvalidVariant(byte))
-    }
-
-    /// The byte this class occupies with a `proof_size` of zero.
-    fn to_variant_byte(self) -> u8 {
-        let mut byte = [0u8];
-        wincode::serialize_into(&mut byte[..], &self)
-            .expect("a tag encoded as one byte fits in one byte");
-        byte[0]
-    }
-}
-
-/// The kind of a shred plus the two layout bits that accompany it.
-///
-/// The high nibble identifies the variant, the low nibble carries `proof_size`:
+/// The high nibble identifies the kind and whether a retransmitter signature trails the proof; the
+/// low nibble is the number of Merkle proof entries, which is
+/// [`MERKLE_PROOF_ENTRIES`](crate::wire_format::MERKLE_PROOF_ENTRIES) in every shred a leader is allowed
+/// to produce:
 ///
 /// ```text
-/// 0b0110_pppp  Code
-/// 0b0111_pppp  Code, resigned
-/// 0b1001_pppp  Data
-/// 0b1011_pppp  Data, resigned
+/// 0b0110_0110  0x66  Code
+/// 0b0111_0110  0x76  Code, resigned
+/// 0b1001_0110  0x96  Data
+/// 0b1011_0110  0xb6  Data, resigned
 /// ```
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+///
+/// Every other byte is invalid, the near misses included: a different proof length describes a
+/// Merkle tree of a size no erasure batch may have, so it is rejected here rather than admitted and
+/// carried through the rest of the parser as a variable offset.
+///
+/// The discriminants are the wincode tags, which is what makes a byte off the wire and a Rust
+/// variant the same thing.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SchemaRead, SchemaWrite)]
+#[wincode(tag_encoding = "u8")]
+#[repr(u8)]
 pub enum ShredVariant {
-    /// A code shred with `proof_size` Merkle proof entries.
-    MerkleCode {
-        /// Number of 20-byte Merkle proof entries in the trailer.
-        proof_size: u8,
-        /// Whether a retransmitter signature trails the proof.
-        resigned: bool,
-    },
-    /// A data shred with `proof_size` Merkle proof entries.
-    MerkleData {
-        /// Number of 20-byte Merkle proof entries in the trailer.
-        proof_size: u8,
-        /// Whether a retransmitter signature trails the proof.
-        resigned: bool,
-    },
+    /// A code shred.
+    #[wincode(tag = 0x66)]
+    MerkleCode = 0x66,
+    /// A code shred whose Merkle proof is followed by a retransmitter signature.
+    #[wincode(tag = 0x76)]
+    MerkleCodeResigned = 0x76,
+    /// A data shred.
+    #[wincode(tag = 0x96)]
+    MerkleData = 0x96,
+    /// A data shred whose Merkle proof is followed by a retransmitter signature.
+    #[wincode(tag = 0xb6)]
+    MerkleDataResigned = 0xb6,
 }
 
 impl ShredVariant {
-    /// Number of Merkle proof entries in the trailer.
-    #[inline]
-    pub const fn proof_size(self) -> u8 {
-        match self {
-            Self::MerkleCode { proof_size, .. } | Self::MerkleData { proof_size, .. } => proof_size,
-        }
-    }
-
     /// Whether a retransmitter signature trails the Merkle proof.
     #[inline]
     pub const fn resigned(self) -> bool {
-        match self {
-            Self::MerkleCode { resigned, .. } | Self::MerkleData { resigned, .. } => resigned,
-        }
+        matches!(self, Self::MerkleCodeResigned | Self::MerkleDataResigned)
     }
 
     /// Whether this variant carries ledger data or erasure codes.
     #[inline]
     pub const fn shred_type(self) -> ShredType {
         match self {
-            Self::MerkleCode { .. } => ShredType::Code,
-            Self::MerkleData { .. } => ShredType::Data,
+            Self::MerkleCode | Self::MerkleCodeResigned => ShredType::Code,
+            Self::MerkleData | Self::MerkleDataResigned => ShredType::Data,
         }
     }
 }
@@ -124,17 +81,7 @@ impl ShredVariant {
 impl From<ShredVariant> for u8 {
     #[inline]
     fn from(variant: ShredVariant) -> u8 {
-        let class = match variant {
-            ShredVariant::MerkleCode {
-                resigned: false, ..
-            } => VariantClass::Code,
-            ShredVariant::MerkleCode { resigned: true, .. } => VariantClass::CodeResigned,
-            ShredVariant::MerkleData {
-                resigned: false, ..
-            } => VariantClass::Data,
-            ShredVariant::MerkleData { resigned: true, .. } => VariantClass::DataResigned,
-        };
-        class.to_variant_byte() | (variant.proof_size() & PROOF_SIZE_MASK)
+        variant as u8
     }
 }
 
@@ -143,62 +90,6 @@ impl TryFrom<u8> for ShredVariant {
 
     #[inline]
     fn try_from(byte: u8) -> Result<Self, Self::Error> {
-        // The legacy ShredType encodings need no special case: their nibbles, 0xa0 and 0x50, are
-        // not among the tags below.
-        let proof_size = byte & PROOF_SIZE_MASK;
-        Ok(match VariantClass::from_variant_byte(byte)? {
-            VariantClass::Code => Self::MerkleCode {
-                proof_size,
-                resigned: false,
-            },
-            VariantClass::CodeResigned => Self::MerkleCode {
-                proof_size,
-                resigned: true,
-            },
-            VariantClass::Data => Self::MerkleData {
-                proof_size,
-                resigned: false,
-            },
-            VariantClass::DataResigned => Self::MerkleData {
-                proof_size,
-                resigned: true,
-            },
-        })
-    }
-}
-
-// SAFETY: `TYPE_META` declares the single byte that `write` writes and `read` reads, and
-// `zero_copy` is false because the nibble encoding has invalid bit patterns. `read` writes `dst`
-// only on success.
-unsafe impl<C: ConfigCore> SchemaWrite<C> for ShredVariant {
-    type Src = Self;
-    const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: 1,
-        zero_copy: false,
-    };
-
-    fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
-        Ok(1)
-    }
-
-    fn write(writer: impl Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        <u8 as SchemaWrite<C>>::write(writer, &u8::from(*src))
-    }
-}
-
-// SAFETY: see the `SchemaWrite` impl above.
-unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for ShredVariant {
-    type Dst = Self;
-    const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: 1,
-        zero_copy: false,
-    };
-
-    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> wincode::ReadResult<()> {
-        let byte = <u8 as SchemaRead<C>>::get(reader)?;
-        let variant = Self::try_from(byte)
-            .map_err(|_| wincode::ReadError::InvalidTagEncoding(usize::from(byte)))?;
-        dst.write(variant);
-        Ok(())
+        wincode::deserialize(&[byte]).map_err(|_| ParseError::InvalidVariant(byte))
     }
 }

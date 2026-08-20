@@ -1,20 +1,20 @@
-//! Shape checks on a shred's Merkle proof.
+//! The leaf a shred hashes to.
 //!
-//! Tree construction, proof generation and root recomputation are out of scope for this draft and
-//! still live in `solana-ledger`. This module only checks that the proof region has a shape a
-//! verifier could work with: a whole number of proof entries, deep enough to cover the leaf's index.
+//! The tree itself is [`merkle_tree`](crate::shred::merkle_tree), which is the same file
+//! `solana-ledger` builds its trees from rather than a second implementation of it. What is left for
+//! this module is the part that is about shreds instead of trees: which bytes of a shred are hashed
+//! into its leaf, and under which prefix.
 
-use crate::{error::Reject, layout::ProofEntry};
+use {
+    crate::shred::merkle_tree::MERKLE_HASH_PREFIX_LEAF, solana_hash::Hash,
+    solana_sha256_hasher::hashv,
+};
 
-/// Checks that `proof` could be a Merkle proof for a leaf at `index`.
-pub fn check_proof_shape(index: usize, proof: &[ProofEntry]) -> Result<(), Reject> {
-    // `proof.len()` proof entries can only witness a leaf in a tree of `2^proof.len()` leaves.
-    let depth = u32::try_from(proof.len()).map_err(|_| Reject::InvalidMerkleProof)?;
-    if 1usize
-        .checked_shl(depth)
-        .is_none_or(|leaves| index >= leaves)
-    {
-        return Err(Reject::InvalidMerkleProof);
-    }
-    Ok(())
+/// The leaf hash of a shred, over its [`merkle_leaf`](crate::ShredView::merkle_leaf) region.
+///
+/// The leaf's index in the tree is the shred's
+/// [`erasure_shard_index`](crate::Shred::erasure_shard_index): data shards first, then code shards.
+#[inline]
+pub fn leaf(merkle_leaf: &[u8]) -> Hash {
+    hashv(&[MERKLE_HASH_PREFIX_LEAF, merkle_leaf])
 }

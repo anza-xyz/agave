@@ -1,11 +1,9 @@
-//! Errors of the validation cascade, one type per transition.
-
 use {crate::shred_variant::ShredType, solana_clock::Slot, thiserror::Error};
 
-/// A shred's bytes could not be read as a well-formed shred.
+/// A shred's bytes could not be interpreted as a well-formed shred.
 #[derive(Debug, Error)]
 pub enum ParseError {
-    /// Fewer bytes than the shred kind's fixed payload length.
+    /// Fewer bytes than the shred requires.
     #[error("shred is {len} bytes, expected at least {expected}")]
     TooShort {
         /// Number of bytes available.
@@ -16,9 +14,6 @@ pub enum ParseError {
     /// The byte at offset 64 is not a valid [`ShredVariant`](crate::ShredVariant).
     #[error("invalid shred variant: {0:#04x}")]
     InvalidVariant(u8),
-    /// The variant's `proof_size` leaves no room for the shred's body.
-    #[error("invalid proof size: {0}")]
-    InvalidProofSize(u8),
     /// The shred is followed by neither nothing nor a 4-byte repair nonce.
     #[error("{0} trailing bytes after the shred")]
     TrailingBytes(usize),
@@ -99,10 +94,67 @@ pub enum Reject {
     NotResignable,
 }
 
+/// Why a Merkle tree could not be built, or a proof could not be checked.
+///
+/// This is the error type the shared `merkle_tree` file raises, which is why its variants are named
+/// after that file's needs rather than this crate's.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum MerkleError {
+    /// A tree was asked for over no leaves at all.
+    #[error("a Merkle tree needs at least one leaf")]
+    EmptyIterator,
+    /// The proof does not have the shape a proof for this leaf must have.
+    #[error("the Merkle proof is not a proof of this leaf")]
+    InvalidMerkleProof,
+}
+
+impl From<MerkleError> for Reject {
+    fn from(_error: MerkleError) -> Self {
+        Self::InvalidMerkleProof
+    }
+}
+
 /// A data shred's `size` field does not describe a region inside the shred's body.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[error("invalid data size: {size}")]
 pub struct InvalidDataSize {
     /// The size the data header claims.
     pub size: usize,
+}
+
+/// A shred, or an erasure batch of them, could not be built as specified.
+#[derive(Debug, Error)]
+pub enum BuildError {
+    /// The data does not fit in one erasure batch, so it belongs to more than one.
+    #[error("{len} bytes of data exceed an erasure batch's capacity of {capacity}")]
+    TooMuchData {
+        /// Length of the data offered.
+        len: usize,
+        /// What one batch can carry.
+        capacity: usize,
+    },
+    /// The parent slot is not a slot this one can chain to within a `u16` offset.
+    #[error("slot {slot} cannot chain to parent slot {parent_slot}")]
+    BadParentSlot {
+        /// The slot being built.
+        slot: Slot,
+        /// The slot it was asked to chain to.
+        parent_slot: Slot,
+    },
+    /// A shred index ran past the end of its type.
+    #[error("shred index overflowed")]
+    IndexOverflow,
+    /// The erasure coder rejected the batch.
+    #[error(transparent)]
+    Erasure(#[from] reed_solomon_erasure::Error),
+    /// A header could not be serialized.
+    #[error(transparent)]
+    Write(#[from] wincode::WriteError),
+    /// The Merkle tree over the batch could not be built.
+    #[error(transparent)]
+    Merkle(#[from] MerkleError),
+    /// The bytes that were built do not read back as the shred they were meant to be, which is a
+    /// bug in this crate rather than anything the caller did.
+    #[error(transparent)]
+    Layout(#[from] ParseError),
 }

@@ -1,4 +1,5 @@
-//! Solana shred wire format: a typestate parser from raw bytes to a verified shred.
+//! Solana shred wire format: a typestate parser from raw bytes to a verified shred, and the writer
+//! that produces those bytes.
 //!
 //! The wire format itself is documented in `README.md`. This crate is about the *order* in which a
 //! shred's claims may be trusted.
@@ -35,7 +36,10 @@
 //! reference into it — the signature, the body, the chained Merkle root, the proof entries, the
 //! retransmitter signature.
 //!
-//! No byte offset is stored, and only one ([`OFFSET_OF_VARIANT`](layout::OFFSET_OF_VARIANT), needed
+//! Every rule about the bytes — the payload length, the kind the variant byte selects, the optional
+//! trailing repair nonce — is applied by [`ShredView::read_packet`], so no check is made twice.
+//!
+//! No byte offset is stored, and only one ([`OFFSET_OF_VARIANT`](wire_format::OFFSET_OF_VARIANT), needed
 //! to pick a kind before there is anything to walk) is written down. [`ShredView::read`] walks the
 //! sections in wire order with wincode, taking each from the reader as it comes, so the reader's
 //! cursor is the offset. Section *sizes* likewise come from the wincode schemas of the types that
@@ -46,7 +50,7 @@
 //! ```
 //! use solana_shred::{AdmissionPolicy, ShredParsed, fixture, parse};
 //!
-//! let (parsed, repair_nonce) = parse(fixture::data_shred())?;
+//! let (parsed, repair_nonce) = parse(fixture::DATA_SHRED)?;
 //! assert_eq!(repair_nonce, None);
 //!
 //! let ShredParsed::Data(shred) = parsed else {
@@ -68,34 +72,48 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! # Building
+//!
+//! The reverse direction is [`FecSet::build`], which is the write path's whole entry point. It takes
+//! an erasure batch rather than a shred, because a shred's Merkle proof comes from the tree over its
+//! FEC set and its signature is the leader's over that tree's root — neither exists until all 64
+//! shreds do. What comes back is 32 data and 32 code shreds in [`Verified`], since their signature
+//! was produced here, plus the root the next batch chains to.
+//!
+//! Both directions are written against the same section boundaries ([`sections`]), and every shred
+//! the writer produces is read back through [`ShredView`] before it is handed out, so the reader's
+//! rules are the writer's test.
+//!
 //! # Status
 //!
-//! A draft. It parses and validates headers, but does not construct shreds, and nothing else in the
-//! tree depends on it yet. Merkle handling is unfinished: [`merkle`] checks the proof region's
-//! *shape* and hashes nothing, so [`verify`](Shred::verify) authenticates nothing and
-//! [`resign`](Shred::resign) signs the leaf region rather than the root.
+//! A draft: nothing else in the tree depends on it yet. Its output is byte-identical to
+//! `solana-ledger`'s shredder for the batches it can build, which its tests assert directly.
+//! Splitting a slot's data across batches is not here — that is block production's business — and
+//! neither is erasure recovery of a batch that arrived incomplete.
 
+pub mod build;
 pub mod error;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod fixture;
 pub mod header;
 pub mod kind;
-pub mod layout;
 pub mod merkle;
 pub mod policy;
 pub mod shred;
 pub mod shred_variant;
 pub mod state;
 pub mod view;
+pub mod wire_format;
 
 pub use crate::{
-    error::{InvalidDataSize, ParseError, Reject},
+    build::{FecSet, FecSetSpec},
+    error::{BuildError, InvalidDataSize, ParseError, Reject},
     header::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
     kind::{Code, Data, ShredKind},
-    layout::ProofEntry,
     policy::AdmissionPolicy,
-    shred::{CodeShred, DataShred, Nonce, Shred, ShredParsed, parse},
+    shred::{CodeShred, DataShred, Shred, ShredParsed, parse},
     shred_variant::{ShredType, ShredVariant},
     state::{Admissible, Parsed, Resigned, ShredState, Verified},
-    view::ShredView,
+    view::{ShredView, ShredViewMut},
+    wire_format::{Nonce, ProofEntry, Sections, sections},
 };

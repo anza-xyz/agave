@@ -3,12 +3,12 @@ use {
         error::{InvalidDataSize, ParseError, Reject},
         header::{CommonHeader, ShredFlags},
         kind::{Code, Data, ShredKind},
-        layout::{OFFSET_OF_VARIANT, ProofEntry, SIZE_OF_NONCE, SIZE_OF_SIGNATURE},
         merkle,
         policy::{self, AdmissionPolicy},
         shred_variant::{ShredType, ShredVariant},
         state::{Admissible, Parsed, Resigned, ShredState, Verified},
-        view::ShredView,
+        view::{self, ShredView, ShredViewMut},
+        wire_format::{Nonce, ProofEntry},
     },
     bytes::{Bytes, BytesMut},
     solana_clock::Slot,
@@ -20,8 +20,19 @@ use {
     std::{fmt, marker::PhantomData},
 };
 
-/// The nonce a repair response carries after the shred, tying it to the request it answers.
-pub type Nonce = u32;
+/// The Merkle tree of an erasure batch.
+///
+/// The file is a symlink to `ledger/src/shred/merkle_tree.rs`, so this is the very tree the cluster
+/// already runs and not a reimplementation of it. It compiles unchanged in both crates because its
+/// module path is the same in both, and because of the [`Error`] alias below.
+// The shared file is written under `solana-ledger`'s lint configuration, which allows plain
+// arithmetic; this crate's denies it. Scoped to the one module rather than relaxed crate-wide.
+#[allow(clippy::arithmetic_side_effects)]
+#[path = "merkle_tree.rs"]
+pub mod merkle_tree;
+
+/// The error the shared [`merkle_tree`] file raises, under the name it knows it by.
+pub use crate::error::MerkleError as Error;
 
 /// A shred of kind `K` that has reached validation state `S`.
 ///
@@ -55,7 +66,7 @@ pub enum ShredParsed {
 /// the layout and deserializes the headers — no hashing and no signature work, so it is cheap
 /// enough to run on every packet that arrives.
 pub fn parse(bytes: Bytes) -> Result<(ShredParsed, Option<Nonce>), ParseError> {
-    match peek_variant(&bytes)?.shred_type() {
+    match view::peek_variant(&bytes)?.shred_type() {
         ShredType::Data => {
             let (shred, nonce) = Shred::<Data, Parsed>::parse(bytes)?;
             Ok((ShredParsed::Data(shred), nonce))
@@ -65,17 +76,6 @@ pub fn parse(bytes: Bytes) -> Result<(ShredParsed, Option<Nonce>), ParseError> {
             Ok((ShredParsed::Code(shred), nonce))
         }
     }
-}
-
-/// Reads the variant byte without committing to a shred kind.
-fn peek_variant(bytes: &[u8]) -> Result<ShredVariant, ParseError> {
-    let Some(&byte) = bytes.get(OFFSET_OF_VARIANT) else {
-        return Err(ParseError::TooShort {
-            len: bytes.len(),
-            expected: OFFSET_OF_VARIANT + 1,
-        });
-    };
-    ShredVariant::try_from(byte)
 }
 
 impl ShredParsed {
@@ -89,38 +89,22 @@ impl ShredParsed {
 }
 
 impl<K: ShredKind> Shred<K, Parsed> {
-    /// Reads `bytes` as a shred of this specific kind.
+    /// Reads `bytes` as a shred of this specific kind, followed by an optional repair nonce.
     ///
-    /// Fails with [`ParseError::UnexpectedKind`] if the variant byte selects the other kind.
+    /// Every check the bytes have to pass is [`ShredView::read_packet`]'s; all this adds is keeping
+    /// the header scalars and dropping the nonce from the buffer. Fails with
+    /// [`ParseError::UnexpectedKind`] if the variant byte selects the other kind, which is what a
+    /// caller that knew the kind in advance — from a kind-specific blockstore column, say — sees
+    /// when that expectation was wrong.
     pub fn parse(mut bytes: Bytes) -> Result<(Self, Option<Nonce>), ParseError> {
-        let variant = peek_variant(&bytes)?;
-        let found = variant.shred_type();
-        if found != K::SHRED_TYPE {
-            return Err(ParseError::UnexpectedKind {
-                expected: K::SHRED_TYPE,
-                found,
-            });
-        }
-        if bytes.len() < K::SIZE_OF_PAYLOAD {
-            return Err(ParseError::TooShort {
-                len: bytes.len(),
-                expected: K::SIZE_OF_PAYLOAD,
-            });
-        }
-        // Whatever follows the shred is either nothing or a repair nonce. Splitting is a refcount
-        // operation, so neither the shred nor the trailer is copied.
-        let trailer = bytes.split_off(K::SIZE_OF_PAYLOAD);
-        let nonce = match trailer.len() {
-            0 => None,
-            SIZE_OF_NONCE => {
-                let bytes = <[u8; SIZE_OF_NONCE]>::try_from(&trailer[..])
-                    .expect("trailer length was just matched against SIZE_OF_NONCE");
-                Some(Nonce::from_le_bytes(bytes))
-            }
-            len => return Err(ParseError::TrailingBytes(len)),
+        // The view borrows from `bytes`, so it has to go out of scope before the buffer is trimmed.
+        let (common, header, nonce) = {
+            let (view, nonce) = ShredView::<K>::read_packet(&bytes)?;
+            (view.common, view.header, nonce)
         };
-        let view = ShredView::<K>::read(&bytes)?;
-        let (common, header) = (view.common, view.header);
+        // Drop any repair nonce, which shortens the buffer without copying it. From here on the
+        // bytes are exactly one shred, which is what `view()` relies on.
+        bytes.truncate(K::SIZE_OF_PAYLOAD);
         let shred = Self {
             bytes,
             common,
@@ -165,14 +149,39 @@ impl<K: ShredKind> Shred<K, Parsed> {
 }
 
 impl<K: ShredKind> Shred<K, Admissible> {
-    pub fn verify(self, _leader: &Pubkey) -> Result<Shred<K, Verified>, Reject> {
-        self.check_merkle_proof_shape()?;
-        // sigverify goes here
+    /// Checks the leader's signature over the Merkle root this shred's proof reconstructs.
+    ///
+    /// This is the expensive stage: one hash of the leaf region, six to climb the proof, and one
+    /// ed25519 verification. Everything cheap enough to reject a shred on has already run.
+    pub fn verify(self, leader: &Pubkey) -> Result<Shred<K, Verified>, Reject> {
+        let root = self.merkle_root()?;
+        if !self.signature().verify(leader.as_ref(), root.as_ref()) {
+            return Err(Reject::InvalidSignature);
+        }
         Ok(self.transition())
     }
 }
 
 impl<K: ShredKind> Shred<K, Verified> {
+    /// Takes bytes this node assembled and signed itself as a verified shred.
+    ///
+    /// The leader signature is good by construction — it was produced here, over a root computed
+    /// from these bytes — so the shred starts where the read path ends up. The bytes are still put
+    /// through [`ShredView::read`], which is what makes the reader's rules the writer's test: a
+    /// misplaced section surfaces as the [`ParseError`] a receiver would have raised.
+    pub(crate) fn assume_signed(bytes: Bytes) -> Result<Self, ParseError> {
+        let (common, header) = {
+            let view = ShredView::<K>::read(&bytes)?;
+            (view.common, view.header)
+        };
+        Ok(Self {
+            bytes,
+            common,
+            header,
+            _state: PhantomData,
+        })
+    }
+
     /// Signs the Merkle root as the retransmitter in the Turbine tree, leaving the leader's
     /// signature intact.
     ///
@@ -181,25 +190,20 @@ impl<K: ShredKind> Shred<K, Verified> {
     /// variant has no room for a retransmitter signature — that depends on a wire bit, so it
     /// cannot be settled by the type system.
     ///
-    /// The signature covers the shred's Merkle leaf region, pending the root recomputation in
-    /// [`merkle`].
+    /// The retransmitter signature covers the same Merkle root the leader signed, which is what
+    /// lets a downstream node check it without knowing anything about this shred's contents.
     pub fn resign(mut self, keypair: &Keypair) -> Result<Shred<K, Resigned>, Reject> {
-        let signature = {
-            let view = self.view();
-            if view.retransmitter_signature.is_none() {
-                return Err(Reject::NotResignable);
-            }
-            keypair.sign_message(view.merkle_leaf)
-        };
-        // The retransmitter signature is the shred's last section.
-        let start = self
-            .bytes
-            .len()
-            .checked_sub(SIZE_OF_SIGNATURE)
-            .expect("a resigned shred is longer than the signature it ends with");
+        if self.view().retransmitter_signature.is_none() {
+            return Err(Reject::NotResignable);
+        }
+        let signature = keypair.sign_message(self.merkle_root()?.as_ref());
         // `Bytes` is immutable, so this copies unless we hold the only reference to the buffer.
         let mut buffer = BytesMut::from(std::mem::take(&mut self.bytes));
-        buffer[start..].copy_from_slice(signature.as_ref());
+        ShredViewMut::<K>::new(&mut buffer, self.common.variant)
+            .expect("the bytes parsed as this kind of shred already")
+            .retransmitter_signature_mut()
+            .expect("the variant was just checked to reserve a retransmitter signature")
+            .copy_from_slice(signature.as_ref());
         self.bytes = buffer.freeze();
         Ok(self.transition())
     }
@@ -220,10 +224,6 @@ impl<K: ShredKind, S: ShredState> Shred<K, S> {
     }
 
     /// The shred's sections, borrowed from its bytes.
-    ///
-    /// Walking the sections is a handful of cursor advances with no hashing and no copying, so
-    /// this is cheap enough to call per accessor; call it once and keep the view when reading
-    /// several sections.
     #[inline]
     pub fn view(&self) -> ShredView<'_, K> {
         ShredView::read(&self.bytes).expect("the bytes parsed as this kind of shred already")
@@ -296,11 +296,17 @@ impl<K: ShredKind, S: ShredState> Shred<K, S> {
         K::erasure_shard_index(&self.common, &self.header)
     }
 
-    pub fn check_merkle_proof_shape(&self) -> Result<(), Reject> {
+    /// The Merkle root this shred's proof reconstructs from its own leaf.
+    ///
+    /// This is the message both the leader's and the retransmitter's signatures are over. A shred
+    /// carries no root of its own — only the previous batch's — so it has to be recomputed.
+    pub fn merkle_root(&self) -> Result<Hash, Reject> {
         let index = self
             .erasure_shard_index()
             .ok_or(Reject::InvalidMerkleProof)?;
-        merkle::check_proof_shape(index, self.merkle_proof())
+        let view = self.view();
+        merkle_tree::get_merkle_root(index, merkle::leaf(view.merkle_leaf), view.merkle_proof)
+            .map_err(Reject::from)
     }
 
     /// The shred's bytes, without any trailing repair nonce.
@@ -429,10 +435,7 @@ pub type CodeShred<S> = Shred<Code, S>;
 mod tests {
     use {
         super::*,
-        crate::{
-            fixture,
-            layout::{SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER},
-        },
+        crate::{fixture, wire_format::OFFSET_OF_VARIANT},
         assert_matches::assert_matches,
         test_case::test_case,
     };
@@ -450,18 +453,12 @@ mod tests {
 
     #[test]
     fn parse_fixture_matches_expected_sections() {
-        let (parsed, nonce) = parse(fixture::data_shred()).unwrap();
+        let (parsed, nonce) = parse(fixture::DATA_SHRED).unwrap();
         assert_matches!(nonce, None);
         let ShredParsed::Data(shred) = parsed else {
             panic!("the fixture is a data shred, not a code shred");
         };
-        assert_eq!(
-            shred.variant(),
-            ShredVariant::MerkleData {
-                proof_size: 6,
-                resigned: false,
-            }
-        );
+        assert_eq!(shred.variant(), ShredVariant::MerkleData);
         assert_eq!(shred.slot(), fixture::FIXTURE_SLOT);
         assert_eq!(shred.index(), 64);
         assert_eq!(shred.version(), 42);
@@ -473,7 +470,7 @@ mod tests {
 
         // Section sizes, hand-computed from the README's formula: 1203 - 88 - 32 - 6 * 20 - 0.
         let view = shred.view();
-        assert_eq!(SIZE_OF_COMMON_HEADER + SIZE_OF_DATA_HEADER, 88);
+        assert_eq!(Data::SIZE_OF_HEADERS, 88);
         assert_eq!(view.body.len(), 963);
         assert_eq!(view.merkle_proof.len(), 6);
         assert_matches!(view.retransmitter_signature, None);
@@ -510,7 +507,7 @@ mod tests {
 
     #[test]
     fn cascade_reaches_verified() {
-        let (parsed, _) = parse(fixture::data_shred()).unwrap();
+        let (parsed, _) = parse(fixture::DATA_SHRED).unwrap();
         let ShredParsed::Data(shred) = parsed else {
             panic!("the fixture is a data shred, not a code shred");
         };
@@ -518,29 +515,84 @@ mod tests {
         let shred = shred.verify(&fixture::leader()).unwrap();
         assert_eq!(shred.data().unwrap().len(), 963);
 
-        // `verify` does not authenticate anything yet, so an unrelated pubkey passes just as well.
-        // Asserted so that this test fails once the signature check lands.
-        let (parsed, _) = parse(fixture::data_shred()).unwrap();
+        // The same shred against any other signer.
+        let (parsed, _) = parse(fixture::DATA_SHRED).unwrap();
         let ShredParsed::Data(shred) = parsed else {
             panic!("the fixture is a data shred, not a code shred");
         };
         let shred = shred.admit(&fixture_policy()).unwrap();
-        assert_matches!(shred.verify(&Pubkey::new_from_array([9u8; 32])), Ok(_));
+        assert_matches!(
+            shred.verify(&Pubkey::new_from_array([9u8; 32])),
+            Err(Reject::InvalidSignature)
+        );
     }
 
+    /// Each of the four valid layouts, from bytes to `Verified`, with `resign` reachable exactly
+    /// for the two that reserve room for a retransmitter signature.
     #[test]
-    fn proof_shape_rejects_shallow_proofs() {
-        // Two entries witness at most four leaves.
-        assert_matches!(merkle::check_proof_shape(3, &[[0u8; 20]; 2]), Ok(()));
-        assert_matches!(
-            merkle::check_proof_shape(4, &[[0u8; 20]; 2]),
-            Err(Reject::InvalidMerkleProof)
-        );
+    fn every_layout_reaches_verified() {
+        let policy = fixture_policy();
+        let leader = fixture::leader();
+        for (bytes, variant) in [
+            (fixture::DATA_SHRED, ShredVariant::MerkleData),
+            (
+                fixture::DATA_SHRED_RESIGNED,
+                ShredVariant::MerkleDataResigned,
+            ),
+        ] {
+            let (parsed, _) = parse(bytes).unwrap();
+            let ShredParsed::Data(shred) = parsed else {
+                panic!("{variant:?} is a data shred, not a code shred");
+            };
+            assert_eq!(shred.variant(), variant);
+            let shred = shred.admit(&policy).unwrap().verify(&leader).unwrap();
+            // The first data shred of a batch carries a full chunk, which is the body's length.
+            assert_eq!(shred.data().unwrap().len(), shred.view().body.len());
+            assert_eq!(shred.erasure_shard_index(), Some(0));
+            assert_resignable(shred, variant.resigned());
+        }
+        for (bytes, variant) in [
+            (fixture::CODE_SHRED, ShredVariant::MerkleCode),
+            (
+                fixture::CODE_SHRED_RESIGNED,
+                ShredVariant::MerkleCodeResigned,
+            ),
+        ] {
+            let (parsed, _) = parse(bytes).unwrap();
+            let ShredParsed::Code(shred) = parsed else {
+                panic!("{variant:?} is a code shred, not a data shred");
+            };
+            assert_eq!(shred.variant(), variant);
+            let shred = shred.admit(&policy).unwrap().verify(&leader).unwrap();
+            assert_eq!(shred.num_data_shreds(), 32);
+            assert_eq!(shred.num_code_shreds(), 32);
+            assert_eq!(shred.position(), 0);
+            // Code shards follow the 32 data shards in the batch's Merkle tree.
+            assert_eq!(shred.erasure_shard_index(), Some(32));
+            assert_resignable(shred, variant.resigned());
+        }
+    }
+
+    /// A verified shred may be resigned exactly when its variant reserves room for the signature.
+    fn assert_resignable<K: ShredKind>(shred: Shred<K, Verified>, resignable: bool) {
+        let resigned = shred.resign(&fixture::leader_keypair());
+        if resignable {
+            let resigned = resigned.expect("a resigned variant reserves room for the signature");
+            assert_eq!(
+                resigned.view().retransmitter_signature,
+                Some(
+                    &fixture::leader_keypair()
+                        .sign_message(resigned.merkle_root().unwrap().as_ref())
+                )
+            );
+        } else {
+            assert_matches!(resigned, Err(Reject::NotResignable));
+        }
     }
 
     #[test]
     fn truncation_never_panics() {
-        let shred = fixture::data_shred();
+        let shred = fixture::DATA_SHRED;
         for len in 0..shred.len() {
             assert_matches!(
                 parse(shred.slice(..len)),
@@ -556,7 +608,7 @@ mod tests {
     #[test_case(0b0000_0000)]
     #[test_case(0b1111_0000)]
     fn invalid_variant_byte_is_rejected(byte: u8) {
-        let mut bytes = fixture::data_shred().to_vec();
+        let mut bytes = fixture::DATA_SHRED.to_vec();
         bytes[OFFSET_OF_VARIANT] = byte;
         assert_matches!(
             parse(Bytes::from(bytes)),
@@ -566,7 +618,7 @@ mod tests {
 
     #[test]
     fn trailing_repair_nonce_is_split_off() {
-        let mut bytes = fixture::data_shred().to_vec();
+        let mut bytes = fixture::DATA_SHRED.to_vec();
         bytes.extend_from_slice(&0x0a0b_0c0du32.to_le_bytes());
         let (_, nonce) = parse(Bytes::from(bytes.clone())).unwrap();
         assert_eq!(nonce, Some(0x0a0b_0c0d));
@@ -593,7 +645,7 @@ mod tests {
         Reject::BadParentOffset { slot: fixture::FIXTURE_SLOT, parent_offset: 1 }
     )]
     fn admit_rejects_out_of_policy(policy: AdmissionPolicy, expected: Reject) {
-        let (parsed, _) = parse(fixture::data_shred()).unwrap();
+        let (parsed, _) = parse(fixture::DATA_SHRED).unwrap();
         let ShredParsed::Data(shred) = parsed else {
             panic!("the fixture is a data shred, not a code shred");
         };
@@ -604,7 +656,7 @@ mod tests {
     #[test]
     fn parsing_as_the_wrong_kind_is_rejected() {
         assert_matches!(
-            Shred::<Code, Parsed>::parse(fixture::data_shred()),
+            Shred::<Code, Parsed>::parse(fixture::DATA_SHRED),
             Err(ParseError::UnexpectedKind {
                 expected: ShredType::Code,
                 found: ShredType::Data,

@@ -8,16 +8,16 @@ use {
     crate::{
         error::Reject,
         header::{CodeHeader, CommonHeader, DataHeader},
-        layout::{
-            self, SIZE_OF_CODE_HEADER, SIZE_OF_CODE_PAYLOAD, SIZE_OF_COMMON_HEADER,
-            SIZE_OF_DATA_HEADER, SIZE_OF_DATA_PAYLOAD,
-        },
         policy::{self, AdmissionPolicy, DATA_SHREDS_PER_FEC_BLOCK},
         shred_variant::ShredType,
+        wire_format::{
+            self, SIZE_OF_CODE_HEADER, SIZE_OF_CODE_PAYLOAD, SIZE_OF_COMMON_HEADER,
+            SIZE_OF_DATA_HEADER, SIZE_OF_DATA_PAYLOAD, SIZE_OF_TRAILER, SIZE_OF_TRAILER_RESIGNED,
+        },
     },
     solana_clock::Slot,
     std::fmt::Debug,
-    wincode::{SchemaRead, config::DefaultConfig},
+    wincode::{SchemaRead, SchemaWrite, config::DefaultConfig},
 };
 
 mod sealed {
@@ -27,16 +27,24 @@ mod sealed {
 /// A kind of shred. Sealed; the kinds are exactly [`Data`] and [`Code`].
 pub trait ShredKind: sealed::Sealed + 'static {
     /// The header this kind carries after the common header.
-    type Header: Copy + Debug + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Header>;
+    type Header: Copy
+        + Debug
+        + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Header>
+        + SchemaWrite<DefaultConfig, Src = Self::Header>;
 
     /// The shred type this kind corresponds to on the wire.
     const SHRED_TYPE: ShredType;
     /// Total on-the-wire length of a shred of this kind.
     const SIZE_OF_PAYLOAD: usize;
-    /// Length of the common header plus this kind's header.
+    /// Length of everything before the body: the signature, the common header and this kind's own.
     const SIZE_OF_HEADERS: usize;
     /// Where this kind's erasure-coded region starts.
     const ERASURE_SHARD_START: usize;
+    /// Length of the body of a shred of this kind, which is what the headers and the trailer leave.
+    const SIZE_OF_BODY: usize = Self::SIZE_OF_PAYLOAD - Self::SIZE_OF_HEADERS - SIZE_OF_TRAILER;
+    /// Length of the body of a resigned shred, whose trailer is a retransmitter signature longer.
+    const SIZE_OF_BODY_RESIGNED: usize =
+        Self::SIZE_OF_PAYLOAD - Self::SIZE_OF_HEADERS - SIZE_OF_TRAILER_RESIGNED;
 
     /// Index of this shred's erasure shard within its FEC set, which is also the index of its leaf
     /// in the FEC set's Merkle tree. Data shards come first, then code shards.
@@ -66,9 +74,10 @@ impl ShredKind for Data {
 
     const SHRED_TYPE: ShredType = ShredType::Data;
     const SIZE_OF_PAYLOAD: usize = SIZE_OF_DATA_PAYLOAD;
-    const SIZE_OF_HEADERS: usize = SIZE_OF_COMMON_HEADER + SIZE_OF_DATA_HEADER;
+    const SIZE_OF_HEADERS: usize =
+        wire_format::SIZE_OF_SIGNATURE + SIZE_OF_COMMON_HEADER + SIZE_OF_DATA_HEADER;
     // A data shred's own signature is not erasure coded; everything after it is.
-    const ERASURE_SHARD_START: usize = layout::SIZE_OF_SIGNATURE;
+    const ERASURE_SHARD_START: usize = wire_format::SIZE_OF_SIGNATURE;
 
     fn erasure_shard_index(common: &CommonHeader, _header: &DataHeader) -> Option<usize> {
         usize::try_from(common.index.checked_sub(common.fec_set_index)?).ok()
@@ -117,7 +126,8 @@ impl ShredKind for Code {
 
     const SHRED_TYPE: ShredType = ShredType::Code;
     const SIZE_OF_PAYLOAD: usize = SIZE_OF_CODE_PAYLOAD;
-    const SIZE_OF_HEADERS: usize = SIZE_OF_COMMON_HEADER + SIZE_OF_CODE_HEADER;
+    const SIZE_OF_HEADERS: usize =
+        wire_format::SIZE_OF_SIGNATURE + SIZE_OF_COMMON_HEADER + SIZE_OF_CODE_HEADER;
     // Code shred headers cannot be erasure coded: the codes are generated before them.
     const ERASURE_SHARD_START: usize = Self::SIZE_OF_HEADERS;
 

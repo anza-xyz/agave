@@ -3,7 +3,7 @@
 //! The leader's signature occupies bytes `0..64` and is deliberately absent from [`CommonHeader`]:
 //! it is 64 of the 83 header bytes, only sigverify needs it, and it can be handed out as a
 //! zero-copy reference into the shred instead of being copied at parse time. Deserialization
-//! therefore starts at [`OFFSET_OF_VARIANT`](crate::layout::OFFSET_OF_VARIANT).
+//! therefore starts at [`OFFSET_OF_VARIANT`](crate::wire_format::OFFSET_OF_VARIANT).
 
 use {
     crate::shred_variant::ShredVariant,
@@ -62,12 +62,6 @@ impl ShredFlags {
     pub const DATA_COMPLETE_SHRED: u8 = 0b0100_0000;
     /// Marks the last data shred of a slot. Implies [`Self::DATA_COMPLETE_SHRED`].
     pub const LAST_SHRED_IN_SLOT: u8 = 0b1100_0000;
-
-    /// The raw flags byte.
-    #[inline]
-    pub const fn bits(self) -> u8 {
-        self.0
-    }
 
     /// The reference tick, saturated at [`Self::REFERENCE_TICK_MASK`] by the sender.
     #[inline]

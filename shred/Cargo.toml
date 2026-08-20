@@ -10,15 +10,17 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [features]
-dev-context-only-utils = ["dep:bs58"]
+dev-context-only-utils = []
 
 [dependencies]
-bs58 = { workspace = true, features = ["alloc"], optional = true }
 bytes = { workspace = true }
+reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 solana-clock = { workspace = true }
-solana-hash = { workspace = true, features = ["decode", "wincode"] }
+solana-hash = { workspace = true, features = ["copy", "decode", "wincode"] }
 solana-keypair = { workspace = true }
+solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signature = { workspace = true, features = ["verify", "wincode"] }
 solana-signer = { workspace = true }
 static_assertions = { workspace = true }
@@ -27,8 +29,19 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+criterion = { workspace = true }
+rand = { workspace = true }
+solana-ledger = { workspace = true }
 solana-shred = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
+
+[[bench]]
+name = "view"
+harness = false
+
+[[bench]]
+name = "build"
+harness = false
 
 [lints]
 workspace = true

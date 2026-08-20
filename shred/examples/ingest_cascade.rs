@@ -1,31 +1,28 @@
 //! Walks a real shred through the whole validation cascade, printing what each stage establishes.
 //!
-//! Run with: `cargo run -p solana-shred --features dev-context-only-utils --example cascade`
+//! Run with: `cargo run -p solana-shred --features dev-context-only-utils --example ingest_cascade`
 
 use {
     solana_keypair::Keypair,
     solana_shred::{
-        AdmissionPolicy, Data, ShredParsed, ShredView, fixture,
-        layout::{
+        AdmissionPolicy, Data, ShredParsed, ShredView, fixture, parse,
+        wire_format::{
             SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE,
-            SIZE_OF_SIGNATURE,
         },
-        parse,
     },
 };
 
 fn main() {
-    let bytes = fixture::data_shred();
+    let bytes = fixture::DATA_SHRED;
     println!("off the wire: {} bytes", bytes.len());
 
-    // Stage 1: length, variant, headers. No hashing.
+    // Stage 1: length, variant, headers.
     let (parsed, nonce) = parse(bytes).expect("the fixture is a well-formed shred");
     let common = *parsed.common();
     let variant = common.variant;
     println!(
-        "parsed {:?}  proof_size={}  resigned={}  repair_nonce={:?}",
+        "parsed {:?}  resigned={}  repair_nonce={:?}",
         variant.shred_type(),
-        variant.proof_size(),
         variant.resigned(),
         nonce,
     );
@@ -38,11 +35,12 @@ fn main() {
     };
     print_sections(shred.view());
     println!(
-        "   parent_offset={} flags={:#010b} reference_tick={} data={} bytes",
-        shred.parent_offset(),
-        shred.flags().bits(),
-        shred.flags().reference_tick(),
-        shred
+        "   parent_offset={PO} Flags=[DC={DC}LIS={LIS}], reference_tick={RT} data={DATA} bytes",
+        PO = shred.parent_offset(),
+        DC = shred.flags().data_complete(),
+        LIS = shred.flags().last_in_slot(),
+        RT = shred.flags().reference_tick(),
+        DATA = shred
             .data()
             .expect("the fixture's size field is sane")
             .len(),
@@ -68,7 +66,7 @@ fn main() {
         Ok(shred) => shred,
         Err(reason) => panic!("verification rejected the fixture: {reason:?}"),
     };
-    println!("verified     leader={leader} (proof shape only, no signature check yet)");
+    println!("verified     leader={leader} (Merkle root recomputed, leader signature checked)");
     println!("    chained_merkle_root={}", shred.chained_merkle_root());
     println!(
         "    erasure_shard_index={:?} erasure_shard={} bytes",
@@ -102,10 +100,7 @@ fn print_sections(view: ShredView<'_, Data>) {
         offset = end;
     };
     row("signature", view.signature.as_ref().len());
-    row(
-        "common header (past signature)",
-        SIZE_OF_COMMON_HEADER.saturating_sub(SIZE_OF_SIGNATURE),
-    );
+    row("common header", SIZE_OF_COMMON_HEADER);
     row("data header", SIZE_OF_DATA_HEADER);
     row("body", view.body.len());
     row(
