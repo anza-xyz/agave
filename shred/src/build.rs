@@ -21,7 +21,7 @@
 use {
     crate::{
         error::BuildError,
-        header::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
+        headers::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
         kind::{Code, Data, ShredKind},
         merkle,
         policy::DATA_SHREDS_PER_FEC_BLOCK,
@@ -68,9 +68,8 @@ pub struct FecSetSpec {
     /// this batch's first code shred.
     ///
     /// The two kinds are indexed by separate counters on the wire, but with every FEC set holding 32
-    /// of each the counters advance together from zero, so they never disagree — and a shred whose
-    /// index falls outside its own FEC set is rejected by
-    /// [`admit`](crate::Shred::admit) anyway.
+    /// of each the counters advance together from zero, so they never disagree. A shred whose index
+    /// falls outside its own FEC set is rejected by [`admit`](crate::Shred::admit) anyway.
     pub fec_set_index: u32,
     /// Merkle root of the preceding erasure batch.
     pub chained_merkle_root: Hash,
@@ -206,13 +205,13 @@ fn write_data_shreds(
         version: spec.version,
         fec_set_index: spec.fec_set_index,
     };
-    // Every batch is a whole FEC set, so its last data shred always completes one; only the last
-    // batch of a slot also ends the slot.
     let chunks = data
         .chunks(spec.data_capacity_per_shred())
         .chain(std::iter::repeat(&[][..]))
         .take(DATA_SHREDS);
     for (position, chunk) in chunks.enumerate() {
+        // Every batch is a whole FEC set, so its last data shred always completes one; only the
+        // last batch of a slot also ends the slot.
         let last = position == DATA_SHREDS.saturating_sub(1);
         let mut flags = spec.reference_tick.min(ShredFlags::REFERENCE_TICK_MASK);
         if last {
@@ -282,8 +281,8 @@ fn encode_erasure_batch(spec: &FecSetSpec, payloads: &mut [Vec<u8>]) -> Result<(
 
 /// The one Reed-Solomon coder there is.
 ///
-/// Building a coder means building its encoding matrix, which is worth doing once — and once is all
-/// it takes, since every erasure batch has the same fixed 32:32 shape.
+/// Building a coder means building its encoding matrix, which is worth doing once. Once is all it
+/// takes, since every erasure batch has the same fixed 32:32 shape.
 fn coder() -> &'static ReedSolomon {
     static CODER: OnceLock<ReedSolomon> = OnceLock::new();
     CODER.get_or_init(|| {
@@ -294,8 +293,8 @@ fn coder() -> &'static ReedSolomon {
 
 /// A view over the shard at `index` of the batch, whose kind its position decides.
 ///
-/// The two kinds have different layouts but the same set of sections, so the batch-wide passes —
-/// chaining, hashing, signing — are written once over a view that hides which kind it is looking at.
+/// The two kinds have different layouts but the same set of sections, so the batch-wide passes
+/// (chaining, hashing, signing) are written once over a view that hides which kind it is looking at.
 fn view<'a>(
     spec: &FecSetSpec,
     index: usize,
@@ -392,7 +391,7 @@ mod tests {
     #[test]
     fn built_batch_passes_the_read_path() {
         let keypair = keypair();
-        let data: Vec<u8> = (0..20_000u32).map(|byte| byte as u8).collect();
+        let data: Vec<u8> = (0..20_000u32).map(|index| index as u8).collect();
         for resigned in [false, true] {
             let spec = spec(resigned);
             let set = FecSet::build(&spec, &data, &keypair).unwrap();

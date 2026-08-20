@@ -2,8 +2,8 @@
 //!
 //! One batch is 64 shreds: 32 bodies copied in, a 32:32 Reed-Solomon encode, 64 leaf hashes, one
 //! signature, 64 proofs written, and 64 payloads read back through the parser. The incumbent group
-//! runs `solana-ledger`'s shredder over the same bytes, which is the number that matters — the two
-//! produce identical payloads, so this is a straight comparison.
+//! runs `solana-ledger`'s shredder over the same bytes, which is the number that matters. The
+//! two produce identical payloads, so this is a straight comparison.
 
 use {
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
@@ -35,7 +35,7 @@ fn bench_build(c: &mut Criterion) {
         resigned: false,
         last_in_slot: false,
     };
-    let data: Vec<u8> = (0..spec.capacity()).map(|byte| byte as u8).collect();
+    let data: Vec<u8> = (0..spec.capacity()).map(|index| index as u8).collect();
 
     let mut group = c.benchmark_group("shred_build");
     group.throughput(Throughput::Elements(SHREDS));

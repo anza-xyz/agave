@@ -20,7 +20,7 @@ pub struct CommonHeader {
     pub slot: Slot,
     /// Index of this shred within its slot, counted separately per kind.
     pub index: u32,
-    /// Cluster shred version, `hash(genesis_block) % 65536`.
+    /// Cluster shred version, derived from the genesis hash and the cluster's hard forks.
     pub version: u16,
     /// Index of the first data shred of this shred's FEC set.
     pub fec_set_index: u32,

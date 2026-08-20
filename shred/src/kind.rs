@@ -1,13 +1,13 @@
 //! The two shred kinds, and the layout constants that distinguish them.
 //!
 //! The kind is a type parameter of [`Shred`](crate::Shred) rather than a runtime tag, so that
-//! accessors which only make sense for one kind — `parent_offset` on data shreds, `position` on
-//! code shreds — simply do not exist on the other, instead of returning an error at runtime.
+//! accessors which only make sense for one kind (`parent_offset` on data shreds, `position` on code
+//! shreds) simply do not exist on the other, instead of returning an error at runtime.
 
 use {
     crate::{
         error::Reject,
-        header::{CodeHeader, CommonHeader, DataHeader},
+        headers::{CodeHeader, CommonHeader, DataHeader},
         policy::{self, AdmissionPolicy, DATA_SHREDS_PER_FEC_BLOCK},
         shred_variant::ShredType,
         wire_format::{

@@ -12,7 +12,7 @@
 use {
     crate::{
         error::ParseError,
-        header::CommonHeader,
+        headers::CommonHeader,
         kind::ShredKind,
         shred_variant::ShredVariant,
         wire_format::{
@@ -142,7 +142,7 @@ impl<'a, K: ShredKind> ShredView<'a, K> {
 /// The mutable counterpart of [`ShredView`] cannot be a struct of `&mut` sections the way the
 /// borrowed one is: the Merkle leaf and the erasure shard overlap the sections they span, and two
 /// mutable slices may not alias. So the payload is held whole and each section is borrowed from it
-/// on request, which is also the order a shred is built in — headers, body, chained root, then the
+/// on request, which is also the order a shred is built in: headers, body, chained root, then the
 /// proof and signature the FEC set's tree produces.
 pub struct ShredViewMut<'a, K: ShredKind> {
     payload: &'a mut [u8],

@@ -11,7 +11,7 @@ pub const DATA_SHREDS_PER_FEC_BLOCK: u32 = 32;
 /// Bounds a shred's headers must fall within to be worth verifying.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AdmissionPolicy {
-    /// The only shred version this node accepts, `hash(genesis_block) % 65536`.
+    /// The only shred version this node accepts, derived from the genesis hash and hard forks.
     pub shred_version: u16,
     /// The node's current root. Shreds at or below it are of no further use.
     pub root: Slot,

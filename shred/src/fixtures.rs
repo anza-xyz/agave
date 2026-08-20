@@ -1,14 +1,15 @@
 //! Test vectors: one real shred of each of the four valid layouts.
 //!
 //! Gated behind `dev-context-only-utils`, so this data is never compiled into a validator.
-
+//!
 //! # Provenance
-//! All four come from one deterministic run of `solana-ledger`'s shredder, and
-//! [`data_shred`]'s bytes are exactly the vector `solana-ledger`'s `test_serde_compat_shred_data`
-//! pins. To regenerate, shred 4096 bytes for slot [`FIXTURE_SLOT`] with parent `FIXTURE_SLOT - 1`,
-//!  version 42, reference tick 0, a default chained Merkle root and shred index [`FIXTURE_INDEX`],
-//!  signed by [`leader_keypair`], and take the first data and first code shred of the batch,
-//!  once with `is_last_in_slot` false, and once with it true.
+//!
+//! All four come from one deterministic run of `solana-ledger`'s shredder, and [`DATA_SHRED`]'s
+//! bytes are exactly the vector `solana-ledger`'s `test_serde_compat_shred_data` pins. To
+//! regenerate, shred 4096 bytes for slot [`FIXTURE_SLOT`] with parent `FIXTURE_SLOT - 1`, version
+//! 42, reference tick 0, a default chained Merkle root and shred index [`FIXTURE_INDEX`], signed by
+//! [`leader_keypair`], and take the first data and first code shred of the batch, once with
+//! `is_last_in_slot` false, and once with it true.
 
 use {bytes::Bytes, solana_keypair::Keypair, solana_pubkey::Pubkey, solana_signer::Signer};
 

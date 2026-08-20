@@ -13,7 +13,7 @@
 //! ```
 //!
 //! `(*)` The body is whatever the fixed sections leave, so it is the one length that depends on
-//! both inputs — and it is a length, not a count of useful bytes:
+//! both inputs. It is a length, not a count of useful bytes:
 //!
 //! ```text
 //!         unresigned  resigned
@@ -32,7 +32,7 @@
 pub use crate::shred::merkle_tree::{MerkleProofEntry as ProofEntry, SIZE_OF_MERKLE_PROOF_ENTRY};
 use {
     crate::{
-        header::{CodeHeader, CommonHeader, DataHeader},
+        headers::{CodeHeader, CommonHeader, DataHeader},
         kind::{Code, Data, ShredKind},
         shred::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH,
     },

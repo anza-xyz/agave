@@ -1,7 +1,7 @@
 //! The bytes this crate writes are the bytes `solana-ledger`'s shredder writes.
 //!
 //! A wire-format writer can only be judged against the implementation the cluster already runs, so
-//! this builds the same erasure batch both ways — same keypair, same data, same chained root — and
+//! this builds the same erasure batch both ways (same keypair, same data, same chained root) and
 //! compares all 64 payloads byte for byte.
 
 use {
@@ -58,7 +58,7 @@ fn keypair() -> Keypair {
 #[test]
 fn payloads_match_the_incumbent_shredder() {
     // One batch's worth of data, ending mid-shred so the padding is exercised too.
-    let data: Vec<u8> = (0..20_000u32).map(|byte| byte as u8).collect();
+    let data: Vec<u8> = (0..20_000u32).map(|index| index as u8).collect();
     for last_in_slot in [false, true] {
         let spec = spec(last_in_slot);
         let ours = FecSet::build(&spec, &data, &keypair()).unwrap();

@@ -5,7 +5,7 @@
 use {
     solana_keypair::Keypair,
     solana_shred::{
-        AdmissionPolicy, Data, ShredParsed, ShredView, fixture, parse,
+        AdmissionPolicy, Data, ShredParsed, ShredView, fixtures, parse,
         wire_format::{
             SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE,
         },
@@ -13,7 +13,7 @@ use {
 };
 
 fn main() {
-    let bytes = fixture::DATA_SHRED;
+    let bytes = fixtures::DATA_SHRED;
     println!("off the wire: {} bytes", bytes.len());
 
     // Stage 1: length, variant, headers.
@@ -35,7 +35,7 @@ fn main() {
     };
     print_sections(shred.view());
     println!(
-        "   parent_offset={PO} Flags=[DC={DC}LIS={LIS}], reference_tick={RT} data={DATA} bytes",
+        "   parent_offset={PO} Flags=[DC={DC} LIS={LIS}] reference_tick={RT} data={DATA} bytes",
         PO = shred.parent_offset(),
         DC = shred.flags().data_complete(),
         LIS = shred.flags().last_in_slot(),
@@ -61,7 +61,7 @@ fn main() {
     println!("\nadmissible   under {policy:?}");
 
     // Stage 3: the expensive stage, reached only once the cheap checks have passed.
-    let leader = fixture::leader();
+    let leader = fixtures::leader();
     let shred = match shred.verify(&leader) {
         Ok(shred) => shred,
         Err(reason) => panic!("verification rejected the fixture: {reason:?}"),
@@ -83,7 +83,7 @@ fn main() {
                 .expect("a resigned variant carries a retransmitter signature"),
         ),
         Err(reason) => {
-            println!("not resigned {reason:?} — this variant reserves no retransmitter signature",)
+            println!("not resigned {reason:?}: this variant reserves no retransmitter signature")
         }
     }
 }
