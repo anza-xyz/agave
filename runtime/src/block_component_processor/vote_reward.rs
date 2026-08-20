@@ -608,7 +608,7 @@ mod tests {
                 create_genesis_config_with_alpenglow_vote_accounts,
                 create_genesis_config_with_leader_ex, create_validator,
             },
-            inflation_rewards::commission_split_preserve_lamports,
+            inflation_rewards::{MAX_BPS, commission_split_preserve_lamports},
             stake_utils,
             validated_block_finalization::ValidatedBlockFinalizationCert,
         },
@@ -642,8 +642,6 @@ mod tests {
         },
         test_case::test_matrix,
     };
-
-    const MAX_COMMISSION_BPS: u16 = 10_000;
 
     fn new_bank_for_tests(
         leader: SlotLeader,
@@ -1084,12 +1082,12 @@ mod tests {
         );
         assert_eq!(
             is_split,
-            commission_bps != 0 && commission_bps != MAX_COMMISSION_BPS,
+            commission_bps != 0 && commission_bps != MAX_BPS,
             "is_split must be false only at the commission endpoints"
         );
         match commission_bps {
             0 => assert_eq!(voter_reward, 0, "0 bps must pay the voter nothing"),
-            MAX_COMMISSION_BPS => {
+            MAX_BPS => {
                 assert_eq!(staker_reward, 0, "100% commission must pay stakers nothing")
             }
             _ => {}
