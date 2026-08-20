@@ -356,9 +356,8 @@ pub struct RepairStats {
     pub orphan: RepairStatsGroup,
     pub get_best_orphans_us: u64,
     pub get_best_shreds_us: u64,
-    /// Request packets the send path accepted.
-    pub num_packets_sent: u64,
-    /// Request packets the send path refused, e.g. an unreachable peer or a full XDP queue.
+    /// Request packets the send path refused.
+    /// The packets that did make it out are `repair-total` minus this.
     pub num_packets_dropped: u64,
 }
 
@@ -388,7 +387,6 @@ impl RepairStats {
                 ("highest-shred-slot-min", nonzero_num(self.highest_shred.min), Option<i64>),
                 ("orphan-slot-max", nonzero_num(self.orphan.max), Option<i64>),
                 ("orphan-slot-min", nonzero_num(self.orphan.min), Option<i64>),
-                ("packets-sent", self.num_packets_sent, i64),
                 ("packets-dropped", self.num_packets_dropped, i64),
             );
         }
@@ -855,7 +853,6 @@ impl RepairService {
                     )
                 })
             };
-            repair_metrics.stats.num_packets_sent += num_sent as u64;
             repair_metrics.stats.num_packets_dropped += (num_pkts - num_sent) as u64;
         }
         send_batch_us.stop();

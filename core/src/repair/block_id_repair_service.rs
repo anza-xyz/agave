@@ -965,7 +965,7 @@ impl BlockIdRepairService {
                     state.expect_ping_response(peer_pubkey, addr, now);
 
                     // Update stats
-                    state.request_stats.total_requests += 1;
+                    state.request_stats.requests_attempted += 1;
                     match block_id_repair_type {
                         BlockIdRepairType::ParentAndFecSetCount { .. } => {
                             state.request_stats.parent_fec_set_count_requests += 1;
@@ -1003,7 +1003,7 @@ impl BlockIdRepairService {
                     state.sent_requests.insert(request, now);
 
                     // Update stats
-                    state.request_stats.total_requests += 1;
+                    state.request_stats.requests_attempted += 1;
                     state.request_stats.shred_for_block_id_requests += 1;
                 }
             }
