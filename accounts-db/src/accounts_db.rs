@@ -149,8 +149,8 @@ pub(crate) struct ShrinkCollectAliveSeparatedByRefs<'a> {
     pub(crate) no_duplicates: AliveAccounts<'a>,
     /// can only be packed into a slot >= this one
     pub(crate) newest_duplicate: AliveAccounts<'a>,
-    /// account where ref_count > 1, and this slot is NOT the highest alive entry in the index for the pubkey
-    pub(crate) many_refs_old_alive: AliveAccounts<'a>,
+    /// must stay in this slot
+    pub(crate) not_newest_duplicate: AliveAccounts<'a>,
 }
 
 pub(crate) trait ShrinkCollector<'a>: Sync + Send {
@@ -203,13 +203,14 @@ impl<'a> ShrinkCollector<'a> for ShrinkCollectAliveSeparatedByRefs<'a> {
     fn collect(&mut self, other: Self) {
         self.no_duplicates.collect(other.no_duplicates);
         self.newest_duplicate.collect(other.newest_duplicate);
-        self.many_refs_old_alive.collect(other.many_refs_old_alive);
+        self.not_newest_duplicate
+            .collect(other.not_newest_duplicate);
     }
     fn with_capacity(capacity: usize, slot: Slot) -> Self {
         Self {
             no_duplicates: AliveAccounts::with_capacity(capacity, slot),
             newest_duplicate: AliveAccounts::with_capacity(0, slot),
-            many_refs_old_alive: AliveAccounts::with_capacity(0, slot),
+            not_newest_duplicate: AliveAccounts::with_capacity(0, slot),
         }
     }
     fn add(
@@ -223,27 +224,27 @@ impl<'a> ShrinkCollector<'a> for ShrinkCollectAliveSeparatedByRefs<'a> {
         } else if slot_list.len() == 1
             || !slot_list
                 .iter()
-                .any(|(slot_list_slot, _info)| slot_list_slot > &self.many_refs_old_alive.slot)
+                .any(|(slot_list_slot, _info)| slot_list_slot > &self.not_newest_duplicate.slot)
         {
             // this entry is alive but is newer than any other slot in the index
             &mut self.newest_duplicate
         } else {
             // This entry is alive but is older than at least one other slot in the index.
             // We would expect clean to get rid of the entry for THIS slot at some point, but clean hasn't done that yet.
-            &mut self.many_refs_old_alive
+            &mut self.not_newest_duplicate
         };
         other.add(ref_count, account, slot_list);
     }
     fn len(&self) -> usize {
         self.no_duplicates
             .len()
-            .saturating_add(self.many_refs_old_alive.len())
+            .saturating_add(self.not_newest_duplicate.len())
             .saturating_add(self.newest_duplicate.len())
     }
     fn alive_bytes(&self) -> usize {
         self.no_duplicates
             .alive_bytes()
-            .saturating_add(self.many_refs_old_alive.alive_bytes())
+            .saturating_add(self.not_newest_duplicate.alive_bytes())
             .saturating_add(self.newest_duplicate.alive_bytes())
     }
     fn alive_accounts(&self) -> &Vec<&'a AccountFromStorage> {
