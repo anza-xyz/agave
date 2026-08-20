@@ -678,10 +678,11 @@ impl RecycledPacketBatch {
     pub fn new_with_recycler_data(
         recycler: &PacketBatchRecycler,
         name: &'static str,
-        mut packets: Vec<Packet>,
+        packets: impl IntoIterator<Item = Packet, IntoIter: ExactSizeIterator>,
     ) -> Self {
+        let packets = packets.into_iter();
         let mut batch = Self::new_with_recycler(recycler, packets.len(), name);
-        batch.packets.append(&mut packets);
+        batch.packets.extend(packets);
         batch
     }
 

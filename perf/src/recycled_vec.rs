@@ -49,6 +49,13 @@ impl<'a, T: Clone + Default + Sized> IntoIterator for &'a RecycledVec<T> {
     }
 }
 
+impl<T: Clone + Default + Sized> Extend<T> for RecycledVec<T> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.x.extend(iter);
+    }
+}
+
 impl<T: Clone + Default + Sized, I: SliceIndex<[T]>> Index<I> for RecycledVec<T> {
     type Output = I::Output;
 
