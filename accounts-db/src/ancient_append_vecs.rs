@@ -692,7 +692,7 @@ impl AccountsDb {
         let mut write_ancient_accounts = write_ancient_accounts.into_inner().unwrap();
 
         // write new storages where contents were unable to move because ref_count > 1
-        self.write_ancient_accounts_to_same_slot_multiple_refs(
+        self.write_ancient_accounts_to_same_slot(
             accounts_to_combine.accounts_keep_slots.values(),
             &mut write_ancient_accounts,
         );
@@ -952,7 +952,7 @@ impl AccountsDb {
     /// These accounts need to be rewritten in their same slot, Ideally with no other accounts in the slot.
     /// Other accounts would have ref_count = 1.
     /// ref_count = 1 accounts will be combined together with other slots into larger append vecs elsewhere.
-    fn write_ancient_accounts_to_same_slot_multiple_refs<'a, 'b: 'a>(
+    fn write_ancient_accounts_to_same_slot<'a, 'b: 'a>(
         &'b self,
         accounts_to_combine: impl Iterator<Item = &'a AliveAccounts<'a>>,
         write_ancient_accounts: &mut WriteAncientAccounts<'b>,
@@ -1402,13 +1402,11 @@ mod tests {
     }
 
     #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
-    fn test_write_ancient_accounts_to_same_slot_multiple_refs_empty(
-        accounts_db_config: AccountsDbConfig,
-    ) {
+    fn test_write_ancient_accounts_to_same_slot_empty(accounts_db_config: AccountsDbConfig) {
         let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let (_storages, _slots, _infos) = get_sample_storages(&db, 0, None);
         let mut write_ancient_accounts = WriteAncientAccounts::default();
-        db.write_ancient_accounts_to_same_slot_multiple_refs(
+        db.write_ancient_accounts_to_same_slot(
             AccountsToCombine::default().accounts_keep_slots.values(),
             &mut write_ancient_accounts,
         );
