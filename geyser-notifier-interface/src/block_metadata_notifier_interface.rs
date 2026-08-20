@@ -9,7 +9,7 @@ use {
 /// [`BlockMetadataNotifier`].
 ///
 /// Mirrors the validator-internal reward representation
-/// (`solana_runtime::reward_info::RewardInfo`) field-for-field so the
+/// (`solana_runtime::RewardInfo`) field-for-field so the
 /// conversion at the notification call site is trivial, without this crate
 /// depending on the runtime.
 #[derive(Debug, Clone, Copy, PartialEq)]
