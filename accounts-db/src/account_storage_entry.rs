@@ -21,9 +21,9 @@ use {
 /// Persistent storage structure holding the accounts
 #[derive(Debug)]
 pub struct AccountStorageEntry {
-    pub(crate) id: AccountsFileId,
+    id: AccountsFileId,
 
-    pub(crate) slot: Slot,
+    slot: Slot,
 
     /// storage holding the accounts
     pub accounts: AccountsFile,

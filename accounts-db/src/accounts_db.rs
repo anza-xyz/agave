@@ -5207,7 +5207,7 @@ impl AccountsDb {
         let mut total_time = Measure::start("generate_index");
 
         let mut storages = self.storage.all_storages();
-        storages.sort_unstable_by_key(|storage| storage.slot);
+        storages.sort_unstable_by_key(|storage| storage.slot());
         if let Some(limit) = limit_load_slot_count_from_snapshot {
             storages.truncate(limit); // get rid of the newer slots and keep just the older
         }
