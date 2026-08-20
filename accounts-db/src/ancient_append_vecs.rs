@@ -456,8 +456,7 @@ impl AccountsDb {
             .accounts_to_combine
             .iter_mut()
             .filter_map(|alive| {
-                let newest_alive =
-                    std::mem::take(&mut alive.alive_accounts.many_refs_this_is_newest_alive);
+                let newest_alive = std::mem::take(&mut alive.alive_accounts.newest_duplicate);
                 (!newest_alive.accounts.is_empty()).then_some(newest_alive)
             })
             .collect::<Vec<_>>();
@@ -830,7 +829,7 @@ impl AccountsDb {
             if many_ref_slots == IncludeManyRefSlots::Skip
                 && !shrink_collect
                     .alive_accounts
-                    .many_refs_this_is_newest_alive
+                    .newest_duplicate
                     .accounts
                     .is_empty()
             {
@@ -885,7 +884,7 @@ impl AccountsDb {
                     .is_empty()
                     && shrink_collect
                         .alive_accounts
-                        .many_refs_this_is_newest_alive
+                        .newest_duplicate
                         .accounts
                         .is_empty()
                 {
@@ -2042,7 +2041,7 @@ mod tests {
                                     |shrink_collect| {
                                         !shrink_collect
                                             .alive_accounts
-                                            .many_refs_this_is_newest_alive
+                                            .newest_duplicate
                                             .accounts
                                             .is_empty()
                                     }
@@ -2061,7 +2060,7 @@ mod tests {
                                     |shrink_collect| {
                                         shrink_collect
                                             .alive_accounts
-                                            .many_refs_this_is_newest_alive
+                                            .newest_duplicate
                                             .accounts
                                             .is_empty()
                                     }
@@ -2200,7 +2199,7 @@ mod tests {
                 .iter()
                 .all(|shrink_collect| shrink_collect
                     .alive_accounts
-                    .many_refs_this_is_newest_alive
+                    .newest_duplicate
                     .accounts
                     .is_empty())
         );
@@ -2324,7 +2323,7 @@ mod tests {
         );
         let slots_vec = slots.collect::<Vec<_>>();
         assert_eq!(accounts_to_combine.accounts_to_combine.len(), num_slots);
-        // all accounts should be in many_refs_this_is_newest_alive
+        // all accounts should be in newest_duplicate
         let mut accounts_keep = accounts_to_combine
             .accounts_keep_slots
             .keys()
@@ -2341,7 +2340,7 @@ mod tests {
                 .first()
                 .unwrap()
                 .alive_accounts
-                .many_refs_this_is_newest_alive
+                .newest_duplicate
                 .accounts
                 .iter()
                 .map(|meta| meta.pubkey())
@@ -2380,7 +2379,7 @@ mod tests {
                 .iter()
                 .all(|shrink_collect| !shrink_collect
                     .alive_accounts
-                    .many_refs_this_is_newest_alive
+                    .newest_duplicate
                     .accounts
                     .is_empty())
         );
@@ -3775,12 +3774,7 @@ mod tests {
                             alive_accounts.add(1, &account, &slot_list);
                             assert!(!alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                            assert!(
-                                alive_accounts
-                                    .many_refs_this_is_newest_alive
-                                    .accounts
-                                    .is_empty()
-                            );
+                            assert!(alive_accounts.newest_duplicate.accounts.is_empty());
                         }
                         1 => {
                             // non-empty slot list (but ignored) because slot_list = 1
@@ -3794,12 +3788,7 @@ mod tests {
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                            assert!(
-                                !alive_accounts
-                                    .many_refs_this_is_newest_alive
-                                    .accounts
-                                    .is_empty()
-                            );
+                            assert!(!alive_accounts.newest_duplicate.accounts.is_empty());
                         }
                         2 => {
                             // multiple slot list, ref_count=2, this is NOT newest alive, so many_refs_old_alive
@@ -3822,12 +3811,7 @@ mod tests {
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(!alive_accounts.many_refs_old_alive.accounts.is_empty());
-                            assert!(
-                                alive_accounts
-                                    .many_refs_this_is_newest_alive
-                                    .accounts
-                                    .is_empty()
-                            );
+                            assert!(alive_accounts.newest_duplicate.accounts.is_empty());
                         }
                         3 => {
                             // multiple slot list, ref_count=2, this is newest
@@ -3850,12 +3834,7 @@ mod tests {
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                            assert!(
-                                !alive_accounts
-                                    .many_refs_this_is_newest_alive
-                                    .accounts
-                                    .is_empty()
-                            );
+                            assert!(!alive_accounts.newest_duplicate.accounts.is_empty());
                         }
                         _ => {
                             panic!("unexpected");
