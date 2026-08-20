@@ -213,6 +213,9 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
                 let (programdata, _slot) = callbacks
                     .get_account_shared_data(&programdata_address)
                     .ok_or(TransactionError::ProgramAccountNotFound)?;
+                if !bpf_loader_upgradeable::check_id(programdata.owner()) {
+                    return Err(TransactionError::ProgramAccountNotFound);
+                }
                 if let Ok(UpgradeableLoaderState::ProgramData {
                     slot,
                     upgrade_authority_address: _,
