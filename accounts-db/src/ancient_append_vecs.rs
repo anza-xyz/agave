@@ -383,16 +383,16 @@ impl AccountsDb {
         self.shrink_ancient_stats.report();
     }
 
-    /// return false if `many_refs_newest` accounts cannot be moved into `target_slots_sorted`.
+    /// return false if `newest_duplicate` accounts cannot be moved into `target_slots_sorted`.
     /// The slot # would be violated.
-    /// accounts in `many_refs_newest` must be moved a slot >= each account's current slot.
+    /// accounts in `newest_duplicate` must be moved a slot >= each account's current slot.
     /// If that can be done, this fn returns true
-    fn many_ref_accounts_can_be_moved(
-        many_refs_newest: &[AliveAccounts<'_>],
+    fn newest_duplicate_can_be_moved(
+        newest_duplicate: &[AliveAccounts<'_>],
         target_slots_sorted: &[Slot],
         tuning: &PackedAncientStorageTuning,
     ) -> bool {
-        let alive_bytes = many_refs_newest
+        let alive_bytes = newest_duplicate
             .iter()
             .map(|alive| alive.bytes)
             .sum::<usize>();
@@ -409,7 +409,7 @@ impl AccountsDb {
             .saturating_sub(required_ideal_packed);
 
         let highest_slot = target_slots_sorted[i_last];
-        many_refs_newest
+        newest_duplicate
             .iter()
             .all(|many| many.slot <= highest_slot)
     }
@@ -452,7 +452,7 @@ impl AccountsDb {
         );
         metrics.unpackable_slots_count += accounts_to_combine.unpackable_slots_count;
 
-        let mut many_refs_newest = accounts_to_combine
+        let mut newest_duplicate = accounts_to_combine
             .accounts_to_combine
             .iter_mut()
             .filter_map(|alive| {
@@ -463,11 +463,11 @@ impl AccountsDb {
 
         // Sort highest slot to lowest slot. This way, we will put the multi ref accounts with the highest slots in the highest
         // packed slot.
-        many_refs_newest.sort_unstable_by_key(|b| cmp::Reverse(b.slot));
-        metrics.newest_alive_packed_count += many_refs_newest.len();
+        newest_duplicate.sort_unstable_by_key(|b| cmp::Reverse(b.slot));
+        metrics.newest_alive_packed_count += newest_duplicate.len();
 
-        if !Self::many_ref_accounts_can_be_moved(
-            &many_refs_newest,
+        if !Self::newest_duplicate_can_be_moved(
+            &newest_duplicate,
             &accounts_to_combine.target_slots_sorted,
             &tuning,
         ) {
@@ -475,7 +475,7 @@ impl AccountsDb {
             log::info!(
                 "unable to ancient pack: highest available slot: {:?}, lowest required slot: {:?}",
                 accounts_to_combine.target_slots_sorted.last(),
-                many_refs_newest.last().map(|accounts| accounts.slot)
+                newest_duplicate.last().map(|accounts| accounts.slot)
             );
             return;
         }
@@ -493,7 +493,7 @@ impl AccountsDb {
         // pack the accounts with 1 ref or refs > 1 but the slot we're packing is the highest alive slot for the pubkey.
         // Note the `chain` below combining the 2 types of refs.
         let pack = PackedAncientStorage::pack(
-            many_refs_newest.iter().chain(
+            newest_duplicate.iter().chain(
                 accounts_to_combine
                     .accounts_to_combine
                     .iter()
@@ -3845,7 +3845,7 @@ mod tests {
     }
 
     #[test]
-    fn test_many_ref_accounts_can_be_moved() {
+    fn test_newest_duplicate_can_be_moved() {
         let tuning = PackedAncientStorageTuning {
             // only allow 10k slots old enough to be ancient
             max_ancient_slots: 10_000,
@@ -3856,58 +3856,58 @@ mod tests {
         };
 
         // nothing to move, so no problem fitting it
-        let many_refs_newest = vec![];
+        let newest_duplicate = vec![];
         let target_slots_sorted = vec![];
-        assert!(AccountsDb::many_ref_accounts_can_be_moved(
-            &many_refs_newest,
+        assert!(AccountsDb::newest_duplicate_can_be_moved(
+            &newest_duplicate,
             &target_slots_sorted,
             &tuning
         ));
         // something to move, no target slots, so can't fit
         let slot = 1;
-        let many_refs_newest = vec![AliveAccounts {
+        let newest_duplicate = vec![AliveAccounts {
             bytes: 1,
             slot,
             accounts: Vec::default(),
         }];
-        assert!(!AccountsDb::many_ref_accounts_can_be_moved(
-            &many_refs_newest,
+        assert!(!AccountsDb::newest_duplicate_can_be_moved(
+            &newest_duplicate,
             &target_slots_sorted,
             &tuning
         ));
 
         // something to move, 1 target slot, so can fit
         let target_slots_sorted = vec![slot];
-        assert!(AccountsDb::many_ref_accounts_can_be_moved(
-            &many_refs_newest,
+        assert!(AccountsDb::newest_duplicate_can_be_moved(
+            &newest_duplicate,
             &target_slots_sorted,
             &tuning
         ));
 
         // too much to move to 1 target slot, so can't fit
-        let many_refs_newest = vec![AliveAccounts {
+        let newest_duplicate = vec![AliveAccounts {
             bytes: tuning.ideal_storage_size.get() as usize,
             slot,
             accounts: Vec::default(),
         }];
-        assert!(!AccountsDb::many_ref_accounts_can_be_moved(
-            &many_refs_newest,
+        assert!(!AccountsDb::newest_duplicate_can_be_moved(
+            &newest_duplicate,
             &target_slots_sorted,
             &tuning
         ));
 
         // more than 1 slot to move, 2 target slots, so can fit
         let target_slots_sorted = vec![slot, slot + 1];
-        assert!(AccountsDb::many_ref_accounts_can_be_moved(
-            &many_refs_newest,
+        assert!(AccountsDb::newest_duplicate_can_be_moved(
+            &newest_duplicate,
             &target_slots_sorted,
             &tuning
         ));
 
         // lowest target slot is below required slot
         let target_slots_sorted = vec![slot - 1, slot];
-        assert!(!AccountsDb::many_ref_accounts_can_be_moved(
-            &many_refs_newest,
+        assert!(!AccountsDb::newest_duplicate_can_be_moved(
+            &newest_duplicate,
             &target_slots_sorted,
             &tuning
         ));
