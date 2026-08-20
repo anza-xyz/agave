@@ -20,10 +20,16 @@ name = "agave_logger"
 
 [features]
 agave-unstable-api = []
+# Prototype: replace the env_logger backend with ftlog, which formats and writes
+# log messages on a dedicated thread instead of the calling thread.
+ftlog = ["dep:env_filter", "dep:ftlog", "dep:time"]
 
 [dependencies]
+env_filter = { workspace = true, optional = true }
 env_logger = { workspace = true }
+ftlog = { workspace = true, optional = true }
 log = { workspace = true }
+time = { workspace = true, optional = true }
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }

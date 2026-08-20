@@ -1,52 +1,30 @@
 #![cfg(feature = "agave-unstable-api")]
-//! The `logger` module configures `env_logger`
-use std::{
-    path::{Path, PathBuf},
-    sync::{Arc, LazyLock, RwLock},
-};
+//! The `logger` module configures the process-wide `log` backend.
+//!
+//! Two interchangeable backends: `env_logger` by default, or `ftlog` with the
+//! `ftlog` feature. Both take `env_logger` filter syntax and write to stderr, so
+//! `redirect_stderr` and the `SIGUSR1` log rotation it implements work with either.
+//!
+//! To build a binary against the `ftlog` backend without editing manifests:
+//! `cargo build -p agave-validator --features agave-logger/ftlog`
+use std::path::{Path, PathBuf};
 
-static LOGGER: LazyLock<Arc<RwLock<env_logger::Logger>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(env_logger::Logger::from_default_env())));
+#[cfg_attr(feature = "ftlog", path = "ftlog_backend.rs")]
+#[cfg_attr(not(feature = "ftlog"), path = "env_logger_backend.rs")]
+mod backend;
 
 pub const DEFAULT_FILTER: &str = "solana=info,agave=info";
-
-struct LoggerShim {}
-
-impl log::Log for LoggerShim {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        LOGGER.read().unwrap().enabled(metadata)
-    }
-
-    fn log(&self, record: &log::Record) {
-        LOGGER.read().unwrap().log(record);
-    }
-
-    fn flush(&self) {}
-}
-
-fn replace_logger(logger: env_logger::Logger) {
-    log::set_max_level(logger.filter());
-    *LOGGER.write().unwrap() = logger;
-    let _ = log::set_boxed_logger(Box::new(LoggerShim {}));
-}
 
 // Configures logging with a specific filter overriding RUST_LOG.  _RUST_LOG is used instead
 // so if set it takes precedence.
 // May be called at any time to re-configure the log filter
 pub fn setup_with(filter: &str) {
-    let logger =
-        env_logger::Builder::from_env(env_logger::Env::new().filter_or("_RUST_LOG", filter))
-            .format_timestamp_nanos()
-            .build();
-    replace_logger(logger);
+    backend::install("_RUST_LOG", filter);
 }
 
 // Configures logging with a default filter if RUST_LOG is not set
 pub fn setup_with_default(filter: &str) {
-    let logger = env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(filter))
-        .format_timestamp_nanos()
-        .build();
-    replace_logger(logger);
+    backend::install("RUST_LOG", filter);
 }
 
 // Configures logging with the `DEFAULT_FILTER` if RUST_LOG is not set
@@ -59,21 +37,17 @@ pub fn setup() {
     setup_with_default("error");
 }
 
+// Waits for pending log messages to be written out. With the `ftlog` backend
+// messages are written by a background thread and are otherwise lost when the
+// process exits without flushing.
+pub fn flush() {
+    log::logger().flush();
+}
+
 // Configures file logging with a default filter if RUST_LOG is not set
 #[cfg(not(unix))]
 fn setup_file_with_default_filter(logfile: &Path) {
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(logfile)
-        .unwrap();
-
-    let logger =
-        env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(DEFAULT_FILTER))
-            .format_timestamp_nanos()
-            .target(env_logger::Target::Pipe(Box::new(file)))
-            .build();
-    replace_logger(logger);
+    backend::install_to_file("RUST_LOG", DEFAULT_FILTER, logfile);
 }
 
 #[cfg(unix)]
