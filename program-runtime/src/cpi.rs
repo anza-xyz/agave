@@ -102,6 +102,56 @@ struct SolAccountInfo {
     pub executable: bool,
 }
 
+/// Stable BPF representation of Rust [`solana_account_info::AccountInfo`].
+#[derive(Debug)]
+#[repr(C)]
+pub struct StableAccountInfo {
+    key_addr: u64,
+    /// This address is pointing at `Rc<RefCell<T>>`'s internal data first. Use the
+    /// [`StableAccountInfo::lamports_addr()`] method to get the pointer to contained `T`.
+    lamports_addr: u64,
+    /// This address is pointing at `Rc<RefCell<T>>`'s internal data first. Use the
+    /// [`StableAccountInfo::data_addr()`] method to get the pointer to contained `T`.
+    data_addr: u64,
+    owner_addr: u64,
+    _unused: u64,
+    _is_signer: u8,
+    _is_writable: u8,
+    _executable: u8,
+}
+
+impl StableAccountInfo {
+    fn lamports_addr(&self) -> u64 {
+        self.lamports_addr.wrapping_add(24)
+    }
+    fn data_addr(&self) -> u64 {
+        self.data_addr.wrapping_add(24)
+    }
+    fn data_len_addr(&self) -> u64 {
+        self.data_addr.wrapping_add(32)
+    }
+}
+
+const _FOR_NOW_THESE_ARE_THE_SAME_BUT_IF_ACCOUNT_INFO_CHANGES_SDK_HAS_TO_FIX_IT: () = const {
+    assert!(mem::offset_of!(StableAccountInfo, key_addr) == mem::offset_of!(AccountInfo, key));
+    assert!(
+        mem::offset_of!(StableAccountInfo, lamports_addr) == mem::offset_of!(AccountInfo, lamports)
+    );
+    assert!(mem::offset_of!(StableAccountInfo, data_addr) == mem::offset_of!(AccountInfo, data));
+    assert!(mem::offset_of!(StableAccountInfo, owner_addr) == mem::offset_of!(AccountInfo, owner));
+    assert!(
+        mem::offset_of!(StableAccountInfo, _is_signer) == mem::offset_of!(AccountInfo, is_signer)
+    );
+    assert!(
+        mem::offset_of!(StableAccountInfo, _is_writable)
+            == mem::offset_of!(AccountInfo, is_writable)
+    );
+    assert!(
+        mem::offset_of!(StableAccountInfo, _executable) == mem::offset_of!(AccountInfo, executable)
+    );
+    assert!(mem::size_of::<StableAccountInfo>() == mem::size_of::<AccountInfo>());
+};
+
 /// Maximum number of account info structs that can be used in a single CPI invocation
 const MAX_CPI_ACCOUNT_INFOS: usize = 255;
 
@@ -274,7 +324,7 @@ impl<'a> CallerAccount<'a> {
         memory_mapping: &MemoryMapping,
         check_aligned: bool,
         _vm_addr: u64,
-        account_info: &solana_account_info::AccountInfo,
+        account_info: &StableAccountInfo,
         account_metadata: &crate::memory_context::SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::{translate_type, translate_type_mut_for_cpi};
@@ -291,13 +341,13 @@ impl<'a> CallerAccount<'a> {
         if syscall_parameter_address_restrictions {
             check_account_info_pointer(
                 invoke_context,
-                account_info.key as *const _ as u64,
+                account_info.key_addr,
                 account_metadata.vm_key_addr,
                 "key",
             )?;
             check_account_info_pointer(
                 invoke_context,
-                account_info.owner as *const _ as u64,
+                account_info.owner_addr,
                 account_metadata.vm_owner_addr,
                 "owner",
             )?;
@@ -307,13 +357,10 @@ impl<'a> CallerAccount<'a> {
         // in vm space so they need to be translated.
         let lamports = {
             // Double translate lamports out of RefCell
-            let ptr = translate_type::<u64>(
-                memory_mapping,
-                account_info.lamports.as_ptr() as u64,
-                check_aligned,
-            )?;
+            let ptr =
+                translate_type::<u64>(memory_mapping, account_info.lamports_addr(), check_aligned)?;
             if syscall_parameter_address_restrictions {
-                if account_info.lamports.as_ptr() as u64 >= solana_sbpf::ebpf::MM_INPUT_START {
+                if account_info.lamports_addr() >= solana_sbpf::ebpf::MM_INPUT_START {
                     return Err(Box::new(CpiError::InvalidPointer));
                 }
 
@@ -329,23 +376,20 @@ impl<'a> CallerAccount<'a> {
 
         let owner = translate_type_mut_for_cpi::<Pubkey>(
             memory_mapping,
-            account_info.owner as *const _ as u64,
+            account_info.owner_addr,
             check_aligned,
         )?;
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
             if syscall_parameter_address_restrictions
-                && account_info.data.as_ptr() as u64 >= solana_sbpf::ebpf::MM_INPUT_START
+                && account_info.data_addr() >= solana_sbpf::ebpf::MM_INPUT_START
             {
                 return Err(Box::new(CpiError::InvalidPointer));
             }
 
             // Double translate data out of RefCell
-            let data = *translate_type::<&[u8]>(
-                memory_mapping,
-                account_info.data.as_ptr() as *const _ as u64,
-                check_aligned,
-            )?;
+            let data =
+                *translate_type::<&[u8]>(memory_mapping, account_info.data_addr(), check_aligned)?;
             if syscall_parameter_address_restrictions {
                 check_account_info_pointer(
                     invoke_context,
@@ -362,18 +406,19 @@ impl<'a> CallerAccount<'a> {
                 )?;
             }
 
-            let vm_len_addr = (account_info.data.as_ptr() as *const u64 as u64)
-                .saturating_add(std::mem::size_of::<u64>() as u64);
             if syscall_parameter_address_restrictions {
                 // In the same vein as the other check_account_info_pointer() checks, we don't lock
                 // this pointer to a specific address but we don't want it to be inside accounts, or
                 // callees might be able to write to the pointed memory.
-                if vm_len_addr >= solana_sbpf::ebpf::MM_INPUT_START {
+                if account_info.data_len_addr() >= solana_sbpf::ebpf::MM_INPUT_START {
                     return Err(Box::new(CpiError::InvalidPointer));
                 }
             }
-            let ref_to_len_in_vm =
-                translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
+            let ref_to_len_in_vm = translate_type_mut_for_cpi::<u64>(
+                memory_mapping,
+                account_info.data_len_addr(),
+                false,
+            )?;
             let vm_data_addr = data.as_ptr() as u64;
             let serialized_data = unsafe {
                 CallerAccount::get_serialized_data(
@@ -610,7 +655,7 @@ pub fn translate_accounts_rust<'a>(
     translate_account_infos(
         account_infos_addr,
         account_infos_len,
-        |account_info: &AccountInfo| account_info.key as *const _ as u64,
+        |account_info: &StableAccountInfo| account_info.key_addr,
         invoke_context,
         memory_mapping,
         check_aligned,
@@ -1998,7 +2043,8 @@ mod tests {
         let memory_mapping =
             unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
 
-        let account_info = translate_type::<AccountInfo>(&memory_mapping, vm_addr, false).unwrap();
+        let account_info =
+            translate_type::<StableAccountInfo>(&memory_mapping, vm_addr, false).unwrap();
 
         invoke_context
             .memory_contexts
