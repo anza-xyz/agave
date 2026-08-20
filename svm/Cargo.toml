@@ -102,7 +102,7 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instruction-error = { workspace = true, optional = true }
 solana-instructions-sysvar = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
+solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true, features = ["wincode"] }
@@ -142,7 +142,7 @@ assert_matches = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 rand = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
@@ -151,6 +151,7 @@ solana-compute-budget-program = { path = "../programs/compute-budget", features 
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-native-token = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }

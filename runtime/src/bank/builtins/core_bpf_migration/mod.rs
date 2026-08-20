@@ -8,7 +8,9 @@ use {
     crate::bank::{Bank, builtins::core_bpf_migration::target_bpf_v2::TargetBpfV2},
     error::CoreBpfMigrationError,
     num_traits::{CheckedAdd, CheckedSub},
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,

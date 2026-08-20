@@ -7,7 +7,9 @@ use {
         create_custom_loader, deploy_program_with_upgrade_authority, load_program, program_address,
         program_data_size, register_builtins,
     },
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -2896,6 +2898,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
             &buffer_address,
             &fee_payer,
             &Pubkey::new_unique(),
+            true,
         )
     } else {
         loaderv3_instruction::close_any(
@@ -2903,6 +2906,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
             &Pubkey::new_unique(),
             Some(&fee_payer),
             Some(&program_id),
+            false,
         )
     };
 
@@ -3014,8 +3018,13 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     test_entry.drop_expected_account(deploy);
 
     // close the buffer
-    let close_instruction =
-        loaderv3_instruction::close_any(&target, &Pubkey::new_unique(), Some(&fee_payer), None);
+    let close_instruction = loaderv3_instruction::close_any(
+        &target,
+        &Pubkey::new_unique(),
+        Some(&fee_payer),
+        None,
+        false,
+    );
 
     // reopen as a program
     #[allow(deprecated)]
@@ -3026,6 +3035,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
         &fee_payer,
         LAMPORTS_PER_SOL,
         buffer_data.len(),
+        true,
     )
     .unwrap();
 
@@ -3271,6 +3281,7 @@ fn program_cache_stats() {
             &buffer_address,
             &fee_payer,
             &Pubkey::new_unique(),
+            true,
         )],
         Some(&fee_payer),
         &[&fee_payer_keypair],

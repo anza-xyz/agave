@@ -396,7 +396,7 @@ pub(crate) mod tests {
         epoch: solana_clock::Epoch,
     ) -> solana_vote::vote_account::VoteAccount {
         use {
-            solana_account::AccountSharedData,
+            solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
             solana_vote_program::vote_state::{VoteInit, VoteStateV4, VoteStateVersions},
         };
 

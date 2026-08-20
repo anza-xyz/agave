@@ -188,7 +188,7 @@ agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }
-solana-account = "4.6.0"
+solana-account = { version = "4.6.0", features = ["wincode"] }
 solana-account-info = "3.1.0"
 solana-client-traits = "4.0.0"
 solana-clock = "3.0.0"
@@ -204,7 +204,7 @@ solana-fee-structure = "4.0.0"
 solana-hash = "4.3.0"
 solana-instruction = { workspace = true }
 solana-keypair = "3.1.2"
-solana-loader-v3-interface = "7.0.0"
+solana-loader-v3-interface = { version = "8.1.1", features = ["serde", "wincode"] }
 solana-message = "4.1.0"
 solana-program-binaries = { workspace = true, features = ["agave-unstable-api"] }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
@@ -219,7 +219,7 @@ solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sdk-ids = "3.1.0"
 solana-signer = "3.0.0"
-solana-stake-history = { workspace = true }
+solana-stake-history = { workspace = true, features = ["wincode"] }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 solana-svm-feature-set = { workspace = true }
 solana-svm-timings = { workspace = true }

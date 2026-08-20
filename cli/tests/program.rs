@@ -2177,6 +2177,7 @@ async fn test_cli_program_write_buffer() {
             &keypair.pubkey(),
             Some(&keypair.pubkey()),
             None,
+            false,
         )],
         Some(&keypair.pubkey()),
     );

@@ -197,7 +197,7 @@ bencher = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
 serial_test = { workspace = true }
-solana-account = { workspace = true, features = ["bincode", "wincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api", "svm-internal"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-compute-budget = { workspace = true }
@@ -208,7 +208,7 @@ solana-cost-model = { path = "../cost-model", features = ["agave-unstable-api", 
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-loader-v3-interface = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["serde", "wincode"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-poh = { path = "../poh", features = ["agave-unstable-api", "dev-context-only-utils"] }

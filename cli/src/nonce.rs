@@ -746,7 +746,7 @@ mod tests {
     use {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
-        solana_account::{Account, WritableAccount},
+        solana_account::{Account, WritableAccount, state_traits::StateMutWincode as _},
         solana_keypair::{Keypair, read_keypair_file, write_keypair},
         solana_nonce::{
             self as nonce,
@@ -1078,9 +1078,10 @@ mod tests {
             assert_eq!(err, Error::InvalidAccountOwner,);
         }
 
-        let invalid_data = Account::new_data(1, &"invalid", &system_program::ID);
+        // Data that is not a valid nonce `Versions` at all.
+        let invalid_data = Account::new_with_data(1, b"invalid".to_vec(), &system_program::ID);
         if let CliError::InvalidNonce(err) =
-            check_nonce_account(&invalid_data.unwrap(), &nonce_pubkey, &blockhash).unwrap_err()
+            check_nonce_account(&invalid_data, &nonce_pubkey, &blockhash).unwrap_err()
         {
             assert_eq!(err, Error::InvalidAccountData,);
         }

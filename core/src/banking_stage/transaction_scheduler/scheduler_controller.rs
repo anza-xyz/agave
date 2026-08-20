@@ -563,7 +563,7 @@ mod tests {
         },
         crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
