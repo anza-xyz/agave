@@ -2454,8 +2454,8 @@ fn test_full_clean_refcount_first() {
 }
 
 #[test]
-#[should_panic(expected = "exhaustively_verify_index failed")]
-fn test_exhaustively_verify_index_small_dataset_detects_mismatch() {
+#[should_panic(expected = "verify_index failed")]
+fn test_verify_index_small_dataset_detects_mismatch() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 0;
     let pubkey = Pubkey::new_unique();
@@ -2471,7 +2471,7 @@ fn test_exhaustively_verify_index_small_dataset_detects_mismatch() {
         (false, ())
     });
 
-    accounts.exhaustively_verify_index(Some(slot + 1));
+    accounts.verify_index(Some(slot + 1));
 }
 
 #[test]

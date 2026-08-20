@@ -947,7 +947,7 @@ pub struct AccountsDb {
     pub(crate) active_stats: ActiveStats,
 
     /// debug feature to scan every storage and verify the index matches
-    exhaustively_verify_index: bool,
+    verify_index: bool,
 
     /// storage format to use for new storages
     accounts_file_provider: AccountsFileProvider,
@@ -1105,7 +1105,7 @@ impl AccountsDb {
             ),
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
-            exhaustively_verify_index: accounts_db_config.exhaustively_verify_index,
+            verify_index: accounts_db_config.verify_index,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
             thread_pool_foreground,
             thread_pool_background,
@@ -1503,8 +1503,8 @@ impl AccountsDb {
     /// this is very slow
     /// this function will call Rayon par_iter, so you will want to have thread pool installed if
     /// you want to call this without consuming all the cores on the CPU.
-    fn exhaustively_verify_index(&self, max_slot_inclusive: Option<Slot>) {
-        info!("exhaustively verifying index as of slot: {max_slot_inclusive:?}");
+    fn verify_index(&self, max_slot_inclusive: Option<Slot>) {
+        info!("verifying index as of slot: {max_slot_inclusive:?}");
         let pubkey_slot_lists = DashMap::<Pubkey, Vec<Slot>, PubkeyHasherBuilder>::default();
         let mut storages = self.storage.all_storages();
         // Flush is not running while we verify, so storages are stable. With no slot bound we
@@ -1554,7 +1554,7 @@ impl AccountsDb {
                             let Some(index_entry) = index_entry else {
                                 failed.store(true, Ordering::Relaxed);
                                 error!(
-                                    "exhaustively_verify_index: {} has no index entry, storages: \
+                                    "verify_index: {} has no index entry, storages: \
                                      {storage_slots:?}",
                                     entry.key(),
                                 );
@@ -1578,9 +1578,9 @@ impl AccountsDb {
                             if index_slots != storage_slots {
                                 failed.store(true, Ordering::Relaxed);
                                 error!(
-                                    "exhaustively_verify_index: {} index slot list does not match \
-                                     storages: index: {index_slots:?}, storages: \
-                                     {storage_slots:?}, slot list: {:?}",
+                                    "verify_index: {} index slot list does not match storages: \
+                                     index: {index_slots:?}, storages: {storage_slots:?}, slot \
+                                     list: {:?}",
                                     entry.key(),
                                     slot_list,
                                 );
@@ -1590,7 +1590,7 @@ impl AccountsDb {
                 });
         });
         if failed.load(Ordering::Relaxed) {
-            panic!("exhaustively_verify_index failed");
+            panic!("verify_index failed");
         }
     }
 
@@ -1599,14 +1599,14 @@ impl AccountsDb {
     // Only remove those accounts where the entire rooted history of the account
     // can be purged because there are no live append vecs in the ancestors
     pub fn clean_accounts(&self, max_clean_root_inclusive: Option<Slot>, is_startup: bool) {
-        if self.exhaustively_verify_index {
+        if self.verify_index {
             //at startup use all cores to verify the index
             if is_startup {
-                self.exhaustively_verify_index(max_clean_root_inclusive);
+                self.verify_index(max_clean_root_inclusive);
             } else {
                 // otherwise, use the background thread pool
                 self.thread_pool_background
-                    .install(|| self.exhaustively_verify_index(max_clean_root_inclusive));
+                    .install(|| self.verify_index(max_clean_root_inclusive));
             }
         }
 
