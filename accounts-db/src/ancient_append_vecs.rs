@@ -9,8 +9,8 @@ use {
         account_storage::ShrinkInProgress,
         account_storage_entry::AccountStorageEntry,
         accounts_db::{
-            AccountFromStorage, AccountsDb, AliveAccounts, GetUniqueAccountsResult, ShrinkCollect,
-            ShrinkCollectAliveSeparatedByRefs,
+            AccountFromStorage, AccountsDb, AliveAccounts, AliveAccountsSeparated,
+            GetUniqueAccountsResult, ShrinkCollect,
             stats::{ShrinkAncientStats, SquashStatsSub},
         },
         active_stats::ActiveStatItem,
@@ -796,7 +796,7 @@ impl AccountsDb {
         let mut accounts_to_combine = accounts_per_storage
             .iter_mut()
             .map(|(info, unique_accounts)| {
-                self.shrink_collect::<ShrinkCollectAliveSeparatedByRefs<'_>>(
+                self.shrink_collect::<AliveAccountsSeparated<'_>>(
                     &info.storage,
                     unique_accounts,
                     &self.shrink_ancient_stats.shrink_stats,
@@ -983,7 +983,7 @@ struct AccountsToCombine<'a> {
     /// all the rest of alive accounts that can move slots and should be combined
     /// This includes all accounts with ref_count = 1 from the slots in 'accounts_keep_slots'.
     /// There is one entry here for each storage we are processing. Even if all accounts are in 'accounts_keep_slots'.
-    accounts_to_combine: Vec<ShrinkCollect<ShrinkCollectAliveSeparatedByRefs<'a>>>,
+    accounts_to_combine: Vec<ShrinkCollect<AliveAccountsSeparated<'a>>>,
     /// slots that contain alive accounts that can move into ANY other ancient slot
     /// these slots will NOT be in 'accounts_keep_slots'
     /// Some of these slots will have ancient append vecs created at them to contain everything in 'accounts_to_combine'
@@ -3761,8 +3761,7 @@ mod tests {
                 let slot = 1;
                 let capacity = 0;
                 for i in 0..4usize {
-                    let mut alive_accounts =
-                        ShrinkCollectAliveSeparatedByRefs::with_capacity(capacity, slot);
+                    let mut alive_accounts = AliveAccountsSeparated::with_capacity(capacity, slot);
                     let lamports = 1;
 
                     match i {

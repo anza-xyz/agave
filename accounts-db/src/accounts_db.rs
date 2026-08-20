@@ -144,7 +144,7 @@ pub(crate) struct AliveAccounts<'a> {
 
 /// separate alive accounts by whether a newer duplicate of the account exists
 #[derive(Debug)]
-pub(crate) struct ShrinkCollectAliveSeparatedByRefs<'a> {
+pub(crate) struct AliveAccountsSeparated<'a> {
     /// can be packed into any slot
     pub(crate) no_duplicates: AliveAccounts<'a>,
     /// can only be packed into a slot >= this one
@@ -199,7 +199,7 @@ impl<'a> ShrinkCollector<'a> for AliveAccounts<'a> {
     }
 }
 
-impl<'a> ShrinkCollector<'a> for ShrinkCollectAliveSeparatedByRefs<'a> {
+impl<'a> ShrinkCollector<'a> for AliveAccountsSeparated<'a> {
     fn collect(&mut self, other: Self) {
         self.no_duplicates.collect(other.no_duplicates);
         self.newest_duplicate.collect(other.newest_duplicate);
