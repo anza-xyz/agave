@@ -16,7 +16,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{LruCache, verify_shred_with_leader},
+        sigverify_shreds::verify_shred_with_leader,
     },
     solana_perf::{
         self,
@@ -38,9 +38,6 @@ use {
     },
     thiserror::Error,
 };
-
-// 34MB where each cache entry is 136 bytes.
-const SIGVERIFY_LRU_CACHE_CAPACITY: usize = 1 << 18;
 
 const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 const DEDUPER_NUM_BITS: u64 = 637_534_199; // 76MB
@@ -85,7 +82,6 @@ pub fn spawn_shred_sigverify(
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
     let mut stats = ShredSigVerifyStats::new(Instant::now());
-    let cache = RwLock::new(LruCache::new(SIGVERIFY_LRU_CACHE_CAPACITY));
     let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
         CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
         CLUSTER_NODES_CACHE_TTL,
@@ -118,7 +114,6 @@ pub fn spawn_shred_sigverify(
                 &verified_sender,
                 &cluster_nodes_cache,
                 repair_nonce_location_lookup.as_ref(),
-                &cache,
                 &mut stats,
                 &mut shred_buffer,
             ) {
@@ -149,7 +144,6 @@ fn run_shred_sigverify<const K: usize>(
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     repair_nonce_location_lookup: &RepairNonceLocationLookup,
-    cache: &RwLock<LruCache>,
     stats: &mut ShredSigVerifyStats,
     shred_buffer: &mut Vec<PacketBatch>,
 ) -> Result<(), ShredSigverifyError> {
@@ -233,7 +227,6 @@ fn run_shred_sigverify<const K: usize>(
                             packet.as_ref(),
                             &working_bank,
                             leader_schedule_cache,
-                            cache,
                         )
                     {
                         packet.meta_mut().set_discard(true);
@@ -468,7 +461,6 @@ fn verify_packet_signature(
     packet: PacketRef,
     working_bank: &Bank,
     leader_schedule_cache: &LeaderScheduleCache,
-    cache: &RwLock<LruCache>,
 ) -> bool {
     if packet.meta().discard() {
         return false;
@@ -486,7 +478,7 @@ fn verify_packet_signature(
     else {
         return false;
     };
-    verify_shred_with_leader(packet, &leader, cache)
+    verify_shred_with_leader(packet, &leader)
 }
 
 fn count_discards(packets: &[PacketBatch]) -> usize {
@@ -686,7 +678,6 @@ mod tests {
         batches[0][1].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][1].meta_mut().size = shred.payload().len();
 
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let working_bank = bank_forks.read().unwrap().working_bank();
         let batches = batches
             .into_iter()
@@ -697,14 +688,12 @@ mod tests {
             batches[0].get(0).unwrap(),
             &working_bank,
             &leader_schedule_cache,
-            &cache,
         ));
         assert!(!verify_packet_signature(
             &Pubkey::new_unique(), // self_pubkey
             batches[0].get(1).unwrap(),
             &working_bank,
             &leader_schedule_cache,
-            &cache,
         ));
     }
 
