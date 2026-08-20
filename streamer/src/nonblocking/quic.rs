@@ -802,7 +802,10 @@ fn handle_chunks(
         stats
             .total_packet_batches_none
             .fetch_add(1, Ordering::Relaxed);
-        return Err(());
+        // An empty stream carries no transaction; treat it as a finished stream
+        // instead of an invalid one. Closing the whole connection here would
+        // abort all other in-flight streams on this connection.
+        return Ok(StreamState::Finished);
     }
 
     // done receiving chunks
@@ -2206,6 +2209,41 @@ pub mod test {
             _ => panic!("unexpected close"),
         }
         assert_eq!(stats.invalid_stream_size.load(Ordering::Relaxed), 1);
+        cancel.cancel();
+        join_handle.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_client_connection_empty_stream_does_not_close_connection() {
+        let SpawnTestServerResult {
+            join_handle,
+            receiver,
+            server_address,
+            stats,
+            cancel,
+            ..
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
+
+        let client_connection = make_client_endpoint(&server_address, None).await;
+
+        // Finish an empty uni-stream (no data) on the connection.
+        let mut empty_stream = client_connection.open_uni().await.unwrap();
+        empty_stream.finish().unwrap();
+
+        // A valid stream on the same connection must still be accepted: an empty
+        // stream is not an invalid stream and must not close the connection.
+        let num_bytes = PACKET_DATA_SIZE;
+        let mut send_stream = client_connection.open_uni().await.unwrap();
+        send_stream.write_all(&vec![42; num_bytes]).await.unwrap();
+        send_stream.finish().unwrap();
+
+        check_received_packets(receiver, 1, num_bytes).await;
+        assert_eq!(stats.total_packet_batches_none.load(Ordering::Relaxed), 1);
+
         cancel.cancel();
         join_handle.await.unwrap();
     }
