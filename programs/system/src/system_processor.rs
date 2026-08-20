@@ -579,8 +579,7 @@ mod tests {
     #[allow(deprecated)]
     use {
         solana_account::{
-            Account, AccountSharedData, ReadableAccount, WritableAccount,
-            state_traits::StateMutWincode as _,
+            Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
         },
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
@@ -598,25 +597,8 @@ mod tests {
             recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes},
             rent::Rent,
         },
-        solana_sysvar_id::SysvarId,
+        solana_sysvar_account::create_sysvar_account,
     };
-
-    fn create_sysvar_account<T>(value: &T) -> AccountSharedData
-    where
-        T: wincode::Serialize<Src = T> + SysvarId,
-    {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
-        let canonical_data_len = match T::id() {
-            sysvar::recent_blockhashes::ID => sysvar::recent_blockhashes::SIZE,
-            sysvar::rent::ID => solana_rent::SIZE,
-            id => panic!("unsupported sysvar: {id}"),
-        };
-        let required_data_len = canonical_data_len.max(serialized_len);
-        let mut account =
-            AccountSharedData::new(1, required_data_len, &solana_sdk_ids::sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
-    }
 
     impl From<Pubkey> for Address {
         fn from(address: Pubkey) -> Self {
