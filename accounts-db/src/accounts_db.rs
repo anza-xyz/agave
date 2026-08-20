@@ -3912,16 +3912,10 @@ impl AccountsDb {
             .collect();
 
         if !accounts.is_empty() {
-            // This ensures that all updates are written to an AppendVec, before any
-            // updates to the index happen, so anybody that sees a real entry in the index,
-            // will be able to find the account in storage
-            let flushed_store = Arc::new(self.create_store(slot, flush_stats.num_bytes_stored.0));
-            self.storage.insert(Arc::clone(&flushed_store));
-
             let (store_accounts_for_flush_stats, store_accounts_for_flush_us) =
                 measure_us!(self.store_accounts_for_flush(
                     (slot, &accounts[..]),
-                    &flushed_store,
+                    flush_stats.num_bytes_stored.0,
                     reclaim_method,
                 ));
             flush_stats.accumulate_store_accounts_for_flush(store_accounts_for_flush_stats);
@@ -4713,7 +4707,7 @@ impl AccountsDb {
         new_storage.batch_insert_tombstone_offsets(tombstone_infos.iter().map(|info| info.offset()))
     }
 
-    /// Stores accounts in the storage and updates the index.
+    /// Stores accounts into a new storage and updates the index.
     /// This function is intended for accounts that are being flushed (moving from the cache to storage)
     /// - `UpsertReclaims` determines whether to reclaim old slots. If `ReclaimOldSlots` is used, all
     ///   old versions of the account are reclaimed. If `IgnoreReclaims` is used, old versions of the
@@ -4721,17 +4715,24 @@ impl AccountsDb {
     fn store_accounts_for_flush<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        storage: &AccountStorageEntry,
+        size_for_new_storage: u64,
         reclaim_handling: UpsertReclaim,
     ) -> StoreAccountsForFlushStats {
         let slot = accounts.target_slot();
 
         debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
 
+        let storage = self.create_store(slot, size_for_new_storage);
+
         // Write the accounts to storage
         let write_accounts_time = Measure::start("write_accounts");
-        let infos = self.write_accounts_to_storage(slot, storage, &accounts);
+        let infos = self.write_accounts_to_storage(slot, &storage, &accounts);
         let write_accounts_us = write_accounts_time.end_as_us();
+
+        // This ensures that all updates are written to storage, before any
+        // updates to the index happen, so anybody that sees a real entry in the index,
+        // will be able to find the account in storage.
+        self.storage.insert(Arc::new(storage));
 
         let update_index_time = Measure::start("update_index");
         let reclaims = self.update_index_for_flush(infos, &accounts, reclaim_handling);
