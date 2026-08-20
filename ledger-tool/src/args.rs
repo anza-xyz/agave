@@ -97,7 +97,7 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
         Arg::with_name("accounts_db_verify_index")
             .long("accounts-db-verify-index")
             .help(
-                "Debug option to scan all AppendVecs and verify account index slot lists prior to \
+                "Debug option to scan all storages and verify account index slot lists prior to \
                  clean",
             )
             .hidden(hidden_unless_forced()),

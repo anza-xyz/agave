@@ -955,8 +955,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("accounts_db_verify_index")
             .long("accounts-db-verify-index")
             .help(
-                "Debug option to scan all append vecs and verify account index slot lists prior \
-                 to clean",
+                "Debug option to scan all storages and verify account index slot lists prior to \
+                 clean",
             )
             .hidden(hidden_unless_forced()),
     )
