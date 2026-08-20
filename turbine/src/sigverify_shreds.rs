@@ -18,7 +18,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{LruCache, SlotPubkeys, par_verify_shreds},
+        sigverify_shreds::{SlotPubkeys, par_verify_shreds},
     },
     solana_perf::{
         self,
@@ -40,9 +40,6 @@ use {
     },
     thiserror::Error,
 };
-
-// 34MB where each cache entry is 136 bytes.
-const SIGVERIFY_LRU_CACHE_CAPACITY: usize = 1 << 18;
 
 const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 const DEDUPER_NUM_BITS: u64 = 637_534_199; // 76MB
@@ -91,7 +88,6 @@ pub fn spawn_shred_sigverify(
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
     let mut stats = ShredSigVerifyStats::new(Instant::now());
-    let cache = RwLock::new(LruCache::new(SIGVERIFY_LRU_CACHE_CAPACITY));
     let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
         CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
         CLUSTER_NODES_CACHE_TTL,
@@ -124,7 +120,6 @@ pub fn spawn_shred_sigverify(
                 &verified_sender,
                 &cluster_nodes_cache,
                 repair_nonce_location_lookup.as_ref(),
-                &cache,
                 &mut stats,
                 &mut shred_buffer,
             ) {
@@ -155,7 +150,6 @@ fn run_shred_sigverify<const K: usize>(
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     repair_nonce_location_lookup: &RepairNonceLocationLookup,
-    cache: &RwLock<LruCache>,
     stats: &mut ShredSigVerifyStats,
     shred_buffer: &mut Vec<PacketBatch>,
 ) -> Result<(), ShredSigverifyError> {
@@ -212,7 +206,6 @@ fn run_shred_sigverify<const K: usize>(
             &working_bank,
             leader_schedule_cache,
             shred_buffer,
-            cache,
         )
     });
     stats.num_discards_post += count_discards(shred_buffer);
@@ -424,14 +417,13 @@ fn par_verify_packets(
     working_bank: &Bank,
     leader_schedule_cache: &LeaderScheduleCache,
     packets: &mut [PacketBatch],
-    cache: &RwLock<LruCache>,
 ) {
     let leader_slots: SlotPubkeys =
         get_slot_leaders(self_pubkey, packets, leader_schedule_cache, working_bank)
             .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
             .chain(std::iter::once((Slot::MAX, Pubkey::default())))
             .collect();
-    par_verify_shreds(packets, &leader_slots, cache);
+    par_verify_shreds(packets, &leader_slots);
 }
 
 // Returns pubkey of leaders for shred slots referenced in the packets.
@@ -653,7 +645,6 @@ mod tests {
         ]);
         let batches = vec![batch];
 
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let working_bank = bank_forks.read().unwrap().working_bank();
         let mut batches = batches
@@ -666,7 +657,6 @@ mod tests {
                 &working_bank,
                 &leader_schedule_cache,
                 &mut batches,
-                &cache,
             )
         });
         assert!(!batches[0].first().unwrap().meta().discard());
