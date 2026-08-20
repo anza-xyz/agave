@@ -498,7 +498,7 @@ impl AccountsDb {
                 accounts_to_combine
                     .accounts_to_combine
                     .iter()
-                    .map(|shrink_collect| &shrink_collect.alive_accounts.one_ref),
+                    .map(|shrink_collect| &shrink_collect.alive_accounts.no_duplicates),
             ),
             tuning.ideal_storage_size,
         );
@@ -878,7 +878,11 @@ impl AccountsDb {
                 // This would fail the invariant that the highest slot # where an account exists defines the most recent account.
                 // It could be a clean error or a transient condition that will resolve if we encounter this situation.
                 // The count of these accounts per call will be reported by metrics in `unpackable_slots_count`
-                if shrink_collect.alive_accounts.one_ref.accounts.is_empty()
+                if shrink_collect
+                    .alive_accounts
+                    .no_duplicates
+                    .accounts
+                    .is_empty()
                     && shrink_collect
                         .alive_accounts
                         .many_refs_this_is_newest_alive
@@ -2009,7 +2013,7 @@ mod tests {
                             } else {
                                 vec![]
                             };
-                            // all accounts should be in one_ref and all slots are available as target slots
+                            // all accounts should be in no_duplicates and all slots are available as target slots
                             assert_eq!(
                                 accounts_to_combine.target_slots_sorted,
                                 expected_target_slots_sorted,
@@ -2027,7 +2031,11 @@ mod tests {
                             if two_refs {
                                 assert!(accounts_to_combine.accounts_to_combine.iter().all(
                                     |shrink_collect| {
-                                        shrink_collect.alive_accounts.one_ref.accounts.is_empty()
+                                        shrink_collect
+                                            .alive_accounts
+                                            .no_duplicates
+                                            .accounts
+                                            .is_empty()
                                     }
                                 ));
                                 assert!(accounts_to_combine.accounts_to_combine.iter().all(
@@ -2042,7 +2050,11 @@ mod tests {
                             } else {
                                 assert!(accounts_to_combine.accounts_to_combine.iter().all(
                                     |shrink_collect| {
-                                        !shrink_collect.alive_accounts.one_ref.accounts.is_empty()
+                                        !shrink_collect
+                                            .alive_accounts
+                                            .no_duplicates
+                                            .accounts
+                                            .is_empty()
                                     }
                                 ));
                                 assert!(accounts_to_combine.accounts_to_combine.iter().all(
@@ -2161,7 +2173,7 @@ mod tests {
             .first()
             .unwrap()
             .alive_accounts
-            .one_ref
+            .no_duplicates
             .accounts;
         let one_ref_accounts_account_shared_data = one_ref_accounts
             .iter()
@@ -2342,7 +2354,7 @@ mod tests {
             .first()
             .unwrap()
             .alive_accounts
-            .one_ref
+            .no_duplicates
             .accounts;
         let one_ref_accounts_account_shared_data = one_ref_accounts
             .iter()
@@ -3761,7 +3773,7 @@ mod tests {
                             // empty slot list (ignored anyway) because ref_count = 1
                             let slot_list = vec![];
                             alive_accounts.add(1, &account, &slot_list);
-                            assert!(!alive_accounts.one_ref.accounts.is_empty());
+                            assert!(!alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
                             assert!(
                                 alive_accounts
@@ -3780,7 +3792,7 @@ mod tests {
                                 ),
                             )];
                             alive_accounts.add(2, &account, &slot_list);
-                            assert!(alive_accounts.one_ref.accounts.is_empty());
+                            assert!(alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
                             assert!(
                                 !alive_accounts
@@ -3808,7 +3820,7 @@ mod tests {
                                 ),
                             ];
                             alive_accounts.add(2, &account, &slot_list);
-                            assert!(alive_accounts.one_ref.accounts.is_empty());
+                            assert!(alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(!alive_accounts.many_refs_old_alive.accounts.is_empty());
                             assert!(
                                 alive_accounts
@@ -3836,7 +3848,7 @@ mod tests {
                                 ),
                             ];
                             alive_accounts.add(2, &account, &slot_list);
-                            assert!(alive_accounts.one_ref.accounts.is_empty());
+                            assert!(alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
                             assert!(
                                 !alive_accounts
