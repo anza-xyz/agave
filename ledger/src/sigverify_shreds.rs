@@ -1,7 +1,7 @@
 #![allow(clippy::implicit_hasher)]
 use {
     crate::shred,
-    rayon::{ThreadPool, prelude::*},
+    rayon::prelude::*,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_nohash_hasher::BuildNoHashHasher,
@@ -55,17 +55,6 @@ pub fn verify_shred_cpu(
     }
 }
 
-pub fn verify_shreds(
-    thread_pool: &ThreadPool,
-    batches: &mut [PacketBatch],
-    slot_leaders: &SlotPubkeys,
-    cache: &RwLock<LruCache>,
-) {
-    thread_pool.install(|| {
-        par_verify_shreds(batches, slot_leaders, cache);
-    });
-}
-
 pub fn par_verify_shreds(
     batches: &mut [PacketBatch],
     slot_leaders: &SlotPubkeys,
@@ -111,7 +100,7 @@ mod tests {
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::{Rng, seq::SliceRandom},
-        rayon::ThreadPoolBuilder,
+        rayon::{ThreadPool, ThreadPoolBuilder},
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -123,6 +112,17 @@ mod tests {
         std::iter::{once, repeat_with},
         test_case::test_case,
     };
+
+    fn verify_shreds(
+        thread_pool: &ThreadPool,
+        batches: &mut [PacketBatch],
+        slot_leaders: &SlotPubkeys,
+        cache: &RwLock<LruCache>,
+    ) {
+        thread_pool.install(|| {
+            par_verify_shreds(batches, slot_leaders, cache);
+        });
+    }
 
     fn sign_shreds(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
         thread_pool.install(|| {
