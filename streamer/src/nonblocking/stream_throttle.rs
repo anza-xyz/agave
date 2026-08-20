@@ -175,9 +175,10 @@ impl StakedStreamLoadEMA {
                 if self.staked_throttling_enabled.load(Ordering::Relaxed) {
                     // 1 is added to `max_unstaked_load_in_throttling_window` to guarantee that staked
                     // clients get at least 1 more number of streams than unstaked connections.
-                    self.max_staked_load_in_throttling_window
-                        .saturating_mul(stake)
-                        .checked_div(total_stake)
+                    u128::from(self.max_staked_load_in_throttling_window)
+                        .saturating_mul(u128::from(stake))
+                        .checked_div(u128::from(total_stake))
+                        .and_then(|capacity| u64::try_from(capacity).ok())
                         .unwrap_or(self.max_unstaked_load_in_throttling_window + 1)
                         .max(self.max_unstaked_load_in_throttling_window + 1)
                 } else {
