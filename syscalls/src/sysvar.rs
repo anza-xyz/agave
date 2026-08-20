@@ -50,9 +50,11 @@ fn get_sysvar<T: SysvarId + Clone>(
     Ok(SUCCESS)
 }
 
-declare_builtin_function!(
-    /// Get a Clock sysvar
-    SyscallGetClockSysvar,
+/// Get a Clock sysvar
+pub struct SyscallGetClockSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetClockSysvar {
+    type Error = Error;
+
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -67,11 +69,12 @@ declare_builtin_function!(
             invoke_context,
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a EpochSchedule sysvar
-    SyscallGetEpochScheduleSysvar,
+/// Get a EpochSchedule sysvar
+pub struct SyscallGetEpochScheduleSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochScheduleSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -81,16 +84,20 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         get_sysvar(
-            invoke_context.environment_config.sysvar_cache().get_epoch_schedule(),
+            invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_epoch_schedule(),
             var_addr,
             invoke_context,
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a EpochRewards sysvar
-    SyscallGetEpochRewardsSysvar,
+/// Get a EpochRewards sysvar
+pub struct SyscallGetEpochRewardsSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochRewardsSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -100,16 +107,20 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         get_sysvar(
-            invoke_context.environment_config.sysvar_cache().get_epoch_rewards(),
+            invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_epoch_rewards(),
             var_addr,
             invoke_context,
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a Fees sysvar
-    SyscallGetFeesSysvar,
+/// Get a Fees sysvar
+pub struct SyscallGetFeesSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetFeesSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -127,11 +138,12 @@ declare_builtin_function!(
             )
         }
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a Rent sysvar
-    SyscallGetRentSysvar,
+/// Get a Rent sysvar
+pub struct SyscallGetRentSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetRentSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -146,11 +158,12 @@ declare_builtin_function!(
             invoke_context,
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a Last Restart Slot sysvar
-    SyscallGetLastRestartSlotSysvar,
+/// Get a Last Restart Slot sysvar
+pub struct SyscallGetLastRestartSlotSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLastRestartSlotSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -160,21 +173,26 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         get_sysvar(
-            invoke_context.environment_config.sysvar_cache().get_last_restart_slot(),
+            invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_last_restart_slot(),
             var_addr,
             invoke_context,
         )
     }
-);
+}
 
 const SYSVAR_NOT_FOUND: u64 = 2;
 const OFFSET_LENGTH_EXCEEDS_SYSVAR: u64 = 1;
 
 // quoted language from SIMD0127
 // because this syscall can both return error codes and abort, well-ordered error checking is crucial
-declare_builtin_function!(
-    /// Get a slice of a Sysvar in-memory representation
-    SyscallGetSysvar,
+/// Get a slice of a Sysvar in-memory representation
+pub struct SyscallGetSysvar {}
+
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         sysvar_id_addr: u64,
@@ -240,11 +258,10 @@ declare_builtin_function!(
             .checked_add(length)
             .ok_or(InstructionError::ArithmeticOverflow)?;
 
-
         // "`2` if the sysvar data is not present in the Sysvar Cache."
         let cache = invoke_context.environment_config.sysvar_cache();
         let Some(sysvar_buf) = cache.sysvar_id_to_buffer(sysvar_id) else {
-            return Ok(SYSVAR_NOT_FOUND)
+            return Ok(SYSVAR_NOT_FOUND);
         };
 
         // "`1` if `offset + length` is greater than the length of the sysvar data."
@@ -261,4 +278,4 @@ declare_builtin_function!(
 
         Ok(SUCCESS)
     }
-);
+}
