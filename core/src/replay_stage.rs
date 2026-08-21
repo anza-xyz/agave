@@ -32,6 +32,10 @@ use {
         voting_service::VoteOp,
         window_service::DuplicateSlotReceiver,
     },
+    agave_geyser_notifier_interface::{
+        block_metadata_notifier_interface::{BlockMetadataNotifierArc, BlockRewardInfo},
+        slot_status_notifier::SlotStatusNotifier,
+    },
     agave_votor::{
         event::{
             CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, SwitchBankEvent, VotorEvent,
@@ -53,7 +57,6 @@ use {
     smallvec::SmallVec,
     solana_accounts_db::contains::Contains,
     solana_clock::{BankId, Slot},
-    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -80,9 +83,9 @@ use {
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
         rpc_subscriptions::RpcSubscriptions,
-        slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
+        RewardInfo,
         bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions, bank_hash_details},
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommand, BankForksCommandReceiver, SetRootCommand},
@@ -4269,13 +4272,17 @@ impl ReplayStage {
                         .unwrap_or_default();
                     let commission_rate_in_basis_points =
                         bank.feature_set.snapshot().commission_rate_in_basis_points;
+                    let rewards_and_num_partitions = bank.get_rewards_and_num_partitions();
+                    let keyed_rewards =
+                        build_block_reward_infos(&rewards_and_num_partitions.keyed_rewards);
                     block_metadata_notifier.notify_block_metadata(
                         bank.parent_slot(),
                         &parent_blockhash.to_string(),
                         bank.slot(),
                         bank.bank_id(),
                         &bank.last_blockhash().to_string(),
-                        &bank.get_rewards_and_num_partitions(),
+                        &keyed_rewards,
+                        rewards_and_num_partitions.num_partitions,
                         Some(bank.clock().unix_timestamp),
                         Some(bank.block_height()),
                         bank.executed_transaction_count(),
@@ -5556,6 +5563,27 @@ impl ReplayStage {
     pub fn join(self) -> thread::Result<()> {
         self.t_replay.join().map(|_| ())
     }
+}
+
+/// Converts the runtime reward representation into the Geyser boundary type
+/// accepted by [`BlockMetadataNotifier`](solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifier).
+fn build_block_reward_infos(
+    keyed_rewards: &[(Pubkey, RewardInfo)],
+) -> Vec<(Pubkey, BlockRewardInfo)> {
+    keyed_rewards
+        .iter()
+        .map(|(pubkey, reward)| {
+            (
+                *pubkey,
+                BlockRewardInfo {
+                    reward_type: reward.reward_type,
+                    lamports: reward.lamports,
+                    post_balance: reward.post_balance,
+                    commission_bps: reward.commission_bps,
+                },
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

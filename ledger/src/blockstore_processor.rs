@@ -12,6 +12,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
+    agave_geyser_notifier_interface::accounts_update_notifier_interface::AccountsUpdateNotifier,
     agave_transaction_view::{
         transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
     },
@@ -24,10 +25,7 @@ use {
     rayon::ThreadPool,
     scopeguard::defer,
     smallvec::SmallVec,
-    solana_accounts_db::{
-        account_locks::validate_account_locks, accounts_db::AccountsDbConfig,
-        accounts_update_notifier_interface::AccountsUpdateNotifier,
-    },
+    solana_accounts_db::{account_locks::validate_account_locks, accounts_db::AccountsDbConfig},
     solana_clock::{BankId, Slot},
     solana_entry::{
         block_component::{ParsedBlockComponent, VersionedBlockMarker},

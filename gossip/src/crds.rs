@@ -29,12 +29,14 @@ use {
     crate::{
         cluster_info_metrics::{last_four_chars, should_report_message_signature},
         contact_info::ContactInfo,
-        contact_info_notifier::{ContactInfoEvent, ContactInfoSender, ContactInfoSnapshot},
         crds_data::CrdsData,
         crds_entry::CrdsEntry,
         crds_gossip_pull::CrdsTimeouts,
         crds_shards::CrdsShards,
         crds_value::{CrdsValue, CrdsValueLabel},
+    },
+    agave_geyser_notifier_interface::contact_info_notifier::{
+        ContactInfoEvent, ContactInfoSender, ContactInfoSnapshot,
     },
     assert_matches::debug_assert_matches,
     indexmap::{

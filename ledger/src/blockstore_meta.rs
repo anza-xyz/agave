@@ -211,25 +211,26 @@ pub struct SlotMetaV3 {
 
 pub type SlotMeta = SlotMetaV3;
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct UpdateParentInfo {
-    pub slot: Slot,
-    pub update_parent_fec_set_index: u32,
-    pub parent_slot: Slot,
-    pub parent_block_id: Hash,
-}
+use agave_geyser_notifier_interface::deshred_transaction_notifier_interface::UpdateParentInfo;
 
-impl UpdateParentInfo {
-    pub fn from_slot_meta(slot: Slot, slot_meta: &SlotMeta) -> Option<Self> {
-        Some(Self {
-            slot,
-            update_parent_fec_set_index: slot_meta
-                .has_update_parent()
-                .then_some(slot_meta.replay_fec_set_index)?,
-            parent_slot: slot_meta.parent_slot?,
-            parent_block_id: slot_meta.parent_block_id,
-        })
-    }
+/// Builds the [`UpdateParentInfo`] for a slot from its [`SlotMeta`], or `None`
+/// if the slot has no UpdateParent marker or no known parent.
+///
+/// Free function rather than a constructor because [`UpdateParentInfo`] is
+/// defined in `agave-geyser-notifier-interface`, which cannot know about
+/// [`SlotMeta`].
+pub fn update_parent_info_from_slot_meta(
+    slot: Slot,
+    slot_meta: &SlotMeta,
+) -> Option<UpdateParentInfo> {
+    Some(UpdateParentInfo {
+        slot,
+        update_parent_fec_set_index: slot_meta
+            .has_update_parent()
+            .then_some(slot_meta.replay_fec_set_index)?,
+        parent_slot: slot_meta.parent_slot?,
+        parent_block_id: slot_meta.parent_block_id,
+    })
 }
 
 /// Lighter-weight version of [`SlotMeta`] containing just the set
@@ -983,6 +984,32 @@ mod test {
         assert!(index.contains_range(7..8));
         assert!(index.contains_range(5..5));
         assert!(index.contains_range(5..2));
+    }
+
+    #[test]
+    fn test_update_parent_info_from_slot_meta() {
+        // No UpdateParent marker (replay_fec_set_index == 0) -> None
+        let meta = SlotMeta::new(5, Some(3));
+        assert_eq!(update_parent_info_from_slot_meta(5, &meta), None);
+
+        // Marker present, but parent unknown (orphan) -> None
+        let mut meta = SlotMeta::new_orphan(5);
+        meta.replay_fec_set_index = 7;
+        assert_eq!(update_parent_info_from_slot_meta(5, &meta), None);
+
+        // Marker present with a known parent -> all fields carried over
+        let mut meta = SlotMeta::new(5, Some(3));
+        meta.replay_fec_set_index = 7;
+        meta.parent_block_id = Hash::new_unique();
+        assert_eq!(
+            update_parent_info_from_slot_meta(5, &meta),
+            Some(UpdateParentInfo {
+                slot: 5,
+                update_parent_fec_set_index: 7,
+                parent_slot: 3,
+                parent_block_id: meta.parent_block_id,
+            })
+        );
     }
 
     #[test]

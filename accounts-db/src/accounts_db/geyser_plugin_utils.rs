@@ -33,13 +33,9 @@ impl AccountsDb {
 mod tests {
     use {
         super::*,
-        crate::{
-            accounts::Accounts,
-            accounts_update_notifier_interface::{
-                AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
-            },
-            ancestors::Ancestors,
-            utils::create_account_shared_data,
+        crate::{accounts::Accounts, ancestors::Ancestors, utils::create_account_shared_data},
+        agave_geyser_notifier_interface::accounts_update_notifier_interface::{
+            AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
         },
         dashmap::DashMap,
         solana_account::ReadableAccount as _,

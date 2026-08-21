@@ -1,5 +1,6 @@
 use {
-    crate::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
+    crate::rpc_subscriptions::RpcSubscriptions,
+    agave_geyser_notifier_interface::slot_status_notifier::SlotStatusNotifier,
     crossbeam_channel::RecvTimeoutError,
     solana_ledger::blockstore::CompletedSlotsReceiver,
     solana_rpc_client_api::response::SlotUpdate,

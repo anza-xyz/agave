@@ -11,6 +11,7 @@ use {
         replay_stage::ReplayStage,
         vote_simulator::{self, VoteSimulator},
     },
+    agave_geyser_notifier_interface::slot_status_notifier::SlotStatusNotifierInterface,
     agave_votor_messages::{
         certificate::{CertSignature, GenesisCert},
         consensus_message::Block,
@@ -56,7 +57,6 @@ use {
     solana_rpc::{
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         rpc::{create_test_transaction_entries, populate_blockstore_for_tests},
-        slot_status_notifier::SlotStatusNotifierInterface,
     },
     solana_runtime::{
         bank::BankTestConfig,
@@ -7112,5 +7112,58 @@ fn test_process_duplicate_confirmed_slots(same_batch: bool) {
         &mut DuplicateSlotsToRepair::default(),
         &ancestor_hashes_replay_update_sender,
         &mut PurgeRepairSlotCounter::default(),
+    );
+}
+
+#[test]
+fn test_build_block_reward_infos() {
+    use solana_reward_info::RewardType;
+    let voter = Pubkey::new_unique();
+    let staker = Pubkey::new_unique();
+    let keyed_rewards = vec![
+        (
+            voter,
+            RewardInfo {
+                reward_type: RewardType::Voting,
+                lamports: 10,
+                post_balance: 100,
+                commission_bps: Some(550),
+            },
+        ),
+        (
+            staker,
+            RewardInfo {
+                reward_type: RewardType::Staking,
+                lamports: -5,
+                post_balance: 50,
+                commission_bps: None,
+            },
+        ),
+    ];
+
+    let converted = build_block_reward_infos(&keyed_rewards);
+
+    assert_eq!(
+        converted,
+        vec![
+            (
+                voter,
+                BlockRewardInfo {
+                    reward_type: RewardType::Voting,
+                    lamports: 10,
+                    post_balance: 100,
+                    commission_bps: Some(550),
+                },
+            ),
+            (
+                staker,
+                BlockRewardInfo {
+                    reward_type: RewardType::Staking,
+                    lamports: -5,
+                    post_balance: 50,
+                    commission_bps: None,
+                },
+            ),
+        ],
     );
 }

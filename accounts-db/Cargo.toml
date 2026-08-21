@@ -41,6 +41,7 @@ frozen-abi = [
 
 [dependencies]
 agave-fs = { workspace = true }
+agave-geyser-notifier-interface = { workspace = true }
 ahash = { workspace = true }
 blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }

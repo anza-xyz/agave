@@ -51,14 +51,7 @@ pub enum BankNotification {
     NewRootedChain(Vec<(Slot, BankId)>, Slot),
 }
 
-#[derive(Clone, Debug)]
-pub enum SlotNotification {
-    OptimisticallyConfirmed(Slot, BankId),
-    /// The (Slot, Parent Slot, Bank Id) tuple for the slot frozen
-    Frozen((Slot, Slot, BankId)),
-    /// The (Slot, Parent Slot, Bank Id) tuple for the root slot
-    Root((Slot, Slot, BankId)),
-}
+use agave_geyser_notifier_interface::slot_notification::SlotNotification;
 
 impl std::fmt::Debug for BankNotification {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

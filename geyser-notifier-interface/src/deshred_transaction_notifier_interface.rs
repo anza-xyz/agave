@@ -1,8 +1,19 @@
 use {
-    crate::blockstore_meta::UpdateParentInfo, solana_clock::Slot,
-    solana_message::v0::LoadedAddresses, solana_signature::Signature,
-    solana_transaction::versioned::VersionedTransaction, std::sync::Arc,
+    solana_clock::Slot, solana_hash::Hash, solana_message::v0::LoadedAddresses,
+    solana_signature::Signature, solana_transaction::versioned::VersionedTransaction,
+    std::sync::Arc,
 };
+
+/// Describes an UpdateParent marker observed for a slot: replay of the slot
+/// must skip the optimistic-parent prefix before `update_parent_fec_set_index`
+/// and use (`parent_slot`, `parent_block_id`) as the effective parent.
+#[derive(Debug, Eq, PartialEq)]
+pub struct UpdateParentInfo {
+    pub slot: Slot,
+    pub update_parent_fec_set_index: u32,
+    pub parent_slot: Slot,
+    pub parent_block_id: Hash,
+}
 
 /// Trait for notifying about transactions when they are deshredded.
 /// This is called when entries are formed from shreds, before any execution occurs.

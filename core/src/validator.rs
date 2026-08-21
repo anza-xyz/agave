@@ -31,6 +31,7 @@ use {
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
+    agave_geyser_notifier_interface::accounts_update_notifier_interface::AccountsUpdateNotifier,
     agave_snapshots::{
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
@@ -48,7 +49,6 @@ use {
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
-        accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::validate_account_paths_for_direct_io,
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},

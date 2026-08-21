@@ -5,6 +5,7 @@ use {
         entry_notifier_service::EntryNotifierSender,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
+    agave_geyser_notifier_interface::accounts_update_notifier_interface::AccountsUpdateNotifier,
     agave_snapshots::{
         error::SnapshotError,
         paths as snapshot_paths,
@@ -15,10 +16,7 @@ use {
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
     },
     log::*,
-    solana_accounts_db::{
-        accounts_update_notifier_interface::AccountsUpdateNotifier,
-        utils::move_and_async_delete_path_contents,
-    },
+    solana_accounts_db::utils::move_and_async_delete_path_contents,
     solana_genesis_config::GenesisConfig,
     solana_runtime::{
         bank_forks::BankForks, snapshot_bank_utils, snapshot_utils,

@@ -8,14 +8,14 @@
 //! provided to the [`CompletedDataSetsService`].
 
 use {
+    agave_geyser_notifier_interface::deshred_transaction_notifier_interface::{
+        DeshredTransactionNotifier, DeshredTransactionNotifierArc,
+    },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore::{Blockstore, CompletedDataSetInfo},
-        blockstore_meta::UpdateParentInfo,
-        deshred_transaction_notifier_interface::{
-            DeshredTransactionNotifier, DeshredTransactionNotifierArc,
-        },
+        blockstore_meta::update_parent_info_from_slot_meta,
     },
     solana_measure::measure::Measure,
     solana_message::{VersionedMessage, v0::LoadedAddresses},
@@ -176,7 +176,7 @@ impl CompletedDataSetsService {
                                 .ok()
                                 .flatten()
                                 .and_then(|slot_meta| {
-                                    UpdateParentInfo::from_slot_meta(slot, &slot_meta)
+                                    update_parent_info_from_slot_meta(slot, &slot_meta)
                                 })
                             && update_parent.update_parent_fec_set_index
                                 == completed_data_set_starting_shred_index
@@ -314,6 +314,7 @@ impl CompletedDataSetsService {
 pub mod test {
     use {
         super::*,
+        agave_geyser_notifier_interface::deshred_transaction_notifier_interface::UpdateParentInfo,
         crossbeam_channel::bounded,
         solana_entry::{
             block_component::{

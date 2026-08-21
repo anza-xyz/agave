@@ -2,7 +2,6 @@ use {
     crate::{
         accounts_update_notifier::AccountsUpdateNotifierImpl,
         block_metadata_notifier::BlockMetadataNotifierImpl,
-        block_metadata_notifier_interface::BlockMetadataNotifierArc,
         deshred_transaction_notifier::DeshredTransactionNotifierImpl,
         entry_notifier::EntryNotifierImpl,
         geyser_plugin_manager::{GeyserPluginManager, GeyserPluginManagerRequest},
@@ -10,19 +9,17 @@ use {
         slot_status_observer::SlotStatusObserver,
         transaction_notifier::TransactionNotifierImpl,
     },
+    agave_geyser_notifier_interface::{
+        accounts_update_notifier_interface::AccountsUpdateNotifier,
+        block_metadata_notifier_interface::BlockMetadataNotifierArc,
+        deshred_transaction_notifier_interface::DeshredTransactionNotifierArc,
+        slot_notification::SlotNotification, slot_status_notifier::SlotStatusNotifier,
+    },
     arc_swap::ArcSwap,
     crossbeam_channel::Receiver,
     log::*,
-    solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
-    solana_ledger::{
-        deshred_transaction_notifier_interface::DeshredTransactionNotifierArc,
-        entry_notifier_interface::EntryNotifierArc,
-    },
-    solana_rpc::{
-        optimistically_confirmed_bank_tracker::SlotNotification,
-        slot_status_notifier::SlotStatusNotifier,
-        transaction_notifier_interface::TransactionNotifierArc,
-    },
+    solana_ledger::entry_notifier_interface::EntryNotifierArc,
+    solana_rpc::transaction_notifier_interface::TransactionNotifierArc,
     std::{
         path::{Path, PathBuf},
         sync::{

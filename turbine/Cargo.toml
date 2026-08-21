@@ -20,6 +20,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-geyser-notifier-interface = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
 bytes = { workspace = true }

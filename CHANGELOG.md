@@ -51,6 +51,24 @@ still accepted for backwards compatibility but slated for full removal in the fu
   Specify `--votor-peer-overrides <VALIDATOR IDENTITY>...` to additionally send votor
   messages to identities outside the staked set.
 ### Geyser
+#### Breaking
+* The Geyser notifier interfaces now live in a new `agave-geyser-notifier-interface` crate, and
+  the crates that previously defined them no longer re-export them. Update imports as follows:
+  * `solana_accounts_db::accounts_update_notifier_interface` ->
+    `agave_geyser_notifier_interface::accounts_update_notifier_interface`
+  * `solana_ledger::deshred_transaction_notifier_interface` (and
+    `solana_ledger::blockstore_meta::UpdateParentInfo`) ->
+    `agave_geyser_notifier_interface::deshred_transaction_notifier_interface`
+  * `solana_rpc::slot_status_notifier` -> `agave_geyser_notifier_interface::slot_status_notifier`
+  * `solana_rpc::optimistically_confirmed_bank_tracker::SlotNotification` ->
+    `agave_geyser_notifier_interface::slot_notification::SlotNotification`
+  * `solana_gossip::contact_info_notifier` ->
+    `agave_geyser_notifier_interface::contact_info_notifier`
+  * `solana_geyser_plugin_manager::block_metadata_notifier_interface` ->
+    `agave_geyser_notifier_interface::block_metadata_notifier_interface`
+
+  Depending on the new crate directly is also substantially faster to build than depending on
+  `solana-ledger`, `solana-rpc`, or `solana-accounts-db` for these types.
 #### Deprecations
 * The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
   `notify_block_metadata` are slated for removal in the next major release.

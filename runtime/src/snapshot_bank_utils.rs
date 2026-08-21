@@ -26,6 +26,7 @@ use {
         },
     },
     agave_fs::io_setup::IoSetupState,
+    agave_geyser_notifier_interface::accounts_update_notifier_interface::AccountsUpdateNotifier,
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotKind,
         error::{
@@ -42,10 +43,7 @@ use {
         snapshot_hash::SnapshotHash,
     },
     log::*,
-    solana_accounts_db::{
-        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
-        accounts_update_notifier_interface::AccountsUpdateNotifier,
-    },
+    solana_accounts_db::accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
     solana_leader_schedule::SlotLeader,

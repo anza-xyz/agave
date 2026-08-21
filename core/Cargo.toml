@@ -53,6 +53,7 @@ agave-bls-cert-verify = { workspace = true }
 agave-bls-sigverify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
+agave-geyser-notifier-interface = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
@@ -214,6 +215,7 @@ solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-poh = { path = "../poh", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
 solana-rent = { workspace = true }
+solana-reward-info = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer-store = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }

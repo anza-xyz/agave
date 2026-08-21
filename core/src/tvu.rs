@@ -31,6 +31,10 @@ use {
         generated_cert_types::GeneratedCertTypes,
         rewards::RewardInput,
     },
+    agave_geyser_notifier_interface::{
+        block_metadata_notifier_interface::BlockMetadataNotifierArc,
+        slot_status_notifier::SlotStatusNotifier,
+    },
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         peer_list_updater::PeerListService,
@@ -49,7 +53,6 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
-    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::{
         cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
         duplicate_shred_listener::DuplicateShredListener,
@@ -70,7 +73,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc::{
         max_slots::MaxSlots, optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
-        rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
+        rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
         bank_forks::BankForks,
