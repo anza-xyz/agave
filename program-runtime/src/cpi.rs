@@ -7,7 +7,6 @@ use {
         memory_context::SerializedAccountMetadata,
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
-    solana_account_info::AccountInfo,
     solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
@@ -102,55 +101,62 @@ struct SolAccountInfo {
     pub executable: bool,
 }
 
-/// Stable BPF representation of Rust [`solana_account_info::AccountInfo`].
-#[derive(Debug)]
-#[repr(C)]
-pub struct StableAccountInfo {
-    key_addr: u64,
-    /// This address is pointing at `Rc<RefCell<T>>`'s internal data first. Use the
-    /// [`StableAccountInfo::lamports_addr()`] method to get the pointer to contained `T`.
-    lamports_addr: u64,
-    /// This address is pointing at `Rc<RefCell<T>>`'s internal data first. Use the
-    /// [`StableAccountInfo::data_addr()`] method to get the pointer to contained `T`.
-    data_addr: u64,
-    owner_addr: u64,
-    _unused: u64,
-    _is_signer: u8,
-    _is_writable: u8,
-    _executable: u8,
-}
+mod stable {
+    /// Stable BPF representation of Rust [`solana_account_info::AccountInfo`].
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct AccountInfo {
+        key_addr: u64,
+        /// This address is pointing at `Rc<RefCell<T>>`'s internal data first. Use the
+        /// [`AccountInfo::lamports_addr()`] method to get the pointer to contained `T`.
+        lamports_addr: u64,
+        /// This address is pointing at `Rc<RefCell<T>>`'s internal data first. Use the
+        /// [`AccountInfo::data_addr()`] method to get the pointer to contained `T`.
+        data_addr: u64,
+        owner_addr: u64,
+        _unused: u64,
+        _is_signer: u8,
+        _is_writable: u8,
+        _executable: u8,
+    }
 
-impl StableAccountInfo {
-    fn lamports_addr(&self) -> u64 {
-        self.lamports_addr.wrapping_add(24)
+    impl AccountInfo {
+        const LAMPORTS_DATA_OFFSET: u64 = 24;
+        const DATA_DATA_OFFSET: u64 = 24;
+        const DATA_LEN_OFFSET: u64 = 32;
+        pub(crate) fn owner_addr(&self) -> u64 {
+            self.owner_addr
+        }
+        pub(crate) fn key_addr(&self) -> u64 {
+            self.key_addr
+        }
+        pub(crate) fn lamports_addr(&self) -> u64 {
+            self.lamports_addr.wrapping_add(Self::LAMPORTS_DATA_OFFSET)
+        }
+        pub(crate) fn data_addr(&self) -> u64 {
+            self.data_addr.wrapping_add(Self::DATA_DATA_OFFSET)
+        }
+        pub(crate) fn data_len_addr(&self) -> u64 {
+            self.data_addr.wrapping_add(Self::DATA_LEN_OFFSET)
+        }
     }
-    fn data_addr(&self) -> u64 {
-        self.data_addr.wrapping_add(24)
-    }
-    fn data_len_addr(&self) -> u64 {
-        self.data_addr.wrapping_add(32)
-    }
-}
 
-const _FOR_NOW_THESE_ARE_THE_SAME_BUT_IF_ACCOUNT_INFO_CHANGES_SDK_HAS_TO_FIX_IT: () = const {
-    assert!(mem::offset_of!(StableAccountInfo, key_addr) == mem::offset_of!(AccountInfo, key));
-    assert!(
-        mem::offset_of!(StableAccountInfo, lamports_addr) == mem::offset_of!(AccountInfo, lamports)
-    );
-    assert!(mem::offset_of!(StableAccountInfo, data_addr) == mem::offset_of!(AccountInfo, data));
-    assert!(mem::offset_of!(StableAccountInfo, owner_addr) == mem::offset_of!(AccountInfo, owner));
-    assert!(
-        mem::offset_of!(StableAccountInfo, _is_signer) == mem::offset_of!(AccountInfo, is_signer)
-    );
-    assert!(
-        mem::offset_of!(StableAccountInfo, _is_writable)
-            == mem::offset_of!(AccountInfo, is_writable)
-    );
-    assert!(
-        mem::offset_of!(StableAccountInfo, _executable) == mem::offset_of!(AccountInfo, executable)
-    );
-    assert!(mem::size_of::<StableAccountInfo>() == mem::size_of::<AccountInfo>());
-};
+    const _FOR_NOW_THESE_ARE_THE_SAME_BUT_IF_ACCOUNT_INFO_CHANGES_SDK_HAS_TO_FIX_IT: () = const {
+        use {
+            solana_account_info::AccountInfo as SdkAccountInfo,
+            std::mem::{align_of, offset_of, size_of},
+        };
+        assert!(offset_of!(AccountInfo, key_addr) == offset_of!(SdkAccountInfo, key));
+        assert!(offset_of!(AccountInfo, lamports_addr) == offset_of!(SdkAccountInfo, lamports));
+        assert!(offset_of!(AccountInfo, data_addr) == offset_of!(SdkAccountInfo, data));
+        assert!(offset_of!(AccountInfo, owner_addr) == offset_of!(SdkAccountInfo, owner));
+        assert!(offset_of!(AccountInfo, _is_signer) == offset_of!(SdkAccountInfo, is_signer));
+        assert!(offset_of!(AccountInfo, _is_writable) == offset_of!(SdkAccountInfo, is_writable));
+        assert!(offset_of!(AccountInfo, _executable) == offset_of!(SdkAccountInfo, executable));
+        assert!(size_of::<AccountInfo>() == size_of::<SdkAccountInfo>());
+        assert!(align_of::<SdkAccountInfo>() >= align_of::<AccountInfo>());
+    };
+}
 
 /// Maximum number of account info structs that can be used in a single CPI invocation
 const MAX_CPI_ACCOUNT_INFOS: usize = 255;
@@ -324,7 +330,7 @@ impl<'a> CallerAccount<'a> {
         memory_mapping: &MemoryMapping,
         check_aligned: bool,
         _vm_addr: u64,
-        account_info: &StableAccountInfo,
+        account_info: &stable::AccountInfo,
         account_metadata: &crate::memory_context::SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::{translate_type, translate_type_mut_for_cpi};
@@ -341,13 +347,13 @@ impl<'a> CallerAccount<'a> {
         if syscall_parameter_address_restrictions {
             check_account_info_pointer(
                 invoke_context,
-                account_info.key_addr,
+                account_info.key_addr(),
                 account_metadata.vm_key_addr,
                 "key",
             )?;
             check_account_info_pointer(
                 invoke_context,
-                account_info.owner_addr,
+                account_info.owner_addr(),
                 account_metadata.vm_owner_addr,
                 "owner",
             )?;
@@ -356,7 +362,7 @@ impl<'a> CallerAccount<'a> {
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
         let lamports = {
-            // Double translate lamports out of RefCell
+            // Double dereference lamports out
             let ptr =
                 translate_type::<u64>(memory_mapping, account_info.lamports_addr(), check_aligned)?;
             if syscall_parameter_address_restrictions {
@@ -376,7 +382,7 @@ impl<'a> CallerAccount<'a> {
 
         let owner = translate_type_mut_for_cpi::<Pubkey>(
             memory_mapping,
-            account_info.owner_addr,
+            account_info.owner_addr(),
             check_aligned,
         )?;
 
@@ -387,20 +393,26 @@ impl<'a> CallerAccount<'a> {
                 return Err(Box::new(CpiError::InvalidPointer));
             }
 
-            // Double translate data out of RefCell
-            let data =
-                *translate_type::<&[u8]>(memory_mapping, account_info.data_addr(), check_aligned)?;
+            // Double dereference data pointer out
+            // NOTE: we must obtain an owned copy to VmSlice<u8> right away in order to make
+            // the mutable reference to the length sound.
+            let data_slice = *translate_type::<VmSlice<u8>>(
+                memory_mapping,
+                account_info.data_addr(),
+                check_aligned,
+            )?;
             if syscall_parameter_address_restrictions {
                 check_account_info_pointer(
                     invoke_context,
-                    data.as_ptr() as u64,
+                    data_slice.ptr(),
                     account_metadata.vm_data_addr,
                     "data",
                 )?;
             } else {
                 // Moved to translate_accounts_common() via feature gate.
                 invoke_context.compute_meter.consume_checked(
-                    (data.len() as u64)
+                    data_slice
+                        .len()
                         .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                         .unwrap_or(u64::MAX),
                 )?;
@@ -419,24 +431,23 @@ impl<'a> CallerAccount<'a> {
                 account_info.data_len_addr(),
                 false,
             )?;
-            let vm_data_addr = data.as_ptr() as u64;
             let serialized_data = unsafe {
                 CallerAccount::get_serialized_data(
                     memory_mapping,
                     check_aligned,
-                    vm_data_addr,
+                    data_slice.ptr(),
                     account_metadata.original_data_len,
                     if syscall_parameter_address_restrictions {
                         *ref_to_len_in_vm as usize
                     } else {
-                        data.len()
+                        data_slice.len() as usize
                     },
                     syscall_parameter_address_restrictions,
                     virtual_address_space_adjustments,
                     account_data_direct_mapping,
                 )?
             };
-            (serialized_data, vm_data_addr, ref_to_len_in_vm)
+            (serialized_data, data_slice.ptr(), ref_to_len_in_vm)
         };
 
         Ok(CallerAccount {
@@ -655,7 +666,7 @@ pub fn translate_accounts_rust<'a>(
     translate_account_infos(
         account_infos_addr,
         account_infos_len,
-        |account_info: &StableAccountInfo| account_info.key_addr,
+        |account_info: &stable::AccountInfo| account_info.key_addr(),
         invoke_context,
         memory_mapping,
         check_aligned,
@@ -2044,7 +2055,7 @@ mod tests {
             unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
 
         let account_info =
-            translate_type::<StableAccountInfo>(&memory_mapping, vm_addr, false).unwrap();
+            translate_type::<stable::AccountInfo>(&memory_mapping, vm_addr, false).unwrap();
 
         invoke_context
             .memory_contexts
