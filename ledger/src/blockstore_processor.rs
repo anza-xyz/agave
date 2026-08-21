@@ -5,7 +5,7 @@ use {
         block_error::BlockError,
         blockstore::{Blockstore, BlockstoreError},
         blockstore_meta::SlotMeta,
-        entry_notifier_service::{EntryNotification, EntryNotifierSender},
+        entry_notifier_service::{EntryNotification, EntryNotifierSender, send_entry_notification},
         leader_schedule_cache::LeaderScheduleCache,
         shred::MAX_FEC_SETS_PER_SLOT,
         thread_pool::{WorkerJob, WorkerPool},
@@ -1498,12 +1498,14 @@ pub fn confirm_slot(
                         })?;
                     if let Some(block_footer) = block_footer
                         && let Some(entry_notification_sender) = entry_notification_sender
-                        && let Err(err) =
-                            entry_notification_sender.send(EntryNotification::BlockFooter {
+                        && let Err(err) = send_entry_notification(
+                            entry_notification_sender,
+                            EntryNotification::BlockFooter {
                                 slot,
                                 bank_id: bank.bank_id(),
                                 block_footer: Box::new(block_footer),
-                            })
+                            },
+                        )
                     {
                         warn!(
                             "Slot {slot} block footer entry_notification_sender send failed: \
@@ -1566,13 +1568,16 @@ fn confirm_slot_entries(
         .map(|(i, entry)| {
             if let Some(entry_notification_sender) = entry_notification_sender {
                 let entry_index = progress.num_entries.saturating_add(i);
-                if let Err(err) = entry_notification_sender.send(EntryNotification::Entry {
-                    slot,
-                    bank_id,
-                    index: entry_index,
-                    entry: entry.into(),
-                    starting_transaction_index: entry_tx_starting_index,
-                }) {
+                if let Err(err) = send_entry_notification(
+                    entry_notification_sender,
+                    EntryNotification::Entry {
+                        slot,
+                        bank_id,
+                        index: entry_index,
+                        entry: entry.into(),
+                        starting_transaction_index: entry_tx_starting_index,
+                    },
+                ) {
                     warn!(
                         "Slot {slot}, entry {entry_index} entry_notification_sender send failed: \
                          {err:?}"
