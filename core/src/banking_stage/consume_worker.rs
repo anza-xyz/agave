@@ -112,6 +112,9 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         let bank = leader_state
             .working_bank()
             .expect("active_leader_state should only return an active bank");
+        if bank.slot() != work.slot {
+            return Ok(ProcessingStatus::CouldNotProcess(work));
+        }
         self.metrics
             .count_metrics
             .num_messages_processed
@@ -3004,6 +3007,7 @@ mod tests {
             alt_invalidation_slot: bank.slot(),
         };
         let work = ConsumeWork {
+            slot: bank.slot(),
             batch_id: bid,
             ids: vec![id],
             transactions,
@@ -3046,6 +3050,7 @@ mod tests {
             )]);
             consume_sender
                 .send(ConsumeWork {
+                    slot: bank.slot(),
                     batch_id: TransactionBatchId::new(i as u64),
                     ids: vec![i],
                     transactions,
@@ -3071,6 +3076,64 @@ mod tests {
         }
 
         // Cleanup.
+        drop(test_frame);
+        let _ = worker_thread.join().unwrap();
+    }
+
+    #[test]
+    fn test_worker_consume_wrong_slot() {
+        let (mut test_frame, worker) = setup_test_frame();
+        let metrics = worker.metrics_handle();
+        let TestFrame {
+            mint_keypair,
+            genesis_config,
+            bank,
+            shared_leader_state,
+            consume_sender,
+            consumed_receiver,
+            ..
+        } = &mut test_frame;
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+            None,
+        )));
+        let worker_thread = std::thread::spawn(move || worker.run());
+
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            genesis_config.hash(),
+        )]);
+        consume_sender
+            .send(ConsumeWork {
+                slot: bank.slot() + 1,
+                batch_id: TransactionBatchId::new(0),
+                ids: vec![0],
+                transactions,
+                max_ages: vec![MaxAge {
+                    sanitized_epoch: bank.epoch(),
+                    alt_invalidation_slot: bank.slot(),
+                }],
+            })
+            .unwrap();
+
+        let consumed = consumed_receiver.recv().unwrap();
+        assert_eq!(consumed.work.slot, bank.slot() + 1);
+        assert_eq!(
+            consumed.retryable_indexes,
+            vec![RetryableIndex::new(0, true)]
+        );
+        assert_eq!(
+            metrics
+                .count_metrics
+                .num_messages_processed
+                .load(Ordering::Relaxed),
+            0
+        );
+
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
     }
@@ -3112,6 +3175,7 @@ mod tests {
             alt_invalidation_slot: bank.slot(),
         };
         let work = ConsumeWork {
+            slot: bank.slot(),
             batch_id: bid,
             ids: vec![id],
             transactions,
@@ -3167,6 +3231,7 @@ mod tests {
         };
         consume_sender
             .send(ConsumeWork {
+                slot: bank.slot(),
                 batch_id: bid,
                 ids: vec![id1, id2],
                 transactions: txs,
@@ -3233,6 +3298,7 @@ mod tests {
         };
         consume_sender
             .send(ConsumeWork {
+                slot: bank.slot(),
                 batch_id: bid1,
                 ids: vec![id1],
                 transactions: txs1,
@@ -3242,6 +3308,7 @@ mod tests {
 
         consume_sender
             .send(ConsumeWork {
+                slot: bank.slot(),
                 batch_id: bid2,
                 ids: vec![id2],
                 transactions: txs2,
@@ -3359,6 +3426,7 @@ mod tests {
 
         consume_sender
             .send(ConsumeWork {
+                slot: bank.slot(),
                 batch_id: TransactionBatchId::new(1),
                 ids: vec![0, 1, 2, 3, 4, 5],
                 transactions: txs,
