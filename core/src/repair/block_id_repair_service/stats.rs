@@ -56,19 +56,20 @@ impl BlockIdRepairResponsesStats {
 
 #[derive(Default)]
 pub(super) struct BlockIdRepairRequestsStats {
-    /// Total requests we sent
-    pub total_requests: usize,
-
+    /// Requests we built and handed to the send path.
+    pub requests_attempted: usize,
     pub parent_fec_set_count_requests: usize,
     pub fec_set_root_requests: usize,
     pub shred_for_block_id_requests: usize,
+    /// Request packets the send path refused, e.g. an unreachable peer.
+    pub dropped_requests: usize,
 }
 
 impl BlockIdRepairRequestsStats {
     pub fn report(&mut self) {
         datapoint_info!(
             "block_id_repair_requests",
-            ("total_requests", self.total_requests, i64),
+            ("requests_attempted", self.requests_attempted, i64),
             (
                 "parent_fec_set_count_requests",
                 self.parent_fec_set_count_requests,
@@ -80,6 +81,7 @@ impl BlockIdRepairRequestsStats {
                 self.shred_for_block_id_requests,
                 i64
             ),
+            ("dropped_requests", self.dropped_requests, i64),
         );
         *self = Self::default();
     }

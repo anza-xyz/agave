@@ -1951,17 +1951,14 @@ impl ServeRepair {
             }
         }
         if !pending_pongs.is_empty() {
-            let num_pkts = pending_pongs.len();
             let pending_pongs = pending_pongs.iter().map(|(bytes, addr)| (bytes, addr));
-            match batch_send(repair_socket, pending_pongs) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(err, num_failed)) => {
-                    warn!(
-                        "batch_send failed to send {num_failed}/{num_pkts} packets. First error: \
-                         {err:?}"
-                    );
-                }
-            }
+            // Dropped pongs are ignored: there is no repair-response stat to report them into, and
+            // a peer that does not get its pong simply pings us again.
+            batch_send(repair_socket, pending_pongs).unwrap_or_else(
+                |SendPktsError::IoError(err)| {
+                    panic!("can not send repair pongs any more, the send path is broken: {err:?}")
+                },
+            );
         }
     }
 

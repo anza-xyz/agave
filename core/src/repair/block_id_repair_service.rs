@@ -39,10 +39,7 @@ use {
         blockstore_meta::BlockLocation,
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
-    solana_perf::{
-        packet::{PacketBatch, PacketRef, packet_config},
-        recycler::Recycler,
-    },
+    solana_perf::packet::{PacketBatch, PacketRef, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::SharableBanks,
     solana_streamer::{
@@ -272,12 +269,10 @@ impl BlockIdRepairService {
             block_id_repair_socket.clone(),
             exit.clone(),
             response_sender,
-            Recycler::default(),
             Arc::new(StreamerReceiveStats::new(
                 "block_id_repair_response_receiver",
             )),
             None,  // coalesce
-            false, // use_pinned_memory
             false, // is_staked_service
         );
 
@@ -970,7 +965,7 @@ impl BlockIdRepairService {
                     state.expect_ping_response(peer_pubkey, addr, now);
 
                     // Update stats
-                    state.request_stats.total_requests += 1;
+                    state.request_stats.requests_attempted += 1;
                     match block_id_repair_type {
                         BlockIdRepairType::ParentAndFecSetCount { .. } => {
                             state.request_stats.parent_fec_set_count_requests += 1;
@@ -1008,41 +1003,38 @@ impl BlockIdRepairService {
                     state.sent_requests.insert(request, now);
 
                     // Update stats
-                    state.request_stats.total_requests += 1;
+                    state.request_stats.requests_attempted += 1;
                     state.request_stats.shred_for_block_id_requests += 1;
                 }
             }
         }
 
         if !block_id_socket_batch.is_empty() {
-            let total = block_id_socket_batch.len();
-            let _ = batch_send(
+            let num_sent = batch_send(
                 block_id_repair_socket,
                 block_id_socket_batch
                     .iter()
                     .map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, failed)| {
-                error!(
-                    "{}: failed to send block_id repair packets, packets failed {failed}/{total}: \
-                     {err:?}",
-                    repair_info.cluster_info.id(),
+            .unwrap_or_else(|SendPktsError::IoError(err)| {
+                panic!(
+                    "can not send block_id repair packets any more, the send path is broken: \
+                     {err:?}"
                 )
             });
+            state.request_stats.dropped_requests += block_id_socket_batch.len() - num_sent;
         }
         if !shred_socket_batch.is_empty() {
-            let total = shred_socket_batch.len();
-            let _ = batch_send(
+            let num_sent = batch_send(
                 repair_socket,
                 shred_socket_batch.iter().map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, failed)| {
-                error!(
-                    "{}: failed to send shred repair requests, packets failed {failed}/{total}: \
-                     {err:?}",
-                    repair_info.cluster_info.id(),
+            .unwrap_or_else(|SendPktsError::IoError(err)| {
+                panic!(
+                    "can not send shred repair requests any more, the send path is broken: {err:?}"
                 )
             });
+            state.request_stats.dropped_requests += shred_socket_batch.len() - num_sent;
         }
     }
 

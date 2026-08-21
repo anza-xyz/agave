@@ -536,16 +536,14 @@ fn retransmit_shred(
         }
         RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
             let socket = socket.get_socket();
-            match multi_target_send(socket, shred, addrs.as_ref()) {
-                Ok(()) => num_addrs,
-                Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    error!(
-                        "retransmit_to multi_target_send error: {ioerr:?}, \
-                         {num_failed}/{num_addrs} packets failed"
-                    );
-                    num_addrs - num_failed
-                }
-            }
+            multi_target_send(socket, shred, addrs.as_ref()).unwrap_or_else(
+                |SendPktsError::IoError(ioerr)| {
+                    panic!(
+                        "retransmit_to can not send shreds any more, the send path is broken: \
+                         {ioerr:?}"
+                    )
+                },
+            )
         }
     };
     retransmit_time.stop();
