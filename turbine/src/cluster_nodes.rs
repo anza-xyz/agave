@@ -85,7 +85,7 @@ pub struct ClusterNodes<T> {
     // sorted by (stake, pubkey) in descending order.
     nodes: Vec<Node>,
     // Reverse index from nodes pubkey to their index in self.nodes.
-    index: HashMap<Pubkey, /*index:*/ usize, PubkeyHasherBuilder>,
+    index: HashMap<Pubkey, /*index:*/ usize>,
     // Shuffles by weights = stakes
     weighted_shuffle: Arc<WeightedShuffle>,
     use_cha_cha_8: bool,
@@ -366,7 +366,7 @@ pub fn new_cluster_nodes<T: 'static>(
 ) -> ClusterNodes<T> {
     let self_pubkey = cluster_info.id();
     let nodes = get_nodes(cluster_info, cluster_type, stakes);
-    let index: HashMap<_, _, PubkeyHasherBuilder> = nodes
+    let index: HashMap<_, _> = nodes
         .iter()
         .enumerate()
         .map(|(ix, node)| (*node.pubkey(), ix))
