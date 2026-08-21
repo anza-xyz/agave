@@ -173,6 +173,8 @@ impl Blockstore {
             error!("Error: {e:?} while submitting write batch for slot {slot:?}")
         })?;
 
+        self.advance_slot_meta_topology_generation();
+
         Ok(())
     }
 
@@ -215,6 +217,7 @@ impl Blockstore {
                  to_slot {to_slot}"
             )
         })?;
+        self.advance_slot_meta_topology_generation();
         write_timer.stop();
 
         let mut purge_files_in_range_timer = Measure::start("delete_file_in_range");
@@ -795,9 +798,23 @@ pub mod tests {
 
         let (shreds, _) = make_many_slot_entries(0, 50, 5);
         blockstore.insert_shreds(shreds, false).unwrap();
+        let mut slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
 
         blockstore.purge_slots(0, 5, PurgeType::Exact).unwrap();
+        assert_ne!(
+            slot_meta_topology_generation,
+            blockstore.slot_meta_topology_generation()
+        );
+        slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
         all_columns_empty_or_greater_than_slot(&blockstore, 6);
+
+        let slot = 6;
+        let meta = blockstore.meta(slot).unwrap().unwrap();
+        blockstore.put_meta(slot, &meta).unwrap();
+        assert_ne!(
+            slot_meta_topology_generation,
+            blockstore.slot_meta_topology_generation()
+        );
 
         blockstore.purge_slots(0, 50, PurgeType::Exact).unwrap();
         // min slot shouldn't matter, blockstore should be empty
@@ -1270,7 +1287,12 @@ pub mod tests {
         let (slot_12, _) = make_slot_entries(12, 5, 5);
         blockstore.insert_shreds(slot_12, false).unwrap();
 
+        let slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
         blockstore.purge_slot_cleanup_chaining(5).unwrap();
+        assert_ne!(
+            slot_meta_topology_generation,
+            blockstore.slot_meta_topology_generation()
+        );
 
         let slot_meta = blockstore.meta(5).unwrap().unwrap();
         let expected_slot_meta = SlotMeta {
