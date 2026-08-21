@@ -113,6 +113,8 @@ still accepted for backwards compatibility but slated for full removal in the fu
 ## 4.1.0
 ### RPC
 #### Breaking
+#### Deprecations
+* The `getLargestAccounts` RPC method is now deprecated.
 #### Changes
 ### Validator
 #### Breaking
