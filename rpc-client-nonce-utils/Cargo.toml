@@ -21,7 +21,7 @@ agave-unstable-api = []
 clap = ["dep:clap", "dep:solana-clap-utils"]
 
 [dependencies]
-clap = { version = "2.33.0", default-features = false, features = ["suggestions"], optional = true }
+clap = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-clap-utils = { workspace = true, optional = true }
 solana-commitment-config = { workspace = true }

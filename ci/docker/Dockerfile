@@ -84,6 +84,7 @@ RUN \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
   cargo install cargo-audit && \
   cargo install cargo-hack && \
+  cargo install cargo-minimal-versions --locked && \
   cargo install cargo-sort@2.0.2 && \
   cargo install rustfilt && \
   cargo install cargo-build-sbf@4.1.0 --locked && \
