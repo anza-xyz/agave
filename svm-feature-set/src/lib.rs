@@ -2,7 +2,6 @@
 #[derive(Clone, Copy, Default)]
 pub struct SVMFeatureSet {
     pub move_precompile_verification_to_svm: bool,
-    pub syscall_parameter_address_restrictions: bool,
     pub virtual_address_space_adjustments: bool,
     pub account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
@@ -57,7 +56,6 @@ impl SVMFeatureSet {
     pub fn all_enabled() -> Self {
         Self {
             move_precompile_verification_to_svm: true,
-            syscall_parameter_address_restrictions: true,
             virtual_address_space_adjustments: true,
             account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
