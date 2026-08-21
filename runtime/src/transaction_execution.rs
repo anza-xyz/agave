@@ -47,6 +47,10 @@ pub struct TransactionStatusBatch {
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
     Freeze(Arc<Bank>),
+    PurgeTransactionHistory {
+        slot: Slot,
+        done_sender: crossbeam_channel::Sender<()>,
+    },
 }
 
 pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
@@ -276,6 +280,18 @@ impl TransactionStatusSender {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
         }
+    }
+
+    /// Requests removal of transaction history for `slot` and waits until the
+    /// TransactionStatusService has finished processing the request.
+    pub fn send_purge_transaction_history_for_slot(&self, slot: Slot) -> Result<(), String> {
+        let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
+
+        self.sender
+            .send(TransactionStatusMessage::PurgeTransactionHistory { slot, done_sender })
+            .map_err(|err| err.to_string())?;
+
+        done_receiver.recv().map_err(|err| err.to_string())
     }
 }
 

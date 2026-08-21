@@ -515,16 +515,12 @@ impl Tvu {
         let (drop_bank_sender, drop_bank_receiver) = unbounded();
         let (voting_sender, voting_receiver) = unbounded();
         let (bls_sender, bls_receiver) = bounded(MAX_BLS_MESSAGES_TO_SEND);
-        let dependency_tracker = bank_notification_sender
-            .as_ref()
-            .and_then(|config| config.dependency_tracker.clone());
 
         let (lockouts_sender, votor_commitment_sender, commitment_service) =
             AggregateCommitmentService::new(
                 exit.clone(),
                 block_commitment_cache.clone(),
                 rpc_subscriptions.clone(),
-                dependency_tracker,
             );
         let (own_votes_sender, own_votes_receiver) =
             EvictingSender::new_bounded(MAX_ALPENGLOW_PACKET_NUM);

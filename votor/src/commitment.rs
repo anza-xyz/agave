@@ -15,20 +15,17 @@ pub enum CommitmentType {
 pub struct CommitmentAggregationData {
     pub commitment_type: CommitmentType,
     pub slot: Slot,
-    pub dependency_work: Option<u64>,
 }
 
 pub fn update_commitment_cache(
     my_pubkey: &Pubkey,
     commitment_type: CommitmentType,
     slot: Slot,
-    dependency_work: Option<u64>,
     sender: &Sender<CommitmentAggregationData>,
 ) {
     let msg = CommitmentAggregationData {
         commitment_type,
         slot,
-        dependency_work,
     };
     if let Err(channel_name) = nonblocking_send(my_pubkey, sender, msg, "commitment_sender") {
         warn!("{my_pubkey}: channel \"{channel_name}\" disconnected");
@@ -45,7 +42,7 @@ mod tests {
         let slot = 3;
         let commitment_type = CommitmentType::Notarize;
         let my_pubkey = Pubkey::new_unique();
-        update_commitment_cache(&my_pubkey, commitment_type, slot, None, &commitment_sender);
+        update_commitment_cache(&my_pubkey, commitment_type, slot, &commitment_sender);
         let received_data = commitment_receiver
             .try_recv()
             .expect("Failed to receive commitment data");
@@ -54,19 +51,11 @@ mod tests {
             CommitmentAggregationData {
                 commitment_type: CommitmentType::Notarize,
                 slot,
-                dependency_work: None,
             }
         );
         let slot = 5;
         let commitment_type = CommitmentType::Rooted;
-        let dependency_work = Some(42);
-        update_commitment_cache(
-            &my_pubkey,
-            commitment_type,
-            slot,
-            dependency_work,
-            &commitment_sender,
-        );
+        update_commitment_cache(&my_pubkey, commitment_type, slot, &commitment_sender);
         let received_data = commitment_receiver
             .try_recv()
             .expect("Failed to receive commitment data");
@@ -75,7 +64,6 @@ mod tests {
             CommitmentAggregationData {
                 commitment_type: CommitmentType::Rooted,
                 slot,
-                dependency_work,
             }
         );
     }

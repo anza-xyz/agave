@@ -1608,6 +1608,7 @@ impl Validator {
             banking_tracer: banking_tracer.clone(),
             slot_status_notifier: slot_status_notifier.clone(),
             entry_notification_sender: entry_notification_sender.clone(),
+            transaction_status_sender: transaction_status_sender.clone(),
             leader_window_info_receiver,
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
