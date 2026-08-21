@@ -106,7 +106,7 @@ use {
         },
         response::{
             Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
+            RpcReceivedTransaction, RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
         },
     },
     solana_signature::Signature,
@@ -296,6 +296,13 @@ pub type AccountSubscription = (
 
 pub type PubsubVoteClientSubscription = PubsubClientSubscription<RpcVote>;
 pub type VoteSubscription = (PubsubVoteClientSubscription, Receiver<RpcVote>);
+
+pub type PubsubReceivedTransactionClientSubscription =
+    PubsubClientSubscription<RpcReceivedTransaction>;
+pub type ReceivedTransactionSubscription = (
+    PubsubReceivedTransactionClientSubscription,
+    Receiver<RpcReceivedTransaction>,
+);
 
 pub type PubsubRootClientSubscription = PubsubClientSubscription<Slot>;
 pub type RootSubscription = (PubsubRootClientSubscription, Receiver<Slot>);
@@ -579,6 +586,63 @@ impl PubsubClient {
         let result = PubsubClientSubscription {
             message_type: PhantomData,
             operation: "vote",
+            socket,
+            subscription_id,
+            t_cleanup: Some(t_cleanup),
+            exit,
+        };
+
+        Ok((result, receiver))
+    }
+
+    /// Subscribe to transactions accepted on the `sendTransaction` path.
+    ///
+    /// Receives messages of type [`RpcReceivedTransaction`] when the node accepts a
+    /// transaction submitted via `sendTransaction`, at the moment it is admitted for
+    /// forwarding and before any leader has seen it.
+    ///
+    /// No execution has occurred at this point, so the payload carries no status, logs or
+    /// balances, and a transaction reported here may never land. It is also unverified
+    /// intent: when [`RpcReceivedTransaction::preflight_skipped`] is true the
+    /// transaction's signatures were not checked, so do not treat the payload as valid.
+    ///
+    /// The node reports each admission once. Periodic re-forwarding does not re-notify,
+    /// but a client resubmitting the same signature is a fresh admission and is reported
+    /// again, so dedupe by signature.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`transactionReceivedSubscribe`] RPC
+    /// method.
+    ///
+    /// [`transactionReceivedSubscribe`]: https://solana.com/docs/rpc/websocket
+    pub fn transaction_received_subscribe<R: IntoClientRequest>(
+        request: R,
+    ) -> Result<ReceivedTransactionSubscription, PubsubClientError> {
+        let client_request = request.into_client_request().map_err(Box::new)?;
+        let socket = connect_with_retry(client_request)?;
+        let (sender, receiver) = unbounded();
+
+        let socket = Arc::new(RwLock::new(socket));
+        let socket_clone = socket.clone();
+        let exit = Arc::new(AtomicBool::new(false));
+        let exit_clone = exit.clone();
+        let body = json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"transactionReceivedSubscribe",
+        })
+        .to_string();
+        let subscription_id =
+            PubsubReceivedTransactionClientSubscription::send_subscribe(&socket_clone, body)?;
+
+        let t_cleanup = std::thread::spawn(move || {
+            Self::cleanup_with_sender(exit_clone, &socket_clone, sender)
+        });
+
+        let result = PubsubClientSubscription {
+            message_type: PhantomData,
+            operation: "transactionReceived",
             socket,
             subscription_id,
             t_cleanup: Some(t_cleanup),

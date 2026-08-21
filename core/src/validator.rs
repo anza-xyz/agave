@@ -114,6 +114,7 @@ use {
             BankNotificationSenderConfig, OptimisticallyConfirmedBank,
             OptimisticallyConfirmedBankTracker,
         },
+        received_transaction_notifier_interface::ReceivedTransactionNotifierArc,
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
@@ -907,6 +908,7 @@ impl Validator {
         let (
             accounts_update_notifier,
             transaction_notifier,
+            received_transaction_notifier,
             deshred_transaction_notifier,
             entry_notifier,
             block_metadata_notifier,
@@ -915,20 +917,23 @@ impl Validator {
             (
                 service.get_accounts_update_notifier(),
                 service.get_transaction_notifier(),
+                service.get_received_transaction_notifier(),
                 service.get_deshred_transaction_notifier(),
                 service.get_entry_notifier(),
                 service.get_block_metadata_notifier(),
                 service.get_slot_status_notifier(),
             )
         } else {
-            (None, None, None, None, None, None)
+            (None, None, None, None, None, None, None)
         };
 
         info!(
             "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
-             deshred_transaction_notifier: {}, entry_notifier: {}",
+             received_transaction_notifier: {}, deshred_transaction_notifier: {}, \
+             entry_notifier: {}",
             accounts_update_notifier.is_some(),
             transaction_notifier.is_some(),
+            received_transaction_notifier.is_some(),
             deshred_transaction_notifier.is_some(),
             entry_notifier.is_some()
         );
@@ -1296,6 +1301,31 @@ impl Validator {
                     cancel.clone(),
                 )
             };
+            // Constructed ahead of the RPC service so that it can be attached as an ingress
+            // notifier for `transactionReceivedSubscribe`.
+            let rpc_subscriptions = Arc::new(RpcSubscriptions::new_with_config(
+                exit.clone(),
+                max_complete_transaction_status_slot.clone(),
+                blockstore.clone(),
+                bank_forks.clone(),
+                block_commitment_cache.clone(),
+                optimistically_confirmed_bank.clone(),
+                &config.pubsub_config,
+                None,
+            ));
+
+            let mut received_transaction_notifiers: Vec<ReceivedTransactionNotifierArc> =
+                Vec::new();
+            if let Some(notifier) = received_transaction_notifier.clone() {
+                received_transaction_notifiers.push(notifier);
+            }
+            // `transactionReceivedSubscribe` is served by the pubsub endpoint, which only
+            // exists on a full-API node. Without it nothing can subscribe, so there is
+            // nothing to feed.
+            if config.rpc_config.full_api {
+                received_transaction_notifiers.push(rpc_subscriptions.clone());
+            }
+
             let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
                 rpc_config: config.rpc_config.clone(),
@@ -1318,19 +1348,10 @@ impl Validator {
                 max_complete_transaction_status_slot: max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 rpc_tpu_client_args,
+                received_transaction_notifiers,
             };
             let json_rpc_service =
                 JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
-            let rpc_subscriptions = Arc::new(RpcSubscriptions::new_with_config(
-                exit.clone(),
-                max_complete_transaction_status_slot,
-                blockstore.clone(),
-                bank_forks.clone(),
-                block_commitment_cache.clone(),
-                optimistically_confirmed_bank.clone(),
-                &config.pubsub_config,
-                None,
-            ));
             let pubsub_service = if !config.rpc_config.full_api {
                 None
             } else {

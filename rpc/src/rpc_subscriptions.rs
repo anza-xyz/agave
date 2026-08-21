@@ -5,6 +5,7 @@ use {
         filter::filter_allows,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::{get_parsed_token_account, get_parsed_token_accounts},
+        received_transaction_notifier_interface::ReceivedTransactionNotifier,
         rpc_pubsub_service::PubSubConfig,
         rpc_subscription_tracker::{
             AccountSubscriptionParams, BlockSubscriptionKind, BlockSubscriptionParams,
@@ -13,6 +14,7 @@ use {
             SubscriptionParams, SubscriptionsTracker,
         },
     },
+    base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     itertools::Either,
     rayon::prelude::*,
@@ -27,8 +29,8 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client_api::response::{
         ProcessedSignatureResult, ReceivedSignatureResult, Response as RpcResponse, RpcBlockUpdate,
-        RpcBlockUpdateError, RpcKeyedAccount, RpcLogsResponse, RpcResponseContext,
-        RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
+        RpcBlockUpdateError, RpcKeyedAccount, RpcLogsResponse, RpcReceivedTransaction,
+        RpcResponseContext, RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
     },
     solana_runtime::{
         bank::{Bank, TransactionLogInfo},
@@ -94,10 +96,22 @@ impl From<NotificationEntry> for TimestampedNotificationEntry {
     }
 }
 
+/// A transaction admitted on the RPC `sendTransaction` path, carried unformatted so that
+/// encoding happens on the notification thread rather than the RPC request thread.
+#[derive(Clone, Debug)]
+pub struct ReceivedTransactionEntry {
+    pub signature: Signature,
+    pub wire_transaction: Vec<u8>,
+    pub received_ns: u64,
+    pub slot_hint: Slot,
+    pub preflight_skipped: bool,
+}
+
 pub enum NotificationEntry {
     Slot(SlotInfo),
     SlotUpdate(SlotUpdate),
     Vote((Pubkey, VoteTransaction, Signature)),
+    TransactionReceived(ReceivedTransactionEntry),
     Root(Slot),
     Bank(CommitmentSlots),
     Gossip(Slot),
@@ -111,6 +125,9 @@ impl std::fmt::Debug for NotificationEntry {
         match self {
             NotificationEntry::Root(root) => write!(f, "Root({root})"),
             NotificationEntry::Vote(vote) => write!(f, "Vote({vote:?})"),
+            NotificationEntry::TransactionReceived(transaction) => {
+                write!(f, "TransactionReceived({})", transaction.signature)
+            }
             NotificationEntry::Slot(slot_info) => write!(f, "Slot({slot_info:?})"),
             NotificationEntry::SlotUpdate(slot_update) => {
                 write!(f, "SlotUpdate({slot_update:?})")
@@ -483,6 +500,7 @@ struct PubsubNotificationStats {
     notify_slot_count: u64,
     notify_slot_update_count: u64,
     notify_vote_count: u64,
+    notify_transaction_received_count: u64,
     notify_root_count: u64,
     notify_signature_count: u64,
     notification_entry_processing_count: u64,
@@ -505,6 +523,11 @@ impl PubsubNotificationStats {
                 i64
             ),
             ("notify_vote_count", self.notify_vote_count, i64),
+            (
+                "notify_transaction_received_count",
+                self.notify_transaction_received_count,
+                i64
+            ),
             ("notify_root_count", self.notify_root_count, i64),
             ("notify_signature_count", self.notify_signature_count, i64),
             (
@@ -820,6 +843,26 @@ impl RpcSubscriptions {
                                 debug!("vote notify: {vote_info:?}");
                                 stats.notify_vote_count += 1;
                                 notifier.notify(&rpc_vote, sub, false);
+                            }
+                        }
+                        // Reported at ingress on the RPC sendTransaction path, before the
+                        // transaction has been forwarded to any leader and before any
+                        // execution has occurred.
+                        NotificationEntry::TransactionReceived(ref entry) => {
+                            if let Some(sub) = subscriptions
+                                .node_progress_watchers()
+                                .get(&SubscriptionParams::TransactionReceived)
+                            {
+                                let received_transaction = RpcReceivedTransaction {
+                                    signature: entry.signature.to_string(),
+                                    transaction: BASE64_STANDARD.encode(&entry.wire_transaction),
+                                    received_ns: entry.received_ns,
+                                    slot_hint: entry.slot_hint,
+                                    preflight_skipped: entry.preflight_skipped,
+                                };
+                                debug!("transaction received notify: {}", entry.signature);
+                                stats.notify_transaction_received_count += 1;
+                                notifier.notify(&received_transaction, sub, false);
                             }
                         }
                         NotificationEntry::Root(root) => {
@@ -1200,6 +1243,30 @@ impl RpcSubscriptions {
     #[cfg(test)]
     fn total(&self) -> usize {
         self.control.total()
+    }
+}
+
+/// Lets the RPC ingress path publish `transactionReceivedSubscribe` notifications. The
+/// call happens on an RPC request thread, so it only enqueues -- base-58 and base-64
+/// encoding are done later on the notification thread.
+impl ReceivedTransactionNotifier for RpcSubscriptions {
+    fn notify_transaction_received(
+        &self,
+        signature: &Signature,
+        wire_transaction: &[u8],
+        received_ns: u64,
+        slot_hint: Slot,
+        preflight_skipped: bool,
+    ) {
+        self.enqueue_notification(NotificationEntry::TransactionReceived(
+            ReceivedTransactionEntry {
+                signature: *signature,
+                wire_transaction: wire_transaction.to_vec(),
+                received_ns,
+                slot_hint,
+                preflight_skipped,
+            },
+        ));
     }
 }
 

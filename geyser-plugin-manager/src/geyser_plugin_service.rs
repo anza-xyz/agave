@@ -6,6 +6,7 @@ use {
         deshred_transaction_notifier::DeshredTransactionNotifierImpl,
         entry_notifier::EntryNotifierImpl,
         geyser_plugin_manager::{GeyserPluginManager, GeyserPluginManagerRequest},
+        received_transaction_notifier::ReceivedTransactionNotifierImpl,
         slot_status_notifier::SlotStatusNotifierImpl,
         slot_status_observer::SlotStatusObserver,
         transaction_notifier::TransactionNotifierImpl,
@@ -20,6 +21,7 @@ use {
     },
     solana_rpc::{
         optimistically_confirmed_bank_tracker::SlotNotification,
+        received_transaction_notifier_interface::ReceivedTransactionNotifierArc,
         slot_status_notifier::SlotStatusNotifier,
         transaction_notifier_interface::TransactionNotifierArc,
     },
@@ -44,6 +46,7 @@ pub struct GeyserPluginService {
     plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
+    received_transaction_notifier: Option<ReceivedTransactionNotifierArc>,
     deshred_transaction_notifier: Option<DeshredTransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
@@ -105,6 +108,10 @@ impl GeyserPluginService {
         let transaction_notifications_enabled =
             plugin_manager.load().transaction_notifications_enabled()
                 || geyser_plugin_always_enabled;
+        let transaction_received_notifications_enabled = plugin_manager
+            .load()
+            .transaction_received_notifications_enabled()
+            || geyser_plugin_always_enabled;
         let deshred_transaction_notifications_enabled = plugin_manager
             .load()
             .deshred_transaction_notifications_enabled()
@@ -129,6 +136,15 @@ impl GeyserPluginService {
             if transaction_notifications_enabled {
                 let transaction_notifier = TransactionNotifierImpl::new(plugin_manager.clone());
                 Some(Arc::new(transaction_notifier))
+            } else {
+                None
+            };
+
+        let received_transaction_notifier: Option<ReceivedTransactionNotifierArc> =
+            if transaction_received_notifications_enabled {
+                let received_transaction_notifier =
+                    ReceivedTransactionNotifierImpl::new(plugin_manager.clone());
+                Some(Arc::new(received_transaction_notifier))
             } else {
                 None
             };
@@ -187,6 +203,7 @@ impl GeyserPluginService {
             plugin_manager,
             accounts_update_notifier,
             transaction_notifier,
+            received_transaction_notifier,
             deshred_transaction_notifier,
             entry_notifier,
             block_metadata_notifier,
@@ -218,6 +235,10 @@ impl GeyserPluginService {
 
     pub fn get_transaction_notifier(&self) -> Option<TransactionNotifierArc> {
         self.transaction_notifier.clone()
+    }
+
+    pub fn get_received_transaction_notifier(&self) -> Option<ReceivedTransactionNotifierArc> {
+        self.received_transaction_notifier.clone()
     }
 
     pub fn get_deshred_transaction_notifier(&self) -> Option<DeshredTransactionNotifierArc> {
