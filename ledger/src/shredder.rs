@@ -299,8 +299,7 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            self, CODING_SHREDS_PER_FEC_BLOCK, ShredType, max_ticks_per_n_shreds,
-            verify_test_data_shred,
+            CODING_SHREDS_PER_FEC_BLOCK, ShredType, max_ticks_per_n_shreds, verify_test_data_shred,
         },
         assert_matches::assert_matches,
         itertools::Itertools,
@@ -481,7 +480,6 @@ mod tests {
         );
         data_shreds.iter().for_each(|s| {
             assert_eq!(s.reference_tick(), 5);
-            assert_eq!(shred::layout::get_reference_tick(s.payload()).unwrap(), 5);
         });
 
         let deserialized_shred =
@@ -519,10 +517,6 @@ mod tests {
         data_shreds.iter().for_each(|s| {
             assert_eq!(
                 s.reference_tick(),
-                ShredFlags::SHRED_TICK_REFERENCE_MASK.bits()
-            );
-            assert_eq!(
-                shred::layout::get_reference_tick(s.payload()).unwrap(),
                 ShredFlags::SHRED_TICK_REFERENCE_MASK.bits()
             );
         });

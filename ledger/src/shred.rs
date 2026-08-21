@@ -1129,23 +1129,11 @@ mod tests {
         assert_eq!(layout::get_shred_id(data), Some(shred.id()));
         assert_eq!(layout::get_signature(data), Some(*shred.signature()));
         assert_eq!(layout::get_shred_type(data).unwrap(), shred.shred_type());
-        match shred.shred_type() {
-            ShredType::Code => {
-                assert_matches!(
-                    layout::get_reference_tick(data),
-                    Err(Error::InvalidShredType)
-                );
-            }
-            ShredType::Data => {
-                assert_eq!(
-                    layout::get_reference_tick(data).unwrap(),
-                    shred.reference_tick()
-                );
-                let parent_offset = layout::get_parent_offset(data).unwrap();
-                let slot = layout::get_slot(data).unwrap();
-                let parent = slot.checked_sub(Slot::from(parent_offset)).unwrap();
-                assert_eq!(parent, shred.parent().unwrap());
-            }
+        if shred.shred_type() == ShredType::Data {
+            let parent_offset = layout::get_parent_offset(data).unwrap();
+            let slot = layout::get_slot(data).unwrap();
+            let parent = slot.checked_sub(Slot::from(parent_offset)).unwrap();
+            assert_eq!(parent, shred.parent().unwrap());
         }
     }
 
