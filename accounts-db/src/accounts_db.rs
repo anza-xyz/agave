@@ -926,6 +926,10 @@ pub struct AccountsDb {
     /// Populated when flushing the accounts write cache
     uncleaned_pubkeys: DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>>,
 
+    /// Pubkeys of the slots purged from the write cache, one entry per purged slot, waiting to be
+    /// cleaned
+    pubkeys_removed_from_cache: Mutex<Vec<Vec<Pubkey>>>,
+
     #[cfg(test)]
     load_delay: u64,
 
@@ -1099,6 +1103,7 @@ impl AccountsDb {
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),
             uncleaned_pubkeys: DashMap::default(),
+            pubkeys_removed_from_cache: Mutex::default(),
             next_id: AtomicAccountsFileId::new(0),
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
@@ -1224,7 +1229,7 @@ impl AccountsDb {
     ///   cache store writes the cache before inserting into the secondary index under that same
     ///   lock, either the re-check sees the cache write and the entry is not removed, or the
     ///   removal wins and the store's later insert re-adds it.
-    /// 2) Removed from the cache, and also simultaneously removed from storage by clean
+    /// 2) Removed from the cache, and also removed from storage by clean
     /// - Since both the cache removal and the index removal are done before the removal from the
     ///   secondary index, the worst case is a double removal (both paths remove the same secondary
     ///   index entry). This is safe since the secondary index removal is idempotent.
@@ -1605,6 +1610,11 @@ impl AccountsDb {
 
         self.report_store_stats();
 
+        // purge_slots_from_cache delays handling of pubkeys removed from the cache
+        // to avoid collisions with background threads. Handle any removals here
+        let (_, handle_pubkeys_removed_from_cache_us) =
+            measure_us!(self.handle_pubkeys_removed_from_cache());
+
         let active_guard = self
             .active_stats
             .activate(ActiveStatItem::CleanConstructCandidates);
@@ -1742,6 +1752,11 @@ impl AccountsDb {
                 i64
             ),
             ("construct_candidates_us", measure_construct_candidates.as_us(), i64),
+            (
+                "handle_pubkeys_removed_from_cache_us",
+                handle_pubkeys_removed_from_cache_us,
+                i64
+            ),
             ("accounts_scan", accounts_scan.as_us(), i64),
             ("clean_old_rooted", clean_old_rooted.as_us(), i64),
             (
@@ -3297,7 +3312,8 @@ impl AccountsDb {
         self.purge_slots(std::iter::once(&slot));
     }
 
-    /// Purges each slot in `removed_slots` from the write cache and potentially the secondary
+    /// Purges each slot in `removed_slots` from the write cache, and queues any pubkeys that
+    /// were fully removed from the write cache to clean to handle removal from the secondary
     /// index. Slots no longer present in the cache are skipped. This never touches backing
     /// storage, so it cannot delete a flushed slot's data. Returns whether any slot was actually
     /// removed from the cache. This allows the snapshot minimizer to determine whether
@@ -3313,8 +3329,7 @@ impl AccountsDb {
         for remove_slot in removed_slots {
             // This function runs in parallel with the ABS operations (flush, shrink, clean) and
             // must be safe with respect to them. ABS operations will not operate on this slot as
-            // it is unrooted (unless the snapshot minimizer is being used), but pubkey operations
-            // must be safe with respect to collisions (eg. write_through and handle_dead_keys)
+            // it is unrooted (unless the snapshot minimizer is being used).
             let mut remove_cache_elapsed = Measure::start("remove_cache_elapsed");
             if let Some(slot_cache) = self.accounts_cache.slot_cache(*remove_slot) {
                 num_cached_slots_removed += 1;
@@ -3326,12 +3341,7 @@ impl AccountsDb {
                     .accounts_cache
                     .remove_slot(*remove_slot)
                     .expect("slot cache entry must still be present");
-                // Potentially purge the secondary entries for any key that has now left the cache
-                if !self.account_indexes.is_empty() {
-                    let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys_removed);
-                    self.purge_secondary_indexes_for_dead_keys(&removed_keys);
-                }
-                self.accounts_index.write_through_pubkeys(pubkeys_removed);
+                self.queue_pubkeys_removed_from_cache(pubkeys_removed);
             }
         }
 
@@ -3346,6 +3356,33 @@ impl AccountsDb {
             .fetch_add(total_removed_cached_bytes, Ordering::Relaxed);
 
         num_cached_slots_removed > 0
+    }
+
+    /// Queue any keys that were removed from the cache and need follow-up work by clean
+    /// Only required if secondary indexes are enabled, or disk index is enabled
+    fn queue_pubkeys_removed_from_cache(&self, pubkeys: Vec<Pubkey>) {
+        if self.account_indexes.is_empty() && !self.accounts_index.is_disk_index_enabled() {
+            return;
+        }
+        self.pubkeys_removed_from_cache
+            .lock()
+            .unwrap()
+            .push(pubkeys);
+    }
+
+    /// For each pubkey in the list:
+    /// 1. write-through to disk if the pubkey is dirty and not present in the cache
+    /// 2. remove the pubkey from the secondary index if it is not present in either teh cache
+    ///    or the index
+    fn handle_pubkeys_removed_from_cache(&self) {
+        let queued = mem::take(&mut *self.pubkeys_removed_from_cache.lock().unwrap());
+        for pubkeys in queued {
+            if !self.account_indexes.is_empty() {
+                let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys);
+                self.purge_secondary_indexes_for_dead_keys(&removed_keys);
+            }
+            self.accounts_index.write_through_pubkeys(pubkeys);
+        }
     }
 
     /// Purges every slot in `removed_slots` from both the cache and storage. This includes

@@ -567,8 +567,9 @@ fn test_flush_does_not_write_through_when_write_through_disabled() {
 }
 
 /// The dead-slot purge path removes only the purged slot's index entries, so a pubkey with
-/// a surviving dirty single-ref entry at another slot must be written through when the purge
-/// drops its last cached slot.
+/// a surviving dirty single-ref entry at another slot must be written through once the purge
+/// drops its last cached slot. To avoid contention the write-through is queued for the clean
+/// thread to handle.
 #[test]
 fn test_purge_unrooted_slot_writes_through_surviving_entry() {
     let db = AccountsDb::new_for_tests_with_config(
@@ -617,16 +618,18 @@ fn test_purge_unrooted_slot_writes_through_surviving_entry() {
 
     // Purge the unrooted slot 1 from the cache. `purge_slot_cache` removes only the slot-1
     // entry, leaving the slot-0 entry as a single-ref dirty entry; the pubkey leaves the cache
-    // entirely, so the purge path's write-through fires on that surviving entry exactly once.
+    // entirely, so it is queued for write-through, but nothing is written yet.
     db.remove_unrooted_slots(&[(1, 1)]);
     assert!(
-        !is_dirty_in_mem(&pubkey),
-        "should be clean after purge writes through the surviving entry"
+        is_dirty_in_mem(&pubkey),
+        "still dirty until clean drains the queue"
     );
-    assert_eq!(
-        immediate_disk_writes(),
-        baseline_writes + 1,
-        "purge path must write through the surviving single-ref entry exactly once"
+
+    // Clean drains the queue and writes through the surviving entry exactly once.
+    db.clean_accounts_for_tests();
+    assert!(
+        !is_dirty_in_mem(&pubkey),
+        "should be clean after clean writes through the surviving entry"
     );
 }
 
@@ -685,14 +688,53 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
         Some(1)
     );
 
-    // Dropping the unrooted slot must reclaim the secondary entry, not leak it.
+    // Dropping the unrooted slot queues the key, and the following clean must reclaim the
+    // secondary entry, not leak it.
     db.remove_unrooted_slots(&[(slot, bank_id)]);
     assert!(!db.accounts_cache.contains_pubkey(&pubkey));
+    db.clean_accounts_for_tests();
     assert_eq!(
         db.accounts_index
             .get_index_key_size(&AccountIndex::ProgramId, &owner),
         None
     );
+}
+
+/// A pubkey queued by `remove_unrooted_slots` can be stored again, rooted and flushed before the
+/// next clean drains the queue. The key is alive in the primary index at that point and no longer
+/// in the write cache, clean must not purge its secondary index entry.
+#[test]
+fn test_purged_pubkey_restored_before_clean_keeps_secondary_index() {
+    let db = AccountsDb {
+        account_indexes: program_id_index_enabled(),
+        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
+    };
+
+    let owner = Pubkey::new_unique();
+    let pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &owner);
+
+    // Store the pubkey in an unrooted slot, then purge that slot. The pubkey is queued for clean,
+    // and has no primary index entry at all.
+    db.store_for_tests((1, &[(&pubkey, &account)][..]));
+    db.remove_unrooted_slots(&[(1, 1)]);
+    assert!(!db.accounts_index.contains(&pubkey));
+
+    // Store the pubkey again and flush it to storage, which creates an entry in the accounts index
+    db.store_for_tests((2, &[(&pubkey, &account)][..]));
+    db.add_root_and_flush_write_cache(2);
+    assert!(!db.accounts_cache.contains_pubkey(&pubkey));
+
+    db.clean_accounts_for_tests();
+
+    // Assert that the pubkey is still in the secondary index
+    assert_eq!(
+        db.accounts_index
+            .get_index_key_pubkeys(&IndexKey::ProgramId(owner)),
+        vec![pubkey],
+        "clean purged the secondary index entry of a key that was stored again"
+    );
+    db.assert_load_account(2, pubkey, 1);
 }
 
 // Test that removing a rooted storage works correctly. This is behaviour specific to
@@ -1872,9 +1914,10 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
 
     accounts.purge_slots_from_cache(iter::once(&cache_slot), &PurgeStats::default());
 
-    // The pubkey has been removed from both the index and the write cache. Ensure it is
-    // removed from the secondary index as well.
+    // The pubkey has been removed from both the index and the write cache. The purge only queued
+    // it, so the following clean must remove it from the secondary index as well.
     assert!(!accounts.accounts_cache.contains_pubkey(&pubkey));
+    accounts.clean_accounts_for_tests();
     assert_eq!(
         accounts
             .accounts_index
