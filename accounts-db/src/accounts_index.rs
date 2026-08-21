@@ -842,12 +842,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         map.delete(pubkey, reclaims);
     }
 
-    pub fn ref_count_from_storage(&self, pubkey: &Pubkey) -> RefCount {
+    /// Length of `pubkey`'s slot list, 0 if the pubkey is not in the index
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn slot_list_len(&self, pubkey: &Pubkey) -> usize {
         let map = self.get_bin(pubkey);
         map.get_internal_inner(pubkey, |entry| {
             (
                 false,
-                entry.map(|entry| entry.ref_count()).unwrap_or_default(),
+                entry
+                    .map(|entry| entry.slot_list_lock_read_len())
+                    .unwrap_or_default(),
             )
         })
     }
@@ -1181,7 +1185,7 @@ mod tests {
 
         let ancestors = Ancestors::default();
         assert!(index.contains_with(pubkey, &ancestors));
-        assert_eq!(index.ref_count_from_storage(pubkey), 1);
+        assert_eq!(index.slot_list_len(pubkey), 1);
 
         let mut num = 0;
         index.scan_accounts(
@@ -1204,7 +1208,7 @@ mod tests {
 
         let ancestors = Ancestors::default();
         assert!(index.contains_with(pubkey, &ancestors));
-        assert_eq!(index.ref_count_from_storage(pubkey), 1);
+        assert_eq!(index.slot_list_len(pubkey), 1);
 
         let mut num = 0;
         index.scan_accounts(
@@ -1772,10 +1776,7 @@ mod tests {
         assert!(reclaims.is_empty());
 
         // Slot list should only have a single entry
-        let slot_list_len = index.get_and_then(&key, |entry| {
-            (false, entry.unwrap().slot_list_lock_read_len())
-        });
-        assert_eq!(slot_list_len, 1);
+        assert_eq!(index.slot_list_len(&key), 1);
 
         index.upsert(0, 0, &key, 0, &mut reclaims, UPSERT_RECLAIM_TEST_DEFAULT);
 
@@ -1783,10 +1784,7 @@ mod tests {
         assert!(!reclaims.is_empty());
 
         // Slot list should only have a single entry
-        let slot_list_len = index.get_and_then(&key, |entry| {
-            (false, entry.unwrap().slot_list_lock_read_len())
-        });
-        assert_eq!(slot_list_len, 1);
+        assert_eq!(index.slot_list_len(&key), 1);
     }
 
     #[test]
@@ -1805,7 +1803,7 @@ mod tests {
             &mut gc,
             UpsertReclaim::IgnoreReclaims,
         );
-        assert_eq!(index.ref_count_from_storage(&key), 1);
+        assert_eq!(index.slot_list_len(&key), 1);
 
         let account_info = 200;
 
@@ -1816,8 +1814,8 @@ mod tests {
             (false, entry.unwrap().slot_list_read_lock().clone_list())
         });
         assert_eq!(slot_list, SlotList::from([(slot, account_info)]));
-        // Replace doesn't change refcounts.
-        assert_eq!(index.ref_count_from_storage(&key), 1);
+        // Replace doesn't change the slot list length.
+        assert_eq!(index.slot_list_len(&key), 1);
     }
 
     #[test]
@@ -1838,7 +1836,7 @@ mod tests {
             &mut gc,
             UpsertReclaim::IgnoreReclaims,
         );
-        assert_eq!(index.ref_count_from_storage(&key), 1);
+        assert_eq!(index.slot_list_len(&key), 1);
 
         index.replace(new_slot, old_slot, &key, account_info);
 
@@ -1846,8 +1844,8 @@ mod tests {
             (false, entry.unwrap().slot_list_read_lock().clone_list())
         });
         assert_eq!(slot_list, SlotList::from([(new_slot, account_info)]));
-        // Moving an entry between slots must not change the ref count.
-        assert_eq!(index.ref_count_from_storage(&key), 1);
+        // Moving an entry between slots must not change the slot list length.
+        assert_eq!(index.slot_list_len(&key), 1);
     }
 
     #[test]
@@ -2008,10 +2006,7 @@ mod tests {
                 UpsertReclaim::IgnoreReclaims,
             );
         }
-        let slot_list_len = index.get_and_then(&key, |entry| {
-            (false, entry.unwrap().slot_list_lock_read_len())
-        });
-        assert_eq!(slot_list_len, reclaim_slot as usize);
+        assert_eq!(index.slot_list_len(&key), reclaim_slot as usize);
 
         // Insert an item newer than the one that we will reclaim old slots on
         index.upsert(
@@ -2022,10 +2017,7 @@ mod tests {
             &mut gc,
             UpsertReclaim::IgnoreReclaims,
         );
-        let slot_list_len = index.get_and_then(&key, |entry| {
-            (false, entry.unwrap().slot_list_lock_read_len())
-        });
-        assert_eq!(slot_list_len, (reclaim_slot + 1) as usize);
+        assert_eq!(index.slot_list_len(&key), (reclaim_slot + 1) as usize);
 
         // Reclaim all older slots
         index.upsert(

@@ -9269,11 +9269,11 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     //! 1. A key is written _only_ in an unrooted bank (key1)
     //!     - In this case, key1 should be cleaned up
     //! 2. A key is written in both an unrooted _and_ rooted bank (key3)
-    //!     - In this case, key3's ref-count should be decremented correctly
+    //!     - In this case, key3 should stay in the index
     //! 3. A key with zero lamports is _only_ in an unrooted bank (key4)
     //!     - In this case, key4 should be cleaned up
     //! 4. A key with zero lamports is in both an unrooted _and_ rooted bank (key5)
-    //!     - In this case, key5's ref-count should be decremented correctly
+    //!     - In this case, key5 should be cleaned up
 
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -9336,45 +9336,11 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     drop(bank1);
     bank2.clean_accounts_for_tests();
 
-    let expected_ref_count_for_cleaned_up_keys = 0;
-    let expected_ref_count_for_keys_in_both_slot1_and_slot2 = 1;
-
-    assert_eq!(
-        bank2
-            .rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .ref_count_from_storage(&key1.pubkey()),
-        expected_ref_count_for_cleaned_up_keys,
-    );
-    assert_eq!(
-        bank2
-            .rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .ref_count_from_storage(&key3.pubkey()),
-        expected_ref_count_for_keys_in_both_slot1_and_slot2,
-    );
-    assert_eq!(
-        bank2
-            .rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .ref_count_from_storage(&key4.pubkey()),
-        expected_ref_count_for_cleaned_up_keys,
-    );
-    assert_eq!(
-        bank2
-            .rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .ref_count_from_storage(&key5.pubkey()),
-        expected_ref_count_for_cleaned_up_keys,
-    );
+    // key1, key4 and key5 are cleaned up; key3 is still alive in rooted slot 2
+    assert!(!bank2.rc.accounts.accounts_db.contains(&key1.pubkey()));
+    assert!(bank2.rc.accounts.accounts_db.contains(&key3.pubkey()));
+    assert!(!bank2.rc.accounts.accounts_db.contains(&key4.pubkey()));
+    assert!(!bank2.rc.accounts.accounts_db.contains(&key5.pubkey()));
     assert_eq!(
         bank2.rc.accounts.accounts_db.alive_account_count_in_slot(1),
         0
