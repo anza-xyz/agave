@@ -1874,6 +1874,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
+name = "const-siphasher"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03efed02df0504d71e44bfd51d3329f401b8303a2fd14254acf05c95a0af0153"
+
+[[package]]
 name = "const_format"
 version = "0.2.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1940,6 +1946,19 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "corosensei"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6886a0c0f263965933c438626e7179139a62b978a33aa18281cbf0cd5a975f34"
+dependencies = [
+ "autocfg",
+ "cfg-if 1.0.4",
+ "libc",
+ "scopeguard",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "cpufeatures"
@@ -4835,6 +4854,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
+name = "owo-colors"
+version = "4.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
+
+[[package]]
 name = "page_size"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6541,11 +6566,80 @@ dependencies = [
  "bitvec",
  "generator",
  "hex",
- "owo-colors",
+ "owo-colors 3.5.0",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rand_pcg",
  "scoped-tls",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "shuttle"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "786792d8bc94c770b53a938f0ae68726387a3a0a3762f9cc2c38d5e1bb40f0c0"
+dependencies = [
+ "bitvec",
+ "cfg-if 1.0.4",
+ "const-siphasher",
+ "corosensei",
+ "hex",
+ "owo-colors 4.3.0",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
+ "rand_pcg",
+ "scoped-tls",
+ "shuttle-engine",
+ "shuttle-schedulers",
+ "shuttle-std",
+ "tracing",
+]
+
+[[package]]
+name = "shuttle-engine"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb03d6daa3cf319f53bef382ee4431203c770912209703452033d19fb71e813b"
+dependencies = [
+ "assoc",
+ "bitvec",
+ "cfg-if 1.0.4",
+ "const-siphasher",
+ "corosensei",
+ "hex",
+ "owo-colors 4.3.0",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
+ "rand_pcg",
+ "scoped-tls",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "shuttle-schedulers"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7673a579e1660404067f5aa1344d6530f15b59f53b0fe98767d7ab117d14067"
+dependencies = [
+ "rand 0.8.6",
+ "rand_pcg",
+ "shuttle-engine",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "shuttle-std"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf4a3088fd2d19e5ebc24bc3779bc85a68228fafde2d87d138e475b8591dc721"
+dependencies = [
+ "assoc",
+ "owo-colors 4.3.0",
+ "shuttle-engine",
  "smallvec",
  "tracing",
 ]
@@ -7182,7 +7276,7 @@ dependencies = [
  "criterion",
  "qualifier_attr",
  "rand 0.9.4",
- "shuttle",
+ "shuttle 0.9.3",
  "solana-account 4.6.0",
  "solana-bincode",
  "solana-bpf-loader-program",
@@ -9080,7 +9174,7 @@ dependencies = [
  "pcap-file",
  "rand 0.9.4",
  "serde",
- "shuttle",
+ "shuttle 0.9.3",
  "socket2 0.6.5",
  "solana-net-utils",
  "solana-serde",
@@ -9252,7 +9346,7 @@ dependencies = [
  "log",
  "qualifier_attr",
  "rand 0.9.4",
- "shuttle",
+ "shuttle 0.9.3",
  "solana-clock",
  "solana-entry",
  "solana-hash 4.6.0",
@@ -10012,7 +10106,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "shuttle",
+ "shuttle 0.9.3",
  "smallvec",
  "solana-account 4.6.0",
  "solana-account-decoder",
@@ -10164,7 +10258,7 @@ dependencies = [
  "log",
  "rand 0.8.6",
  "rustc-demangle",
- "shuttle",
+ "shuttle 0.7.1",
  "thiserror 2.0.20",
  "winapi",
 ]
@@ -10636,7 +10730,7 @@ dependencies = [
  "qualifier_attr",
  "rand 0.9.4",
  "serde",
- "shuttle",
+ "shuttle 0.9.3",
  "solana-account 4.6.0",
  "solana-address-lookup-table-interface",
  "solana-bpf-loader-program",
@@ -10755,7 +10849,7 @@ version = "4.4.0-alpha.1"
 dependencies = [
  "futures 0.3.33",
  "rand 0.9.4",
- "shuttle",
+ "shuttle 0.9.3",
 ]
 
 [[package]]
