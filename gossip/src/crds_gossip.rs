@@ -7,7 +7,7 @@
 use {
     crate::{
         cluster_info_metrics::GossipStats,
-        crds::{Crds, GossipRoute},
+        crds::{CrdsStore, GossipRoute},
         crds_data::CrdsData,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -32,14 +32,14 @@ use {
         cmp,
         collections::{HashMap, HashSet},
         net::SocketAddr,
-        sync::{Mutex, RwLock},
+        sync::Mutex,
         time::{Duration, Instant},
     },
 };
 
 #[derive(Default)]
 pub struct CrdsGossip {
-    pub crds: RwLock<Crds>,
+    pub crds: CrdsStore,
     pub push: CrdsGossipPush,
     pub pull: CrdsGossipPull,
 }
@@ -101,7 +101,7 @@ impl CrdsGossip {
         let pubkey = keypair.pubkey();
         // Skip if there are already records of duplicate shreds for this slot.
         let shred_slot = shred.slot();
-        let mut crds = self.crds.write().unwrap();
+        let mut crds = self.crds.write();
         if crds
             .get_records(&pubkey)
             .any(|value| match value.value.data() {
@@ -304,7 +304,6 @@ impl CrdsGossip {
         let rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
         self.crds
             .write()
-            .unwrap()
             .trim_purged(now.saturating_sub(5 * self.pull.crds_timeout));
         self.pull.purge_failed_inserts(now);
         rv
@@ -325,7 +324,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     // By default, should only push to or pull from gossip nodes with the same
     // shred-version.
     verify_shred_version: impl Fn(/*shred_version:*/ u16) -> bool,
-    crds: &RwLock<Crds>,
+    crds: &CrdsStore,
     gossip_validators: Option<&HashSet<Pubkey>>,
     stakes: &HashMap<Pubkey, u64>,
     socket_addr_space: &SocketAddrSpace,
@@ -333,7 +332,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     // Exclude nodes which have not been active for this long.
     const ACTIVE_TIMEOUT: Duration = Duration::from_secs(60);
     let active_cutoff = now.saturating_sub(ACTIVE_TIMEOUT.as_millis() as u64);
-    let crds = crds.read().unwrap();
+    let crds = crds.read();
     crds.get_nodes()
         .filter_map(|value| {
             let node = value.value.contact_info()?;
@@ -411,7 +410,6 @@ mod test {
         crds_gossip
             .crds
             .write()
-            .unwrap()
             .insert(
                 CrdsValue::new_unsigned(CrdsData::from(&ci)),
                 0,
