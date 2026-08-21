@@ -238,6 +238,10 @@ enum StartLeaderError {
         actual: Option<Hash>,
     },
 
+    /// AccountsDB has not finished purging an older Bank generation for this slot.
+    #[error("Accounts cache still contains an older Bank generation for leader slot {0}")]
+    StaleAccountsCache(/* leader slot */ Slot),
+
     /// PoH recorder failed while starting or completing a leader block.
     #[error("PoH recorder failed: {0}")]
     PohRecorder(#[from] PohRecorderError),
@@ -609,6 +613,7 @@ fn produce_window(
 
     while !ctx.exit.load(Ordering::Relaxed) && slot <= end_slot {
         let timeout = block_timeout(&working_bank, slot);
+        drop(working_bank);
         trace!(
             "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}ms",
             timeout.saturating_sub(block_timer.elapsed()).as_millis()
@@ -987,6 +992,8 @@ fn handle_parent_ready(
         .clear_bank(slot)
         .map_err(|_| PohRecorderError::ResetBankError(old_parent_slot, new_parent_slot))?;
     ctx.poh_recorder.write().unwrap().clear_bank(true);
+    // Drop the old working bank while waiting for ABS purge.
+    drop(bank);
 
     if let Some(sender) = &ctx.entry_notification_sender
         && let Err(err) = sender.send(EntryNotification::UpdateParent(EntryUpdateParentInfo {
@@ -1223,6 +1230,16 @@ fn start_leader_wait_for_parent_replay_with_used_bytes(
                     .replay_is_behind_wait_elapsed_hist
                     .increment(wait_start.as_us());
             }
+            Err(StartLeaderError::StaleAccountsCache(_)) => {
+                trace!(
+                    "{my_pubkey}: Attempting to recreate leader slot {slot}, but AccountsDB still \
+                     contains the previous Bank generation; waiting for its purge"
+                );
+                let wait_timeout = time_left(block_timer, timeout).min(Duration::from_millis(10));
+                if !wait_timeout.is_zero() {
+                    thread::sleep(wait_timeout);
+                }
+            }
             Err(e) => return Err(e),
         }
     }
@@ -1237,6 +1254,7 @@ fn start_leader_wait_for_parent_replay_with_used_bytes(
 /// - Is the highest notarization/finalized slot from `consensus_pool` frozen
 /// - Startup verification is complete
 /// - Bank forks does not already contain a bank for `slot`
+/// - AccountsDB does not contain an older Bank generation for `slot`
 ///
 /// If checks pass we return `Ok(())` and:
 /// - Reset poh to the `parent_slot`
@@ -1262,6 +1280,10 @@ fn maybe_start_leader(
     if !parent_bank.is_frozen() {
         ctx.slot_metrics.replay_is_behind_count += 1;
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
+    }
+
+    if parent_bank.has_cached_accounts_for_slot(slot) {
+        return Err(StartLeaderError::StaleAccountsCache(slot));
     }
 
     if let Some(expected) = parent_hash.filter(|hash| *hash != Hash::default()) {
