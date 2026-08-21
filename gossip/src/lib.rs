@@ -18,10 +18,18 @@ pub mod crds_value;
 pub mod duplicate_shred;
 pub mod duplicate_shred_handler;
 pub mod duplicate_shred_listener;
+mod engine_cluster_info;
 pub mod epoch_slots;
 pub mod epoch_specs;
+mod gossip_command;
+mod gossip_engine;
 pub mod gossip_error;
+mod gossip_housekeeper;
+mod gossip_identity;
+mod gossip_ingress;
+mod gossip_policy;
 pub mod gossip_service;
+mod gossip_timer;
 pub mod node;
 #[macro_use]
 mod tlv;
