@@ -1,4 +1,5 @@
 use {
+    agave_votor_messages::fraction::Fraction,
     itertools::Itertools,
     lazy_lru::LruCache,
     solana_pubkey::Pubkey,
@@ -38,7 +39,7 @@ impl ReceivedCache {
         &mut self,
         pubkey: &Pubkey, // This node.
         origin: Pubkey,  // CRDS value owner.
-        stake_threshold: f64,
+        stake_threshold: Fraction,
         min_ingress_nodes: usize,
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = Pubkey> + use<> {
@@ -90,17 +91,17 @@ impl ReceivedCacheEntry {
         self,
         pubkey: &Pubkey, // This node.
         origin: &Pubkey, // CRDS value owner.
-        stake_threshold: f64,
+        stake_threshold: Fraction,
         min_ingress_nodes: usize,
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = Pubkey> + use<> {
-        debug_assert!((0.0..=1.0).contains(&stake_threshold));
+        debug_assert!(stake_threshold <= Fraction::from_percentage(100));
         debug_assert!(self.num_upserts >= ReceivedCache::MIN_NUM_UPSERTS);
         // Enforce a minimum aggregate ingress stake; see:
         // https://github.com/solana-labs/solana/issues/3214
         let min_ingress_stake = {
             let stake = stakes.get(pubkey).min(stakes.get(origin));
-            (stake.copied().unwrap_or_default() as f64 * stake_threshold) as u64
+            stake_threshold.mul_u64(stake.copied().unwrap_or_default())
         };
         self.nodes
             .into_iter()
@@ -175,14 +176,14 @@ mod tests {
         assert_eq!(
             cache
                 .mock_clone()
-                .prune(&pubkey, origin, 0.5, 2, &stakes)
+                .prune(&pubkey, origin, Fraction::from_percentage(50), 2, &stakes)
                 .collect::<HashSet<_>>(),
             prunes
         );
         let prunes: HashSet<Pubkey> = [nodes[0], nodes[2]].into_iter().collect();
         assert_eq!(
             cache
-                .prune(&pubkey, origin, 1.0, 0, &stakes)
+                .prune(&pubkey, origin, Fraction::from_percentage(100), 0, &stakes)
                 .collect::<HashSet<_>>(),
             prunes
         );
