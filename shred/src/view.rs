@@ -1,13 +1,7 @@
 //! Borrowed views over a shred's sections, one per direction.
 //!
-//! [`Sections`] says where each section lives; this module is what reads and writes them.
-//! [`ShredView`] borrows every section of a finished shred at once, and [`ShredViewMut`] hands them
-//! out one at a time for a shred still being built. Neither computes a boundary of its own.
-//!
-//! Every rule about where a shred's bytes end and what may follow them lives here too: the payload
-//! length, the kind the variant byte selects, and the optional repair nonce. [`Shred`](crate::Shred)
-//! owns the bytes and holds the header scalars; it hands out a view for anything that lives in the
-//! buffer, and repeats none of the checks this module makes.
+//! This contains the segmentation logic of the crate, which slices bytes in a buffer in a way
+//! that allows them to be interpreted by e.g. wincode parsers.
 
 use {
     crate::{
@@ -27,9 +21,6 @@ use {
 };
 
 /// The sections of one shred, borrowed from its bytes.
-///
-/// Obtained from [`Shred::view`](crate::Shred::view) or, before there is a `Shred`, from
-/// [`ShredView::read`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ShredView<'a, K: ShredKind> {
     /// The leader's signature over the FEC set's Merkle root.
@@ -69,7 +60,7 @@ pub fn peek_variant(bytes: &[u8]) -> Result<ShredVariant, ParseError> {
 
 impl<'a, K: ShredKind> ShredView<'a, K> {
     /// Reads `bytes` as exactly one shred of kind `K`, with nothing following it.
-    pub fn read(bytes: &'a [u8]) -> Result<Self, ParseError> {
+    pub fn read_exact(bytes: &'a [u8]) -> Result<Self, ParseError> {
         let (view, trailer) = Self::read_prefix(bytes)?;
         if !trailer.is_empty() {
             return Err(ParseError::TrailingBytes(trailer.len()));
@@ -78,8 +69,8 @@ impl<'a, K: ShredKind> ShredView<'a, K> {
     }
 
     /// Reads `bytes` as one shred of kind `K` optionally followed by a repair nonce, which is how a
-    /// shred arrives in a packet.
-    pub fn read_packet(bytes: &'a [u8]) -> Result<(Self, Option<Nonce>), ParseError> {
+    /// shred arrives in the UDP packet.
+    pub fn read_wire_packet(bytes: &'a [u8]) -> Result<(Self, Option<Nonce>), ParseError> {
         let (view, mut trailer) = Self::read_prefix(bytes)?;
         let nonce = match trailer.len() {
             0 => None,
@@ -137,7 +128,7 @@ impl<'a, K: ShredKind> ShredView<'a, K> {
     }
 }
 
-/// A shred's sections, handed out for writing.
+/// Shred's sections, handed out for writing.
 ///
 /// The mutable counterpart of [`ShredView`] cannot be a struct of `&mut` sections the way the
 /// borrowed one is: the Merkle leaf and the erasure shard overlap the sections they span, and two
@@ -177,6 +168,7 @@ impl<'a, K: ShredKind> ShredViewMut<'a, K> {
     }
 
     /// Writes the headers, the variant byte included.
+    #[inline]
     pub fn write_headers(
         &mut self,
         common: &CommonHeader,

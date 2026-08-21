@@ -4,8 +4,10 @@
 
 use {
     solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
     solana_shred::{
-        AdmissionPolicy, Data, ShredParsed, ShredView, fixtures, parse,
+        AdmissionPolicy, AnyReceived, Data, DataShred, Parsed, Received, RepairRx, ShredParsed,
+        ShredView, TurbineRx, Verified, fixtures, parse,
         wire_format::{
             SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE,
         },
@@ -17,7 +19,7 @@ fn main() {
     println!("off the wire: {} bytes", bytes.len());
 
     // Stage 1: length, variant, headers.
-    let (parsed, nonce) = parse(bytes).expect("the fixture is a well-formed shred");
+    let (parsed, nonce) = parse::<TurbineRx>(bytes).expect("the fixture is a well-formed shred");
     let common = *parsed.common();
     let variant = common.variant;
     println!(
@@ -33,6 +35,7 @@ fn main() {
     let ShredParsed::Data(shred) = parsed else {
         panic!("the fixture is a data shred");
     };
+    println!("   provenance={:?}", shred.provenance());
     print_sections(shred.view());
     println!(
         "   parent_offset={PO} Flags=[DC={DC} LIS={LIS}] reference_tick={RT} data={DATA} bytes",
@@ -86,6 +89,64 @@ fn main() {
             println!("not resigned {reason:?}: this variant reserves no retransmitter signature")
         }
     }
+
+    // Stage 5: a batch mixing the two sockets. Turbine and repair shreds are different types, so
+    // they only share a Vec once both have been widened to the group they have in common.
+    let turbine = verified::<TurbineRx>(&policy, &leader).forget_source();
+    let repair = verified::<RepairRx>(&policy, &leader).forget_source();
+    let mut batch: Vec<DataShred<Verified, AnyReceived>> = Vec::with_capacity(2);
+    batch.extend([turbine, repair]);
+    println!(
+        "\nbatch        {} shreds, provenance={:?}",
+        batch.len(),
+        batch[0].provenance(),
+    );
+    // `resign` is still reachable for the batch, because `AnyReceived` is in the `Received` group.
+    // It refuses this fixture on the variant's missing room, which is a wire bit, not a type.
+    println!(
+        "             resign reachable, returns {:?}",
+        batch[0].clone().resign(&Keypair::new()).map(|_| ()),
+    );
+
+    // And the same batch once provenance is dropped altogether: readable, no longer resignable.
+    let read_only = batch[0].clone().forget_provenance();
+    println!(
+        "read-only    provenance={:?} slot={} index={}",
+        read_only.provenance(),
+        read_only.slot(),
+        read_only.index(),
+    );
+
+    // What the type system refuses, with the error each line would produce:
+    //
+    //   FecSet::build(&spec, data, &keypair)?.data[0].clone().resign(&keypair);
+    //     the method `resign` exists for Shred<Data, Verified, SelfProduced>, but its trait bounds
+    //     were not satisfied
+    //
+    //   DataShred::<Verified, TurbineRx>::assume_verified(bytes);
+    //     no associated function named `assume_verified` found for Shred<Data, Verified, TurbineRx>
+    //
+    //   parse::<SelfProduced>(bytes);
+    //     the trait `Received` is not implemented for `SelfProduced`
+    //
+    //   FecSet::build(&spec, data, &keypair)?.data[0].clone().forget_source();
+    //     the method `forget_source` exists for Shred<Data, Verified, SelfProduced>, but its trait
+    //     bounds were not satisfied
+    //
+    //   read_only.resign(&Keypair::new());
+    //     the method `resign` exists for Shred<Data, Verified, Unspecified>, but its trait bounds
+    //     were not satisfied
+}
+
+/// Runs the fixture through the cascade again, as if it had arrived by way of `P`.
+fn verified<P: Received>(policy: &AdmissionPolicy, leader: &Pubkey) -> DataShred<Verified, P> {
+    DataShred::<Parsed, P>::parse(fixtures::DATA_SHRED)
+        .expect("the fixture is a well-formed data shred")
+        .0
+        .admit(policy)
+        .expect("the policy was built around this shred")
+        .verify(leader)
+        .expect("the fixture carries its leader's signature")
 }
 
 /// Prints the shred's sections in wire order, in the order `ShredView` reads them.

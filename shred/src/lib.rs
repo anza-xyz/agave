@@ -29,6 +29,35 @@
 //! sense for one kind do not exist on the other. [`ShredParsed`] is the single point where the kind
 //! is still a runtime tag, because [`parse`] cannot know it before reading the variant byte.
 //!
+//! # Provenance
+//!
+//! The third parameter is where the bytes came from: [`SelfProduced`], [`Blockstore`],
+//! [`Recovered`], [`TurbineRx`] or [`RepairRx`]. It is not on the wire; it is what this node knows
+//! about their origin, and it decides which door into a state is open.
+//!
+//! Four things can put a shred in [`Verified`], and each is reachable from one provenance only:
+//!
+//! ```text
+//! Shred<K, Admissible, P: Received>::verify(leader)   hash and ed25519, here
+//! FecSet::build(..)                        -> SelfProduced   signed here, over these bytes
+//! Shred<K, Verified, Blockstore>::assume_verified(..)  verified before it was ever stored
+//! (erasure recovery)                       -> Recovered      inherited from the batch
+//! ```
+//!
+//! So the shortcuts that skip signature checking are not one function with a warning in its doc
+//! comment; they are separate functions that a shred off a socket cannot name. In the other
+//! direction, [`resign`](Shred::resign) is restricted to [`Received`] provenances: a node
+//! retransmitter-signs what it was sent, and the shreds it produced itself go out with the all-zero
+//! retransmitter signature they were built with.
+//!
+//! Provenance is a type parameter, so shreds that differ in it are different types and cannot
+//! share a collection. Two markers stand for "no longer distinguished":
+//! [`forget_source`](Shred::forget_source) widens a received shred to [`AnyReceived`], which stays
+//! in the group and so stays resignable, and [`forget_provenance`](Shred::forget_provenance) widens
+//! any shred to [`Unspecified`] for the paths that only read fields. Both are one-way.
+//!
+//! [`provenance`](crate::provenance) is where the markers and the [`Received`] group live.
+//!
 //! # Cost
 //!
 //! Parsing materializes only the header scalars: 19 bytes of common header plus 5 or 6 for the
@@ -48,9 +77,9 @@
 //! # Example
 //!
 //! ```
-//! use solana_shred::{AdmissionPolicy, ShredParsed, fixtures, parse};
+//! use solana_shred::{AdmissionPolicy, ShredParsed, TurbineRx, fixtures, parse};
 //!
-//! let (parsed, repair_nonce) = parse(fixtures::DATA_SHRED)?;
+//! let (parsed, repair_nonce) = parse::<TurbineRx>(fixtures::DATA_SHRED)?;
 //! assert_eq!(repair_nonce, None);
 //!
 //! let ShredParsed::Data(shred) = parsed else {
@@ -68,6 +97,8 @@
 //! let shred = shred.verify(&fixtures::leader())?;
 //! assert_eq!(shred.data()?.len(), 963);
 //!
+//! assert_eq!(shred.provenance(), solana_shred::ProvenanceKind::TurbineRx);
+//!
 //! // `shred.resign(..)` is reachable only from here, and only for resigned variants.
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -77,8 +108,8 @@
 //! The reverse direction is [`FecSet::build`], which is the write path's whole entry point. It takes
 //! an erasure batch rather than a shred, because a shred's Merkle proof comes from the tree over its
 //! FEC set and its signature is the leader's over that tree's root, and neither exists until all
-//! 64 shreds do. What comes back is 32 data and 32 code shreds in [`Verified`], since their signature
-//! was produced here, plus the root the next batch chains to.
+//! 64 shreds do. What comes back is 32 data and 32 code shreds in [`Verified`] and [`SelfProduced`],
+//! since their signature was produced here, plus the root the next batch chains to.
 //!
 //! Both directions are written against the same section boundaries ([`sections`]), and every shred
 //! the writer produces is read back through [`ShredView`] before it is handed out, so the reader's
@@ -99,6 +130,7 @@ pub mod headers;
 pub mod kind;
 pub mod merkle;
 pub mod policy;
+pub mod provenance;
 pub mod shred;
 pub mod shred_variant;
 pub mod state;
@@ -111,6 +143,10 @@ pub use crate::{
     headers::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
     kind::{Code, Data, ShredKind},
     policy::AdmissionPolicy,
+    provenance::{
+        AnyReceived, Blockstore, Provenance, ProvenanceKind, Received, Recovered, RepairRx,
+        SelfProduced, TurbineRx, Unspecified,
+    },
     shred::{CodeShred, DataShred, Shred, ShredParsed, parse},
     shred_variant::{ShredType, ShredVariant},
     state::{Admissible, Parsed, Resigned, ShredState, Verified},

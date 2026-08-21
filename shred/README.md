@@ -207,6 +207,40 @@ came from (e.g., a kind-specific blockstore column) get a typed one whose kind m
 corruption rather than a malformed packet. That mismatch is returned as error for the caller to
 interpret as appropriate.
 
+### Why provenance is a type parameter
+
+Where a shred came from is not on the wire, it is what this node knows about how the bytes arrived:
+built here, read back from the blockstore, erasure-recovered, off the Turbine socket, or in a repair
+response. It decides which door into a state is open, which is why it belongs in the type rather
+than in a field.
+
+Four things can put a shred in `Verified`, and they are not interchangeable. A received shred earns
+it by recomputing the Merkle root and checking the leader's signature. A shred this node built has
+it by construction. A shred out of the blockstore has it because nothing is stored there unverified.
+A recovered shred inherits it from the batch it was rebuilt from. Without provenance in the type,
+the three that skip the signature check are one function with a warning in its doc comment, and
+nothing stops it being called on a packet from a stranger. With it, each is a separate constructor
+that a shred of the wrong provenance cannot name.
+
+The same parameter carries the rule in the other direction: a retransmitter signature is only for
+shreds this node received and forwards, so `resign` is restricted to the received provenances. A
+shred this node produced goes out with the all-zero retransmitter signature it was built with, and
+that is now a compile error to change rather than a convention.
+
+Provenances are grouped by a marker trait rather than enumerated at each use, so a rule states the
+property it depends on ("came from an untrusted peer") instead of listing the provenances that
+happen to have it today.
+
+The cost of putting provenance in the type is that shreds which differ in it are different types and
+cannot share a collection, which is a problem for a batch assembled from both receive paths. The
+answer is not one erased provenance but two, because erasing has to stay inside the group that the
+rules are stated over. `forget_source` widens a received shred to `AnyReceived`, which is still
+`Received`, so a mixed Turbine and repair batch is one type and keeps the operations that being
+received is what justifies. `forget_provenance` widens anything to `Unspecified`, which is outside
+the group, for the paths that only read a shred's fields. Both are one-way retags of a phantom
+parameter: free at runtime, and with no narrowing counterpart, so widening cannot be used to walk a
+self-produced shred into the resign path.
+
 ### Why an owned shred plus a borrowed view
 
 A shred must be movable and storable, so it cannot hold references into its own buffer. Copying each

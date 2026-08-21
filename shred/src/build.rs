@@ -25,6 +25,7 @@ use {
         kind::{Code, Data, ShredKind},
         merkle,
         policy::DATA_SHREDS_PER_FEC_BLOCK,
+        provenance::SelfProduced,
         shred::{CodeShred, DataShred, merkle_tree::MerkleTree},
         shred_variant::ShredVariant,
         state::Verified,
@@ -74,6 +75,9 @@ pub struct FecSetSpec {
     /// Merkle root of the preceding erasure batch.
     pub chained_merkle_root: Hash,
     /// Whether to reserve room for a retransmitter signature, which the last batch of a slot does.
+    ///
+    /// The room is only reserved, never filled: the retransmitter signature of a shred this node
+    /// produced is all zeroes, and stays that way until a node that received the shred signs it.
     pub resigned: bool,
     /// Whether this batch ends the slot.
     pub last_in_slot: bool,
@@ -111,9 +115,9 @@ impl FecSetSpec {
 #[derive(Clone, Debug)]
 pub struct FecSet {
     /// The batch's data shreds, in index order.
-    pub data: Vec<DataShred<Verified>>,
+    pub data: Vec<DataShred<Verified, SelfProduced>>,
     /// The batch's code shreds, in index order.
-    pub code: Vec<CodeShred<Verified>>,
+    pub code: Vec<CodeShred<Verified, SelfProduced>>,
     /// The root the leader signed, which the next batch chains to.
     pub merkle_root: Hash,
 }
@@ -171,10 +175,10 @@ impl FecSet {
         let data = payloads
             .by_ref()
             .take(DATA_SHREDS)
-            .map(DataShred::assume_signed)
+            .map(DataShred::assume_built)
             .collect::<Result<_, _>>()?;
         let code = payloads
-            .map(CodeShred::assume_signed)
+            .map(CodeShred::assume_built)
             .collect::<Result<_, _>>()?;
         Ok(Self {
             data,
@@ -355,8 +359,10 @@ mod tests {
         super::*,
         crate::{
             policy::AdmissionPolicy,
+            provenance::TurbineRx,
             shred::{ShredParsed, parse},
         },
+        solana_signature::Signature,
         solana_signer::Signer,
     };
 
@@ -400,7 +406,7 @@ mod tests {
 
             let mut reassembled = Vec::new();
             for (position, shred) in set.data.iter().enumerate() {
-                let (parsed, nonce) = parse(shred.bytes().clone()).unwrap();
+                let (parsed, nonce) = parse::<TurbineRx>(shred.bytes().clone()).unwrap();
                 assert_eq!(nonce, None);
                 let ShredParsed::Data(shred) = parsed else {
                     panic!("a data shred parsed as a code shred");
@@ -415,7 +421,7 @@ mod tests {
             assert_eq!(reassembled, data);
 
             for (position, shred) in set.code.iter().enumerate() {
-                let (parsed, _) = parse(shred.bytes().clone()).unwrap();
+                let (parsed, _) = parse::<TurbineRx>(shred.bytes().clone()).unwrap();
                 let ShredParsed::Code(shred) = parsed else {
                     panic!("a code shred parsed as a data shred");
                 };
@@ -428,25 +434,17 @@ mod tests {
         }
     }
 
-    /// A resigned batch is what `resign` needs, and an unresigned one has no room for it.
+    /// A shred this node built carries no retransmitter signature, whether or not its variant
+    /// reserves room for one. `resign` is unreachable from here: the shred would have to be
+    /// received first.
     #[test]
-    fn only_a_resigned_batch_can_be_resigned() {
-        let keypair = keypair();
+    fn self_produced_shreds_carry_no_retransmitter_signature() {
         for resigned in [false, true] {
             let spec = spec(resigned);
-            let set = FecSet::build(&spec, b"entries", &keypair).unwrap();
-            let shred = set.data.first().unwrap().clone();
-            let root = shred.merkle_root().unwrap();
-            match shred.resign(&keypair) {
-                Ok(shred) => {
-                    assert!(resigned);
-                    let signature = shred.retransmitter_signature().unwrap();
-                    assert!(signature.verify(keypair.pubkey().as_ref(), root.as_ref()));
-                }
-                Err(error) => {
-                    assert!(!resigned);
-                    assert_eq!(error, crate::Reject::NotResignable);
-                }
+            let set = FecSet::build(&spec, b"entries", &keypair()).unwrap();
+            let zeroes = Signature::default();
+            for shred in &set.data {
+                assert_eq!(shred.retransmitter_signature(), resigned.then_some(&zeroes));
             }
         }
     }

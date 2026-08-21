@@ -82,24 +82,22 @@ pub const SIZE_OF_TRAILER_RESIGNED: usize = SIZE_OF_TRAILER + SIZE_OF_SIGNATURE;
 /// Size of the repair nonce that may trail a shred in a repair response packet.
 pub const SIZE_OF_NONCE: usize = serialized_size_of::<Nonce>();
 
-/// Total on-the-wire size of a code shred, which is one packet minus the repair nonce.
+/// Total wire size of a code shred.
 ///
 /// This is the constant every other size in the shred format follows from, and the only one whose
-/// cause is outside the format: a shred has to fit a packet that fits the minimum IPv6 MTU, with
-/// room left for the nonce a repair response appends.
+/// cause is outside the format itself: a shred was designed to fit a packet that fits the minimum
+/// IPv6 MTU, with room left for the nonce a repair response appends.
 pub const SIZE_OF_CODE_PAYLOAD: usize = PACKET_DATA_SIZE - SIZE_OF_NONCE;
-/// Total on-the-wire size of a data shred.
+/// Total wire size of a data shred.
 ///
 /// Code shreds erasure-code the entirety of a data shred except its signature, and the erasure
 /// algorithm needs equal-length inputs, so a data shred is exactly a code shred's coded region
-/// with a signature in front.
+/// with a signature in front (signature is not covered by error correction as it is the same
+/// for all shreds in a FEC set).
 pub const SIZE_OF_DATA_PAYLOAD: usize =
     SIZE_OF_CODE_PAYLOAD - Code::SIZE_OF_HEADERS + SIZE_OF_SIGNATURE;
 
 /// Offset of the [`ShredVariant`](crate::ShredVariant) byte, which follows the signature.
-///
-/// The one offset the crate names, because peeking at the variant is what selects a kind before
-/// there is anything to walk sections with.
 pub const OFFSET_OF_VARIANT: usize = SIZE_OF_SIGNATURE;
 
 // this may be a bit excessive, but it is a tripwire in case of breaking changes in wincode
