@@ -3,8 +3,8 @@
 //! - try_add, checks the configured limits and records the transaction's cost when it fits.
 use {
     crate::{
-        block_cost_limits::*, cost_tracker_post_analysis::CostTrackerPostAnalysis,
-        transaction_cost::TransactionCost,
+        allocated_accounts_data_size, block_cost_limits::*,
+        cost_tracker_post_analysis::CostTrackerPostAnalysis, transaction_cost::TransactionCost,
     },
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
@@ -88,7 +88,7 @@ impl Default for CostTrackerLimits {
         Self {
             account_cost: MAX_WRITABLE_ACCOUNT_UNITS,
             block_cost: MAX_BLOCK_UNITS,
-            allocated_data_size: MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA,
+            allocated_data_size: allocated_accounts_data_size::DEFAULT_LIMIT,
         }
     }
 }
@@ -202,12 +202,11 @@ impl CostTracker {
             return Err(CostTrackerError::WouldExceedAccountMaxLimit);
         }
 
-        let allocated_accounts_data_size =
-            self.allocated_accounts_data_size + Saturating(tx_cost.allocated_accounts_data_size());
-
-        if allocated_accounts_data_size.0 > self.limits.allocated_data_size {
-            return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
-        }
+        allocated_accounts_data_size::would_fit(
+            self.allocated_accounts_data_size,
+            tx_cost,
+            self.limits.allocated_data_size,
+        )?;
 
         // Check each account against account_cost_limit and apply the cost in
         // the same lookup. On failure, undo the applied prefix.
@@ -239,7 +238,7 @@ impl CostTracker {
         }
 
         // every check passed: publish the block-level state
-        self.allocated_accounts_data_size = allocated_accounts_data_size;
+        allocated_accounts_data_size::add(&mut self.allocated_accounts_data_size, tx_cost);
         self.transaction_count += 1;
         self.transaction_signature_count += tx_cost.num_transaction_signatures();
         self.secp256k1_instruction_signature_count +=
@@ -346,7 +345,7 @@ impl CostTracker {
             ("costliest_account_cost", costliest_account_cost, i64),
             (
                 "allocated_accounts_data_size",
-                self.allocated_accounts_data_size.0,
+                allocated_accounts_data_size::stats_value(self.allocated_accounts_data_size),
                 i64
             ),
             (
@@ -405,7 +404,7 @@ impl CostTracker {
     fn remove_transaction_cost(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
         let cost = tx_cost.sum();
         self.sub_transaction_execution_cost(tx_cost, cost);
-        self.allocated_accounts_data_size -= tx_cost.allocated_accounts_data_size();
+        allocated_accounts_data_size::subtract(&mut self.allocated_accounts_data_size, tx_cost);
         self.transaction_count -= 1;
         self.transaction_signature_count -= tx_cost.num_transaction_signatures();
         self.secp256k1_instruction_signature_count -=
