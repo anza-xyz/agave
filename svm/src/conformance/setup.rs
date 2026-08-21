@@ -225,7 +225,7 @@ pub(crate) fn recent_blockhash(sysvar_cache: &SysvarCache) -> (Hash, u64) {
 
 /// Build a sysvar cache populated from any sysvar accounts present in the
 /// input account set.
-#[cfg(any(feature = "conformance", test))]
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils", test))]
 pub fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
     let mut cache = SysvarCache::default();
     cache.fill_missing_entries(|pubkey, set_sysvar| {
