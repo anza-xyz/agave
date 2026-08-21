@@ -319,7 +319,7 @@ fn test_conformance_epoch_slots_index_at_max() {
     let es_data = make_epoch_slots_crds_data(255, &pk, 1_000_000);
     let crds_val = make_crds_value_bytes(&[0u8; 64], &es_data);
     let data = make_push_message_bytes(&pk, &[crds_val]);
-    check(&data, false);
+    check(&data, true);
 }
 
 #[test]
