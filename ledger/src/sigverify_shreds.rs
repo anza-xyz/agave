@@ -1,11 +1,10 @@
 #![allow(clippy::implicit_hasher)]
 use {
     crate::shred,
-    rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_nohash_hasher::BuildNoHashHasher,
-    solana_perf::packet::{PacketBatch, PacketRef},
+    solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     std::{collections::HashMap, sync::RwLock},
@@ -55,25 +54,6 @@ pub fn verify_shred_cpu(
     }
 }
 
-pub fn verify_shreds(
-    thread_pool: &ThreadPool,
-    batches: &[PacketBatch],
-    slot_leaders: &SlotPubkeys,
-    cache: &RwLock<LruCache>,
-) -> Vec<Vec<u8>> {
-    thread_pool.install(|| {
-        batches
-            .into_par_iter()
-            .map(|batch| {
-                batch
-                    .par_iter()
-                    .map(|packet| u8::from(verify_shred_cpu(packet, slot_leaders, cache)))
-                    .collect()
-            })
-            .collect()
-    })
-}
-
 #[cfg(test)]
 fn sign_shred_cpu(keypair: &Keypair, packet: &mut PacketRefMut) {
     let sig = shred::layout::SIGNATURE_RANGE;
@@ -105,12 +85,11 @@ mod tests {
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::{Rng, seq::SliceRandom},
-        rayon::ThreadPoolBuilder,
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_packet::Packet,
-        solana_perf::packet::RecycledPacketBatch,
+        solana_perf::packet::{PacketBatch, RecycledPacketBatch},
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
@@ -118,14 +97,28 @@ mod tests {
         test_case::test_case,
     };
 
-    fn sign_shreds(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
-        thread_pool.install(|| {
-            batches.par_iter_mut().for_each(|batch| {
+    fn sign_shreds(keypair: &Keypair, batches: &mut [PacketBatch]) {
+        for batch in batches {
+            for mut packet in batch.iter_mut() {
+                sign_shred_cpu(keypair, &mut packet);
+            }
+        }
+    }
+
+    fn verify_batches(
+        batches: &[PacketBatch],
+        slot_leaders: &SlotPubkeys,
+        cache: &RwLock<LruCache>,
+    ) -> Vec<Vec<u8>> {
+        batches
+            .iter()
+            .map(|batch| {
                 batch
-                    .par_iter_mut()
-                    .for_each(|mut p| sign_shred_cpu(keypair, &mut p));
-            });
-        });
+                    .iter()
+                    .map(|packet| u8::from(verify_shred_cpu(packet, slot_leaders, cache)))
+                    .collect()
+            })
+            .collect()
     }
 
     fn run_test_sigverify_shred_cpu(slot: Slot) {
@@ -165,106 +158,6 @@ mod tests {
     #[test]
     fn test_sigverify_shred_cpu() {
         run_test_sigverify_shred_cpu(0xdead_c0de);
-    }
-
-    fn run_test_sigverify_shreds_cpu(thread_pool: &ThreadPool, slot: Slot) {
-        agave_logger::setup();
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let keypair = Keypair::new();
-        let batch = make_packet_batch(&keypair, slot);
-        let mut batches = [batch];
-
-        let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        let rv = verify_shreds(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 1);
-
-        let wrong_keypair = Keypair::new();
-        let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
-        let rv = verify_shreds(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
-
-        let leader_slots: SlotPubkeys = HashMap::default();
-        let rv = verify_shreds(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
-
-        let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        batches[0]
-            .iter_mut()
-            .for_each(|mut packet_ref| packet_ref.meta_mut().size = 0);
-        let rv = verify_shreds(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
-    }
-
-    #[test]
-    fn test_sigverify_shreds_cpu() {
-        let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
-        run_test_sigverify_shreds_cpu(&thread_pool, 0xdead_c0de);
-    }
-
-    fn run_test_sigverify_shreds(thread_pool: &ThreadPool, slot: Slot) {
-        agave_logger::setup();
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-
-        let keypair = Keypair::new();
-        let batch = make_packet_batch(&keypair, slot);
-        let mut batches = [batch];
-
-        let leader_slots: SlotPubkeys = [(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]
-            .into_iter()
-            .collect();
-        let rv = verify_shreds(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 1);
-
-        let wrong_keypair = Keypair::new();
-        let leader_slots: SlotPubkeys = [
-            (u64::MAX, Pubkey::default()),
-            (slot, wrong_keypair.pubkey()),
-        ]
-        .into_iter()
-        .collect();
-        let rv = verify_shreds(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
-
-        let leader_slots: SlotPubkeys = [(u64::MAX, Pubkey::default())].into_iter().collect();
-        let rv = verify_shreds(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
-
-        batches[0]
-            .iter_mut()
-            .for_each(|mut pr| pr.meta_mut().size = 0);
-        let leader_slots: SlotPubkeys = [(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]
-            .into_iter()
-            .collect();
-        let rv = verify_shreds(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
-    }
-
-    fn make_packet_batch(keypair: &Keypair, slot: u64) -> PacketBatch {
-        let mut batch = RecycledPacketBatch::default();
-        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
-            keypair,
-            &[],
-            true,
-            Hash::default(),
-            0,
-            0,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        );
-        batch.resize(shreds.len(), Packet::default());
-        for i in 0..shreds.len() {
-            batch[i].buffer_mut()[..shreds[i].payload().len()].copy_from_slice(shreds[i].payload());
-            batch[i].meta_mut().size = shreds[i].payload().len();
-        }
-        PacketBatch::from(batch)
-    }
-
-    #[test]
-    fn test_sigverify_shreds() {
-        let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
-        run_test_sigverify_shreds(&thread_pool, 0xdead_c0de);
     }
 
     fn make_transaction<R: Rng>(rng: &mut R) -> Transaction {
@@ -372,7 +265,6 @@ mod tests {
     fn test_verify_shreds_fuzz(is_last_in_slot: bool) {
         let mut rng = rand::rng();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let keypairs = repeat_with(|| rng.random_range(169_367_809..169_906_789))
             .map(|slot| (slot, Keypair::new()))
             .take(3)
@@ -385,7 +277,7 @@ mod tests {
             .collect();
         let mut packets = make_packets(&mut rng, &shreds);
         assert_eq!(
-            verify_shreds(&thread_pool, &packets, &pubkeys, &cache),
+            verify_batches(&packets, &pubkeys, &cache),
             packets
                 .iter()
                 .map(|batch| vec![1u8; batch.len()])
@@ -410,7 +302,7 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .collect();
-        assert_eq!(verify_shreds(&thread_pool, &packets, &pubkeys, &cache), out);
+        assert_eq!(verify_batches(&packets, &pubkeys, &cache), out);
     }
 
     #[test_case(true)]
@@ -418,7 +310,6 @@ mod tests {
     fn test_sign_shreds(is_last_in_slot: bool) {
         let mut rng = rand::rng();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let shreds = {
             let keypairs = repeat_with(|| rng.random_range(169_367_809..169_906_789))
                 .map(|slot| (slot, Keypair::new()))
@@ -439,16 +330,16 @@ mod tests {
         let mut packets = make_packets(&mut rng, &shreds);
         // Assert that initially all signatures are invalid.
         assert_eq!(
-            verify_shreds(&thread_pool, &packets, &pubkeys, &cache),
+            verify_batches(&packets, &pubkeys, &cache),
             packets
                 .iter()
                 .map(|batch| vec![0u8; batch.len()])
                 .collect::<Vec<_>>()
         );
-        // Sign and verify shreds signatures.
-        sign_shreds(&thread_pool, &keypair, &mut packets);
+        // Sign and verify shred signatures.
+        sign_shreds(&keypair, &mut packets);
         assert_eq!(
-            verify_shreds(&thread_pool, &packets, &pubkeys, &cache),
+            verify_batches(&packets, &pubkeys, &cache),
             packets
                 .iter()
                 .map(|batch| vec![1u8; batch.len()])
