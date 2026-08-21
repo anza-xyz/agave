@@ -100,6 +100,10 @@ const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 // full datagrams. Use 8 to allow headroom for partially filled datagrams.
 const MAX_EXPECTED_TRANSACTION_CHUNKS: usize = 8;
 
+// Coalesce chunks into a single buffer to reduce memory consumption when a stream
+// buffers more than twice the expected maximum number of transaction chunks.
+const CHUNK_COMPACTION_THRESHOLD: usize = 2 * MAX_EXPECTED_TRANSACTION_CHUNKS;
+
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
 // packet metadata. We use this accumulator to avoid
@@ -111,6 +115,10 @@ struct PacketAccumulator {
     // The capacity here should match or exceed the capacity of the chunks array used
     // by handle_connection().
     pub chunks: SmallVec<[Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS]>,
+    // Set once a stream exceeds CHUNK_COMPACTION_THRESHOLD buffered chunks: from then on
+    // incoming bytes are copied into this single owned buffer rather than retained as
+    // datagram slices. See `CHUNK_COMPACTION_THRESHOLD`.
+    coalesced: Option<BytesMut>,
     pub start_time: Instant,
 }
 
@@ -119,7 +127,23 @@ impl PacketAccumulator {
         Self {
             meta,
             chunks: SmallVec::default(),
+            coalesced: None,
             start_time: Instant::now(),
+        }
+    }
+
+    fn push(&mut self, chunk: Bytes, max_size: usize) {
+        if let Some(buf) = &mut self.coalesced {
+            buf.put_slice(&chunk);
+            return;
+        }
+        self.chunks.push(chunk);
+        if self.chunks.len() > CHUNK_COMPACTION_THRESHOLD {
+            let mut buf = BytesMut::with_capacity(max_size);
+            for chunk in self.chunks.drain(..) {
+                buf.put_slice(&chunk);
+            }
+            self.coalesced = Some(buf);
         }
     }
 }
@@ -781,7 +805,7 @@ fn handle_chunks(
             debug!("invalid stream size {}", accum.meta.size);
             return Err(());
         }
-        accum.chunks.push(chunk);
+        accum.push(chunk, max_stream_data_bytes as usize);
         if peer_type.is_staked() {
             stats
                 .total_staked_chunks_received
@@ -798,18 +822,26 @@ fn handle_chunks(
         return Ok(StreamState::Receiving);
     }
 
+    // A coalesced stream buffered more than CHUNK_COMPACTION_THRESHOLD chunks, so it
+    // qualifies even though they have been folded into a single owned buffer.
+    if accum.coalesced.is_some() || accum.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
+        stats
+            .total_packets_at_or_above_chunk_capacity
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    // If the stream switched to coalescing mode, its single owned buffer is the whole
+    // packet; fold it back so the single-chunk (no extra copy) path below handles it.
+    if let Some(buf) = accum.coalesced.take() {
+        accum.chunks.push(buf.freeze());
+    }
+
     if accum.chunks.is_empty() {
         debug!("stream is empty");
         stats
             .total_packet_batches_none
             .fetch_add(1, Ordering::Relaxed);
         return Err(());
-    }
-
-    if accum.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
-        stats
-            .total_packets_at_or_above_chunk_capacity
-            .fetch_add(1, Ordering::Relaxed);
     }
 
     // done receiving chunks
@@ -2230,6 +2262,95 @@ pub mod test {
             1
         );
         assert!(receiver.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_packet_accumulator_coalesces_and_releases_datagram_pins() {
+        // `origin` stands in for the shared datagram memory that single-byte chunks slice.
+        let origin = Bytes::from((0u8..32).collect::<Vec<u8>>());
+        let mut accum = PacketAccumulator::new(Meta::default());
+        for i in 0..origin.len() {
+            accum.meta.size += 1;
+            accum.push(origin.slice(i..i + 1), origin.len());
+        }
+
+        // Past the threshold we stop retaining slices and copy into one owned buffer.
+        assert!(accum.chunks.is_empty());
+        let buf = accum.coalesced.take().expect("should have coalesced");
+        assert_eq!(&buf[..], &origin[..]);
+        // Prove the buffer is a distinct allocation, not an alias to the `origin`.
+        assert!(buf.freeze().try_into_mut().is_ok());
+    }
+
+    #[test]
+    fn test_handle_chunks_bounds_buffered_chunks_under_tiny_frame_flood() {
+        let (sender, receiver) = bounded(1);
+        let stats = StreamerStats::default();
+        let mut accum = PacketAccumulator::new(Meta::default());
+        let rtt = Duration::from_millis(50);
+        let max_stream_data_bytes = PACKET_DATA_SIZE as u32;
+
+        // Feed many single-byte chunks a few at a time, the way `read_chunks` delivers
+        // them, mimicking a stream sent as one useful byte per padded datagram.
+        let total_bytes = 200usize;
+        assert!(total_bytes <= max_stream_data_bytes as usize);
+        let mut expected = Vec::with_capacity(total_bytes);
+        for batch in (0..total_bytes).collect::<Vec<_>>().chunks(4) {
+            let chunks: Vec<Bytes> = batch
+                .iter()
+                .map(|i| {
+                    let byte = *i as u8;
+                    expected.push(byte);
+                    Bytes::from(vec![byte])
+                })
+                .collect();
+            let state = handle_chunks(
+                chunks.into_iter(),
+                &mut accum,
+                rtt,
+                &sender,
+                &stats,
+                ConnectionPeerType::Unstaked,
+                max_stream_data_bytes,
+            )
+            .expect("stream should remain valid");
+            assert!(matches!(state, StreamState::Receiving));
+            assert!(
+                accum.chunks.len() <= CHUNK_COMPACTION_THRESHOLD,
+                "buffered chunks not bounded: {}",
+                accum.chunks.len()
+            );
+        }
+        assert_eq!(accum.meta.size, total_bytes);
+        // A tiny-frame flood must have tripped the switch to a single owned buffer.
+        assert!(accum.coalesced.is_some());
+
+        let state = handle_chunks(
+            std::iter::empty(), // EOF
+            &mut accum,
+            rtt,
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            max_stream_data_bytes,
+        )
+        .expect("finish should succeed");
+        assert!(matches!(state, StreamState::Finished));
+        // A coalesced stream counts toward the chunk-capacity metric even though its
+        // chunks were folded into a single owned buffer.
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            1
+        );
+
+        let PacketBatch::Single(packet) = receiver.try_recv().expect("a packet should be sent")
+        else {
+            panic!("expected a single-packet batch");
+        };
+        assert_eq!(packet.meta().size, total_bytes);
+        assert_eq!(packet.data(..).expect("packet data"), &expected[..]);
     }
 
     #[tokio::test(flavor = "multi_thread")]
