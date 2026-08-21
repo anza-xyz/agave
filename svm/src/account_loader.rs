@@ -538,6 +538,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         error_metrics,
     )?;
 
+    let loaderv3_programdata_size_floor =
+        account_loader.feature_set.loaderv3_programdata_size_floor;
     let mut collect_loaded_account =
         |account_loader: &mut AccountLoader<CB>, key: &Pubkey, loaded_account| -> Result<()> {
             let LoadedTransactionAccount {
@@ -567,18 +569,32 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 if !account_keys.iter().any(|key| programdata_address == *key)
                     && !additional_loaded_accounts.contains(&programdata_address)
                 {
-                    // ...and the programdata account exists (if it doesn't, it is *not* a load failure)...
-                    if let Some(programdata_account) =
-                        account_loader.load_account(&programdata_address)
-                    {
-                        // ...count programdata toward this transaction's total size.
-                        loaded_tx_data_size.increase_calculated_data_size(
-                            TRANSACTION_ACCOUNT_BASE_SIZE
-                                .saturating_add(programdata_account.data().len()),
-                            error_metrics,
-                        )?;
-                        additional_loaded_accounts.insert(programdata_address);
-                    }
+                    // ...then we:
+                    // * Old behavior: If programdata exists, add base size plus data size.
+                    // * New behavior: Unconditionally add base size plus the greater of
+                    //   its data size or the minimum `size_of_programdata_metadata()`.
+                    let maybe_programdata_account =
+                        account_loader.load_account(&programdata_address);
+
+                    let programdata_charged_size = if loaderv3_programdata_size_floor {
+                        let data_size = maybe_programdata_account
+                            .as_ref()
+                            .map(|account| account.data().len())
+                            .unwrap_or(0)
+                            .max(UpgradeableLoaderState::size_of_programdata_metadata());
+
+                        TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(data_size)
+                    } else {
+                        maybe_programdata_account
+                            .map(|account| {
+                                TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(account.data().len())
+                            })
+                            .unwrap_or(0)
+                    };
+
+                    loaded_tx_data_size
+                        .increase_calculated_data_size(programdata_charged_size, error_metrics)?;
+                    additional_loaded_accounts.insert(programdata_address);
                 }
             }
 
@@ -2553,10 +2569,13 @@ mod tests {
 
     // note all magic numbers (how many accounts, how many instructions, how big to size buffers) are arbitrary
     // other than trying not to swamp programs with blank accounts and keep transaction size below the 64mb limit
-    #[test]
-    fn test_load_transaction_accounts_data_sizes() {
+    #[test_case::test_case(false)]
+    #[test_case::test_case(true)]
+    fn test_load_transaction_accounts_data_sizes(loaderv3_programdata_size_floor: bool) {
         let mut rng = rand::rng();
         let mut mock_bank = TestCallbacks::default();
+
+        mock_bank.feature_set.loaderv3_programdata_size_floor = loaderv3_programdata_size_floor;
 
         // arbitrary accounts
         for _ in 0..128 {
@@ -2619,7 +2638,17 @@ mod tests {
                             );
                         programdata_tracker.insert(
                             program_id,
-                            (programdata_address, programdata_account.data().len()),
+                            (
+                                programdata_address,
+                                if loaderv3_programdata_size_floor {
+                                    programdata_account
+                                        .data()
+                                        .len()
+                                        .max(UpgradeableLoaderState::size_of_programdata_metadata())
+                                } else {
+                                    programdata_account.data().len()
+                                },
+                            ),
                         );
                         mock_bank
                             .accounts_map
@@ -2628,6 +2657,15 @@ mod tests {
                     }
 
                     if has_programdata || rng.random() {
+                        if !has_programdata && loaderv3_programdata_size_floor {
+                            programdata_tracker.insert(
+                                program_id,
+                                (
+                                    programdata_address,
+                                    UpgradeableLoaderState::size_of_programdata_metadata(),
+                                ),
+                            );
+                        }
                         bincode::serialize_into(
                             account.data_as_mut_slice(),
                             &UpgradeableLoaderState::Program {
