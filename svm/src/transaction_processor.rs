@@ -208,12 +208,20 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// ProgramRuntimeEnvironment of the current epoch
     pub program_runtime_environment: ProgramRuntimeEnvironment,
 
-    /// Builtin program ids
+    /// Builtin program ids for this fork.
+    /// Used to see the `builtin_program_cache` between slots via
+    /// `new_from()`.
     pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
 
     /// Cached ProgramCacheForTxBatch pre-populated with builtin entries.
-    /// Populated once per block in `new_from()` from the global program cache,
-    /// avoiding re-acquiring the lock and re-running extract() on every batch.
+    /// Populated once per slot in `new_from()` from the global program cache.
+    ///
+    /// Keeping a dedicated builtin program cache for each slot:
+    ///
+    /// - Protects different forks from extracting the another fork's version
+    ///   of a builtin that may have been recently enabled or migrated to Core
+    ///   BPF.
+    /// - Avoids re-acquiring the lock and re-running extract() on every batch.
     builtin_program_cache: RwLock<ProgramCacheForTxBatch>,
 
     execution_cost: SVMTransactionExecutionCost,
@@ -320,6 +328,25 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         // Pre-populate the builtin program cache from the global cache.
         // This is done once per block rather than once per batch.
+        //
+        // Note: Only the builtins already-listed in this slot's builtin program
+        // IDs can be extracted from the global program cache. This is important
+        // for cross-fork extraction when a builtin may be activated for the
+        // first time or migrated to Core BPF.
+        //
+        // The `builtin_program_ids` on the batch processor are effectively a
+        // guard against cross-fork extraction:
+        //
+        // - If a builtin appears in one fork's `builtin_program_ids`, it will
+        //   never be extracted by a fork whose `builtin_program_ids` _doesn't_
+        //   have it.
+        // - If a builtin is removed from one fork's `builtin_program_ids`, it
+        //   may still be extracted on another fork whose `builtin_program_ids`
+        //   still has it.
+        //
+        // `builtin_program_ids` seeds the `builtin_program_cache` below, which
+        // ensures only non-cached program IDs are extracted from the global
+        // program cache during `replenish_program_cache`.
         let mut builtin_program_cache = ProgramCacheForTxBatch::new(slot);
         let mut search_for: Vec<ProgramToLoad> = builtin_program_ids
             .iter()
@@ -336,6 +363,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &environments,
             false,
             false,
+        );
+
+        // Every registered builtin must be present in the global program cache,
+        // since `add_builtin` writes both together.
+        debug_assert!(
+            search_for.is_empty(),
+            "builtin(s) registered on this fork but missing from the global program cache: \
+             {search_for:?}"
         );
 
         Self {
@@ -1354,7 +1389,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap().clone()
     }
 
-    /// Add a built-in program
+    /// Add a built-in program to this fork.
+    ///
+    /// A builtin program should _never_ be inserted directly into the global
+    /// program cache without updating the fork guard: `builtin_program_ids`
+    /// and `builtin_program_cache`.
     pub fn add_builtin(&self, program_id: Pubkey, builtin: ProgramCacheEntry) {
         self.builtin_program_ids.write().unwrap().insert(program_id);
         let entry = Arc::new(builtin);
@@ -1411,7 +1450,7 @@ mod tests {
         },
         solana_rent::Rent,
         solana_sbpf::vm,
-        solana_sdk_ids::{bpf_loader, system_program, sysvar},
+        solana_sdk_ids::{bpf_loader, native_loader, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_system_interface::instruction as system_instruction,
@@ -2156,7 +2195,7 @@ mod tests {
                 ),
             )
         };
-        let program = ProgramCacheEntry::new_builtin(0, register_fn);
+        let program = ProgramCacheEntry::new_builtin(register_fn);
         batch_processor.add_builtin(key, program);
 
         let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new(0);
@@ -2181,8 +2220,325 @@ mod tests {
         let entry = loaded_programs_for_tx_batch.find(&key).unwrap();
 
         // Repeating code because ProgramCacheEntry does not implement clone.
-        let program = ProgramCacheEntry::new_builtin(0, register_fn);
+        let program = ProgramCacheEntry::new_builtin(register_fn);
         assert_eq!(entry, Arc::new(program));
+    }
+
+    #[test]
+    fn test_builtin_in_global_cache_but_not_in_fork_is_not_extracted() {
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
+        let batch_processor =
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None);
+
+        let key = Pubkey::new_unique();
+        let register_fn: BuiltinFunctionRegisterer = |p, n| {
+            p.register_function(
+                n,
+                (
+                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                    |_| {},
+                ),
+            )
+        };
+
+        // Insert the builtin into the global program cache only, but bypass the
+        // `builtin_program_ids` fork guard.
+        batch_processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .assign_program(
+                &batch_processor.program_runtime_environment,
+                key,
+                0,
+                Arc::new(ProgramCacheEntry::new_builtin(register_fn)),
+            );
+        assert!(
+            !batch_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(&key)
+        );
+
+        // Roll over into another slot.
+        // Assert this bank does not pick up the inserted builtin.
+        let next_slot = batch_processor.new_from(1, 0);
+        assert!(!next_slot.builtin_program_ids.read().unwrap().contains(&key));
+        assert!(
+            next_slot
+                .builtin_program_cache
+                .read()
+                .unwrap()
+                .find(&key)
+                .is_none()
+        );
+
+        // Now register the address on this fork.
+        // Assert the builtin is still not available without a slot rollover.
+        batch_processor
+            .builtin_program_ids
+            .write()
+            .unwrap()
+            .insert(key);
+        assert!(
+            next_slot
+                .builtin_program_cache
+                .read()
+                .unwrap()
+                .find(&key)
+                .is_none()
+        );
+
+        // Now roll over into another slot.
+        // Assert the builtin was extracted from the global cache.
+        let next_slot = batch_processor.new_from(2, 0);
+        let entry = next_slot
+            .builtin_program_cache
+            .read()
+            .unwrap()
+            .find(&key)
+            .unwrap();
+        assert_eq!(entry, Arc::new(ProgramCacheEntry::new_builtin(register_fn)));
+    }
+
+    #[test]
+    fn test_builtin_not_in_fork_is_never_searched_for() {
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
+        let batch_processor =
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None);
+
+        let key = Pubkey::new_unique();
+        let register_fn: BuiltinFunctionRegisterer = |p, n| {
+            p.register_function(
+                n,
+                (
+                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                    |_| {},
+                ),
+            )
+        };
+
+        // Insert a builtin into the global program cache.
+        // This is a builtin added by another fork, but not by ours.
+        batch_processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .assign_program(
+                &batch_processor.program_runtime_environment,
+                key,
+                0,
+                Arc::new(ProgramCacheEntry::new_builtin(register_fn)),
+            );
+
+        // Assert that a transaction naming the builtin's address does not
+        // tamper with the global program cache.
+        let mock_bank = MockBankCallback::default();
+        for account_exists in [false, true] {
+            if account_exists {
+                // Even if the account exists owned by the native loader,
+                // the invariant should hold.
+                mock_bank
+                    .account_shared_data
+                    .write()
+                    .unwrap()
+                    .insert(key, AccountSharedData::new(1, 1, &native_loader::id()));
+            }
+
+            let program_cache_for_tx_batch = batch_processor
+                .builtin_program_cache
+                .read()
+                .unwrap()
+                .clone();
+            assert!(program_cache_for_tx_batch.find(&key).is_none());
+
+            let search_for = filter_executable_program_accounts(
+                &mock_bank,
+                &program_cache_for_tx_batch,
+                std::iter::once(&key),
+            );
+            assert!(search_for.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_core_bpf_migration_of_a_builtin() {
+        const BUILTIN_SLOT: Slot = 0;
+        const MIGRATION_SLOT: Slot = 10;
+        const NEXT_SLOT: Slot = 11;
+
+        struct SingleChainForkGraph;
+        impl ForkGraph for SingleChainForkGraph {
+            fn relationship(&self, a: Slot, b: Slot) -> BlockRelation {
+                if a == b {
+                    BlockRelation::Equal
+                } else if a < b {
+                    BlockRelation::Ancestor
+                } else {
+                    BlockRelation::Descendant
+                }
+            }
+        }
+
+        let fork_graph = Arc::new(RwLock::new(SingleChainForkGraph));
+        let batch_processor =
+            TransactionBatchProcessor::new(BUILTIN_SLOT, 0, Arc::downgrade(&fork_graph), None);
+
+        let key = Pubkey::new_unique();
+        let register_fn: BuiltinFunctionRegisterer = |p, n| {
+            p.register_function(
+                n,
+                (
+                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                    |_| {},
+                ),
+            )
+        };
+
+        // Start with a properly guarded builtin: registered on the fork and
+        // present in the global program cache.
+        batch_processor.add_builtin(key, ProgramCacheEntry::new_builtin(register_fn));
+        assert!(
+            batch_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(&key)
+        );
+
+        // Simulate migrating the builtin program to Core BPF: "deploy" the
+        // program by assigning it a new Unloaded entry owned by Loader V3 in
+        // the global program cache, then remove it from `builtin_program_ids`.
+        batch_processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .assign_program(
+                &batch_processor.program_runtime_environment,
+                key,
+                MIGRATION_SLOT,
+                Arc::new(ProgramCacheEntry::new_unloaded(
+                    MIGRATION_SLOT,
+                    ProgramCacheEntryOwner::LoaderV3,
+                    batch_processor.program_runtime_environment.clone(),
+                )),
+            );
+        batch_processor
+            .builtin_program_ids
+            .write()
+            .unwrap()
+            .remove(&key);
+
+        // For the rest of the slot the builtin is still served: the batch cache was
+        // seeded at the start of the block and is unaffected by the guard change.
+        // `filter_executable_program_accounts` finds it there and short circuits,
+        // so the newly deployed program is never even searched for.
+        let program_cache_for_tx_batch = batch_processor
+            .builtin_program_cache
+            .read()
+            .unwrap()
+            .clone();
+        let entry = program_cache_for_tx_batch.find(&key).unwrap();
+        assert!(matches!(entry.program, ProgramCacheEntryType::Builtin(_)));
+        assert_eq!(entry.deployment_slot, BUILTIN_SLOT);
+
+        // Had it been searched for, it would not have been usable anyway: the
+        // program is deployed in this slot, so it is not effective until the next
+        // one and extraction yields a delay visibility tombstone.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &key,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployed_on_or_after_slot: MIGRATION_SLOT,
+            last_modification_slot: MIGRATION_SLOT,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(MIGRATION_SLOT);
+        batch_processor
+            .global_program_cache
+            .read()
+            .unwrap()
+            .extract(
+                &mut search_for,
+                &mut extracted,
+                &batch_processor.program_runtime_environment,
+                false,
+                false,
+            );
+        assert!(matches!(
+            extracted.find(&key).unwrap().program,
+            ProgramCacheEntryType::DelayVisibility
+        ));
+
+        // Rolling to the next slot rebuilds the batch cache from the fork guard,
+        // which no longer lists the address, so the builtin is gone.
+        let next_slot = batch_processor.new_from(NEXT_SLOT, 0);
+        assert!(
+            next_slot
+                .builtin_program_cache
+                .read()
+                .unwrap()
+                .find(&key)
+                .is_none()
+        );
+
+        // A caller reporting the deployed slot now reaches the migrated program's
+        // entry, which is unloaded, so the cache signals a reload from account
+        // state. Crucially the builtin is not served in its place.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &key,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployed_on_or_after_slot: MIGRATION_SLOT,
+            last_modification_slot: MIGRATION_SLOT,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
+        next_slot.global_program_cache.read().unwrap().extract(
+            &mut search_for,
+            &mut extracted,
+            &next_slot.program_runtime_environment,
+            false,
+            false,
+        );
+        assert!(extracted.find(&key).is_none());
+        assert_eq!(search_for.len(), 1);
+
+        // The builtin entry does survive in the global program cache, but keyed at
+        // slot 0 under `NativeLoader`, which the lookup above cannot reach.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &key,
+            loader: ProgramCacheEntryOwner::NativeLoader,
+            deployed_on_or_after_slot: BUILTIN_SLOT,
+            last_modification_slot: BUILTIN_SLOT,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
+        next_slot.global_program_cache.read().unwrap().extract(
+            &mut search_for,
+            &mut extracted,
+            &next_slot.program_runtime_environment,
+            false,
+            false,
+        );
+        assert!(matches!(
+            extracted.find(&key).unwrap().program,
+            ProgramCacheEntryType::Builtin(_)
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "missing from the global program cache")]
+    fn test_builtin_in_fork_but_not_in_global_cache_panics() {
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
+        let batch_processor =
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None);
+
+        // Register a builtin without going through `add_builtin()` and just
+        // add it to `builtin_program_ids` directly. This will trip the debug
+        // assertion for the fork guard's `search_for`.
+        batch_processor
+            .builtin_program_ids
+            .write()
+            .unwrap()
+            .insert(Pubkey::new_unique());
+        batch_processor.new_from(1, 0);
     }
 
     #[test]

@@ -213,6 +213,9 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
                 let (programdata, _slot) = callbacks
                     .get_account_shared_data(&programdata_address)
                     .ok_or(TransactionError::ProgramAccountNotFound)?;
+                if !bpf_loader_upgradeable::check_id(programdata.owner()) {
+                    return Err(TransactionError::ProgramAccountNotFound);
+                }
                 if let Ok(UpgradeableLoaderState::ProgramData {
                     slot,
                     upgrade_authority_address: _,
@@ -721,33 +724,56 @@ mod tests {
     #[test]
     fn test_program_modification_slot_account_not_found() {
         let mock_bank = MockBankCallback::default();
-        let key = Pubkey::new_unique();
+        let program_address = Pubkey::new_unique();
+        let programdata_address = Pubkey::new_unique();
 
-        let mut account_data = AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
+        // Case: Incorrect program_account state
+        let mut program_account = AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-
+            .insert(program_address, (program_account.clone(), 0));
         let result = get_program_deployment_slot(
             &mock_bank,
-            &mock_bank.get_account_shared_data(&key).unwrap().0,
+            &mock_bank
+                .get_account_shared_data(&program_address)
+                .unwrap()
+                .0,
             ProgramCacheEntryOwner::LoaderV3,
         );
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
 
+        // Case: Empty programdata_account
         let state = UpgradeableLoaderState::Program {
-            programdata_address: Pubkey::new_unique(),
+            programdata_address,
         };
-        account_data.set_data_from_slice(&bincode::serialize(&state).unwrap());
+        program_account.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-
+            .insert(program_address, (program_account.clone(), 0));
         let result = get_program_deployment_slot(
             &mock_bank,
-            &mock_bank.get_account_shared_data(&key).unwrap().0,
+            &mock_bank
+                .get_account_shared_data(&program_address)
+                .unwrap()
+                .0,
+            ProgramCacheEntryOwner::LoaderV3,
+        );
+        assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
+
+        // Case: Incorrect programdata_account owner
+        let programdata_account = AccountSharedData::new(100, 100, &bpf_loader::id());
+        mock_bank
+            .account_shared_data
+            .borrow_mut()
+            .insert(programdata_address, (programdata_account.clone(), 0));
+        let result = get_program_deployment_slot(
+            &mock_bank,
+            &mock_bank
+                .get_account_shared_data(&program_address)
+                .unwrap()
+                .0,
             ProgramCacheEntryOwner::LoaderV3,
         );
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));

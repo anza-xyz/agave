@@ -2,20 +2,18 @@
 //! updates via WebSocket interface.
 use {
     crate::{
-        leader_updater::LeaderUpdater,
-        logging::{error, info},
+        logging::info,
         node_address_service::{
-            LeaderTpuCacheServiceConfig, NodeAddressService, NodeAddressServiceError, SlotEvent,
+            LeaderTpuCacheServiceConfig, NodeAddressProvider, NodeAddressService,
+            NodeAddressServiceError, SlotEvent,
         },
     },
-    async_trait::async_trait,
     futures::Stream,
     futures_util::stream::StreamExt,
-    solana_clock::Slot,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error::Error as ClientError, response::SlotUpdate},
-    std::{net::SocketAddr, sync::Arc, time::Duration},
+    std::{sync::Arc, time::Duration},
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::SendTimeoutError},
@@ -33,48 +31,34 @@ pub struct WebsocketNodeAddressService {
 }
 
 impl WebsocketNodeAddressService {
+    /// Run the [`WebsocketNodeAddressService`].
     pub async fn run(
         rpc_client: Arc<RpcClient>,
         websocket_url: String,
         config: LeaderTpuCacheServiceConfig,
         cancel: CancellationToken,
-    ) -> Result<Self, Error> {
+    ) -> Result<(NodeAddressProvider, Self), Error> {
         let (websocket_slot_event_stream, ws_task_handle) =
             websocket_slot_event_stream(websocket_url);
-        let service =
+        let (provider, service) =
             NodeAddressService::run(rpc_client, websocket_slot_event_stream, config, cancel)
                 .await?;
 
-        Ok(Self {
-            service,
-            ws_task_handle: Some(ws_task_handle),
-        })
+        Ok((
+            provider,
+            Self {
+                service,
+                ws_task_handle: Some(ws_task_handle),
+            },
+        ))
     }
 
-    pub async fn shutdown(&mut self) -> Result<(), Error> {
+    pub async fn shutdown(mut self) -> Result<(), Error> {
         self.service.shutdown().await?;
         if let Some(handle) = self.ws_task_handle.take() {
             handle.await??;
         }
         Ok(())
-    }
-
-    /// Returns the estimated current slot.
-    pub fn current_slot(&self) -> Slot {
-        self.service.estimated_current_slot()
-    }
-}
-
-#[async_trait]
-impl LeaderUpdater for WebsocketNodeAddressService {
-    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
-        self.service.next_leaders(lookahead_leaders)
-    }
-
-    async fn stop(&mut self) {
-        if let Err(e) = self.shutdown().await {
-            error!("Failed to shutdown WebsocketNodeAddressService: {e}");
-        }
     }
 }
 

@@ -3,7 +3,7 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
-            ShredFlags, max_ticks_per_n_shreds,
+            MAX_DATA_SHREDS_PER_SLOT, ShredFlags, max_ticks_per_n_shreds,
             merkle::finish_erasure_batch_for_tests,
             merkle_tree::{
                 SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
@@ -12,8 +12,11 @@ use {
         },
     },
     assert_matches::assert_matches,
-    rand::{rng, seq::SliceRandom},
-    solana_entry::entry::next_entry_mut,
+    rand::{Rng, rng, seq::SliceRandom},
+    rand_chacha::{ChaChaRng, rand_core::SeedableRng},
+    solana_entry::entry::{
+        entries_to_verification_data, entry_views_to_verification_data, next_entry_mut,
+    },
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
     solana_hash::Hash,
     solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
@@ -28,7 +31,7 @@ use {
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{InnerInstruction, InnerInstructions},
-    std::{cmp::Ordering, time::Duration},
+    std::{borrow::Cow, cmp::Ordering, time::Duration},
     test_case::{test_case, test_matrix},
 };
 
@@ -91,7 +94,6 @@ fn create_update_parent_shreds_with_shred_parent(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
 }
 
 fn create_block_header_shreds(slot: Slot, parent_slot: Slot, parent_block_id: Hash) -> Vec<Shred> {
@@ -123,7 +125,6 @@ fn create_block_header_shreds_with_shred_parent(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
 }
 
 fn verify_next_slots(blockstore: &Blockstore, parent_slot: Slot, expected: &[Slot]) {
@@ -182,7 +183,29 @@ fn create_block_footer_shreds_with_last(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
+}
+
+fn create_entry_batch_shreds(
+    slot: Slot,
+    parent_slot: Slot,
+    entries: Vec<Entry>,
+    shred_index: u32,
+    is_last_in_slot: bool,
+) -> Vec<Shred> {
+    let component = BlockComponent::new_entry_batch(entries).unwrap();
+
+    Shredder::new(slot, parent_slot, 0, 0)
+        .unwrap()
+        .make_merkle_shreds_from_component(
+            &Keypair::new(),
+            &component,
+            is_last_in_slot,
+            Hash::new_unique(),
+            shred_index,
+            shred_index,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        )
 }
 
 fn data_shreds(shreds: Vec<Shred>) -> Vec<Shred> {
@@ -1868,8 +1891,9 @@ fn test_merkle_root_metas_coding() {
     let (_, coding_shreds) = setup_erasure_shreds(slot, parent_slot, 10);
     let coding_shred = coding_shreds[index as usize].clone();
 
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
-        ShredInsertionTracker::new(coding_shreds.len(), blockstore.get_write_batch().unwrap());
+        ShredInsertionTracker::new(coding_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_coding_shred(
             Cow::Borrowed(&coding_shred),
@@ -1924,8 +1948,9 @@ fn test_merkle_root_metas_coding() {
     let (_, coding_shreds) = setup_erasure_shreds(slot, parent_slot, 10);
     let new_coding_shred = coding_shreds[(index + 1) as usize].clone();
 
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
-        ShredInsertionTracker::new(coding_shreds.len(), blockstore.get_write_batch().unwrap());
+        ShredInsertionTracker::new(coding_shreds.len(), &mut write_batch);
 
     assert!(matches!(
         blockstore.check_insert_coding_shred(
@@ -2058,8 +2083,9 @@ fn test_merkle_root_metas_data() {
     let (data_shreds, _) = setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
     let data_shred = data_shreds[0].clone();
 
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
-        ShredInsertionTracker::new(data_shreds.len(), blockstore.get_write_batch().unwrap());
+        ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_data_shred(
             Cow::Borrowed(&data_shred),
@@ -2114,8 +2140,9 @@ fn test_merkle_root_metas_data() {
     let (data_shreds, _) = setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
     let new_data_shred = data_shreds[1].clone();
 
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
-        ShredInsertionTracker::new(data_shreds.len(), blockstore.get_write_batch().unwrap());
+        ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
 
     let insert_result = blockstore.check_insert_data_shred(
         Cow::Owned(new_data_shred),
@@ -2131,7 +2158,7 @@ fn test_merkle_root_metas_data() {
     );
     blockstore
         .dead_slots_cf
-        .put_in_batch(&mut shred_insertion_tracker.write_batch, slot, &true)
+        .put_in_batch(shred_insertion_tracker.write_batch, slot, &true)
         .unwrap();
     let ShredInsertionTracker {
         merkle_root_metas,
@@ -2206,11 +2233,13 @@ fn test_merkle_root_metas_data() {
             &mut ProcessShredsStats::default(),
         )
         .unwrap()
+        .into_iter()
         .next()
         .unwrap();
 
+    let mut write_batch = blockstore.db.batch();
     let mut shred_insertion_tracker =
-        ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
+        ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_data_shred(
             Cow::Borrowed(&new_data_shred),
@@ -2284,8 +2313,8 @@ fn test_check_insert_coding_shred() {
         );
     let coding_shred = code_shreds[0].clone();
 
-    let mut shred_insertion_tracker =
-        ShredInsertionTracker::new(1, blockstore.get_write_batch().unwrap());
+    let mut write_batch = blockstore.get_write_batch();
+    let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
     blockstore
         .check_insert_coding_shred(
             Cow::Borrowed(&coding_shred),
@@ -2414,7 +2443,8 @@ fn test_mark_slot_dead_if_not_full() {
         block_id: Hash::new_unique(),
     };
 
-    let mut shred_insertion_tracker = ShredInsertionTracker::new(1, blockstore.db.batch().unwrap());
+    let mut write_batch = blockstore.db.batch();
+    let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
 
     blockstore.mark_slot_dead_if_not_full(empty_slot, location, &mut shred_insertion_tracker);
     blockstore.mark_slot_dead_if_not_full(partial_slot, location, &mut shred_insertion_tracker);
@@ -2597,7 +2627,7 @@ fn test_get_slot_entries_with_shred_count_corruption() {
     let keypair = Keypair::new();
     let reed_solomon_cache = ReedSolomonCache::default();
 
-    let shreds: Vec<Shred> = shredder
+    let mut shreds = shredder
         .make_shreds_from_data_slice(
             &keypair,
             &[1, 1, 1],
@@ -2608,9 +2638,8 @@ fn test_get_slot_entries_with_shred_count_corruption() {
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         )
-        .unwrap()
-        .take(DATA_SHREDS_PER_FEC_BLOCK)
-        .collect();
+        .unwrap();
+    shreds.truncate(DATA_SHREDS_PER_FEC_BLOCK);
 
     // With the corruption, nothing should be returned, even though an
     // earlier data block was valid
@@ -3020,6 +3049,7 @@ fn test_get_complete_block_with_block_markers() {
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
+        .into_iter()
         .filter(Shred::is_data)
         .collect_vec();
     let entry_end_index = entry_shreds.last().unwrap().index() + 1;
@@ -3041,9 +3071,12 @@ fn test_get_complete_block_with_block_markers() {
     blockstore.set_roots([parent_slot, slot].iter()).unwrap();
 
     let (slot_entries, num_shreds, is_full) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, false)
+        .get_slot_entry_views_with_shred_info(slot, 0, false)
         .unwrap();
-    assert_eq!(slot_entries, entries);
+    assert_eq!(
+        entry_views_to_verification_data(&slot_entries),
+        entries_to_verification_data(&entries)
+    );
     assert_eq!(num_shreds, u64::from(slot_end_index));
     assert!(is_full);
 
@@ -4655,6 +4688,7 @@ fn test_recovery() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
 
     let slot = 1;
     let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
@@ -4680,6 +4714,7 @@ fn test_recovery() {
                 0, // shred_version
             )),
             &mut pinnable_slice,
+            &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
@@ -4704,6 +4739,7 @@ fn test_skip_alt_recovery() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
 
     let slot = 1;
     let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
@@ -4724,6 +4760,7 @@ fn test_skip_alt_recovery() {
             false, // is_trusted
             None,
             &mut pinnable_slice,
+            &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
@@ -4751,6 +4788,7 @@ fn test_skip_alt_recovery() {
                 0, // shred_version
             )),
             &mut pinnable_slice,
+            &mut write_batch,
             &mut metrics,
         )
         .unwrap();
@@ -4779,6 +4817,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
 
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -4849,6 +4888,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
                 0, // shred_version
             )),
             &mut pinnable_slice,
+            &mut write_batch,
             &mut metrics,
         )
         .unwrap();
@@ -5277,9 +5317,16 @@ fn test_update_completed_data_indexes() {
 
     for i in 0..10 {
         shred_index.insert(i as u64);
+        let received = u64::from(i) + 1;
         assert!(
-            update_completed_data_indexes(true, i, &shred_index, &mut completed_data_indexes)
-                .eq(std::iter::once(i..i + 1))
+            update_completed_data_indexes(
+                true,
+                i,
+                received,
+                &shred_index,
+                &mut completed_data_indexes
+            )
+            .eq(std::iter::once(i..i + 1))
         );
         assert!(completed_data_indexes.iter().eq(0..=i));
     }
@@ -5290,21 +5337,39 @@ fn test_update_completed_data_indexes_out_of_order() {
     let mut completed_data_indexes = CompletedDataIndexes::default();
     let mut shred_index = ShredIndex::default();
 
+    // Shred 4 is received first, so `received` stays at 5 throughout.
+    let received = 5;
+
     shred_index.insert(4);
     assert!(
-        update_completed_data_indexes(false, 4, &shred_index, &mut completed_data_indexes).eq([])
+        update_completed_data_indexes(
+            false,
+            4,
+            received,
+            &shred_index,
+            &mut completed_data_indexes
+        )
+        .eq([])
     );
     assert!(completed_data_indexes.is_empty());
 
     shred_index.insert(2);
     assert!(
-        update_completed_data_indexes(false, 2, &shred_index, &mut completed_data_indexes).eq([])
+        update_completed_data_indexes(
+            false,
+            2,
+            received,
+            &shred_index,
+            &mut completed_data_indexes
+        )
+        .eq([])
     );
     assert!(completed_data_indexes.is_empty());
 
     shred_index.insert(3);
     assert!(
-        update_completed_data_indexes(true, 3, &shred_index, &mut completed_data_indexes).eq([])
+        update_completed_data_indexes(true, 3, received, &shred_index, &mut completed_data_indexes)
+            .eq([])
     );
     assert!(completed_data_indexes.clone().iter().eq([3]));
 
@@ -5312,7 +5377,7 @@ fn test_update_completed_data_indexes_out_of_order() {
     // is part of the same data set
     shred_index.insert(1);
     assert!(
-        update_completed_data_indexes(true, 1, &shred_index, &mut completed_data_indexes)
+        update_completed_data_indexes(true, 1, received, &shred_index, &mut completed_data_indexes)
             .eq(std::iter::once(2..4))
     );
     assert!(completed_data_indexes.clone().iter().eq([1, 3]));
@@ -5321,10 +5386,125 @@ fn test_update_completed_data_indexes_out_of_order() {
     // is part of the same data set
     shred_index.insert(0);
     assert!(
-        update_completed_data_indexes(true, 0, &shred_index, &mut completed_data_indexes)
+        update_completed_data_indexes(true, 0, received, &shred_index, &mut completed_data_indexes)
             .eq([0..1, 1..2])
     );
     assert!(completed_data_indexes.clone().iter().eq([0, 1, 3]));
+}
+
+// Differential regression test for the `received` bounded scan in
+// `update_completed_data_indexes`.
+//
+// The bounded scan is correct only if no completed data index exists at or
+// above `received`. Check both returned ranges and mutated state against the
+// original unbounded implementation across randomized insertion orders, and
+// check that `received` values past the bit vector capacity — including the
+// u32 saturation of `u64::MAX` — degrade to the unbounded scan.
+#[test]
+fn test_update_completed_data_indexes_differential() {
+    // The original implementation, with an unbounded forward scan.
+    fn reference(
+        is_last_in_data: bool,
+        new_shred_index: u32,
+        received_data_shreds: &ShredIndex,
+        completed_data_indexes: &mut CompletedDataIndexes,
+    ) -> Vec<Range<u32>> {
+        if is_last_in_data {
+            completed_data_indexes.insert(new_shred_index);
+        }
+        [
+            completed_data_indexes
+                .range(..new_shred_index)
+                .next_back()
+                .map(|index| index + 1)
+                .or(Some(0u32)),
+            is_last_in_data.then_some(new_shred_index + 1),
+            completed_data_indexes
+                .range(new_shred_index + 1..)
+                .next()
+                .map(|index| index + 1),
+        ]
+        .into_iter()
+        .flatten()
+        .tuple_windows()
+        .filter(|&(start, end)| {
+            let bounds = u64::from(start)..u64::from(end);
+            received_data_shreds.range(bounds.clone()).eq(bounds)
+        })
+        .map(|(start, end)| start..end)
+        .collect()
+    }
+
+    const WINDOW: u32 = 512;
+    let max_index = u32::try_from(MAX_DATA_SHREDS_PER_SLOT).unwrap();
+    for seed in 0..200u64 {
+        let mut rng = ChaChaRng::seed_from_u64(seed);
+        // Draw distinct shred indexes from a window of the index space; pin
+        // some windows to the tail to exercise clamping at capacity.
+        let window_start = if seed & 3 == 0 {
+            max_index - WINDOW
+        } else {
+            rng.random_range(0..max_index - WINDOW)
+        };
+        let mut indexes: Vec<u32> = (window_start..window_start + WINDOW).collect();
+        indexes.shuffle(&mut rng);
+        indexes.truncate(rng.random_range(1..=256));
+        // Cover the in-order arrival, reverse order, and
+        // random permutations.
+        match seed % 5 {
+            0 => indexes.sort_unstable(),
+            1 => indexes.sort_unstable_by(|a, b| b.cmp(a)),
+            _ => (),
+        }
+
+        let mut shred_index = ShredIndex::default();
+        let mut received = 0u64;
+        let mut completed_data_indexes = CompletedDataIndexes::default();
+        let mut completed_data_indexes_ref = CompletedDataIndexes::default();
+        let mut completed_data_indexes_sat = CompletedDataIndexes::default();
+
+        for &index in &indexes {
+            let is_last_in_data = rng.random_bool(0.25);
+            shred_index.insert(u64::from(index));
+            received = received.max(u64::from(index) + 1);
+
+            let ranges: Vec<_> = update_completed_data_indexes(
+                is_last_in_data,
+                index,
+                received,
+                &shred_index,
+                &mut completed_data_indexes,
+            )
+            .collect();
+            let expected = reference(
+                is_last_in_data,
+                index,
+                &shred_index,
+                &mut completed_data_indexes_ref,
+            );
+            assert_eq!(ranges, expected, "seed {seed}, index {index}");
+            assert_eq!(
+                completed_data_indexes, completed_data_indexes_ref,
+                "seed {seed}, index {index}"
+            );
+
+            // A `received` that saturates the u32 conversion must behave
+            // exactly like the unbounded scan.
+            let saturated: Vec<_> = update_completed_data_indexes(
+                is_last_in_data,
+                index,
+                u64::MAX,
+                &shred_index,
+                &mut completed_data_indexes_sat,
+            )
+            .collect();
+            assert_eq!(saturated, expected, "seed {seed}, index {index}");
+            assert_eq!(
+                completed_data_indexes_sat, completed_data_indexes_ref,
+                "seed {seed}, index {index}"
+            );
+        }
+    }
 }
 
 fn make_large_tx_entry(num_txs: usize) -> Entry {
@@ -5464,33 +5644,29 @@ fn setup_duplicate_last_in_slot(
     let leader_keypair = Arc::new(Keypair::new());
     let reed_solomon_cache = ReedSolomonCache::default();
     let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
-    let (shreds1, code1): (Vec<Shred>, Vec<Shred>) = shredder
-        .make_merkle_shreds_from_entries(
-            &leader_keypair,
-            &entries,
-            true,               // is_last_in_slot
-            Hash::new_unique(), // chained_merkle_root
-            0,                  // next_shred_index
-            0,                  // next_code_index,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        )
-        .partition(Shred::is_data);
+    let (shreds1, code1) = shredder.entries_to_merkle_shreds_for_tests(
+        &leader_keypair,
+        &entries,
+        true,               // is_last_in_slot
+        Hash::new_unique(), // chained_merkle_root
+        0,                  // next_shred_index
+        0,                  // next_code_index,
+        &reed_solomon_cache,
+        &mut ProcessShredsStats::default(),
+    );
     let last_data1 = shreds1.last().unwrap();
     let last_code1 = code1.last().unwrap();
 
-    let (shreds2, code2) = shredder
-        .make_merkle_shreds_from_entries(
-            &leader_keypair,
-            &entries,
-            true, // is_last_in_slot
-            last_data1.chained_merkle_root().unwrap(),
-            last_data1.index() + 1, // next_shred_index
-            last_code1.index() + 1, // next_code_index,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        )
-        .partition(Shred::is_data);
+    let (shreds2, code2) = shredder.entries_to_merkle_shreds_for_tests(
+        &leader_keypair,
+        &entries,
+        true, // is_last_in_slot
+        last_data1.chained_merkle_root().unwrap(),
+        last_data1.index() + 1, // next_shred_index
+        last_code1.index() + 1, // next_code_index,
+        &reed_solomon_cache,
+        &mut ProcessShredsStats::default(),
+    );
     ((shreds1, code1), (shreds2, code2))
 }
 
@@ -5655,7 +5831,7 @@ fn test_get_slot_entries_dead_slot_race() {
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 while let Ok(slot) = slot_receiver.recv() {
-                    match blockstore.get_slot_entries_with_shred_info(slot, 0, false) {
+                    match blockstore.get_slot_entry_views_with_shred_info(slot, 0, false) {
                         Ok((_entries, _num_shreds, is_full)) => {
                             if is_full {
                                 signal_sender
@@ -6151,7 +6327,7 @@ fn test_chained_merkle_root_upgrade_inconsistency_backwards() {
     blockstore
         .put_erasure_meta(coding_shred_previous.erasure_set(), &erasure_meta)
         .unwrap();
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     blockstore
         .merkle_root_meta_cf
         .delete_range_in_batch(&mut write_batch, slot, slot);
@@ -6222,7 +6398,7 @@ fn test_chained_merkle_root_upgrade_inconsistency_forwards() {
 
     // Remove the merkle root meta in order to simulate this blockstore originating from
     // an older version.
-    let mut write_batch = blockstore.get_write_batch().unwrap();
+    let mut write_batch = blockstore.get_write_batch();
     blockstore
         .merkle_root_meta_cf
         .delete_range_in_batch(&mut write_batch, slot, slot);
@@ -6266,7 +6442,7 @@ fn test_add_transaction_memos_to_batch() {
     let blockstore =
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
     let signatures: Vec<Signature> = (0..2).map(|_| Signature::new_unique()).collect();
-    let mut memos_batch = blockstore.get_write_batch().unwrap();
+    let mut memos_batch = blockstore.get_write_batch();
 
     blockstore
         .add_transaction_memos_to_batch(
@@ -6341,7 +6517,7 @@ fn test_add_transaction_status_to_batch() {
         .map(|_| vec![(Pubkey::new_unique(), true), (Pubkey::new_unique(), false)])
         .collect();
     let slot = 5;
-    let mut status_batch = blockstore.get_write_batch().unwrap();
+    let mut status_batch = blockstore.get_write_batch();
 
     for (tx_idx, signature) in signatures.iter().enumerate() {
         blockstore
@@ -6390,6 +6566,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
 
     let parent_slot = 990;
     let parent_block_id = Hash::default();
@@ -6441,6 +6618,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
             false,
             None,
             &mut pinnable_slice,
+            &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
@@ -6538,6 +6716,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
             false,
             None,
             &mut pinnable_slice,
+            &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
@@ -6558,6 +6737,7 @@ fn insert_test_block_at_location(
     location: BlockLocation,
 ) -> (Vec<Shred>, Hash) {
     let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
     let (data_shreds, _) = setup_erasure_shreds(slot, parent_slot, 200);
     let is_repaired = location != BlockLocation::Original;
     let shreds = data_shreds
@@ -6569,6 +6749,7 @@ fn insert_test_block_at_location(
             false,
             None,
             &mut pinnable_slice,
+            &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
@@ -6672,6 +6853,7 @@ fn test_get_data_shreds_for_slot() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
     let parent_slot = 990;
     let slot = 1000;
     let num_entries = 200;
@@ -6702,6 +6884,7 @@ fn test_get_data_shreds_for_slot() {
                 false,
                 None,
                 &mut pinnable_slice,
+                &mut write_batch,
                 &mut BlockstoreInsertionMetrics::default(),
             )
             .unwrap();
@@ -6973,6 +7156,299 @@ fn test_post_update_orig_after() {
     assert_eq!(meta.replay_fec_set_index, 32);
     assert!(blockstore.get_data_shred(slot, 64).unwrap().is_some());
     assert!(!blockstore.is_dead(slot));
+}
+
+fn transaction_signatures(entries: &[Entry]) -> Vec<Signature> {
+    entries
+        .iter()
+        .flat_map(|entry| entry.transactions.iter())
+        .map(|transaction| transaction.signatures[0])
+        .collect()
+}
+
+fn write_transaction_statuses_for_entries(
+    blockstore: &Blockstore,
+    slot: Slot,
+    entries: &[Entry],
+) -> Vec<Signature> {
+    entries
+        .iter()
+        .flat_map(|entry| entry.transactions.iter())
+        .enumerate()
+        .map(|(transaction_index, transaction)| {
+            let signature = transaction.signatures[0];
+            let account_count = transaction.message.static_account_keys().len();
+            let status = TransactionStatusMeta {
+                status: Ok(()),
+                fee: 42,
+                pre_balances: vec![0; account_count],
+                post_balances: vec![1; account_count],
+                inner_instructions: Some(vec![]),
+                log_messages: Some(vec![]),
+                pre_token_balances: Some(vec![]),
+                post_token_balances: Some(vec![]),
+                rewards: Some(vec![]),
+                loaded_addresses: LoadedAddresses::default(),
+                return_data: Some(TransactionReturnData::default()),
+                compute_units_consumed: Some(12345),
+                cost_units: Some(6789),
+            };
+            blockstore
+                .write_transaction_status(
+                    slot,
+                    signature,
+                    transaction
+                        .message
+                        .static_account_keys()
+                        .iter()
+                        .map(|key| (key, true)),
+                    status,
+                    transaction_index,
+                )
+                .unwrap();
+            signature
+        })
+        .collect()
+}
+
+pub(crate) struct UpdateParentSlotFixture {
+    previous_blockhash: String,
+    post_update_blockhash: String,
+    pub(crate) post_update_address: Pubkey,
+    pre_update_signatures: Vec<Signature>,
+    pub(crate) post_update_signatures: Vec<Signature>,
+    post_update_starting_transaction_indexes: Vec<usize>,
+    post_update_num_entries: usize,
+    update_parent_fec_set_index: u32,
+}
+
+fn expected_starting_transaction_indexes(entries: &[Entry]) -> Vec<usize> {
+    let mut starting_transaction_index = 0;
+    entries
+        .iter()
+        .map(|entry| {
+            let current_index = starting_transaction_index;
+            starting_transaction_index += entry.transactions.len();
+            current_index
+        })
+        .collect()
+}
+
+pub(crate) fn insert_complete_update_parent_slot(
+    blockstore: &Blockstore,
+    slot: Slot,
+    original_parent: Slot,
+    update_parent: Slot,
+) -> UpdateParentSlotFixture {
+    let (parent_shreds, parent_entries) = make_slot_entries(update_parent, update_parent - 1, 5);
+    blockstore.insert_shreds(parent_shreds, true).unwrap();
+    let previous_blockhash = parent_entries.last().unwrap().hash.to_string();
+
+    let pre_update_entries = make_slot_entries_with_transactions(1);
+    let post_update_entries = make_slot_entries_with_transactions(2);
+    let post_update_address = post_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
+    let pre_update_signatures = transaction_signatures(&pre_update_entries);
+    let post_update_signatures =
+        write_transaction_statuses_for_entries(blockstore, slot, &post_update_entries);
+    let post_update_blockhash = post_update_entries.last().unwrap().hash.to_string();
+    let post_update_starting_transaction_indexes =
+        expected_starting_transaction_indexes(&post_update_entries);
+    let post_update_num_entries = post_update_entries.len();
+
+    let fec_set_size = u32::try_from(DATA_SHREDS_PER_FEC_BLOCK).unwrap();
+    let update_parent_fec_set_index = fec_set_size * 2;
+    let post_update_fec_set_index = fec_set_size * 3;
+    let footer_fec_set_index = fec_set_size * 4;
+    let mut shreds = create_block_header_shreds(slot, original_parent, Hash::new_unique());
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        pre_update_entries,
+        fec_set_size,
+        false,
+    ));
+    shreds.extend(create_update_parent_shreds_with_shred_parent(
+        slot,
+        original_parent,
+        update_parent,
+        Hash::new_unique(),
+        update_parent_fec_set_index,
+        false,
+    ));
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        post_update_entries,
+        post_update_fec_set_index,
+        false,
+    ));
+    shreds.extend(create_block_footer_shreds(
+        slot,
+        original_parent,
+        footer_fec_set_index,
+    ));
+    blockstore.insert_shreds(shreds, true).unwrap();
+
+    UpdateParentSlotFixture {
+        previous_blockhash,
+        post_update_blockhash,
+        post_update_address,
+        pre_update_signatures,
+        post_update_signatures,
+        post_update_starting_transaction_indexes,
+        post_update_num_entries,
+        update_parent_fec_set_index,
+    }
+}
+
+#[test]
+fn test_complete_block_skips_pre_update_parent_entries() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 100;
+    let original_parent = 99;
+    let update_parent = 96;
+    let fixture =
+        insert_complete_update_parent_slot(&blockstore, slot, original_parent, update_parent);
+
+    let meta = blockstore.meta(slot).unwrap().unwrap();
+    assert!(meta.is_full());
+    assert_eq!(meta.parent_slot, Some(update_parent));
+    assert_eq!(
+        meta.replay_fec_set_index,
+        fixture.update_parent_fec_set_index
+    );
+
+    let (raw_components, _, _) = blockstore
+        .get_slot_components_with_shred_info(slot, 0, false)
+        .unwrap();
+    assert_eq!(raw_components.len(), 5);
+    assert!(matches!(
+        &raw_components[1],
+        BlockComponent::EntryBatch(entries) if transaction_signatures(entries) == fixture.pre_update_signatures
+    ));
+
+    let complete_block = blockstore.get_complete_block(slot, true).unwrap();
+    assert_eq!(complete_block.parent_slot, update_parent);
+    assert_eq!(
+        complete_block.previous_blockhash,
+        fixture.previous_blockhash
+    );
+    assert_eq!(complete_block.blockhash, fixture.post_update_blockhash);
+    assert_eq!(
+        complete_block
+            .transactions
+            .iter()
+            .map(|tx| tx.transaction.signatures[0])
+            .collect::<Vec<_>>(),
+        fixture.post_update_signatures
+    );
+}
+
+#[test]
+fn test_get_transaction_uses_post_update_parent_indexes() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let original_parent = 103;
+    let update_parent = 100;
+    let fixture =
+        insert_complete_update_parent_slot(&blockstore, slot, original_parent, update_parent);
+
+    for (expected_index, signature) in fixture.post_update_signatures.iter().copied().enumerate() {
+        let transaction = blockstore
+            .get_complete_transaction(signature, slot)
+            .unwrap()
+            .unwrap();
+        assert_eq!(transaction.index, expected_index as u32);
+    }
+
+    blockstore.set_roots([slot].iter()).unwrap();
+    for (expected_index, signature) in fixture.post_update_signatures.iter().copied().enumerate() {
+        let transaction = blockstore
+            .get_rooted_transaction(signature)
+            .unwrap()
+            .unwrap();
+        assert_eq!(transaction.index, expected_index as u32);
+    }
+}
+
+#[test]
+fn test_find_transaction_in_slot_requires_slot_meta() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    assert_matches!(
+        blockstore.find_transaction_in_slot(1, Signature::new_unique()),
+        Err(BlockstoreError::SlotUnavailable)
+    );
+}
+
+#[test]
+fn test_complete_block_with_components_skips_pre_update_parent_components() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let original_parent = 103;
+    let update_parent = 100;
+    let fixture =
+        insert_complete_update_parent_slot(&blockstore, slot, original_parent, update_parent);
+
+    let block_with_components = blockstore
+        .get_complete_block_with_components(
+            slot, /*require_previous_blockhash:*/ true, /*populate_components:*/ true,
+            /*allow_dead_slots:*/ false,
+        )
+        .unwrap();
+    assert_eq!(block_with_components.block.parent_slot, update_parent);
+    assert_eq!(
+        block_with_components.block.previous_blockhash,
+        fixture.previous_blockhash
+    );
+    assert_eq!(
+        block_with_components.block.blockhash,
+        fixture.post_update_blockhash
+    );
+    assert_eq!(
+        block_with_components
+            .block
+            .transactions
+            .iter()
+            .map(|tx| tx.transaction.signatures[0])
+            .collect::<Vec<_>>(),
+        fixture.post_update_signatures
+    );
+
+    assert_eq!(block_with_components.components.len(), 3);
+    assert!(matches!(
+        &block_with_components.components[0],
+        ConfirmedBlockComponent::BlockMarker(marker) if marker.is_update_parent()
+    ));
+    assert!(matches!(
+        &block_with_components.components[1],
+        ConfirmedBlockComponent::EntryBatch(entries)
+            if entries.len() == fixture.post_update_num_entries
+                && entries.iter().map(|entry| entry.starting_transaction_index).collect::<Vec<_>>()
+                    == fixture.post_update_starting_transaction_indexes
+    ));
+    assert!(matches!(
+        &block_with_components.components[2],
+        ConfirmedBlockComponent::BlockMarker(marker) if marker.is_footer()
+    ));
+
+    let raw_components = blockstore
+        .get_slot_components_with_shred_info(slot, 0, false)
+        .unwrap()
+        .0;
+    assert!(matches!(
+        &raw_components[1],
+        BlockComponent::EntryBatch(entries) if transaction_signatures(entries) == fixture.pre_update_signatures
+    ));
 }
 
 #[test_matrix([true, false])]

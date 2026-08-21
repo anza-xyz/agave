@@ -74,7 +74,7 @@ fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
         name: String::from("sanity"),
         command: String::from("ci/test-sanity.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(5),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     }));
 
@@ -379,7 +379,7 @@ fn default_sanity_step() -> buildkite::Step {
         name: String::from("sanity"),
         command: String::from("ci/docker-run-default-image.sh ci/test-sanity.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(5),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     })
 }
@@ -456,7 +456,7 @@ fn default_miri_step() -> buildkite::Step {
         name: String::from("miri"),
         command: String::from("ci/docker-run-default-image.sh ci/test-miri.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(5),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     })
 }

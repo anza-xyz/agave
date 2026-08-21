@@ -64,7 +64,7 @@ impl Shredder {
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
-    ) -> impl Iterator<Item = Shred> + use<> {
+    ) -> Vec<Shred> {
         let now = Instant::now();
         let bytes = wincode::serialize(component).unwrap();
         stats.serialize_elapsed += now.elapsed().as_micros() as u64;
@@ -93,7 +93,7 @@ impl Shredder {
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
-    ) -> impl Iterator<Item = Shred> + use<> {
+    ) -> Vec<Shred> {
         stats.num_entries += entries.len();
         let now = Instant::now();
         let entries = wincode::serialize(entries).unwrap();
@@ -123,8 +123,8 @@ impl Shredder {
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
-    ) -> Result<impl Iterator<Item = Shred> + use<>, Error> {
-        let shreds = shred::merkle::make_shreds_from_data(
+    ) -> Result<Vec<Shred>, Error> {
+        shred::merkle::make_shreds_from_data(
             keypair,
             chained_merkle_root,
             data,
@@ -137,8 +137,7 @@ impl Shredder {
             next_code_index,
             reed_solomon_cache,
             stats,
-        )?;
-        Ok(shreds.into_iter().map(Shred::from))
+        )
     }
 
     pub fn entries_to_merkle_shreds_for_tests(
@@ -165,6 +164,7 @@ impl Shredder {
             reed_solomon_cache,
             stats,
         )
+        .into_iter()
         .partition(Shred::is_data)
     }
 
@@ -192,6 +192,7 @@ impl Shredder {
             reed_solomon_cache,
             stats,
         )
+        .into_iter()
         .partition(Shred::is_data)
     }
 

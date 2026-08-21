@@ -155,7 +155,7 @@ fn bench_add_transaction_memos_to_batch(b: &mut Bencher) {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
     let signatures: Vec<Signature> = (0..64).map(|_| Signature::new_unique()).collect();
     b.iter(|| {
-        let mut memos_batch = blockstore.get_write_batch().unwrap();
+        let mut memos_batch = blockstore.get_write_batch();
 
         for (slot, signature) in signatures.iter().enumerate() {
             blockstore
@@ -226,7 +226,7 @@ fn bench_add_transaction_status_to_batch(b: &mut Bencher) {
     let slot = 5;
 
     b.iter(|| {
-        let mut status_batch = blockstore.get_write_batch().unwrap();
+        let mut status_batch = blockstore.get_write_batch();
 
         for (tx_idx, signature) in signatures.iter().enumerate() {
             blockstore

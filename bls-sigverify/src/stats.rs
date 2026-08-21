@@ -68,6 +68,7 @@ pub(super) struct SigVerifierStats {
     pub(super) num_generated_certs_received: Saturating<u64>,
     /// Number of times a vote was too far in the future and discarded.
     pub(super) vote_too_far_in_future: Saturating<u64>,
+    pub(super) cert_too_far_in_future: Saturating<u64>,
     pub(super) num_keep_vote_failed: Saturating<u64>,
     pub(super) vote_pool_duplicate: Saturating<u64>,
     pub(super) invalid_vote_banning_validator: Saturating<u64>,
@@ -90,6 +91,7 @@ impl SigVerifierStats {
             num_verified_certs_received: Saturating(0),
             num_generated_certs_received: Saturating(0),
             vote_too_far_in_future: Saturating(0),
+            cert_too_far_in_future: Saturating(0),
             verify_and_send_batch_us: WelfordStats::default(),
             invalid_vote_banning_validator: Saturating(0),
             num_keep_vote_failed: Saturating(0),
@@ -124,6 +126,7 @@ impl SigVerifierStats {
             discard_vote_no_epoch_stakes,
             verify_and_send_batch_us,
             vote_too_far_in_future,
+            cert_too_far_in_future,
             invalid_vote_banning_validator,
             num_keep_vote_failed,
             vote_pool_duplicate,
@@ -184,6 +187,7 @@ impl SigVerifierStats {
                 i64
             ),
             ("vote_too_far_in_future", vote_too_far_in_future.0, i64),
+            ("cert_too_far_in_future", cert_too_far_in_future.0, i64),
             (
                 "invalid_vote_banning_validator",
                 invalid_vote_banning_validator.0,
@@ -216,8 +220,6 @@ pub(super) struct SigVerifyCertStats {
 
     /// Number of times cert verification failed.
     pub(super) certificate_verification_failed: Saturating<u64>,
-    /// Number of times the cert was too far in the future and discarded.
-    pub(super) too_far_in_future: Saturating<u64>,
 
     pub(super) pool_sender: SenderStats,
 
@@ -234,7 +236,6 @@ impl SigVerifyCertStats {
             redundant_certs_skipped,
             banning_validator,
             certificate_verification_failed,
-            too_far_in_future,
             pool_sender,
             fn_verify_and_send_certs_stats,
         } = other;
@@ -244,7 +245,6 @@ impl SigVerifyCertStats {
         self.redundant_certs_skipped += redundant_certs_skipped;
         self.banning_validator += banning_validator;
         self.certificate_verification_failed += certificate_verification_failed;
-        self.too_far_in_future += too_far_in_future;
         self.pool_sender.merge(pool_sender);
         self.fn_verify_and_send_certs_stats
             .merge(fn_verify_and_send_certs_stats);
@@ -258,7 +258,6 @@ impl SigVerifyCertStats {
             redundant_certs_skipped,
             banning_validator,
             certificate_verification_failed,
-            too_far_in_future,
             pool_sender,
             fn_verify_and_send_certs_stats,
         } = self;
@@ -280,7 +279,6 @@ impl SigVerifyCertStats {
                 certificate_verification_failed.0,
                 i64
             ),
-            ("too_far_in_future", too_far_in_future.0, i64),
             (
                 "fn_verify_and_send_certs_count",
                 fn_verify_and_send_certs_stats.count(),
@@ -304,7 +302,6 @@ impl Default for SigVerifyCertStats {
             redundant_certs_skipped: Saturating(0),
             banning_validator: Saturating(0),
             certificate_verification_failed: Saturating(0),
-            too_far_in_future: Saturating(0),
             pool_sender: new_cert_stats_pool_sender_stats(),
             fn_verify_and_send_certs_stats: WelfordStats::default(),
         }

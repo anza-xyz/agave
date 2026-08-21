@@ -17,7 +17,9 @@ use {
         },
         transaction_batch::TransactionBatch,
     },
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::transaction_with_meta::{
+        StaticMessageWithMeta, TransactionWithMeta,
+    },
     solana_svm::{
         account_loader::validate_fee_payer,
         transaction_error_metrics::TransactionErrorMetrics,
@@ -474,7 +476,7 @@ impl Consumer {
 
     pub fn check_fee_payer_unlocked(
         bank: &Bank,
-        transaction: &impl TransactionWithMeta,
+        transaction: &impl StaticMessageWithMeta,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = transaction.fee_payer();
@@ -485,10 +487,8 @@ impl Consumer {
             transaction_configuration.priority_fee_lamports,
             bank.fee_features(),
         );
-        let (mut fee_payer_account, _slot) = bank
-            .rc
-            .accounts
-            .load_with_fixed_root(&bank.ancestors, fee_payer)
+        let mut fee_payer_account = bank
+            .get_account_with_fixed_root(fee_payer)
             .ok_or(TransactionError::AccountNotFound)?;
 
         validate_fee_payer(

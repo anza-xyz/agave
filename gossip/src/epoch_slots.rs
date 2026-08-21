@@ -5,7 +5,6 @@ use {
     },
     bv::BitVec,
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
-    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
@@ -15,8 +14,8 @@ use {
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Uncompressed {
     pub first_slot: Slot,
     pub num: usize,
@@ -49,37 +48,12 @@ impl Sanitize for Uncompressed {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Flate2 {
     pub first_slot: Slot,
     pub num: usize,
-    #[serde(with = "serde_compat_bytes")]
     pub compressed: Arc<Vec<u8>>,
-}
-
-mod serde_compat_bytes {
-    use {
-        serde::{Deserialize, Deserializer, Serializer},
-        serde_bytes::ByteBuf,
-        std::sync::Arc,
-    };
-
-    pub(super) fn serialize<S: Serializer>(
-        bytes: &Arc<Vec<u8>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(bytes)
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Deserialize::deserialize(deserializer)
-            .map(ByteBuf::into_vec)
-            .map(Arc::new)
-    }
 }
 
 impl Sanitize for Flate2 {
@@ -203,11 +177,8 @@ impl Uncompressed {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
-)]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum CompressedSlots {
     Flate2(Flate2),
     Uncompressed(Uncompressed),
@@ -275,14 +246,14 @@ impl CompressedSlots {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "7fXxq9nG7ywp9LhMiGTJ7MLNtghPo9mz5xQNE74RxWGj",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct EpochSlots {
     pub from: Pubkey,
     pub slots: Vec<CompressedSlots>,
@@ -544,98 +515,6 @@ mod tests {
         let mut slots = EpochSlots::default();
         assert_eq!(slots.fill(&range, 2), 5000);
         assert!(slots.to_slots(0).eq(range));
-    }
-
-    #[test]
-    fn test_wincode_compatibility_uncompressed() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let mut unc = Uncompressed::new(rng.random_range(1..=16usize));
-            let first: Slot = rng.random_range(0..10_000);
-            let num: u64 = rng.random_range(0..64);
-            let slots: Vec<_> = (0..num).map(|i| first + i).collect();
-            unc.add(&slots);
-
-            let bincode_bytes = bincode::serialize(&unc).unwrap();
-            let wincode_decoded: Uncompressed = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(unc, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&unc).unwrap();
-            let bincode_decoded: Uncompressed = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(unc, bincode_decoded);
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_flate2() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            // Arbitrary bytes — wire-format equivalence does not require a valid compressed stream.
-            let len = rng.random_range(0..64usize);
-            let flate2 = Flate2 {
-                first_slot: rng.random(),
-                num: rng.random_range(0..1000),
-                compressed: Arc::new((0..len).map(|_| rng.random::<u8>()).collect()),
-            };
-
-            let bincode_bytes = bincode::serialize(&flate2).unwrap();
-            let wincode_decoded: Flate2 = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(flate2, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&flate2).unwrap();
-            let bincode_decoded: Flate2 = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(flate2, bincode_decoded);
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_compressed_slots() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let mut unc = Uncompressed::new(rng.random_range(1..=16usize));
-            let first: Slot = rng.random_range(0..10_000);
-            let num: u64 = rng.random_range(0..64);
-            let slots: Vec<_> = (0..num).map(|i| first + i).collect();
-            unc.add(&slots);
-            let cs = CompressedSlots::Uncompressed(unc);
-
-            let bincode_bytes = bincode::serialize(&cs).unwrap();
-            let wincode_decoded: CompressedSlots = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(cs, wincode_decoded);
-            let wincode_bytes = wincode::serialize(&cs).unwrap();
-            let bincode_decoded: CompressedSlots = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(cs, bincode_decoded);
-
-            let len = rng.random_range(0..64usize);
-            let cs = CompressedSlots::Flate2(Flate2 {
-                first_slot: rng.random(),
-                num: rng.random_range(0..1000),
-                compressed: Arc::new((0..len).map(|_| rng.random::<u8>()).collect()),
-            });
-
-            let bincode_bytes = bincode::serialize(&cs).unwrap();
-            let wincode_decoded: CompressedSlots = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(cs, wincode_decoded);
-            let wincode_bytes = wincode::serialize(&cs).unwrap();
-            let bincode_decoded: CompressedSlots = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(cs, bincode_decoded);
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_epoch_slots() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let epoch_slots = EpochSlots::new_rand(&mut rng, None);
-
-            let bincode_bytes = bincode::serialize(&epoch_slots).unwrap();
-            let wincode_decoded: EpochSlots = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(epoch_slots, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&epoch_slots).unwrap();
-            let bincode_decoded: EpochSlots = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(epoch_slots, bincode_decoded);
-        }
     }
 
     fn make_rand_slots<R: Rng>(rng: &mut R) -> impl Iterator<Item = Slot> + '_ {

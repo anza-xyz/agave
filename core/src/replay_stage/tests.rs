@@ -238,7 +238,6 @@ fn block_marker_shreds_with_last(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .collect()
 }
 
 fn insert_update_parent_slot(
@@ -1017,7 +1016,6 @@ fn test_dead_fork_entry_deserialize_failure() {
                 &mut ProcessShredsStats::default(),
             )
             .unwrap()
-            .collect()
     });
 
     assert_matches!(
@@ -3347,16 +3345,9 @@ fn test_headerless_update_parent() {
         bank_forks.read().unwrap().get(slot).is_some(),
         "headerless UpdateParent should create a replay bank from the marker"
     );
-    assert_eq!(
-        progress
-            .get(&slot)
-            .unwrap()
-            .replay_progress
-            .read()
-            .unwrap()
-            .num_shreds,
-        32
-    );
+    let replay_progress = progress.get(&slot).unwrap().replay_progress.read().unwrap();
+    assert_eq!(replay_progress.num_shreds, 32);
+    assert_eq!(replay_progress.num_txs, 0);
 }
 
 #[test]
@@ -3966,7 +3957,7 @@ fn test_latest_parent_coalesces() {
 }
 
 #[test]
-fn test_skip_own_update_full() {
+fn test_replay_own_update_full() {
     let (vote_simulator, blockstore) = setup_forks_from_tree(tr(0), 1, None::<GenerateVotes>);
     let VoteSimulator {
         bank_forks,
@@ -4016,11 +4007,18 @@ fn test_skip_own_update_full() {
         &mut replay_timing,
     );
 
-    assert!(
-        bank_forks.read().unwrap().get(slot).is_none(),
-        "live replay must not create own leader banks from blockstore"
+    let bank = bank_forks.read().unwrap().get(slot).unwrap();
+    assert!(bank.should_replay_from_blockstore());
+    assert_eq!(
+        progress
+            .get(&slot)
+            .unwrap()
+            .replay_progress
+            .read()
+            .unwrap()
+            .num_shreds,
+        u64::from(replay_fec_set_index),
     );
-    assert!(progress.get(&slot).is_none());
 }
 
 #[test]

@@ -6,10 +6,24 @@ on:
       - master
 
 jobs:
-  dependabot:
-    timeout-minutes: 10
+  metadata:
     runs-on: ubuntu-24.04
     if: github.actor == 'dependabot[bot]'
+    outputs:
+      crate_name: ${{ steps.dependabot-metadata.outputs.dependency-names }}
+      new_version: ${{ steps.dependabot-metadata.outputs.new-version }}
+      old_version: ${{ steps.dependabot-metadata.outputs.previous-version }}
+      package_ecosystem: ${{ steps.dependabot-metadata.outputs.package-ecosystem }}
+    steps:
+      - name: Fetch Dependabot metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        id: dependabot-metadata
+
+  dependabot-cargo:
+    needs: metadata
+    if: needs.metadata.outputs.package_ecosystem == 'cargo'
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
     steps:
       - name: Create github app token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -39,24 +53,19 @@ jobs:
 
       - name: update code
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          CRATE_NAME: ${{ needs.metadata.outputs.crate_name }}
+          OLD_VERSION: ${{ needs.metadata.outputs.old_version }}
+          NEW_VERSION: ${{ needs.metadata.outputs.new_version }}
         run: |
-          input="$PR_TITLE"
+          echo "crate_name: $CRATE_NAME, old_version: $OLD_VERSION, new_version: $NEW_VERSION"
 
-          regex='[Bb]ump (.+) from ([^ ]+) to ([^ ]+)( in .*)?'
-          if [[ ! "$input" =~ $regex ]]; then
-            echo "unexpected pattern"
-            exit 1
-          fi
+          # Bump lockfiles before manifests: while the manifests still request the old
+          # version, cargo swaps just this node; a manifest-first edit leaves the locked
+          # version unsatisfiable, which unlocks all of crates.io and rewrites unrelated
+          # resolution choices. No-ops for semver-major bumps, handled by `tree` below.
+          ./scripts/cargo-for-all-lock-files.sh --ignore-exit-code -- update -p "$CRATE_NAME:$OLD_VERSION" --precise "$NEW_VERSION"
 
-          crate_name="${BASH_REMATCH[1]}"
-          old_version="${BASH_REMATCH[2]}"
-          new_version="${BASH_REMATCH[3]}"
-          echo "crate_name: $crate_name, old_version: $old_version, new_version: $new_version"
-
-          cargo anza-xtask update-crate --package "$crate_name" --from "$old_version" --to "$new_version"
-
-          ./scripts/cargo-for-all-lock-files.sh --ignore-exit-code -- update -p $crate_name:$old_version --precise $new_version
+          cargo anza-xtask update-crate --package "$CRATE_NAME" --from "$OLD_VERSION" --to "$NEW_VERSION"
 
           ./scripts/cargo-for-all-lock-files.sh tree
 

@@ -102,8 +102,10 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_runtime_transaction::{
+        runtime_transaction::ReplayTransaction, transaction_meta::TransactionMeta,
+    },
+    solana_svm_transaction::svm_message::SVMMessage,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
@@ -443,7 +445,7 @@ mod utils {
 type LockResult = Result<(), ()>;
 const_assert_eq!(mem::size_of::<LockResult>(), 1);
 
-/// Something to be scheduled; usually a wrapper of [`SanitizedTransaction`].
+/// Something to be scheduled.
 pub type Task = Arc<TaskInner>;
 const_assert_eq!(mem::size_of::<Task>(), 8);
 
@@ -463,7 +465,7 @@ const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
 /// Internal scheduling data about a particular task.
 #[derive(Debug)]
 pub struct TaskInner {
-    transaction: RuntimeTransaction<SanitizedTransaction>,
+    transaction: ReplayTransaction,
     /// For block verification, the index of a transaction in ledger entries. Carrying this along
     /// with the transaction is needed to properly record the execution result of it.
     /// For block production, the priority of a transaction for reordering with
@@ -505,7 +507,7 @@ impl TaskInner {
         self.alt_invalidation_slot
     }
 
-    pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
+    pub fn transaction(&self) -> &ReplayTransaction {
         &self.transaction
     }
 
@@ -563,7 +565,7 @@ impl TaskInner {
             })
     }
 
-    pub fn into_transaction(self: Task) -> RuntimeTransaction<SanitizedTransaction> {
+    pub fn into_transaction(self: Task) -> ReplayTransaction {
         Task::into_inner(self).unwrap().transaction
     }
 }
@@ -1275,7 +1277,7 @@ impl SchedulingStateMachine {
         }
     }
 
-    /// Creates a new task with [`RuntimeTransaction<SanitizedTransaction>`] with all of
+    /// Creates a new task with [`ReplayTransaction`] with all of
     /// its corresponding [`UsageQueue`]s preloaded.
     ///
     /// Closure (`usage_queue_loader`) is used to delegate the (possibly multi-threaded)
@@ -1289,7 +1291,7 @@ impl SchedulingStateMachine {
     /// after created, if `has_no_active_task()` is `true`. Also note that this is desired for
     /// separation of concern.
     pub fn create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
@@ -1304,7 +1306,7 @@ impl SchedulingStateMachine {
     }
 
     pub fn create_block_production_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         sanitized_epoch: Epoch,
@@ -1322,7 +1324,7 @@ impl SchedulingStateMachine {
     }
 
     fn do_create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         sanitized_epoch: Epoch,
@@ -1359,14 +1361,13 @@ impl SchedulingStateMachine {
         // This redundancy is known. It was just left as-is out of abundance
         // of caution.
         let lock_contexts = transaction
-            .message()
             .account_keys()
             .iter()
             .enumerate()
             .map(|(task_id, address)| {
                 LockContext::new(
                     usage_queue_loader(*address),
-                    if transaction.message().is_writable(task_id) {
+                    if transaction.is_writable(task_id) {
                         RequestedUsage::Writable
                     } else {
                         RequestedUsage::Readonly
@@ -1508,10 +1509,21 @@ impl SchedulingStateMachine {
 mod tests {
     use {
         super::*,
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
+        bytes::Bytes,
         solana_instruction::{AccountMeta, Instruction},
-        solana_message::Message,
+        solana_message::{AddressLookupTableAccount, Message, VersionedMessage, v0},
         solana_pubkey::Pubkey,
-        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
+        },
+        solana_signature::Signature,
+        solana_svm_transaction::{
+            svm_message::SVMStaticMessage, svm_transaction::SVMStaticTransaction,
+        },
+        solana_transaction::{
+            Transaction, sanitized::MessageHash, versioned::VersionedTransaction,
+        },
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -1521,22 +1533,24 @@ mod tests {
         test_case::test_matrix,
     };
 
-    fn simplest_transaction() -> RuntimeTransaction<SanitizedTransaction> {
-        let message = Message::new(&[], Some(&Pubkey::new_unique()));
-        let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+    fn simplest_transaction() -> ReplayTransaction {
+        simplest_transaction_with_payer(&Pubkey::new_unique())
     }
 
-    fn transaction_with_readonly_address(
-        address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    fn simplest_transaction_with_payer(payer: &Pubkey) -> ReplayTransaction {
+        let message = Message::new(&[], Some(payer));
+        let unsigned = Transaction::new_unsigned(message);
+        ReplayTransaction::from(unsigned)
+    }
+
+    fn transaction_with_readonly_address(address: Pubkey) -> ReplayTransaction {
         transaction_with_readonly_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_readonly_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> ReplayTransaction {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new_readonly(address, false)],
@@ -1544,19 +1558,17 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        ReplayTransaction::from(unsigned)
     }
 
-    fn transaction_with_writable_address(
-        address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    fn transaction_with_writable_address(address: Pubkey) -> ReplayTransaction {
         transaction_with_writable_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_writable_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> ReplayTransaction {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new(address, false)],
@@ -1564,7 +1576,68 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        ReplayTransaction::from(unsigned)
+    }
+
+    #[derive(Clone, Copy)]
+    enum LoadedAddressAccess {
+        Writable,
+        Readable,
+    }
+
+    /// Builds a v0 transaction whose only reference to `loaded_address` is through an address
+    /// lookup table, i.e. `loaded_address` never appears in `static_account_keys()`.
+    /// `RuntimeTransaction::from_transaction_view_for_tests` can't express this since it always
+    /// resolves with `loaded_addresses: None`, so this goes through the same
+    /// sanitize/statically-load/resolve pipeline by hand, providing the loaded address explicitly.
+    fn transaction_with_loaded_address_with_payer(
+        loaded_address: Pubkey,
+        payer: &Pubkey,
+        access: LoadedAddressAccess,
+    ) -> ReplayTransaction {
+        let instruction = Instruction {
+            program_id: Pubkey::default(),
+            accounts: vec![match access {
+                LoadedAddressAccess::Writable => AccountMeta::new(loaded_address, false),
+                LoadedAddressAccess::Readable => AccountMeta::new_readonly(loaded_address, false),
+            }],
+            data: vec![],
+        };
+        let message = v0::Message::try_compile(
+            payer,
+            &[instruction],
+            &[AddressLookupTableAccount {
+                key: Pubkey::new_unique(),
+                addresses: vec![loaded_address],
+            }],
+            Hash::default(),
+        )
+        .unwrap();
+        let versioned_transaction = VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(message),
+        };
+        let data: Bytes = Bytes::from(wincode::serialize(&versioned_transaction).unwrap());
+        let sanitized_view =
+            SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()).unwrap();
+        let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            sanitized_view,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+        let loaded_addresses = match access {
+            LoadedAddressAccess::Writable => v0::LoadedAddresses {
+                writable: vec![loaded_address],
+                readonly: vec![],
+            },
+            LoadedAddressAccess::Readable => v0::LoadedAddresses {
+                writable: vec![],
+                readonly: vec![loaded_address],
+            },
+        };
+        ReplayTransaction::try_new(static_runtime_tx, Some(loaded_addresses), &HashSet::new())
+            .unwrap()
     }
 
     fn create_address_loader(
@@ -1583,7 +1656,7 @@ mod tests {
 
     #[test]
     fn test_scheduling_state_machine_creation() {
-        let state_machine = unsafe {
+        let state_machine: SchedulingStateMachine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_eq!(state_machine.active_task_count(), 0);
@@ -1593,7 +1666,7 @@ mod tests {
 
     #[test]
     fn test_scheduling_state_machine_good_reinitialization() {
-        let mut state_machine = unsafe {
+        let mut state_machine: SchedulingStateMachine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         state_machine.total_task_count.increment_self();
@@ -1702,6 +1775,150 @@ mod tests {
             Some(103)
         );
         state_machine.deschedule_task(&task3);
+        assert!(state_machine.has_no_active_task());
+    }
+
+    /// `do_create_task` must lock accounts resolved through an address lookup table, not just
+    /// `static_account_keys()`. task1 and task2 share `loaded_address` as their only common
+    /// writable account, resolved purely via each transaction's lookup table, so they must
+    /// conflict.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_conflicting_tasks_sharing_only_a_loaded_address(capability: Capability) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+
+        state_machine.deschedule_task(&task1);
+        assert_matches!(
+            state_machine
+                .schedule_next_unblocked_task()
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_no_active_task());
+    }
+
+    /// task1 and task2 share `loaded_address` as a *readonly* lookup-table entry only, so they
+    /// must not conflict.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_readonly_tasks_sharing_only_a_loaded_address_do_not_conflict(capability: Capability) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task2.clone())
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+
+        state_machine.deschedule_task(&task1);
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_no_active_task());
+    }
+
+    /// task1 writes `loaded_address` via a lookup table; task2 only reads it via the same
+    /// lookup table. They must still conflict.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_writable_task_blocks_readonly_task_sharing_only_a_loaded_address(
+        capability: Capability,
+    ) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+
+        state_machine.deschedule_task(&task1);
+        assert_matches!(
+            state_machine
+                .schedule_next_unblocked_task()
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        state_machine.deschedule_task(&task2);
         assert!(state_machine.has_no_active_task());
     }
 
@@ -2008,7 +2225,7 @@ mod tests {
             });
         // task2's fee payer should have been locked already even if task2 is blocked still via the
         // above the schedule_task(task2) call
-        let fee_payer = task2.transaction().message().fee_payer();
+        let fee_payer = task2.transaction().fee_payer();
         let usage_queue = usage_queues.get(fee_payer).unwrap();
         usage_queue
             .0
