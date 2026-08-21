@@ -784,7 +784,6 @@ impl EventHandler {
             my_pubkey,
             CommitmentType::Notarize,
             slot,
-            None,
             &voting_context.commitment_sender,
         );
         pending_blocks.remove(&slot);
