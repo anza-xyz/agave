@@ -1623,9 +1623,9 @@ impl AccountsDb {
                     let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
                         iter::once(&candidate_pubkey),
-                        |_candidate_pubkey, slot_list_and_ref_count| {
+                        |_candidate_pubkey, slot_list| {
                             let mut useless = true;
-                            if let Some((slot_list, _)) = slot_list_and_ref_count {
+                            if let Some(slot_list) = slot_list {
                                 // find the highest rooted slot in the slot list
                                 let index_in_slot_list = self.accounts_index.latest_slot(
                                     None,
@@ -1909,9 +1909,9 @@ impl AccountsDb {
         let mut index_scan_returned_none_count = 0;
         self.accounts_index.scan(
             accounts.iter().map(|account| account.pubkey()),
-            |_pubkey, slots_refs| {
+            |_pubkey, slot_list| {
                 let stored_account = &accounts[index];
-                if let Some((slot_list, _)) = slots_refs {
+                if let Some(slot_list) = slot_list {
                     index_scan_returned_some_count += 1;
                     let is_alive = slot_list.iter().any(|(slot, _acct_info)| {
                         // if the accounts index contains an entry at this slot, then the append vec we're asking about contains this item and thus, it is alive at this slot
@@ -5559,8 +5559,8 @@ impl AccountsDb {
         let mut capitalization_from_duplicates = 0_u128;
         self.accounts_index.scan(
             pubkeys.iter(),
-            |pubkey, slots_refs| {
-                if let Some((slot_list, _ref_count)) = slots_refs
+            |pubkey, slot_list| {
+                if let Some(slot_list) = slot_list
                     && slot_list.len() > 1
                 {
                     // Only the account data len in the highest slot should be used, and the rest are
