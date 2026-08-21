@@ -3395,7 +3395,11 @@ fn test_get_transaction_status() {
 
     // Signature exists, root found
     if let (Some((slot, _status)), counter) = blockstore
-        .get_transaction_status_with_counter(signature2, &[].into())
+        .get_transaction_status_with_counter(
+            signature2,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap()
     {
         assert_eq!(slot, 2);
@@ -3404,7 +3408,11 @@ fn test_get_transaction_status() {
 
     // Signature exists, root found although not required
     if let (Some((slot, _status)), counter) = blockstore
-        .get_transaction_status_with_counter(signature2, &[3].into())
+        .get_transaction_status_with_counter(
+            signature2,
+            &[3].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap()
     {
         assert_eq!(slot, 2);
@@ -3413,28 +3421,44 @@ fn test_get_transaction_status() {
 
     // Signature exists in skipped slot, no root found
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature4, &[].into())
+        .get_transaction_status_with_counter(
+            signature4,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 2);
 
     // Signature exists in skipped slot, no non-root found
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature4, &[3].into())
+        .get_transaction_status_with_counter(
+            signature4,
+            &[3].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 2);
 
     // Signature exists, no root found
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature5, &[].into())
+        .get_transaction_status_with_counter(
+            signature5,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 4);
 
     // Signature exists, root not required
     if let (Some((slot, _status)), counter) = blockstore
-        .get_transaction_status_with_counter(signature5, &[3].into())
+        .get_transaction_status_with_counter(
+            signature5,
+            &[3].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap()
     {
         assert_eq!(slot, 3);
@@ -3443,39 +3467,63 @@ fn test_get_transaction_status() {
 
     // Signature does not exist, smaller than existing entries
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature1, &[].into())
+        .get_transaction_status_with_counter(
+            signature1,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 1);
 
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature1, &[3].into())
+        .get_transaction_status_with_counter(
+            signature1,
+            &[3].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 1);
 
     // Signature does not exist, between existing entries
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature3, &[].into())
+        .get_transaction_status_with_counter(
+            signature3,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 1);
 
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature3, &[3].into())
+        .get_transaction_status_with_counter(
+            signature3,
+            &[3].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 1);
 
     // Signature does not exist, larger than existing entries
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature7, &[].into())
+        .get_transaction_status_with_counter(
+            signature7,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 0);
 
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature7, &[3].into())
+        .get_transaction_status_with_counter(
+            signature7,
+            &[3].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 0);
@@ -3574,7 +3622,11 @@ fn test_get_transaction_status_with_old_data() {
 
     // Signature exists
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature1, &[].into())
+        .get_transaction_status_with_counter(
+            signature1,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     let (slot, _status) = status.unwrap();
     assert_eq!(slot, 2);
@@ -3582,7 +3634,11 @@ fn test_get_transaction_status_with_old_data() {
 
     // Signature exists
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature2, &[].into())
+        .get_transaction_status_with_counter(
+            signature2,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     let (slot, _status) = status.unwrap();
     assert_eq!(slot, 4);
@@ -3590,7 +3646,11 @@ fn test_get_transaction_status_with_old_data() {
 
     // Signature exists
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature3, &[].into())
+        .get_transaction_status_with_counter(
+            signature3,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     let (slot, _status) = status.unwrap();
     assert_eq!(slot, 4);
@@ -3598,14 +3658,22 @@ fn test_get_transaction_status_with_old_data() {
 
     // Signature does not exist (in a rooted block)
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature5, &[].into())
+        .get_transaction_status_with_counter(
+            signature5,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 1);
 
     // Signature does not exist
     let (status, counter) = blockstore
-        .get_transaction_status_with_counter(signature6, &[].into())
+        .get_transaction_status_with_counter(
+            signature6,
+            &[].into(),
+            &mut UpdateParentTransactionsCache::default(),
+        )
         .unwrap();
     assert_eq!(status, None);
     assert_eq!(counter, 0);
@@ -3687,7 +3755,11 @@ fn do_test_lowest_cleanup_slot_and_special_cfs(simulate_blockstore_cleanup_servi
     let check_for_missing = || {
         (
             blockstore
-                .get_transaction_status_with_counter(signature1, &[].into())
+                .get_transaction_status_with_counter(
+                    signature1,
+                    &[].into(),
+                    &mut UpdateParentTransactionsCache::default(),
+                )
                 .unwrap()
                 .0
                 .is_none(),
@@ -3701,7 +3773,11 @@ fn do_test_lowest_cleanup_slot_and_special_cfs(simulate_blockstore_cleanup_servi
     let assert_existing_always = || {
         let are_existing_always = (
             blockstore
-                .get_transaction_status_with_counter(signature2, &[].into())
+                .get_transaction_status_with_counter(
+                    signature2,
+                    &[].into(),
+                    &mut UpdateParentTransactionsCache::default(),
+                )
                 .unwrap()
                 .0
                 .is_some(),
@@ -7214,6 +7290,7 @@ fn write_transaction_statuses_for_entries(
 pub(crate) struct UpdateParentSlotFixture {
     previous_blockhash: String,
     post_update_blockhash: String,
+    pre_update_address: Pubkey,
     pub(crate) post_update_address: Pubkey,
     pre_update_signatures: Vec<Signature>,
     pub(crate) post_update_signatures: Vec<Signature>,
@@ -7246,10 +7323,14 @@ pub(crate) fn insert_complete_update_parent_slot(
 
     let pre_update_entries = make_slot_entries_with_transactions(1);
     let post_update_entries = make_slot_entries_with_transactions(2);
+    let pre_update_address = pre_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
     let post_update_address = post_update_entries[0].transactions[0]
         .message
         .static_account_keys()[0];
-    let pre_update_signatures = transaction_signatures(&pre_update_entries);
+    let pre_update_signatures =
+        write_transaction_statuses_for_entries(blockstore, slot, &pre_update_entries);
     let post_update_signatures =
         write_transaction_statuses_for_entries(blockstore, slot, &post_update_entries);
     let post_update_blockhash = post_update_entries.last().unwrap().hash.to_string();
@@ -7294,6 +7375,7 @@ pub(crate) fn insert_complete_update_parent_slot(
     UpdateParentSlotFixture {
         previous_blockhash,
         post_update_blockhash,
+        pre_update_address,
         post_update_address,
         pre_update_signatures,
         post_update_signatures,
@@ -7375,6 +7457,201 @@ fn test_get_transaction_uses_post_update_parent_indexes() {
             .unwrap();
         assert_eq!(transaction.index, expected_index as u32);
     }
+}
+
+#[test]
+fn test_get_transaction_status_skips_pre_update_parent_transactions() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+    blockstore.set_roots([slot].iter()).unwrap();
+
+    for signature in fixture.pre_update_signatures {
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .find_transaction_in_slot(slot, signature)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .get_rooted_transaction_status(signature)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    for signature in fixture.post_update_signatures {
+        let status = blockstore
+            .read_transaction_status((signature, slot))
+            .unwrap()
+            .unwrap();
+        assert!(
+            blockstore
+                .find_transaction_in_slot(slot, signature)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            blockstore.get_rooted_transaction_status(signature).unwrap(),
+            Some((slot, status))
+        );
+    }
+}
+
+#[test]
+fn test_get_rooted_transaction_statuses_skips_pre_update_parent_transactions() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+    blockstore.set_roots([slot].iter()).unwrap();
+
+    let mut signatures = fixture.pre_update_signatures.clone();
+    signatures.extend_from_slice(&fixture.post_update_signatures);
+    signatures.push(fixture.post_update_signatures[0]);
+
+    let statuses = blockstore
+        .get_rooted_transaction_statuses(&signatures)
+        .unwrap();
+    assert_eq!(statuses.len(), signatures.len());
+    assert!(
+        statuses[..fixture.pre_update_signatures.len()]
+            .iter()
+            .all(Option::is_none)
+    );
+
+    for (signature, status) in fixture
+        .post_update_signatures
+        .iter()
+        .zip(&statuses[fixture.pre_update_signatures.len()..])
+    {
+        assert_eq!(
+            status.as_ref(),
+            Some(&(
+                slot,
+                blockstore
+                    .read_transaction_status((*signature, slot))
+                    .unwrap()
+                    .unwrap(),
+            ))
+        );
+    }
+    assert_eq!(
+        statuses.last(),
+        statuses.get(fixture.pre_update_signatures.len())
+    );
+}
+
+#[test]
+fn test_get_signatures_for_address_skips_pre_update_parent_transactions() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+    let post_update_signature = fixture.post_update_signatures[0];
+    let stale_loaded_address = solana_pubkey::new_rand();
+    let post_update_loaded_address = solana_pubkey::new_rand();
+    let mut post_update_status = blockstore
+        .read_transaction_status((post_update_signature, slot))
+        .unwrap()
+        .unwrap();
+    post_update_status.loaded_addresses.writable = vec![stale_loaded_address];
+    blockstore
+        .write_transaction_status(
+            slot,
+            post_update_signature,
+            std::iter::once((&stale_loaded_address, true)),
+            post_update_status.clone(),
+            0,
+        )
+        .unwrap();
+    post_update_status.loaded_addresses.writable = vec![post_update_loaded_address];
+    blockstore
+        .write_transaction_status(
+            slot,
+            post_update_signature,
+            std::iter::once((&post_update_loaded_address, true)),
+            post_update_status,
+            0,
+        )
+        .unwrap();
+
+    let older_slot = 101;
+    let older_transaction = Transaction::new_with_compiled_instructions(
+        &[&Keypair::new()],
+        &[fixture.pre_update_address],
+        Hash::default(),
+        vec![solana_pubkey::new_rand()],
+        vec![CompiledInstruction::new(1, &(), vec![0])],
+    );
+    let mut older_entries = vec![next_entry_mut(
+        &mut Hash::default(),
+        0,
+        vec![older_transaction],
+    )];
+    older_entries.append(&mut create_ticks(1, 0, Hash::new_unique()));
+    let older_signature =
+        write_transaction_statuses_for_entries(&blockstore, older_slot, &older_entries)[0];
+    blockstore
+        .insert_shreds(
+            entries_to_test_shreds(&older_entries, older_slot, 100, true, 0),
+            true,
+        )
+        .unwrap();
+    let child_slot = slot + 1;
+    let (child_shreds, _) = make_slot_entries(child_slot, slot, 1);
+    blockstore.insert_shreds(child_shreds, true).unwrap();
+    let pre_update_signature = fixture.pre_update_signatures[0];
+    assert!(
+        blockstore
+            .address_signatures_cf
+            .get((fixture.pre_update_address, slot, 0, pre_update_signature,))
+            .unwrap()
+            .is_some()
+    );
+
+    blockstore
+        .set_roots([100, older_slot, slot, child_slot].iter())
+        .unwrap();
+    assert!(
+        blockstore
+            .find_address_signatures_for_slot(fixture.pre_update_address, slot)
+            .unwrap()
+            .is_empty()
+    );
+    let get_signatures = |address, limit| {
+        blockstore
+            .get_confirmed_signatures_for_address2(address, child_slot, None, None, limit)
+            .unwrap()
+            .infos
+            .into_iter()
+            .map(|info| info.signature)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        get_signatures(fixture.pre_update_address, 1),
+        vec![older_signature]
+    );
+    assert_eq!(
+        get_signatures(fixture.post_update_address, usize::MAX),
+        vec![post_update_signature]
+    );
+    assert!(get_signatures(stale_loaded_address, usize::MAX).is_empty());
+    assert_eq!(
+        get_signatures(post_update_loaded_address, usize::MAX),
+        vec![post_update_signature]
+    );
 }
 
 #[test]
