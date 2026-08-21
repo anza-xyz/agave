@@ -33,7 +33,7 @@ use {
         transaction_meta::TransactionMeta, transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
     std::{collections::HashSet, time::Instant},
@@ -78,34 +78,16 @@ pub(crate) fn precheck_transaction(
     )
     .map_err(IngressCheckError::PacketHandling)?;
 
-    if !filter_keys.is_empty()
-        && view
-            .account_keys()
-            .iter()
-            .any(|key| filter_keys.contains(key))
-    {
-        return Err(IngressCheckError::PacketHandling(
-            PacketHandlingError::FilterKey,
-        ));
-    }
-
-    let transaction_configuration = view
-        .transaction_configuration(&working_bank.feature_set)
-        .map_err(|_| IngressCheckError::PacketHandling(PacketHandlingError::ComputeBudget))?;
+    check_filter_keys(&view, filter_keys).map_err(IngressCheckError::PacketHandling)?;
+    let (priority, cost) = calculate_scheduling_details(working_bank, &view)
+        .map_err(IngressCheckError::PacketHandling)?;
     let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
-    let (priority, cost) =
-        calculate_priority_and_cost(working_bank, &view, &transaction_configuration);
     let state = TransactionState::new(view, max_age, priority, cost);
 
     let mut error_counters = TransactionErrorMetrics::default();
-    let validated_nonce_address = working_bank
-        .check_transaction_without_status_cache(
-            state.transaction(),
-            working_bank.max_processing_age(),
-            &mut error_counters,
-        )
-        .map_err(IngressCheckError::Transaction)?;
-
+    let validated_nonce_address =
+        check_transaction_age_and_nonce(working_bank, state.transaction(), &mut error_counters)
+            .map_err(IngressCheckError::Transaction)?;
     Consumer::check_fee_payer_unlocked(working_bank, state.transaction(), &mut error_counters)
         .map_err(|_| IngressCheckError::FeePayer)?;
 
@@ -113,6 +95,88 @@ pub(crate) fn precheck_transaction(
         state,
         validated_nonce_address,
     })
+}
+
+pub(crate) fn check_filter_keys(
+    transaction: &impl SVMMessage,
+    filter_keys: &HashSet<Pubkey>,
+) -> Result<(), PacketHandlingError> {
+    if !filter_keys.is_empty()
+        && transaction
+            .account_keys()
+            .iter()
+            .any(|key| filter_keys.contains(key))
+    {
+        return Err(PacketHandlingError::FilterKey);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn calculate_scheduling_details(
+    bank: &Bank,
+    transaction: &(impl TransactionMeta + SVMStaticMessage),
+) -> Result<(u64, u64), PacketHandlingError> {
+    let transaction_configuration = transaction
+        .transaction_configuration(&bank.feature_set)
+        .map_err(|_| PacketHandlingError::ComputeBudget)?;
+    Ok(calculate_priority_and_cost(
+        bank,
+        transaction,
+        &transaction_configuration,
+    ))
+}
+
+pub(crate) fn check_transaction_age_and_nonce(
+    bank: &Bank,
+    transaction: &impl SVMMessage,
+    error_counters: &mut TransactionErrorMetrics,
+) -> Result<Option<Pubkey>, TransactionError> {
+    bank.check_transaction_without_status_cache(
+        transaction,
+        bank.max_processing_age(),
+        error_counters,
+    )
+}
+
+/// Parse and sanitize transaction data without resolving address lookup tables.
+pub(crate) fn sanitize_transaction<D: TransactionData>(
+    data: D,
+    sanitize_config: &SanitizeConfig,
+) -> Result<RuntimeTransaction<SanitizedTransactionView<D>>, PacketHandlingError> {
+    let view = SanitizedTransactionView::try_new_sanitized(data, sanitize_config)
+        .map_err(|_| PacketHandlingError::Sanitization)?;
+    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute, None)
+        .map_err(|_| PacketHandlingError::Sanitization)
+}
+
+/// Resolve address lookup tables and perform checks that require the full account-key list.
+pub(crate) fn resolve_transaction<D: TransactionData>(
+    transaction: RuntimeTransaction<SanitizedTransactionView<D>>,
+    bank: &Bank,
+    transaction_account_lock_limit: usize,
+) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, Slot), PacketHandlingError> {
+    if bank.vote_only_bank() && !transaction.is_simple_vote_transaction() {
+        return Err(PacketHandlingError::Sanitization);
+    }
+
+    if usize::from(transaction.total_num_accounts()) > transaction_account_lock_limit {
+        return Err(PacketHandlingError::LockValidation);
+    }
+
+    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&transaction, bank)?;
+    let transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+        transaction,
+        loaded_addresses,
+        bank.get_reserved_account_keys(),
+    )
+    .map_err(|_| PacketHandlingError::Sanitization)?;
+
+    if validate_account_locks(transaction.account_keys(), transaction_account_lock_limit).is_err() {
+        return Err(PacketHandlingError::LockValidation);
+    }
+
+    Ok((transaction, deactivation_slot))
 }
 
 /// Perform sanitization checks and transition from data to an executable
@@ -123,42 +187,9 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     bank: &Bank,
     transaction_account_lock_limit: usize,
     sanitize_config: &SanitizeConfig,
-) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
-    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, sanitize_config) else {
-        return Err(PacketHandlingError::Sanitization);
-    };
-
-    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-        view,
-        MessageHash::Compute,
-        None,
-    ) else {
-        return Err(PacketHandlingError::Sanitization);
-    };
-
-    if bank.vote_only_bank() && !view.is_simple_vote_transaction() {
-        return Err(PacketHandlingError::Sanitization);
-    }
-
-    if usize::from(view.total_num_accounts()) > transaction_account_lock_limit {
-        return Err(PacketHandlingError::LockValidation);
-    }
-
-    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
-
-    let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
-        view,
-        loaded_addresses,
-        bank.get_reserved_account_keys(),
-    ) else {
-        return Err(PacketHandlingError::Sanitization);
-    };
-
-    if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
-        return Err(PacketHandlingError::LockValidation);
-    }
-
-    Ok((view, deactivation_slot))
+) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, Slot), PacketHandlingError> {
+    let transaction = sanitize_transaction(data, sanitize_config)?;
+    resolve_transaction(transaction, bank, transaction_account_lock_limit)
 }
 
 fn load_addresses_for_view<D: TransactionData>(
