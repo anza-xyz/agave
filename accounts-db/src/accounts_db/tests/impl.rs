@@ -18,6 +18,7 @@ use {
     solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     std::{
+        collections::{HashMap, HashSet},
         iter,
         str::FromStr as _,
         sync::{
