@@ -11296,6 +11296,7 @@ dependencies = [
  "solana-perf",
  "solana-poh",
  "solana-pubkey 4.3.0",
+ "solana-rayon-threadlimit",
  "solana-rpc",
  "solana-rpc-client-api",
  "solana-runtime",
@@ -11310,6 +11311,7 @@ dependencies = [
  "solana-turbine",
  "test-case",
  "thiserror 2.0.20",
+ "tikv-jemallocator",
  "wincode",
 ]
 
