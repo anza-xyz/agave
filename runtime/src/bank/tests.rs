@@ -9332,7 +9332,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     bank2.squash();
     add_root_and_flush_write_cache(&bank2);
 
-    bank_forks.write().unwrap().remove(1);
+    let _removed_bank = BankForks::remove(&bank_forks, 1);
     drop(bank1);
     bank2.clean_accounts_for_tests();
 

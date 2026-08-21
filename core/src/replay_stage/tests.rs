@@ -25,6 +25,7 @@ use {
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
     solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_client::connection_cache::ConnectionCache,
+    solana_clock::BankId,
     solana_entry::{
         block_component::{
             BlockComponent, BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedBlockMarker,
@@ -2805,7 +2806,7 @@ fn test_check_propagation_skip_propagation_check() {
 }
 
 #[test]
-fn test_clear_slots_clears_status_cache_for_removed_bank() {
+fn test_clear_slots_clears_status_cache_for_absent_bank() {
     let VoteSimulator {
         bank_forks,
         node_pubkeys,
@@ -2814,7 +2815,7 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
         ..
     } = VoteSimulator::new(1);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+    let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
     let sender = node_pubkeys[0];
     let transfer_signature = bank1
         .transfer(
@@ -2823,14 +2824,8 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
             &Pubkey::new_unique(),
         )
         .unwrap();
-    bank_forks.write().unwrap().insert(bank1);
-    let bank1 = bank_forks.read().unwrap().get(1).unwrap();
     assert!(bank1.get_signature_status(&transfer_signature).is_some());
-
-    let removed_bank = bank_forks.write().unwrap().remove(1).unwrap();
-    drop(removed_bank);
     assert!(bank_forks.read().unwrap().get(1).is_none());
-    assert!(bank1.get_signature_status(&transfer_signature).is_some());
 
     ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new());
 
@@ -4039,9 +4034,9 @@ fn test_purge_anc_desc() {
     // Result should be equivalent to removing slot from BankForks
     // and regenerating the `ancestor` `descendant` maps
     for d in slot_2_descendants {
-        bank_forks.write().unwrap().remove(d);
+        let _removed_bank = BankForks::remove(&bank_forks, d);
     }
-    bank_forks.write().unwrap().remove(2);
+    let _removed_bank = BankForks::remove(&bank_forks, 2);
     assert!(check_map_eq(
         &ancestors,
         &bank_forks.read().unwrap().ancestors()

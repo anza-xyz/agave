@@ -1438,7 +1438,8 @@ impl ProgramTestContext {
                 .clone_without_scheduler()
         };
 
-        self.bank_forks.write().unwrap().set_root(
+        BankForks::set_root_from_shared(
+            &self.bank_forks,
             pre_warp_slot,
             None, // snapshots are disabled
             Some(pre_warp_slot),
@@ -1480,7 +1481,8 @@ impl ProgramTestContext {
         bank.fill_bank_with_ticks_for_tests();
         let pre_warp_slot = bank.slot();
 
-        self.bank_forks.write().unwrap().set_root(
+        BankForks::set_root_from_shared(
+            &self.bank_forks,
             pre_warp_slot,
             None, // snapshot_controller
             Some(pre_warp_slot),
