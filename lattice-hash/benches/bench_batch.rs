@@ -5,11 +5,25 @@ use {
     criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main},
     rand::prelude::*,
     rand_chacha::ChaChaRng,
-    solana_lattice_hash::{batch, lt_hash::LtHash},
+    solana_lattice_hash::{
+        batch,
+        lt_hash::{LtHash, SingleLtHashUpdater},
+    },
 };
 
 const NUM_ACCOUNTS: usize = 1024;
 const MSG_LEN: usize = 273; // 8 lamports + ~200B data + 1 + 32 owner + 32 pubkey
+
+/// End offsets of a five-part split, sized after practical account layouts.
+const PART_ENDS: [usize; 5] = [8, 208, 209, 241, MSG_LEN];
+
+fn parts(msg: &[u8]) -> impl Iterator<Item = &[u8]> {
+    PART_ENDS.iter().scan(0, |start, &end| {
+        let range = *start..end;
+        *start = end;
+        Some(&msg[range])
+    })
+}
 
 fn make_messages(rng: &mut impl Rng) -> Vec<Vec<u8>> {
     (0..NUM_ACCOUNTS)
@@ -31,6 +45,16 @@ fn baseline(messages: &[&[u8]], acc: &mut LtHash) {
     }
 }
 
+fn serial_per_part(messages: &[&[u8]], acc: &mut LtHash) {
+    for msg in messages {
+        let mut h = blake3::Hasher::new();
+        for part in parts(msg) {
+            h.write_part(part);
+        }
+        acc.mix_in(&LtHash::with(&h));
+    }
+}
+
 fn bench(c: &mut Criterion) {
     let mut rng = ChaChaRng::seed_from_u64(7);
     let msgs = make_messages(&mut rng);
@@ -47,6 +71,15 @@ fn bench(c: &mut Criterion) {
         )
     });
 
+    // Same bytes as above, split up: the gap is the per-part call overhead.
+    group.bench_function("serial_per_part", |b| {
+        b.iter_batched_ref(
+            LtHash::identity,
+            |acc| serial_per_part(&refs, acc),
+            BatchSize::SmallInput,
+        )
+    });
+
     // Streaming `Accumulator`: the shape the accounts-hash hot loop uses —
     // create once, `add_message` (copies the message into the owned buffer the
     // kernel then reads in place) each account, `into_lt_hash`.
@@ -55,6 +88,21 @@ fn bench(c: &mut Criterion) {
             let mut acc = batch::Accumulator::new();
             for &msg in &refs {
                 acc.add_message(msg);
+            }
+            acc.into_lt_hash()
+        })
+    });
+
+    // The same, split up: the parts land straight in the lane buffer.
+    group.bench_function("batched_per_part", |b| {
+        b.iter(|| {
+            let mut acc = batch::Accumulator::new();
+            for &msg in &refs {
+                let mut message = acc.start_message();
+                for part in parts(msg) {
+                    message.write_part(part);
+                }
+                message.finish();
             }
             acc.into_lt_hash()
         })

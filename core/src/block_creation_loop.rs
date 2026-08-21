@@ -14,7 +14,7 @@ use {
         replay_stage::{Finalizer, ReplayStage},
     },
     agave_bls_sigverify::rewards::RewardInput,
-    agave_votor::event::LeaderWindowInfo,
+    agave_votor::{event::LeaderWindowInfo, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::{
         consensus_message::Block,
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
@@ -77,6 +77,12 @@ mod stats;
 // the leader window deadline.
 const TIME_TO_COMPLETE_BLOCK_BROADCAST: Duration = Duration::from_millis(6);
 
+// Empirically derived value estimating the average turbine transmission time
+// over a leader window. Agave will terminate block production early such that
+// an external observer views `bank.ns_per_slot()` time between consecutive block
+// completions.
+const BLOCK_PRODUCTION_BUFFER: Duration = Duration::from_millis(50);
+
 /// Source of a leader-window notification consumed by BCL.
 enum ParentSource {
     /// Parent from ParentReady event for this leader window is already known.
@@ -128,6 +134,7 @@ pub struct BlockCreationLoopConfig {
     // Shared state
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub sharable_banks: SharableBanks,
+    pub alpenglow_slot_clock: SharedAlpenglowSlotClock,
     pub bank_forks_controller: Arc<dyn BankForksController>,
     pub blockstore: Arc<Blockstore>,
     pub cluster_info: Arc<ClusterInfo>,
@@ -170,6 +177,8 @@ struct LeaderContext {
     poh_recorder: Arc<RwLock<PohRecorder>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     bank_forks: Arc<RwLock<BankForks>>,
+    sharable_banks: SharableBanks,
+    alpenglow_slot_clock: SharedAlpenglowSlotClock,
     bank_forks_controller: Arc<dyn BankForksController>,
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
@@ -259,7 +268,8 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         optimistic_parent_receiver,
         highest_finalized,
         banking_stage_sender,
-        sharable_banks: _,
+        sharable_banks,
+        alpenglow_slot_clock,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator
@@ -301,6 +311,8 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         record_receiver,
         leader_schedule_cache,
         bank_forks,
+        sharable_banks,
+        alpenglow_slot_clock,
         bank_forks_controller,
         rpc_subscriptions,
         slot_status_notifier,
@@ -444,6 +456,7 @@ fn block_timeout(bank: &Bank, slot: Slot) -> Duration {
     Duration::from_nanos_u128(bank.ns_per_slot_at_slot(slot))
         .saturating_mul((leader_slot_index(slot) as u32).saturating_add(1))
         .saturating_sub(TIME_TO_COMPLETE_BLOCK_BROADCAST)
+        .saturating_sub(BLOCK_PRODUCTION_BUFFER)
 }
 
 /// Select the freshest leader-window notification within one source.
@@ -576,6 +589,8 @@ fn produce_window(
     mut block_timer: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
+    update_leader_window_clock(ctx, start_slot, block_timer);
+
     // Insert the first bank
     let mut working_bank = start_leader_wait_for_parent_replay(
         start_slot,
@@ -994,6 +1009,7 @@ fn handle_parent_ready(
         ctx,
     )
     .map_err(|_| PohRecorderError::ResetBankError(old_parent_slot, new_parent_slot))?;
+    update_leader_window_clock(ctx, slot, *block_timer);
 
     // Re-inject accumulated transactions back to banking stage for rescheduling
     let packets: Vec<BytesPacket> = accumulated_txs
@@ -1031,6 +1047,13 @@ fn handle_parent_ready(
     }
 
     Ok(Some(new_bank))
+}
+
+fn update_leader_window_clock(ctx: &LeaderContext, slot: Slot, started_at: Instant) {
+    let slot_duration =
+        Duration::from_nanos_u128(ctx.sharable_banks.root().ns_per_slot_at_slot(slot));
+    ctx.alpenglow_slot_clock
+        .update_leader(slot, started_at, slot_duration);
 }
 
 /// Shut down record intake and synchronously process all already-reserved records.
@@ -1316,7 +1339,8 @@ fn create_and_insert_leader_bank(
         ctx.rpc_subscriptions.as_deref(),
         &ctx.slot_status_notifier,
         NewBankOptions::default(),
-    );
+    )
+    .mark_leader_bank();
     // make sure parent is frozen for finalized hashes via the above
     // new()-ing of its child bank
     ctx.banking_tracer.hash_event(
@@ -1622,7 +1646,9 @@ mod tests {
             record_receiver,
             poh_recorder,
             leader_schedule_cache,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
@@ -1641,6 +1667,7 @@ mod tests {
         assert!(ctx.bank_forks.read().unwrap().get(1).is_some());
 
         let bank = ctx.poh_recorder.read().unwrap().bank().unwrap();
+        assert!(!bank.should_replay_from_blockstore());
         let in_flight_commit = bank.freeze_lock();
         ctx.record_receiver.shutdown();
         for _ in ctx.record_receiver.drain_after_shutdown() {}
@@ -1741,7 +1768,9 @@ mod tests {
             record_receiver,
             poh_recorder,
             leader_schedule_cache,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
@@ -1817,7 +1846,9 @@ mod tests {
             record_receiver,
             poh_recorder,
             leader_schedule_cache,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
@@ -1953,7 +1984,9 @@ mod tests {
             record_receiver,
             poh_recorder,
             leader_schedule_cache,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
@@ -1991,6 +2024,7 @@ mod tests {
             ))
             .unwrap();
 
+        let parent_ready_started_at = Instant::now();
         let parent_ready = LeaderWindowInfo {
             start_slot: leader_slot,
             end_slot: 7,
@@ -1998,7 +2032,7 @@ mod tests {
                 slot: new_parent_slot,
                 block_id: new_parent_hash,
             },
-            block_timer: Instant::now(),
+            block_timer: parent_ready_started_at,
         };
         let new_bank = handle_parent_ready(
             &mut ctx,
@@ -2044,6 +2078,10 @@ mod tests {
                 parent_slot: new_parent_slot,
                 parent_block_id: new_parent_hash,
             }
+        );
+        assert_eq!(
+            ctx.alpenglow_slot_clock.load().unwrap().started_at,
+            parent_ready_started_at
         );
         assert_eq!(
             ctx.bank_forks

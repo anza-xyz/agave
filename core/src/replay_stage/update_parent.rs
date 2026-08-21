@@ -148,7 +148,7 @@ fn try_restart_slot_from_update_parent(
         return false;
     }
     if bank.as_ref().is_some_and(|bank| {
-        ReplayStage::leader_is_me(bank.leader_id(), my_pubkey)
+        !bank.should_replay_from_blockstore()
             || !bank.feature_set.snapshot().alpenglow_fast_leader_handover
     }) {
         return false;

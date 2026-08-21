@@ -6,11 +6,11 @@ use {
     },
 };
 
-const DEFAULT_ACCOUNTS_DB_CONFIG: AccountsDbConfig = {
+pub const DEFAULT_ACCOUNTS_DB_CONFIG: AccountsDbConfig = {
     let mut config = ACCOUNTS_DB_CONFIG_FOR_TESTING;
     config.accounts_file_provider = AccountsFileProvider::AppendVec;
     config
 };
 
 #[path = "impl.rs"]
-pub(super) mod r#impl;
+mod r#impl;

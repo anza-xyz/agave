@@ -698,18 +698,16 @@ mod tests {
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
-        let mut shreds: Vec<_> = shredder
-            .make_merkle_shreds_from_entries(
-                &leader_keypair,
-                &entries,
-                is_last_in_slot,
-                chained_merkle_root,
-                0,
-                0,
-                &ReedSolomonCache::default(),
-                &mut ProcessShredsStats::default(),
-            )
-            .collect();
+        let mut shreds = shredder.make_merkle_shreds_from_entries(
+            &leader_keypair,
+            &entries,
+            is_last_in_slot,
+            chained_merkle_root,
+            0,
+            0,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
 
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&leader_pubkey, timestamp()),

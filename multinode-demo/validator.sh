@@ -341,7 +341,9 @@ setup_validator_accounts() {
         ) || return $?
       fi
       echo "Creating stake account"
-      wallet create-stake-account "$stake_account" "$stake_sol" || return $?
+      # in case partitioned epoch rewards distribution is active. retry the command to add more tlorercnce
+      retry_command 10 2 \
+        wallet create-stake-account "$stake_account" "$stake_sol" || return $?
       echo "Delegating stake"
       declare vote_pubkey
       vote_pubkey=$($solana_keygen pubkey "$vote_account") || return $?

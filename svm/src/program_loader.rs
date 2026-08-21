@@ -7,10 +7,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramToLoad,
-        },
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad},
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
     },
     solana_pubkey::Pubkey,
@@ -216,6 +213,9 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
                 let (programdata, _slot) = callbacks
                     .get_account_shared_data(&programdata_address)
                     .ok_or(TransactionError::ProgramAccountNotFound)?;
+                if !bpf_loader_upgradeable::check_id(programdata.owner()) {
+                    return Err(TransactionError::ProgramAccountNotFound);
+                }
                 if let Ok(UpgradeableLoaderState::ProgramData {
                     slot,
                     upgrade_authority_address: _,
@@ -240,7 +240,6 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
     callbacks: &CB,
     program_cache_for_tx_batch: &ProgramCacheForTxBatch,
     keys: impl Iterator<Item = &'a Pubkey>,
-    check_program_deployment_slot: bool,
 ) -> Vec<ProgramToLoad<'a>> {
     let mut result = Vec::new();
     for account_key in keys {
@@ -276,15 +275,10 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
             else {
                 continue;
             };
-            let match_criteria = if check_program_deployment_slot {
-                ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(deployment_slot)
-            } else {
-                ProgramCacheMatchCriteria::NoCriteria
-            };
             result.push(ProgramToLoad {
                 program_id: account_key,
                 loader,
-                match_criteria,
+                deployed_on_or_after_slot: deployment_slot,
                 last_modification_slot,
             });
         }
@@ -730,33 +724,56 @@ mod tests {
     #[test]
     fn test_program_modification_slot_account_not_found() {
         let mock_bank = MockBankCallback::default();
-        let key = Pubkey::new_unique();
+        let program_address = Pubkey::new_unique();
+        let programdata_address = Pubkey::new_unique();
 
-        let mut account_data = AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
+        // Case: Incorrect program_account state
+        let mut program_account = AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-
+            .insert(program_address, (program_account.clone(), 0));
         let result = get_program_deployment_slot(
             &mock_bank,
-            &mock_bank.get_account_shared_data(&key).unwrap().0,
+            &mock_bank
+                .get_account_shared_data(&program_address)
+                .unwrap()
+                .0,
             ProgramCacheEntryOwner::LoaderV3,
         );
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
 
+        // Case: Empty programdata_account
         let state = UpgradeableLoaderState::Program {
-            programdata_address: Pubkey::new_unique(),
+            programdata_address,
         };
-        account_data.set_data_from_slice(&bincode::serialize(&state).unwrap());
+        program_account.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-
+            .insert(program_address, (program_account.clone(), 0));
         let result = get_program_deployment_slot(
             &mock_bank,
-            &mock_bank.get_account_shared_data(&key).unwrap().0,
+            &mock_bank
+                .get_account_shared_data(&program_address)
+                .unwrap()
+                .0,
+            ProgramCacheEntryOwner::LoaderV3,
+        );
+        assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
+
+        // Case: Incorrect programdata_account owner
+        let programdata_account = AccountSharedData::new(100, 100, &bpf_loader::id());
+        mock_bank
+            .account_shared_data
+            .borrow_mut()
+            .insert(programdata_address, (programdata_account.clone(), 0));
+        let result = get_program_deployment_slot(
+            &mock_bank,
+            &mock_bank
+                .get_account_shared_data(&program_address)
+                .unwrap()
+                .0,
             ProgramCacheEntryOwner::LoaderV3,
         );
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -896,7 +913,6 @@ mod tests {
             &mock_bank,
             &loaded_programs_for_tx_batch,
             sanitized_tx.account_keys().iter(),
-            false,
         );
         assert_eq!(
             missing_programs,
@@ -904,37 +920,13 @@ mod tests {
                 ProgramToLoad {
                     program_id: &program_ids[1],
                     loader: ProgramCacheEntryOwner::LoaderV2,
-                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                    deployed_on_or_after_slot: 0,
                     last_modification_slot: 0,
                 },
                 ProgramToLoad {
                     program_id: &program_ids[2],
                     loader: ProgramCacheEntryOwner::LoaderV3,
-                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
-                    last_modification_slot: 0,
-                },
-            ]
-        );
-
-        let missing_programs = filter_executable_program_accounts(
-            &mock_bank,
-            &loaded_programs_for_tx_batch,
-            sanitized_tx.account_keys().iter(),
-            true,
-        );
-        assert_eq!(
-            missing_programs,
-            &[
-                ProgramToLoad {
-                    program_id: &program_ids[1],
-                    loader: ProgramCacheEntryOwner::LoaderV2,
-                    match_criteria: ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0),
-                    last_modification_slot: 0,
-                },
-                ProgramToLoad {
-                    program_id: &program_ids[2],
-                    loader: ProgramCacheEntryOwner::LoaderV3,
-                    match_criteria: ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0),
+                    deployed_on_or_after_slot: 0,
                     last_modification_slot: 0,
                 },
             ]

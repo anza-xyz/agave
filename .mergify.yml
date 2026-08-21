@@ -61,30 +61,6 @@ pull_request_rules:
           - automerge
       comment:
         message: automerge label removed due to a CI failure
-  - name: v4.0 feature-gate backport
-    conditions:
-      - label=v4.0
-      - label=feature-gate
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        labels:
-          - feature-gate
-        branches:
-          - v4.0
-  - name: v4.0 non-feature-gate backport
-    conditions:
-      - label=v4.0
-      - label!=feature-gate
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        branches:
-          - v4.0
   - name: v4.1 feature-gate backport
     conditions:
       - label=v4.1
@@ -133,12 +109,36 @@ pull_request_rules:
         ignore_conflicts: true
         branches:
           - v4.2
+  - name: v4.3 feature-gate backport
+    conditions:
+      - label=v4.3
+      - label=feature-gate
+    actions:
+      backport:
+        assignees: *BackportAssignee
+        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
+        ignore_conflicts: true
+        labels:
+          - feature-gate
+        branches:
+          - v4.3
+  - name: v4.3 non-feature-gate backport
+    conditions:
+      - label=v4.3
+      - label!=feature-gate
+    actions:
+      backport:
+        assignees: *BackportAssignee
+        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
+        ignore_conflicts: true
+        branches:
+          - v4.3
   - name: backport warning comment
     conditions:
       - or:
-        - label=v4.0
         - label=v4.1
         - label=v4.2
+        - label=v4.3
     actions:
       comment:
         message: >
@@ -154,9 +154,9 @@ pull_request_rules:
   - name: close PRs against EoL version branches
     conditions:
       - base ~= ^v[0-9]+\.[0-9]+$
-      - base != v4.0
       - base != v4.1
       - base != v4.2
+      - base != v4.3
     actions:
       close:
         message: "`{{base}}` is end-of-life and no longer accepts changes."

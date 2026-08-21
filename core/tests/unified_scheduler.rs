@@ -22,7 +22,7 @@ use {
         bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
         installed_scheduler_pool::SchedulingContext,
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_svm_timings::ExecuteTimings,
     solana_system_transaction as system_transaction,
     solana_transaction_error::TransactionResult as Result,
@@ -92,7 +92,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let root_hash = root_bank.hash();
     bank_forks.write().unwrap().insert(root_bank);
 
-    let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+    let tx = ReplayTransaction::from(system_transaction::transfer(
         &mint_keypair,
         &solana_pubkey::new_rand(),
         2,

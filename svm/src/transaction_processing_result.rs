@@ -1,9 +1,11 @@
 use {
     crate::{
         account_loader::{FeesOnlyTransaction, NoOpTransaction},
+        rollback_accounts::RollbackAccounts,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
     },
     solana_fee_structure::FeeDetails,
+    solana_pubkey::Pubkey,
     solana_transaction_error::{TransactionError, TransactionResult},
 };
 
@@ -64,6 +66,20 @@ impl ProcessedTransaction {
             Self::Executed(executed_tx) => executed_tx.execution_details.status.clone(),
             Self::FeesOnly(details) => Err(TransactionError::clone(&details.load_error)),
             Self::NoOp(details) => Err(TransactionError::clone(&details.validation_error)),
+        }
+    }
+
+    pub fn nonce_address(&self) -> Option<Pubkey> {
+        let rollback_accounts = match self {
+            Self::Executed(executed_tx) => &executed_tx.loaded_transaction.rollback_accounts,
+            Self::FeesOnly(details) => &details.rollback_accounts,
+            Self::NoOp(details) => return details.nonce_address,
+        };
+
+        match rollback_accounts {
+            RollbackAccounts::FeePayerOnly { .. } => None,
+            RollbackAccounts::SameNonceAndFeePayer { nonce }
+            | RollbackAccounts::SeparateNonceAndFeePayer { nonce, .. } => Some(nonce.0),
         }
     }
 

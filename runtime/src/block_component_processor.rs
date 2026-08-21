@@ -10,6 +10,7 @@ use {
         },
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
+    agave_transaction_view::transaction_data::TransactionData,
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
         consensus_message::Block,
@@ -25,7 +26,7 @@ use {
             BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker, VersionedBlockFooter,
             VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
         },
-        entry::Entry,
+        entry::EntryView,
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -325,9 +326,14 @@ impl BlockComponentProcessor {
         slot: Slot,
         parent_slot: Slot,
     ) -> Result<(), BlockComponentProcessorError> {
-        // Only require block markers (header/footer) for slots where they should be present
+        // Only allow block markers for slots where they should be present.
+        // TowerBFT blocks must not include block headers.
         if !migration_status.should_allow_block_markers(slot) {
-            return Ok(());
+            if self.stage == BlockComponentStage::PreParentMarker {
+                return Ok(());
+            } else {
+                return Err(BlockComponentProcessorError::BlockComponentPreMigration);
+            };
         }
 
         if Self::requires_genesis_certificate_marker(migration_status, parent_slot)
@@ -360,11 +366,11 @@ impl BlockComponentProcessor {
     /// Validates that a parent marker (header or update parent) has been processed
     /// before any entry batches. The terminal Alpenglow tick is the only entry
     /// batch allowed after the block footer.
-    pub fn on_entry_batch(
+    pub fn on_entry_batch<D: TransactionData>(
         &mut self,
         migration_status: &MigrationStatus,
         slot: Slot,
-        entries: &[Entry],
+        entries: &[EntryView<D>],
         is_final_component: bool,
     ) -> Result<(), BlockComponentProcessorError> {
         if !migration_status.should_allow_block_markers(slot) {
@@ -790,14 +796,12 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
+        bytes::Bytes,
         rand::Rng,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::DEFAULT_MS_PER_SLOT,
-        solana_entry::{
-            block_component::{
-                BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
-            },
-            entry::Entry,
+        solana_entry::block_component::{
+            BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
         },
         solana_hash::Hash,
         std::{
@@ -885,8 +889,12 @@ mod tests {
         }
     }
 
-    fn alpentick(num_hashes: u64) -> [Entry; 1] {
-        [Entry::new(&Hash::default(), num_hashes, vec![])]
+    fn alpentick(num_hashes: u64) -> [EntryView<Bytes>; 1] {
+        [EntryView {
+            num_hashes,
+            hash: Hash::default(),
+            transactions: vec![],
+        }]
     }
 
     #[test]
@@ -895,7 +903,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
 
         // Try to process entry batch without header - should fail
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MissingParentMarker)
@@ -952,7 +960,7 @@ mod tests {
             )
             .unwrap();
         processor
-            .on_entry_batch(&migration_status, bank.slot(), &[], false)
+            .on_entry_batch::<Bytes>(&migration_status, bank.slot(), &[], false)
             .unwrap();
 
         let marker =
@@ -1024,6 +1032,37 @@ mod tests {
             result,
             Err(BlockComponentProcessorError::MissingBlockFooter)
         ));
+    }
+
+    #[test]
+    fn test_header_during_tower_bft_slot() {
+        let migration_status = MigrationStatus::default();
+        migration_status.record_feature_activation(0);
+        let mut processor = BlockComponentProcessor::default();
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
+        let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+            parent_slot: parent.slot(),
+            parent_block_id: Hash::default(),
+        });
+
+        assert!(!migration_status.should_allow_block_markers(bank.slot()));
+        processor
+            .on_marker(
+                bank.clone(),
+                parent,
+                rand::rng().random(),
+                marker,
+                false,
+                None,
+                &migration_status,
+            )
+            .unwrap();
+
+        assert_matches!(
+            processor.on_final(&migration_status, bank.slot(), bank.parent_slot()),
+            Err(BlockComponentProcessorError::BlockComponentPreMigration)
+        );
     }
 
     #[test]
@@ -1363,7 +1402,7 @@ mod tests {
 
         // Process some entry batches (not full yet)
         processor
-            .on_entry_batch(&migration_status, 1, &[], false)
+            .on_entry_batch::<Bytes>(&migration_status, 1, &[], false)
             .unwrap();
 
         // Process footer with valid timestamp
@@ -1390,7 +1429,7 @@ mod tests {
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
 
         // Entry batch after footer should fail because the footer is terminal.
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert_matches!(
             result,
             Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
@@ -1407,20 +1446,20 @@ mod tests {
             .on_entry_batch(&migration_status, 1, &good_alpentick, true)
             .unwrap();
         assert_matches!(
-            processor.on_entry_batch(&migration_status, 1, &good_alpentick, true),
+            processor.on_entry_batch(&migration_status, 1, &good_alpentick, true,),
             Err(BlockComponentProcessorError::InvalidAlpentickPosition)
         );
 
         let mut processor = BlockComponentProcessor::default();
         assert_matches!(
-            processor.on_entry_batch(&migration_status, 1, &good_alpentick, true),
+            processor.on_entry_batch(&migration_status, 1, &good_alpentick, true,),
             Err(BlockComponentProcessorError::MissingParentMarker)
         );
 
         let mut processor = processor_after_footer();
         let bad_alpentick = alpentick(2);
         assert_matches!(
-            processor.on_entry_batch(&migration_status, 1, &bad_alpentick, true),
+            processor.on_entry_batch(&migration_status, 1, &bad_alpentick, true,),
             Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
         );
 
@@ -1523,12 +1562,15 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
 
         // Processing entry batches pre-migration (without markers) should succeed
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert!(result.is_ok());
 
         // Even with slot full
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert!(result.is_ok());
+
+        // A Tower block with no markers is valid
+        assert!(processor.on_final(&migration_status, 1, 0).is_ok());
     }
 
     #[test]
@@ -1558,7 +1600,7 @@ mod tests {
 
         // Process entry batches
         processor
-            .on_entry_batch(&migration_status, 1, &[], false)
+            .on_entry_batch::<Bytes>(&migration_status, 1, &[], false)
             .unwrap();
 
         // Calculate valid timestamp based on parent's time
@@ -1591,7 +1633,7 @@ mod tests {
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
 
         // Entry batch after footer should fail because the footer is terminal.
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert_matches!(
             result,
             Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
@@ -1672,7 +1714,7 @@ mod tests {
         let mut processor = processor_after_header();
 
         // Process entry batch with header but not full - should succeed even without footer
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert!(result.is_ok());
     }
 
@@ -2098,7 +2140,7 @@ mod tests {
             .unwrap();
 
         processor
-            .on_entry_batch(&migration_status, slot, &[], false)
+            .on_entry_batch::<Bytes>(&migration_status, slot, &[], false)
             .unwrap();
 
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);

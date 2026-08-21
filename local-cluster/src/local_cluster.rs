@@ -10,7 +10,9 @@ use {
     agave_votor::vote_history_storage::FileVoteHistoryStorage,
     itertools::izip,
     log::*,
-    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
+    },
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_clock::{DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_cluster_type::ClusterType,
@@ -1165,9 +1167,9 @@ impl LocalCluster {
                     (Some(stake_account), Some(vote_account)) => {
                         match (
                             stake_account
-                                .deserialize_data::<StakeStateV2>()
+                                .state()
                                 .ok()
-                                .and_then(|state| state.stake()),
+                                .and_then(|state: StakeStateV2| state.stake()),
                             VoteStateV4::deserialize(vote_account.data(), &vote_account_pubkey)
                                 .ok(),
                         ) {

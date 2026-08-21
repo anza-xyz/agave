@@ -104,6 +104,10 @@ pub struct CostTracker {
     transaction_signature_count: Saturating<u64>,
     secp256k1_instruction_signature_count: Saturating<u64>,
     ed25519_instruction_signature_count: Saturating<u64>,
+    /// The number of transactions that have had their estimated cost added to
+    /// the tracker, but are still waiting for an update with actual usage or
+    /// removal if the transaction does not end up getting committed.
+    in_flight_transaction_count: Saturating<usize>,
     secp256r1_instruction_signature_count: Saturating<u64>,
 }
 
@@ -121,6 +125,7 @@ impl Default for CostTracker {
             transaction_signature_count: Saturating(0),
             secp256k1_instruction_signature_count: Saturating(0),
             ed25519_instruction_signature_count: Saturating(0),
+            in_flight_transaction_count: Saturating(0),
             secp256r1_instruction_signature_count: Saturating(0),
         }
     }
@@ -160,6 +165,18 @@ impl CostTracker {
 
     pub fn set_limits_max(&mut self) {
         self.set_limits(CostTrackerLimits::MAX);
+    }
+
+    pub fn in_flight_transaction_count(&self) -> usize {
+        self.in_flight_transaction_count.0
+    }
+
+    pub fn add_transactions_in_flight(&mut self, in_flight_transaction_count: usize) {
+        self.in_flight_transaction_count += in_flight_transaction_count;
+    }
+
+    pub fn sub_transactions_in_flight(&mut self, in_flight_transaction_count: usize) {
+        self.in_flight_transaction_count -= in_flight_transaction_count
     }
 
     /// Checks the block and account limits and, if the transaction fits,
@@ -236,6 +253,34 @@ impl CostTracker {
             updated_block_cost: self.block_cost(),
             updated_costliest_account_cost,
         })
+    }
+
+    pub fn update_execution_cost(
+        &mut self,
+        estimated_tx_cost: &TransactionCost<impl TransactionWithMeta>,
+        actual_execution_units: u64,
+        actual_loaded_accounts_data_size_cost: u64,
+    ) {
+        let actual_load_and_execution_units =
+            actual_execution_units.saturating_add(actual_loaded_accounts_data_size_cost);
+        let estimated_load_and_execution_units = estimated_tx_cost
+            .programs_execution_cost()
+            .saturating_add(estimated_tx_cost.loaded_accounts_data_size_cost());
+        match actual_load_and_execution_units.cmp(&estimated_load_and_execution_units) {
+            std::cmp::Ordering::Equal => (),
+            std::cmp::Ordering::Greater => {
+                self.add_transaction_execution_cost(
+                    estimated_tx_cost,
+                    actual_load_and_execution_units - estimated_load_and_execution_units,
+                );
+            }
+            std::cmp::Ordering::Less => {
+                self.sub_transaction_execution_cost(
+                    estimated_tx_cost,
+                    estimated_load_and_execution_units - actual_load_and_execution_units,
+                );
+            }
+        }
     }
 
     /// Undoes the first `num_applied` per account cost applications of a
@@ -320,6 +365,11 @@ impl CostTracker {
                 i64
             ),
             (
+                "inflight_transaction_count",
+                self.in_flight_transaction_count.0,
+                i64
+            ),
+            (
                 "secp256r1_instruction_signature_count",
                 self.secp256r1_instruction_signature_count.0,
                 i64
@@ -363,6 +413,22 @@ impl CostTracker {
         self.ed25519_instruction_signature_count -= tx_cost.num_ed25519_instruction_signatures();
         self.secp256r1_instruction_signature_count -=
             tx_cost.num_secp256r1_instruction_signatures();
+    }
+
+    /// Apply additional actual execution units to cost_tracker.
+    fn add_transaction_execution_cost(
+        &mut self,
+        tx_cost: &TransactionCost<impl TransactionWithMeta>,
+        adjustment: u64,
+    ) {
+        for account_key in tx_cost.writable_accounts() {
+            let account_cost = self
+                .cost_by_writable_accounts
+                .entry(*account_key)
+                .or_insert(0);
+            *account_cost = account_cost.saturating_add(adjustment);
+        }
+        self.block_cost.fetch_add(adjustment);
     }
 
     /// Subtract extra execution units from cost_tracker

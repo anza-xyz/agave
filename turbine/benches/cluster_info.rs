@@ -53,7 +53,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
     .unwrap();
 
     let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
-    let data_shreds = shredder.make_merkle_shreds_from_entries(
+    let mut shreds = shredder.make_merkle_shreds_from_entries(
         &leader_keypair,
         &entries,
         true,            // is_last_in_slot
@@ -63,7 +63,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
         &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
-    let shreds: Vec<_> = data_shreds.take(NUM_SHREDS).collect();
+    shreds.truncate(NUM_SHREDS);
 
     let mut stakes = HashMap::new();
     const NUM_PEERS: usize = 200;

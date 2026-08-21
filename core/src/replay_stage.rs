@@ -1093,10 +1093,13 @@ impl ReplayStage {
                     let mut process_switch_bank_events_time =
                         Measure::start("process_switch_bank_events_time");
                     // BCL inserts its bank before publishing it to PoH, so check both states.
-                    let has_active_leader_bank =
-                        bank_forks.read().unwrap().banks().values().any(|bank| {
-                            !bank.is_frozen() && Self::leader_is_me(bank.leader_id(), &my_pubkey)
-                        }) || poh_shared_leader_state.load().working_bank().is_some();
+                    let has_active_leader_bank = bank_forks
+                        .read()
+                        .unwrap()
+                        .banks()
+                        .values()
+                        .any(|bank| !bank.is_frozen() && !bank.should_replay_from_blockstore())
+                        || poh_shared_leader_state.load().working_bank().is_some();
                     if !has_active_leader_bank {
                         Self::process_switch_bank_events(
                             &my_pubkey,
@@ -3008,7 +3011,8 @@ impl ReplayStage {
                 rpc_subscriptions,
                 slot_status_notifier,
                 NewBankOptions { vote_only_bank },
-            );
+            )
+            .mark_leader_bank();
             // make sure parent is frozen for finalized hashes via the above
             // new()-ing of its child bank
             banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
@@ -3701,7 +3705,6 @@ impl ReplayStage {
         my_shred_version: u16,
         process_active_banks_context: &ProcessActiveBanksContext,
         bank_replay_result_tracker: BankReplayResultTracker,
-        my_pubkey: &Pubkey,
         finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> (ReplaySlotFromBlockstore, Option<u64>) {
         let BankReplayResultTracker {
@@ -3718,7 +3721,7 @@ impl ReplayStage {
             replay_progress,
         } = bank_replay_tracker;
 
-        if Self::leader_is_me(bank.leader_id(), my_pubkey) {
+        if !bank.should_replay_from_blockstore() {
             return (replay_result, None);
         }
 
@@ -3764,10 +3767,7 @@ impl ReplayStage {
         (replay_result, Some(replay_blockstore_time.as_us()))
     }
 
-    /// Live replay must not execute this validator's own leader banks from
-    /// blockstore. Those banks are driven by BankingStage/PoH while the node is
-    /// live; already-recorded own slots are replayed by startup ledger replay
-    /// before ReplayStage starts.
+    /// Returns whether `slot_leader` is this validator.
     fn leader_is_me(slot_leader: &Pubkey, my_pubkey: &Pubkey) -> bool {
         slot_leader == my_pubkey
     }
@@ -3777,7 +3777,6 @@ impl ReplayStage {
         process_active_banks_context: &ProcessActiveBanksContext,
         bank_replay_result_trackers: Vec<BankReplayResultTracker>,
         replay_timing: &mut ReplayLoopTiming,
-        my_pubkey: &Pubkey,
         finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> Vec<ReplaySlotFromBlockstore> {
         match &process_active_banks_context.replay_mode {
@@ -3800,7 +3799,6 @@ impl ReplayStage {
                                         my_shred_version,
                                         process_active_banks_context,
                                         bank_replay_result_tracker,
-                                        my_pubkey,
                                         finalization_cert_sender,
                                     );
                                 if let Some(replay_blockstore_us) = replay_blockstore_us {
@@ -3829,7 +3827,6 @@ impl ReplayStage {
                         my_shred_version,
                         process_active_banks_context,
                         bank_replay_result_tracker,
-                        my_pubkey,
                         finalization_cert_sender,
                     );
                     if let Some(replay_blockstore_us) = replay_blockstore_us {
@@ -4049,7 +4046,7 @@ impl ReplayStage {
                     .blockstore
                     .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
                     .expect("Blockstore operations must succeed");
-                debug_assert!(block_id.is_some() || is_leader_block);
+                debug_assert!(block_id.is_some() || !bank.should_replay_from_blockstore());
                 if block_id.is_some() {
                     bank.set_block_id(block_id);
                 }
@@ -4341,7 +4338,6 @@ impl ReplayStage {
             process_active_banks_context,
             bank_replay_result_trackers,
             replay_timing,
-            my_pubkey,
             finalization_cert_sender,
         );
 
@@ -5126,7 +5122,10 @@ impl ReplayStage {
             } in tracked_vote_transactions.iter()
             {
                 if new_root_bank
-                    .get_committed_transaction_status_and_slot(message_hash, transaction_blockhash)
+                    .get_transaction_status_and_slot_from_status_cache(
+                        message_hash,
+                        transaction_blockhash,
+                    )
                     .is_some()
                 {
                     *has_new_vote_been_rooted = true;
@@ -5373,10 +5372,10 @@ impl ReplayStage {
                     .slot_leader_at(child_slot, Some(parent_bank))
                     .unwrap();
 
-                // Live ReplayStage should never create banks for our own
-                // leader slots. BCL/PoH own live block production, and startup
-                // replay handles any already-recorded own blocks after restart.
-                if Self::leader_is_me(&leader.id, my_pubkey) {
+                // We don't create the bank here for live leader banks, as that is handled by BCL
+                // and BankingStage. However, a full block may need to be replayed after a
+                // SwitchBank event or after repairing a block following a improper set-identity command.
+                if Self::leader_is_me(&leader.id, my_pubkey) && !blockstore.is_full(child_slot) {
                     trace!("skipping replay bank creation for own leader slot {child_slot}");
                     continue;
                 }

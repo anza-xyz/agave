@@ -537,8 +537,9 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
     );
 
     let mut parent_lthash = LtHash::identity();
-    for (i, chunk) in bank_ctx.parent_lt_hash.chunks_exact(2).enumerate() {
-        parent_lthash.0[i] = u16::from_le_bytes(chunk.try_into().unwrap());
+    let (chunks, _) = bank_ctx.parent_lt_hash.as_chunks::<2>();
+    for (i, chunk) in chunks.iter().enumerate() {
+        parent_lthash.0[i] = u16::from_le_bytes(*chunk);
     }
 
     assert!(bank_ctx.ns_per_slot.len() == 16);
@@ -760,6 +761,7 @@ mod tests {
 
     use {
         super::{LEADER_SCHEDULE_HASH_SEED, execute_block, hash_epoch_leaders},
+        crate::sysvar_account::create_account,
         protosol::protos::{
             AcctState, BlockBank as ProtoBlockBank, BlockContext as ProtoBlockContext,
             BlockhashQueueEntry as ProtoBlockhashQueueEntry,
@@ -771,7 +773,7 @@ mod tests {
             SanitizedTransaction as ProtoSanitizedTransaction,
             TransactionMessage as ProtoTransactionMessage, VoteAccountVersion,
         },
-        solana_account::{Account, create_account_for_test},
+        solana_account::{Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS},
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -783,9 +785,10 @@ mod tests {
         solana_stake_history::StakeHistory,
         solana_svm::conformance::account_state::account_to_proto,
         solana_sysvar::{
-            SysvarSerialize, epoch_rewards::EpochRewards, last_restart_slot::LastRestartSlot,
+            epoch_rewards::EpochRewards, last_restart_slot::LastRestartSlot,
             recent_blockhashes::RecentBlockhashes,
         },
+        solana_sysvar_id::SysvarId,
     };
 
     const PAYER: [u8; 32] = [0x11; 32];
@@ -812,8 +815,14 @@ mod tests {
         ))
     }
 
-    fn sysvar_account<T: SysvarSerialize>(pubkey: Pubkey, value: &T) -> AcctState {
-        account_to_proto((pubkey, create_account_for_test(value)))
+    fn sysvar_account<T>(pubkey: Pubkey, value: &T) -> AcctState
+    where
+        T: wincode::Serialize<Src = T> + SysvarId,
+    {
+        account_to_proto((
+            pubkey,
+            create_account(value, DUMMY_INHERITABLE_ACCOUNT_FIELDS).into(),
+        ))
     }
 
     fn block_sysvar_accounts(parent_slot: u64, epoch_schedule: &EpochSchedule) -> Vec<AcctState> {

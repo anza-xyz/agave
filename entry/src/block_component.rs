@@ -130,13 +130,14 @@
 /// └─────────────────────────────────────────┘
 /// ```
 use {
-    crate::entry::{Entry, MaxDataShredsLen},
+    crate::entry::{Entry, EntryView, MaxDataShredsLen},
     agave_votor_messages::{
         certificate::{CertSignature, CertificateType, GenesisCert},
         consensus_message::Block,
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
         unverified_vote_message::UnverifiedCertificate,
     },
+    bytes::Bytes,
     solana_bls_signatures::{
         BlsError, Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
         signature::AsSignatureAffine,
@@ -488,10 +489,17 @@ pub enum BlockComponent {
     BlockMarker(VersionedBlockMarker),
 }
 
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum ParsedBlockComponent {
+    EntryBatch(Vec<EntryView<Bytes>>),
+    BlockMarker(VersionedBlockMarker),
+}
+
 impl BlockComponent {
-    const MAX_ENTRIES: usize = u32::MAX as usize;
-    const ENTRY_COUNT_SIZE: usize = 8;
-    const EMPTY_ENTRY_BATCH: [u8; Self::ENTRY_COUNT_SIZE] = 0u64.to_le_bytes();
+    pub(crate) const MAX_ENTRIES: usize = u32::MAX as usize;
+    pub(crate) const ENTRY_COUNT_SIZE: usize = 8;
+    pub(crate) const EMPTY_ENTRY_BATCH: [u8; Self::ENTRY_COUNT_SIZE] = 0u64.to_le_bytes();
 
     pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
         if entries.is_empty() {

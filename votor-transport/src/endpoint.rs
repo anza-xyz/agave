@@ -68,8 +68,9 @@ impl QuicDatagramEndpoint {
     /// own port.
     /// Received datagrams flow into `inbound_datagrams`, per-peer receive rate is
     /// capped by `max_datagrams_per_second_per_peer`.
-    /// `peer_list` carries desired peer set: inbound closes connections to
-    /// peers no longer in the set, outbound connects to peers in it.
+    /// `peer_list` carries the desired peer set: inbound admits those peers and
+    /// closes connections to peers no longer in the set, outbound connects to
+    /// peers in it as long as the peer_list enables pushing.
     /// `cancel` controls when the endpoint should terminate.
     pub fn spawn(
         runtime: &Handle,
@@ -390,7 +391,7 @@ pub fn stub_ban_channel_for_tests(capacity: usize) -> (BanSender, mpsc::Receiver
 mod tests {
     use {
         super::{BanSender, Datagram, QuicDatagramEndpoint},
-        crate::{METRICS_INTERVAL, PeerListSender, transport::MAX_IDLE_TIMEOUT},
+        crate::{METRICS_INTERVAL, PeerList, PeerListSender, transport::MAX_IDLE_TIMEOUT},
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
         solana_keypair::{Keypair, Signer},
@@ -406,7 +407,7 @@ mod tests {
             net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
             sync::{
                 Arc,
-                atomic::{AtomicU64, Ordering},
+                atomic::{AtomicBool, AtomicU64, Ordering},
             },
             time::{Duration, Instant},
         },
@@ -453,8 +454,19 @@ mod tests {
         }
 
         fn set_peer_list(&self, map: HashMap<Pubkey, Option<SocketAddr>>) {
+            self.set_peer_list_with_push(map, true);
+        }
+
+        fn set_peer_list_with_push(
+            &self,
+            peers: HashMap<Pubkey, Option<SocketAddr>>,
+            push_enabled: bool,
+        ) {
             self.peer_list_sender
-                .send(Arc::new(map))
+                .send(Arc::new(PeerList {
+                    peers,
+                    push_enabled,
+                }))
                 .expect("peer_list receiver alive");
         }
 
@@ -485,7 +497,10 @@ mod tests {
             // Ingress channel size mirrors prod (`solana_core::tvu`):
             // `MAX_ALPENGLOW_PACKET_NUM`.
             let (ingress_sender, ingress_receiver) = bounded(INGRESS_CAP);
-            let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(peer_list));
+            let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(PeerList {
+                peers: peer_list,
+                push_enabled: true,
+            }));
             let (egress, endpoint) = QuicDatagramEndpoint::spawn(
                 rt.handle(),
                 &keypair,
@@ -671,6 +686,60 @@ mod tests {
                 > 0,
             "unadmitted peer B's handshake should have been rejected (unauthorized)"
         );
+    }
+
+    #[test]
+    fn test_unstaked_client_push_flag_gates_outbound_connections() {
+        let rt = make_runtime_for_tests();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+        let server = Node::spawn_node(
+            &rt,
+            Keypair::new(),
+            peer_list_with_unknown_addr(client_pubkey),
+            HIGH_PPS,
+        );
+        let client = Node::spawn_node(&rt, client_keypair, HashMap::new(), HIGH_PPS);
+        let peers = peer_list_of(server.pubkey(), server.addr);
+
+        client.set_peer_list_with_push(peers.clone(), false);
+        let while_disabled = Bytes::from_static(b"push-disabled");
+        assert_not_delivered(&client, &while_disabled, &server.ingress_receiver, 20);
+
+        // Same peer set, pushing enabled: the client now connects.
+        client.set_peer_list(peers.clone());
+        let while_enabled = Bytes::from_static(b"push-enabled");
+        send_until_received(&client, &while_enabled, &server.ingress_receiver, |d| {
+            (d.message == while_enabled).then_some(())
+        })
+        .expect("server never received a datagram once pushing was enabled");
+        drain_backlog(&server.ingress_receiver);
+
+        // Disabling it again tears the connection down.
+        client.set_peer_list_with_push(peers, false);
+        let after_disable = Bytes::from_static(b"push-disabled-again");
+        assert_not_delivered(&client, &after_disable, &server.ingress_receiver, 20);
+    }
+
+    #[test]
+    fn test_unstaked_server_admits_inbound_while_push_disabled() {
+        let rt = make_runtime_for_tests();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+        let server = Node::spawn_node(&rt, Keypair::new(), HashMap::new(), HIGH_PPS);
+        server.set_peer_list_with_push(peer_list_with_unknown_addr(client_pubkey), false);
+        let client = Node::spawn_node(
+            &rt,
+            client_keypair,
+            peer_list_of(server.pubkey(), server.addr),
+            HIGH_PPS,
+        );
+
+        let payload = Bytes::from_static(b"inbound-while-push-disabled");
+        send_until_received(&client, &payload, &server.ingress_receiver, |d| {
+            (d.peer_pubkey == client_pubkey && d.message == payload).then_some(())
+        })
+        .expect("a non-pushing server must still admit its peers' datagrams");
     }
 
     /// Banning a peer closes its connections and blocks subsequent ones.
@@ -976,6 +1045,86 @@ mod tests {
             (d.peer_pubkey == pubkey2 && d.message == payload2).then_some(())
         })
         .expect("server never received message attributed to K2 after rotation");
+    }
+
+    /// An identity change stops delivery only for as long as the re-handshake
+    /// takes. Only an upper bound is asserted: on loopback the outage is
+    /// sub-millisecond and often drops nothing, so requiring a loss would be flaky.
+    #[test]
+    fn test_client_identity_change_delivery_gap_is_bounded() {
+        // Under HIGH_PPS, so the peer rate limiter cannot manufacture a gap.
+        const SEND_INTERVAL: Duration = Duration::from_millis(5);
+        const MAX_RESUME_DELAY: Duration = Duration::from_secs(2);
+        // Longer than the bound, so the assert fails rather than the loop timing out.
+        const WAIT_LIMIT: Duration = Duration::from_secs(5);
+
+        let rt = make_runtime_for_tests();
+        let keypair1 = Keypair::new();
+        let pubkey1 = keypair1.pubkey();
+        let keypair2 = Keypair::new();
+        let pubkey2 = keypair2.pubkey();
+        let server = Node::spawn_node(
+            &rt,
+            Keypair::new(),
+            HashMap::from([(pubkey1, None), (pubkey2, None)]),
+            HIGH_PPS,
+        );
+        let client = Node::spawn_node(
+            &rt,
+            keypair1,
+            peer_list_of(server.pubkey(), server.addr),
+            HIGH_PPS,
+        );
+
+        let probe = Bytes::from_static(b"probe");
+        send_until_received(&client, &probe, &server.ingress_receiver, |d| {
+            (d.message == probe).then_some(())
+        })
+        .expect("server never received the pre-change probe");
+        drain_backlog(&server.ingress_receiver);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let sender_stop = stop.clone();
+        let egress = client.egress.clone();
+        let sender = std::thread::spawn(move || {
+            let mut seq = 0u32;
+            while !sender_stop.load(Ordering::Relaxed) {
+                let _ = egress.try_send(Bytes::from(seq.to_be_bytes().to_vec()));
+                seq = seq.wrapping_add(1);
+                std::thread::sleep(SEND_INTERVAL);
+            }
+        });
+
+        client
+            .endpoint
+            .key_updater()
+            .update_key(&keypair2)
+            .expect("identity change accepted");
+        let changed_at = Instant::now();
+
+        // Attribution to the new identity is what proves the re-handshake completed.
+        let mut resumed = None;
+        while changed_at.elapsed() < WAIT_LIMIT {
+            match server.ingress_receiver.recv_timeout(SEND_INTERVAL * 4) {
+                Ok(d) if d.peer_pubkey == pubkey2 && d.message.len() == 4 => {
+                    resumed = Some(Instant::now());
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => continue,
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        sender.join().expect("sender thread panicked");
+
+        let resumed = resumed.unwrap_or_else(|| {
+            panic!("delivery never resumed under the new identity within {WAIT_LIMIT:?}")
+        });
+        let gap = resumed.saturating_duration_since(changed_at);
+        assert!(
+            gap < MAX_RESUME_DELAY,
+            "delivery resumed {gap:?} after the change, over the {MAX_RESUME_DELAY:?} bound"
+        );
     }
 
     /// Changing the server identity closes every inbound connection that was

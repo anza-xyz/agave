@@ -52,13 +52,8 @@ pub enum RewardStateError {
     MissingEpochStakes { reward_slot: Slot, bank_slot: Slot },
     #[error("missing EpochInflationAccountState for bank_slot {bank_slot}")]
     MissingEpochInflationAccountState { bank_slot: Slot },
-    #[error(
-        "missing validator stake info for reward epoch {reward_epoch} in bank_slot {bank_slot}"
-    )]
-    NoEpochValidatorStake {
-        reward_epoch: Epoch,
-        bank_slot: Slot,
-    },
+    #[error("missing epoch inflation state for in bank_slot {bank_slot}")]
+    MissingEpochInflationState { bank_slot: Slot },
     #[error("validator {pubkey} missing in bank_slot {bank_slot} for reward slot {reward_slot}")]
     MissingRewardSlotValidator {
         pubkey: Pubkey,
@@ -175,7 +170,7 @@ struct RewardState<'a> {
     accounts: &'a HashMap<Pubkey, (u64, VoteAccount)>,
     /// Total stake at `reward_slot`.
     total_stake: u64,
-    /// inflation state at `reward_slot`.
+    /// inflation state at the current bank's epoch.
     epoch_inflation_state: EpochInflationState,
     migration_epoch: Epoch,
 }
@@ -196,21 +191,18 @@ impl<'a> RewardState<'a> {
         )?;
         let accounts = epoch_stakes.stakes().vote_accounts().as_ref();
         let total_stake = epoch_stakes.total_stake();
-        // This assumes that if the epoch_schedule ever changes, the new schedule will maintain correct
-        // info about older slots as well.
-        let reward_epoch = bank.epoch_schedule.get_epoch(reward_slot);
+        let current_epoch = bank.epoch();
         let epoch_inflation_state = {
+            // rewards are always credited to the bank's epoch so use the inflation budget from that
+            // epoch.
             let epoch_inflation_account_state = EpochInflationAccountState::new_from_bank(bank);
             // This function should only be called after alpenglow is active and the slot in the the epoch
             // that activated Alpenglow should have created the account.
             debug_assert!(epoch_inflation_account_state.is_some());
             epoch_inflation_account_state
                 .ok_or(RewardStateError::MissingEpochInflationAccountState { bank_slot })?
-                .get_epoch_state(reward_epoch)
-                .ok_or(RewardStateError::NoEpochValidatorStake {
-                    reward_epoch,
-                    bank_slot,
-                })?
+                .get_epoch_state(current_epoch)
+                .ok_or(RewardStateError::MissingEpochInflationState { bank_slot })?
         };
         let migration_epoch =
             get_migration_epoch(bank).ok_or(RewardStateError::GenesisCertNotFound {
@@ -221,7 +213,7 @@ impl<'a> RewardState<'a> {
             calc_slot_timestamp(bank, reward_slot, block_producer_time_nanos);
         Ok(Self {
             reward_slot_timestamp_ns,
-            current_epoch: bank.epoch(),
+            current_epoch,
             reward_slot,
             reward_validators,
             bank_slot,
@@ -1563,13 +1555,12 @@ mod tests {
             .collect::<HashMap<_, HashMap<Epoch, u64>>>();
         let leader_vote_pubkey = rewarded_bank.leader().vote_address;
         for &reward_slot in &reward_slots {
-            let reward_epoch = rewarded_bank.epoch_schedule.get_epoch(reward_slot);
             let processing_epoch = rewarded_bank
                 .epoch_schedule
                 .get_epoch(reward_slot.saturating_add(NUM_SLOTS_FOR_REWARD));
             let epoch_state = EpochInflationAccountState::new_from_bank(&rewarded_bank)
                 .unwrap()
-                .get_epoch_state(reward_epoch)
+                .get_epoch_state(processing_epoch)
                 .unwrap();
             let epoch_stakes = rewarded_bank.epoch_stakes_from_slot(reward_slot).unwrap();
             let total_stake = epoch_stakes.total_stake();
@@ -1645,5 +1636,79 @@ mod tests {
                     .unwrap_or_default(),
             );
         }
+    }
+
+    fn run_straddle_boundary(flat_inflation: bool) {
+        let slots_per_epoch = 32;
+        let stake = 200_000_000 * LAMPORTS_PER_SOL;
+        let validators = vec![ValidatorVoteKeypairs::new_rand()];
+        let mut genesis_config = create_genesis_config_with_alpenglow_vote_accounts(
+            100_000_000 * LAMPORTS_PER_SOL,
+            &validators,
+            vec![stake],
+        )
+        .genesis_config;
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+        genesis_config.rent = Rent::default();
+        if flat_inflation {
+            genesis_config.inflation = solana_inflation::Inflation::new_fixed(0.08);
+        }
+
+        let leader = SlotLeader {
+            id: validators[0].node_keypair.pubkey(),
+            vote_address: validators[0].vote_keypair.pubkey(),
+        };
+        let (mut bank, _bank_forks) = new_bank_for_tests(leader, &genesis_config);
+
+        let boundary_slot = slots_per_epoch * 3;
+        for slot in 1..boundary_slot {
+            bank = new_bank_from_parent(bank, slot);
+            let Some(reward_slot) = slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
+                continue;
+            };
+            calc_vote_rewards_update_vote_states(
+                &bank,
+                Some(ValidatedRewardCert::new_for_tests(
+                    reward_slot,
+                    vec![leader.vote_address],
+                )),
+                None,
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as i64,
+            )
+            .unwrap();
+        }
+
+        // Every reward credited during epoch 2 uses epoch 2's inflation state, including delayed
+        // rewards earned in epoch 1.
+        let processing_epoch = bank.epoch();
+        assert_eq!(processing_epoch, 2);
+        let epoch_state = EpochInflationAccountState::new_from_bank(&bank)
+            .unwrap()
+            .get_epoch_state(processing_epoch)
+            .unwrap();
+        let expected_epoch_credits =
+            slots_per_epoch * (epoch_state.max_possible_validator_reward / slots_per_epoch);
+        let vote_state = vote_state_from_bank(&bank, &leader.vote_address);
+        let &(credit_epoch, final_credits, initial_credits) =
+            vote_state.epoch_credits().last().unwrap();
+        assert_eq!(credit_epoch, processing_epoch);
+        assert_eq!(final_credits - initial_credits, expected_epoch_credits);
+
+        // Settling epoch 2 against its own budget happens here.
+        new_bank_from_parent(bank, boundary_slot);
+    }
+
+    #[test]
+    fn test_straddled_rewards_fit_declining_processing_epoch_budget() {
+        run_straddle_boundary(false);
+    }
+
+    #[test]
+    fn test_straddled_rewards_fit_flat_epoch_budget() {
+        run_straddle_boundary(true);
     }
 }

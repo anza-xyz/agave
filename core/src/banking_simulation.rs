@@ -487,7 +487,8 @@ impl SimulatorLoop {
                     info!("new leader bank slot: {new_slot}");
                 }
                 let new_bank =
-                    Bank::new_from_parent(bank.clone_without_scheduler(), new_leader, new_slot);
+                    Bank::new_from_parent(bank.clone_without_scheduler(), new_leader, new_slot)
+                        .mark_leader_bank();
                 if *bank.leader_id() == self.simulated_leader {
                     logger.log_frozen_bank_cost(&bank, bank_created.elapsed());
                 }
@@ -822,6 +823,7 @@ impl BankingSimulator {
             replay_vote_sender,
             None,
             bank_forks.clone(),
+            agave_votor::slot_clock::SharedAlpenglowSlotClock::default(),
             None,
             Arc::default(),
             Arc::new(SchedulerPriorityFloor::default()),

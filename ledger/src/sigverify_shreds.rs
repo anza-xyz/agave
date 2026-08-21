@@ -76,7 +76,7 @@ pub fn verify_shreds(
 
 #[cfg(test)]
 fn sign_shred_cpu(keypair: &Keypair, packet: &mut PacketRefMut) {
-    let sig = shred::layout::get_signature_range();
+    let sig = shred::layout::SIGNATURE_RANGE;
     let msg = shred::layout::get_shred(packet.as_ref())
         .and_then(shred::layout::get_merkle_root)
         .unwrap();
@@ -324,6 +324,7 @@ mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
             })
             .collect();
         shreds.shuffle(rng);

@@ -34,6 +34,7 @@ use {
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         peer_list_updater::PeerListService,
+        slot_clock::SharedAlpenglowSlotClock,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::{VOTOR_RATE_LIMIT_PPS, VotingService as BLSVotingService},
@@ -43,7 +44,8 @@ use {
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
-    agave_votor_transport::endpoint::QuicDatagramEndpoint,
+    agave_votor_transport::{PeerList, endpoint::QuicDatagramEndpoint},
+    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -84,7 +86,7 @@ use {
     solana_validator_exit::Exit,
     std::{
         collections::{HashMap, HashSet},
-        net::UdpSocket,
+        net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
         sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
@@ -181,6 +183,7 @@ impl Default for TvuConfig {
 
 /// Shared state from validator necessary to instantiate votor and related services
 pub struct AlpenglowInitializationState {
+    pub alpenglow_slot_clock: SharedAlpenglowSlotClock,
     // Shared with block creation loop
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
@@ -203,8 +206,8 @@ pub struct AlpenglowInitializationState {
     pub votor_server_sockets: Vec<UdpSocket>,
     // client socket for Alpenglow consensus traffic
     pub votor_client_socket: UdpSocket,
-    #[cfg(feature = "dev-context-only-utils")]
-    pub voting_service_test_override: Option<agave_votor::voting_service::VotingServiceOverride>,
+    // peers plugged into the votor peer_list regardless of stake
+    pub votor_peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
 }
 
 impl Tvu {
@@ -270,6 +273,7 @@ impl Tvu {
         } = sockets;
 
         let AlpenglowInitializationState {
+            alpenglow_slot_clock,
             leader_window_info_sender,
             optimistic_parent_sender,
             optimistic_parent_receiver,
@@ -284,8 +288,7 @@ impl Tvu {
             key_notifiers,
             votor_server_sockets,
             votor_client_socket,
-            #[cfg(feature = "dev-context-only-utils")]
-            voting_service_test_override,
+            votor_peer_overrides,
             highest_finalized,
         } = votor_init;
 
@@ -318,14 +321,16 @@ impl Tvu {
         // PeerListService populates the votor_peer_list channel immediately on startup,
         // so we can initialize the watch channel with a dummy value here.
         let (votor_peer_list_sender, votor_peer_list_receiver) =
-            watch::channel(Arc::new(HashMap::new()));
+            watch::channel(Arc::new(PeerList {
+                peers: HashMap::new(),
+                push_enabled: false,
+            }));
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let peer_list_service = PeerListService::new(
             cluster_info.clone(),
             votor_peer_list_sender,
             sharable_banks.clone(),
-            #[cfg(feature = "dev-context-only-utils")]
-            voting_service_test_override,
+            votor_peer_overrides,
         );
         let (votor_egress, endpoint) = QuicDatagramEndpoint::spawn(
             &votor_rt_handle,
@@ -532,6 +537,7 @@ impl Tvu {
             bank_forks: bank_forks.clone(),
             cluster_info: cluster_info.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
+            alpenglow_slot_clock,
             consensus_metrics_sender,
             highest_finalized: highest_finalized.clone(),
             bank_forks_controller,
@@ -629,13 +635,8 @@ impl Tvu {
             highest_finalized,
         );
 
-        let warm_quic_cache_service = create_cache_warmer_if_needed(
-            None,
-            vote_connection_cache,
-            cluster_info,
-            poh_recorder,
-            &exit,
-        );
+        let warm_quic_cache_service =
+            create_cache_warmer_if_needed(vote_connection_cache, cluster_info, poh_recorder, &exit);
 
         let cost_update_service = CostUpdateService::new(cost_update_receiver);
 
@@ -725,18 +726,15 @@ impl Tvu {
 }
 
 fn create_cache_warmer_if_needed(
-    connection_cache: Option<&Arc<ConnectionCache>>,
     vote_connection_cache: Arc<ConnectionCache>,
     cluster_info: &Arc<ClusterInfo>,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     exit: &Arc<AtomicBool>,
 ) -> Option<WarmQuicCacheService> {
-    let tpu_connection_cache = connection_cache.filter(|cache| cache.use_quic()).cloned();
     let vote_connection_cache = Some(vote_connection_cache).filter(|cache| cache.use_quic());
 
-    (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
+    (vote_connection_cache.is_some()).then(|| {
         WarmQuicCacheService::new(
-            tpu_connection_cache,
             vote_connection_cache,
             cluster_info.clone(),
             poh_recorder.clone(),
@@ -911,6 +909,7 @@ pub mod tests {
             None, // slot_status_notifier
             Arc::new(connection_cache),
             AlpenglowInitializationState {
+                alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
                 leader_window_info_sender,
                 optimistic_parent_sender,
                 optimistic_parent_receiver,
@@ -925,7 +924,7 @@ pub mod tests {
                     bind_to_localhost_unique().expect("bind votor server socket"),
                 ],
                 votor_client_socket: bind_to_localhost_unique().expect("bind votor client socket"),
-                voting_service_test_override: None,
+                votor_peer_overrides: Arc::default(),
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,
                 bank_forks_controller_receiver,

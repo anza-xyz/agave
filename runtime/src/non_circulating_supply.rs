@@ -1,7 +1,7 @@
 use {
     crate::bank::Bank,
     log::*,
-    solana_account::ReadableAccount,
+    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         accounts_index::{AccountIndex, IndexKey},
         accounts_scan::ScanResult,
@@ -47,9 +47,7 @@ pub fn calculate_non_circulating_supply(bank: &Bank) -> ScanResult<NonCirculatin
     };
 
     for (pubkey, account) in stake_accounts.iter() {
-        let stake_account = account
-            .deserialize_data::<StakeStateV2>()
-            .unwrap_or_default();
+        let stake_account: StakeStateV2 = account.state().unwrap_or_default();
         match stake_account {
             StakeStateV2::Initialized(meta)
                 if (meta.lockup.is_in_force(&clock, None)

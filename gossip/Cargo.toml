@@ -48,7 +48,7 @@ agave-random = { workspace = true }
 agave-votor-messages = { workspace = true }
 arc-swap = { workspace = true }
 assert_matches = { workspace = true }
-bv = { workspace = true, features = ["serde"] }
+bv = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 ed25519-dalek = { workspace = true }
@@ -58,14 +58,11 @@ itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
-prost = { version = "0.11", optional = true }
+prost = { workspace = true, optional = true }
 protosol = { workspace = true, optional = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
-serde = { workspace = true }
-serde-big-array = { workspace = true }
-serde_bytes = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
@@ -88,7 +85,6 @@ solana-perf = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-sanitize = { workspace = true }
-solana-serde-varint = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, default-features = false }
@@ -106,7 +102,6 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-bincode = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }

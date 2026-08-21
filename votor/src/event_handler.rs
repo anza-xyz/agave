@@ -234,6 +234,7 @@ impl EventHandler {
     ) -> Result<(), EventLoopError> {
         let my_pubkey = &local_context.my_pubkey;
         info!("{my_pubkey}: Parent ready {slot} {parent_block:?}");
+        Self::record_window_start(slot, Instant::now(), ctx, vctx);
 
         // We need to ensure that we've replayed the parent bank.
         if parent_block.slot > vctx.sharable_banks.root().slot() {
@@ -369,13 +370,11 @@ impl EventHandler {
 
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
+                let now = Instant::now();
                 nonblocking_send(
                     &local_context.my_pubkey,
                     &vctx.consensus_metrics_sender,
-                    (
-                        Instant::now(),
-                        vec![ConsensusMetricsEvent::StartOfSlot { slot }],
-                    ),
+                    (now, vec![ConsensusMetricsEvent::StartOfSlot { slot }]),
                     "consensus_metrics_sender",
                 )
                 .map_err(EventLoopError::ChannelDisconnected)?;
@@ -402,14 +401,14 @@ impl EventHandler {
             VotorEvent::Timeout(slot) => {
                 info!("{}: Timeout {slot}", local_context.my_pubkey);
                 if slot != last_of_consecutive_leader_slots(slot) {
+                    let next_slot = slot.saturating_add(1);
+                    let now = Instant::now();
                     nonblocking_send(
                         &local_context.my_pubkey,
                         &vctx.consensus_metrics_sender,
                         (
-                            Instant::now(),
-                            vec![ConsensusMetricsEvent::StartOfSlot {
-                                slot: slot.saturating_add(1),
-                            }],
+                            now,
+                            vec![ConsensusMetricsEvent::StartOfSlot { slot: next_slot }],
                         ),
                         "consensus_metrics_sender",
                     )
@@ -582,6 +581,18 @@ impl EventHandler {
             }
         }
         Ok(votes)
+    }
+
+    fn record_window_start(
+        slot: Slot,
+        started_at: Instant,
+        ctx: &SharedContext,
+        vctx: &VotingContext,
+    ) {
+        let root_bank = vctx.sharable_banks.root();
+        let slot_duration = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
+        ctx.alpenglow_slot_clock
+            .update(slot, started_at, slot_duration);
     }
 
     /// Under normal cases we should have a parent ready for first slot of every window.
@@ -1029,6 +1040,7 @@ mod tests {
         crate::{
             commitment::CommitmentAggregationData,
             event::{LeaderWindowInfo, RepairEventReceiver},
+            slot_clock::SharedAlpenglowSlotClock,
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
                 VoteHistoryStorage,
@@ -1213,11 +1225,13 @@ mod tests {
             drop_bank_sender: drop_bank_sender.clone(),
         });
         let highest_parent_ready = Arc::new(RwLock::default());
+        let alpenglow_slot_clock = SharedAlpenglowSlotClock::default();
 
         let vote_history_storage =
             Arc::new(FileVoteHistoryStorage::new(test_dir.path().to_path_buf()));
         let shared_context = SharedContext {
             cluster_info: cluster_info.clone(),
+            alpenglow_slot_clock,
             bank_forks: bank_forks.clone(),
             vote_history_storage: vote_history_storage.clone(),
             leader_window_info_sender,
@@ -1590,6 +1604,24 @@ mod tests {
             assert!(self.timer_manager.read().is_timeout_set(expected_slot));
         }
 
+        fn check_alpenglow_slot(&self, expected_slot: Slot) {
+            let slot_info = self
+                .shared_context
+                .alpenglow_slot_clock
+                .load()
+                .expect("Votor should have published an Alpenglow slot");
+            assert_eq!(slot_info.slot, expected_slot);
+            assert_eq!(
+                slot_info.slot_duration,
+                Duration::from_nanos_u128(
+                    self.voting_context
+                        .sharable_banks
+                        .root()
+                        .ns_per_slot_at_slot(expected_slot)
+                )
+            );
+        }
+
         fn check_for_metrics_event(&self, expected: ConsensusMetricsEvent) {
             let event = self
                 .consensus_metrics_receiver
@@ -1642,6 +1674,7 @@ mod tests {
                 block_id: Hash::default(),
             },
         ));
+        test_context.check_alpenglow_slot(slot);
         let root_bank = test_context
             .bank_forks
             .read()
@@ -1665,6 +1698,7 @@ mod tests {
 
         let slot = 2;
         let bank2 = test_context.create_block_and_send_block_event(slot, bank1.clone());
+        test_context.check_alpenglow_slot(1);
         let block_id_2 = bank2.block_id().unwrap();
 
         // Because 2 is middle of window, we should see Notarize vote for block 2 even without parentready
@@ -1815,6 +1849,7 @@ mod tests {
         let slot = 4;
         let bank4 = test_context.create_block_only(slot, bank3);
         test_context.send_timeout_event(slot);
+        test_context.check_alpenglow_slot(1);
         // We did eventually complete replay for 4
         test_context.send_block_event(slot, bank4.clone());
         // There should be a skip vote for 4 to 7 each
@@ -1847,6 +1882,10 @@ mod tests {
         // Now if we received one shred for slot 8, then we should not do anything when
         // receiving timeout_crashed_leader_event for slot 8
         test_context.send_first_shred_event(8);
+        assert_eq!(
+            test_context.shared_context.alpenglow_slot_clock.load(),
+            None
+        );
         test_context.send_timeout_crashed_leader_event(8);
         test_context.check_no_vote_or_commitment();
     }

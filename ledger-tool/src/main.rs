@@ -444,8 +444,13 @@ fn compute_slot_cost(
     slot: Slot,
     allow_dead_slots: bool,
 ) -> Result<(), String> {
+    let replay_fec_set_index = blockstore
+        .meta(slot)
+        .map_err(|err| format!("Slot: {slot}, Failed to load slot meta, err {err:?}"))?
+        .map_or(0, |slot_meta| u64::from(slot_meta.replay_fec_set_index));
+
     let (entries, _num_shreds, _is_full) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, allow_dead_slots)
+        .get_slot_entries_with_shred_info(slot, replay_fec_set_index, allow_dead_slots)
         .map_err(|err| format!("Slot: {slot}, Failed to load entries, err {err:?}"))?;
 
     let num_entries = entries.len();
@@ -2350,7 +2355,7 @@ fn main() {
                                 identity_pubkey,
                                 10000,
                                 vote_pubkey,
-                                0,
+                                10_000,
                                 identity_pubkey,
                                 rent.minimum_balance(VoteStateV4::size_of()).max(1),
                             );
@@ -2440,8 +2445,15 @@ fn main() {
                                 arg_matches,
                                 AccessType::PrimaryForMaintenance,
                             ));
+                            let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
+                            let mut write_batch = backup_blockstore.get_write_batch();
                             let _ = backup_blockstore
-                                .insert_cow_shreds(shreds.into_iter().map(Cow::Owned), true)
+                                .insert_cow_shreds(
+                                    shreds.into_iter().map(Cow::Owned),
+                                    true,
+                                    &mut pinnable_slice,
+                                    &mut write_batch,
+                                )
                                 .expect("Blockstore operation must succeed");
 
                             // Purge modifies state so use rw_blockstore
@@ -2478,11 +2490,14 @@ fn main() {
                                 &ReedSolomonCache::default(),
                                 &mut ProcessShredsStats::default(),
                             )
+                            .into_iter()
                             .filter(Shred::is_data)
                             .map(Cow::Owned)
                             .collect();
+                        let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
+                        let mut write_batch = rw_blockstore.get_write_batch();
                         rw_blockstore
-                            .insert_cow_shreds(shreds, true)
+                            .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
                             .expect("Blockstore operation must succeed");
                     }
 

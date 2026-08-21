@@ -4,7 +4,6 @@ use {
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
-    agave_votor::voting_service::VotingServiceOverride,
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
     arc_swap::ArcSwap,
     assert_matches::assert_matches,
@@ -5898,7 +5897,6 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(validator_keys.clone()),
         node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
-        ticks_per_slot: 8,
         slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH * 2,
         stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         poh_config: PohConfig {
@@ -6050,12 +6048,10 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.fixed_leader_schedule = Some(leader_schedule);
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        override_listeners: Arc::new(ArcSwap::from_pointee(HashMap::from_iter([(
-            listener_pubkey,
-            vote_listener_addr.local_addr().unwrap(),
-        )]))),
-    });
+    validator_config.votor_peer_overrides = Arc::new(ArcSwap::from_pointee(HashMap::from([(
+        listener_pubkey,
+        Some(vote_listener_addr.local_addr().unwrap()),
+    )])));
     validator_config.wait_for_supermajority = Some(0);
 
     // Cluster config
@@ -6072,7 +6068,6 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
         ),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
-        ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
@@ -6191,7 +6186,7 @@ fn test_alpenglow_basic_equivocation() {
         let total_duplicate_blocks_observed = (1..=last_duplicate)
             .filter(|slot| blockstore.has_duplicate_shreds_in_slot(*slot))
             .count();
-        if total_duplicate_blocks_observed == expected_duplicate_blocks {
+        if total_duplicate_blocks_observed >= expected_duplicate_blocks {
             break;
         }
         if start.elapsed() > Duration::from_secs(60) {
@@ -6233,12 +6228,10 @@ fn test_alpenglow_migration(
     let vote_listener_socket = bind_to_localhost_unique().unwrap();
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
     let mut validator_config = ValidatorConfig::default_for_test();
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        override_listeners: Arc::new(ArcSwap::from_pointee(HashMap::from_iter([(
-            listener_keypair.pubkey(),
-            vote_listener_addr.local_addr().unwrap(),
-        )]))),
-    });
+    validator_config.votor_peer_overrides = Arc::new(ArcSwap::from_pointee(HashMap::from([(
+        listener_keypair.pubkey(),
+        Some(vote_listener_addr.local_addr().unwrap()),
+    )])));
     validator_config.wait_for_supermajority = Some(0);
 
     let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);

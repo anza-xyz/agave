@@ -25,4 +25,5 @@
 /turbine/ @anza-xyz/networking
 /votor/ @anza-xyz/consensus
 /votor-messages/ @anza-xyz/consensus
+/votor-transport/ @anza-xyz/networking
 /xdp/ @anza-xyz/networking

@@ -36,15 +36,16 @@ use {
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
     },
     agave_votor::{
+        slot_clock::SharedAlpenglowSlotClock,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
-        voting_service::VotingServiceOverride,
     },
-    agave_xdp::transmitter::{Transmitter, TransmitterBuilder},
+    agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
+    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
-    solana_account::ReadableAccount,
+    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -346,6 +347,12 @@ pub struct ValidatorConfig {
     pub known_validators: Option<HashSet<Pubkey>>, // None = trust all
     pub repair_validators: Option<HashSet<Pubkey>>, // None = repair from all
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
+    /// Peers plugged into the votor peer_list regardless of stake, admitting their
+    /// inbound connections and (while this node is staked) pushing consensus
+    /// messages to them. Staked peers are admitted unconditionally, so this is
+    /// only needed for peers that hold no stake. Set by `--votor-peer-overrides`.
+    /// `None` resolves the address from gossip, `Some` pins it.
+    pub votor_peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
     pub should_check_duplicate_instance: bool,
     pub max_genesis_archive_unpacked_size: u64,
@@ -398,7 +405,6 @@ pub struct ValidatorConfig {
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub tvu_bls_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
-    pub voting_service_test_override: Option<VotingServiceOverride>,
     pub repair_handler_type: RepairHandlerType,
     // Thread niceness adjustment for snapshot packager service
     pub snapshot_packager_niceness_adj: i8,
@@ -431,6 +437,7 @@ impl ValidatorConfig {
             repair_validators: None,
             should_check_duplicate_instance: true,
             repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
+            votor_peer_overrides: Arc::default(),
             gossip_validators: None,
             max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             run_verification: true,
@@ -484,7 +491,6 @@ impl ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_bls_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             delay_leader_block_for_pending_fork: true,
-            voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
         }
@@ -541,6 +547,38 @@ pub enum ValidatorStartProgress {
 pub struct XdpTransmitSetup {
     pub transmitter_builder: TransmitterBuilder,
     pub src_ip: Ipv4Addr,
+    pub modules: XdpModules,
+}
+
+/// Per-module XDP sender positions. `None` means the module uses OS sockets.
+///
+/// Positions index into the configured queue list (`XdpConfig::queues`), not into NIC hardware
+/// queue ids.
+#[derive(Clone, Debug)]
+pub struct XdpModules {
+    pub tpu: Option<Box<[usize]>>,
+    pub turbine: Option<Box<[usize]>>,
+    pub repair: Option<Box<[usize]>>,
+    pub gossip: Option<Box<[usize]>>,
+}
+
+impl XdpModules {
+    fn validate_sender_positions(&self, sender_count: usize) -> Result<()> {
+        for (module, positions) in [
+            ("tpu", &self.tpu),
+            ("turbine", &self.turbine),
+            ("repair", &self.repair),
+            ("gossip", &self.gossip),
+        ] {
+            let Some(positions) = positions else {
+                continue;
+            };
+            if let Err(err) = XdpSender::validate_subset_positions(positions, sender_count) {
+                return Err(anyhow!("invalid XDP sender positions for {module}: {err}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 struct BlockstoreRootScan {
@@ -626,7 +664,12 @@ impl ValidatorTpuConfig {
                 max_connections_per_ipaddr_per_min: 32,
                 ..Default::default()
             },
-            qos_config: SimpleQosConfig::default(),
+            qos_config: SimpleQosConfig {
+                // Way more than the size of our clusters. If some super low staked validators can not
+                // find room, it does not present a liveness issue.
+                max_staked_connections: 4096,
+                ..Default::default()
+            },
         };
 
         // Two threads is reasonable for tests; benches are free to set more
@@ -1165,6 +1208,8 @@ impl Validator {
 
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        // Updated by Votor and shared with RPC health and block creation.
+        let highest_finalized = Arc::new(RwLock::new(None));
 
         let max_slots = Arc::new(MaxSlots::default());
 
@@ -1266,6 +1311,7 @@ impl Validator {
                 exit: exit.clone(),
                 override_health_check: rpc_override_health_check.clone(),
                 optimistically_confirmed_bank: optimistically_confirmed_bank.clone(),
+                highest_finalized: highest_finalized.clone(),
                 send_transaction_service_config: config.send_transaction_service_config.clone(),
                 max_slots: max_slots.clone(),
                 leader_schedule_cache: leader_schedule_cache.clone(),
@@ -1414,6 +1460,7 @@ impl Validator {
         ) = if let Some(XdpTransmitSetup {
             transmitter_builder,
             src_ip,
+            modules,
         }) = xdp_transmit_setup
         {
             let turbine_src_port = node.sockets.retransmit_sockets[0]
@@ -1433,22 +1480,43 @@ impl Validator {
                 .expect("gossip socket should have local address")
                 .port();
 
+            modules.validate_sender_positions(transmitter_builder.sender_count())?;
             let (transmitter, sender) = transmitter_builder.build();
+
             (
                 Some(transmitter),
-                Some(PinnedXdpSender::new(
-                    sender.clone(),
-                    SocketAddrV4::new(src_ip, turbine_src_port),
-                )),
-                Some((sender.clone(), src_ip)),
-                Some(PinnedXdpSender::new(
-                    sender.clone(),
-                    SocketAddrV4::new(src_ip, repair_src_port),
-                )),
-                Some(PinnedXdpSender::new(
-                    sender,
-                    SocketAddrV4::new(src_ip, gossip_src_port),
-                )),
+                modules.turbine.map(|positions| {
+                    PinnedXdpSender::new(
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        SocketAddrV4::new(src_ip, turbine_src_port),
+                    )
+                }),
+                modules.tpu.map(|positions| {
+                    (
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        src_ip,
+                    )
+                }),
+                modules.repair.map(|positions| {
+                    PinnedXdpSender::new(
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        SocketAddrV4::new(src_ip, repair_src_port),
+                    )
+                }),
+                modules.gossip.map(|positions| {
+                    PinnedXdpSender::new(
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        SocketAddrV4::new(src_ip, gossip_src_port),
+                    )
+                }),
             )
         } else {
             (None, None, None, None, None)
@@ -1515,9 +1583,8 @@ impl Validator {
         );
 
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
+        let alpenglow_slot_clock = SharedAlpenglowSlotClock::default();
         let highest_parent_ready = Arc::new(RwLock::default());
-        // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
-        let highest_finalized = Arc::new(RwLock::new(None));
         // This channel growing > ~1 indicates problems, so bound channel at a
         // small (but highly overprovisioned) number for performance and easier
         // debug if things go off the rails.
@@ -1531,6 +1598,7 @@ impl Validator {
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
             bank_forks: bank_forks.clone(),
+            alpenglow_slot_clock: alpenglow_slot_clock.clone(),
             bank_forks_controller: bank_forks_controller.clone(),
             blockstore: blockstore.clone(),
             cluster_info: cluster_info.clone(),
@@ -1655,6 +1723,7 @@ impl Validator {
             slot_status_notifier,
             vote_connection_cache,
             AlpenglowInitializationState {
+                alpenglow_slot_clock: alpenglow_slot_clock.clone(),
                 leader_window_info_sender,
                 optimistic_parent_sender,
                 optimistic_parent_receiver,
@@ -1669,8 +1738,7 @@ impl Validator {
                 key_notifiers: key_notifiers.clone(),
                 votor_server_sockets: node.sockets.votor_server,
                 votor_client_socket: node.sockets.quic_votor_client,
-                #[cfg(feature = "dev-context-only-utils")]
-                voting_service_test_override: config.voting_service_test_override.clone(),
+                votor_peer_overrides: config.votor_peer_overrides.clone(),
                 highest_finalized,
             },
             reward_aggregates_sender,
@@ -1717,6 +1785,7 @@ impl Validator {
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
+            alpenglow_slot_clock,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
@@ -2021,10 +2090,7 @@ pub fn should_require_vote_history_file(
         return false;
     };
 
-    let Some(Ok(vote_state)) = bank
-        .get_account(vote_account)
-        .map(|acct| acct.deserialize_data())
-    else {
+    let Some(Ok(vote_state)) = bank.get_account(vote_account).map(|acct| acct.state()) else {
         // Must have a vote account
         return false;
     };
@@ -2829,10 +2895,17 @@ fn cleanup_blockstore_incorrect_shred_versions(
             let mut print_timer = Instant::now();
             let mut num_slots_copied = 0;
             let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
+            let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
+            let mut write_batch = backup_blockstore.get_write_batch();
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                let _ = backup_blockstore.insert_cow_shreds(shreds, true);
+                let _ = backup_blockstore.insert_cow_shreds(
+                    shreds,
+                    true,
+                    &mut pinnable_slice,
+                    &mut write_batch,
+                );
                 num_slots_copied += 1;
 
                 if print_timer.elapsed() > PRINT_INTERVAL {
@@ -3141,10 +3214,25 @@ mod tests {
     };
 
     #[test]
+    fn test_xdp_modules_validate_sender_positions_with_module_context() {
+        let modules = XdpModules {
+            tpu: Some([0].into()),
+            turbine: None,
+            repair: Some([1, 1].into()),
+            gossip: None,
+        };
+        let error = modules.validate_sender_positions(2).unwrap_err();
+        assert!(
+            error.to_string().contains("repair") && error.to_string().contains("is repeated"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn test_should_require_vote_history_file() {
         use {
             agave_votor_messages::consensus_message::Block,
-            solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
+            solana_account::AccountSharedData,
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };
 

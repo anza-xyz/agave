@@ -13,6 +13,7 @@ use {
     },
     agave_votor::vote_history_storage,
     agave_votor_transport::MAX_ENDPOINTS,
+    arc_swap::ArcSwap,
     bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -371,7 +372,7 @@ pub fn execute(
             .map(|mut xdp_config| {
                 use {
                     agave_xdp::{device::NetworkDevice, interface_ipv4},
-                    solana_core::validator::XdpTransmitSetup,
+                    solana_core::validator::{XdpModules, XdpTransmitSetup},
                 };
 
                 let device = if let Some(interface) = xdp_config.interface.as_ref() {
@@ -393,11 +394,20 @@ pub fn execute(
                     ),
                     _ => panic!("IPv6 not supported"),
                 };
+                // Nothing can express per-module queue assignments yet, so every
+                // module transmits over the whole queue set.
+                let all_positions: Box<[usize]> = (0..xdp_config.queues.len()).collect();
                 (
                     XdpTransmitSetup {
                         transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
                             .expect("failed to create xdp transmitter"),
                         src_ip,
+                        modules: XdpModules {
+                            tpu: Some(all_positions.clone()),
+                            turbine: Some(all_positions.clone()),
+                            repair: Some(all_positions.clone()),
+                            gossip: Some(all_positions),
+                        },
                     },
                     XdpNetworkConfigReport {
                         zero_copy,
@@ -489,6 +499,21 @@ pub fn execute(
         "gossip_validators",
         "--gossip-validator",
     )?;
+    let votor_peer_overrides = validators_set(
+        &identity_keypair.pubkey(),
+        matches,
+        "votor_peer_overrides",
+        "--votor-peer-overrides",
+    )?;
+    // Identities named on the command line carry no address: the peer list resolves
+    // them from gossip.
+    let votor_peer_overrides = Arc::new(ArcSwap::from_pointee(
+        votor_peer_overrides
+            .unwrap_or_default()
+            .into_iter()
+            .map(|identity| (identity, None))
+            .collect(),
+    ));
 
     if bind_addresses.len() > 1 {
         for (flag, msg) in [
@@ -694,7 +719,7 @@ pub fn execute(
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
         skip_initial_hash_calc: false,
-        exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        verify_index: matches.is_present("accounts_db_verify_index"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
@@ -795,6 +820,7 @@ pub fn execute(
         repair_validators,
         should_check_duplicate_instance: true,
         repair_whitelist,
+        votor_peer_overrides,
         repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
         blockstore_cleanup_strategy,
@@ -877,7 +903,6 @@ pub fn execute(
             Arc::new(AtomicBool::new(false)),
         )]
         .into(),
-        voting_service_test_override: None,
         snapshot_packager_niceness_adj: value_t_or_exit!(
             matches,
             "snapshot_packager_niceness_adj",
@@ -1400,6 +1425,9 @@ fn build_xdp_config(
     let cpus = if let Some(cpu_str) = xdp_cpu_cores {
         let parsed =
             parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        if parsed.is_empty() {
+            return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
+        }
         if let Some(poh_core) = poh_pinned_cpu_core
             && parsed.contains(&poh_core)
         {
@@ -1480,6 +1508,18 @@ mod xdp_tests {
         let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
         let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
         assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+    }
+
+    #[test]
+    fn test_empty_xdp_cpu_cores_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("selects no CPUs"),
+            "empty XDP CPU core selection must produce an error"
+        );
     }
 
     #[test]

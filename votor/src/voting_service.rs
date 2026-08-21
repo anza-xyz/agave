@@ -17,12 +17,6 @@ use {
     },
     tokio::sync::{mpsc, mpsc::error::TrySendError},
 };
-#[cfg(feature = "dev-context-only-utils")]
-use {
-    arc_swap::ArcSwap,
-    solana_pubkey::Pubkey,
-    std::{collections::HashMap, net::SocketAddr},
-};
 
 /// The maximum amount of packets per second we expect from an honest node
 pub const VOTOR_RATE_LIMIT_PPS: usize = 50;
@@ -172,14 +166,6 @@ impl StandstillRefreshQueue {
 
 pub struct VotingService {
     thread_hdl: JoinHandle<()>,
-}
-
-/// Test-only knob plumbed through [`ValidatorConfig`] so local-cluster tests can
-/// override the (pubkey -> socket) set used to address votor peers.
-#[derive(Clone)]
-pub struct VotingServiceOverride {
-    #[cfg(feature = "dev-context-only-utils")]
-    pub override_listeners: Arc<ArcSwap<HashMap<Pubkey, SocketAddr>>>,
 }
 
 impl VotingService {
@@ -352,9 +338,10 @@ mod tests {
             vote::Vote,
         },
         agave_votor_transport::{
-            PeerListReceiver, PeerListSender,
+            PeerList, PeerListReceiver, PeerListSender,
             endpoint::{Datagram, QuicDatagramEndpoint},
         },
+        arc_swap::ArcSwap,
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded, unbounded},
         rand::Rng,
@@ -363,6 +350,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_perf::packet::packet_config,
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -372,6 +360,7 @@ mod tests {
         },
         solana_signer::Signer,
         std::{
+            collections::HashMap,
             net::SocketAddr,
             num::NonZero,
             sync::{Arc, RwLock},
@@ -553,11 +542,10 @@ mod tests {
             cluster_info.clone(),
             peer_list,
             bank_forks.read().unwrap().sharable_banks(),
-            Some(VotingServiceOverride {
-                override_listeners: Arc::new(ArcSwap::from_pointee(HashMap::from_iter([
-                    spy_listener,
-                ]))),
-            }),
+            Arc::new(ArcSwap::from_pointee(HashMap::from([(
+                spy_listener.0,
+                Some(spy_listener.1),
+            )]))),
         );
         (
             VotingService::new(
@@ -617,16 +605,20 @@ mod tests {
         let client_kp = Keypair::new();
         let client_pubkey = client_kp.pubkey();
 
-        // Listener must admit the client; a `None` address keeps the listener's
-        // outbound loop from connecting to it.
-        let (_spy_peer_list_sender, spy_peer_list_receiver) =
-            watch::channel(Arc::new(HashMap::from([(client_pubkey, None)])));
+        // Listener must admit the client, but never pushes to it.
+        let (_spy_peer_list_sender, spy_peer_list_receiver) = watch::channel(Arc::new(PeerList {
+            peers: HashMap::from([(client_pubkey, None)]),
+            push_enabled: false,
+        }));
         let (endpoint, _egress, ingress_rx, listener_addr, rt) =
             spawn_endpoint(listener_kp, spy_peer_list_receiver);
 
-        // Seed the client's peer_list empty; create_voting_service installs a test
-        // override that injects the listener.
-        let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(HashMap::new()));
+        // Seed the client's peer_list empty; create_voting_service installs an override
+        // that injects the listener.
+        let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(PeerList {
+            peers: HashMap::new(),
+            push_enabled: false,
+        }));
         let (client_endpoint, egress, _client_ingress_rx, _client_addr, client_rt) =
             spawn_endpoint(client_kp, peer_list_receiver);
 

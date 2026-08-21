@@ -15,12 +15,16 @@ use {
     tokio::sync::watch,
 };
 
-/// Snapshot of desired peers list. Peers we want to admit but cannot yet
-/// resolve to an address via gossip map to `None`.
-///
-/// Inbound admission uses membership only (the address is ignored).
+pub struct PeerList {
+    /// Peers with whom we are interested in communicating. Inbound admission
+    /// uses membership only, the address is only needed to push.
+    pub peers: HashMap<Pubkey, Option<SocketAddr>>,
+    /// Whether we open outbound connections.
+    pub push_enabled: bool,
+}
+
 /// Readers can clone the Arc and release the watch lock immediately.
-type PeerListSnapshot = Arc<HashMap<Pubkey, Option<SocketAddr>>>;
+type PeerListSnapshot = Arc<PeerList>;
 
 pub type PeerListSender = watch::Sender<PeerListSnapshot>;
 
@@ -111,7 +115,8 @@ pub(crate) const HANDSHAKE_DRAIN_RATE: usize = {
 /// a deeper queue does not admit more handshakes (the drain rate is fixed), it only
 /// adds latency to the attempts we do serve, so we keep it short and let the excess
 /// be shed by quinn.
-pub(crate) const MAX_INCOMING_DELAY: Duration = Duration::from_millis(1000);
+pub(crate) const MAX_INCOMING_DELAY: Duration =
+    Duration::from_millis(HANDSHAKE_BURST * 1000 / HANDSHAKE_GLOBAL_RATE as u64);
 
 /// How often endpoint metrics are reported.
 pub(crate) const METRICS_INTERVAL: Duration = Duration::from_secs(1);

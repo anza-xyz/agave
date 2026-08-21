@@ -22,6 +22,7 @@ use {
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         num::NonZeroUsize,
+        ops::RangeInclusive,
         sync::{
             Arc, RwLock,
             atomic::{AtomicUsize, Ordering},
@@ -547,6 +548,11 @@ impl StreamerStats {
     }
 }
 
+/// Default bounds for the randomized interval between checks that a staked
+/// connection's peer still retains sufficient stake.
+pub const DEFAULT_STAKE_REVALIDATION_INTERVAL: RangeInclusive<Duration> =
+    Duration::from_secs(60 * 60)..=Duration::from_secs(2 * 60 * 60);
+
 #[derive(Clone)]
 pub struct QuicStreamerConfig {
     pub max_connections_per_ipaddr_per_min: u64,
@@ -556,6 +562,10 @@ pub struct QuicStreamerConfig {
     pub stream_receive_window_size: u32,
     /// Maximum total bytes allowed per stream (hard cap).
     pub max_stream_data_bytes: u32,
+    /// Bounds for the randomized interval between checks that a staked
+    /// connection's peer still retains sufficient stake; randomized to spread
+    /// reconnects of evicted peers over time.
+    pub stake_revalidation_interval: RangeInclusive<Duration>,
 }
 
 #[derive(Clone)]
@@ -578,6 +588,7 @@ impl Default for QuicStreamerConfig {
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
             stream_receive_window_size: PACKET_DATA_SIZE as u32,
             max_stream_data_bytes: PACKET_DATA_SIZE as u32,
+            stake_revalidation_interval: DEFAULT_STAKE_REVALIDATION_INTERVAL,
         }
     }
 }

@@ -250,11 +250,13 @@ impl OutboundLoop {
     fn reconcile(&mut self) {
         debug!("OutboundLoop: running reconcile");
         let peer_list = self.peer_list_receiver.borrow().clone();
+        // With pushing off every peer we hold counts as departed.
+        let push_enabled = peer_list.push_enabled;
 
         // 1. Close connections for departed peers.
         let mut closed_not_in_peer_list = 0u64;
         self.peer_state.retain(|peer, state| {
-            if peer_list.contains_key(peer) {
+            if push_enabled && peer_list.peers.contains_key(peer) {
                 return true;
             }
             match state {
@@ -274,8 +276,12 @@ impl OutboundLoop {
             .connection_closed_not_in_peer_list
             .fetch_add(closed_not_in_peer_list, Ordering::Relaxed);
 
+        if !push_enabled {
+            return;
+        }
+
         // 2. Ensure a connection for every addressable peer.
-        for (peer, addr) in peer_list.iter() {
+        for (peer, addr) in peer_list.peers.iter() {
             if *peer == self.local_pubkey {
                 continue;
             }
@@ -409,6 +415,7 @@ impl OutboundLoop {
 mod tests {
     use {
         super::*,
+        crate::PeerList,
         solana_net_utils::sockets::unique_port_range_for_tests,
         std::net::Ipv4Addr,
         tokio::{sync::watch, time::sleep},
@@ -428,7 +435,10 @@ mod tests {
         let (_egress_tx, egress_rx) = mpsc::channel(1);
         let (_identity_tx, identity_rx) = watch::channel(Keypair::new());
         let (ack, _acks) = crossbeam_channel::unbounded();
-        let (_peer_list_tx, peer_list_rx) = watch::channel(Arc::new(HashMap::default()));
+        let (_peer_list_tx, peer_list_rx) = watch::channel(Arc::new(PeerList {
+            peers: HashMap::default(),
+            push_enabled: true,
+        }));
 
         let mut outbound = OutboundLoop::new(
             endpoint,
