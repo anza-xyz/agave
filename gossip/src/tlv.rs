@@ -110,6 +110,13 @@ pub enum TlvEncodeError {
 
 /// Parses a slice of serialized TLV records into a provided type. Unsupported
 /// TLV records are ignored.
+///
+/// Re-serialize from the original records, not from the parsed output, or the
+/// records dropped here are lost.
+///
+/// Test-only while every Extension enum is empty; drop the cfg once decoding
+/// can return anything.
+#[cfg(test)]
 pub(crate) fn parse<'a, T: TryFrom<&'a TlvRecord>>(entries: &'a [TlvRecord]) -> Vec<T> {
     entries.iter().filter_map(|v| T::try_from(v).ok()).collect()
 }
