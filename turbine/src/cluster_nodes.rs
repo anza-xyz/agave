@@ -432,11 +432,15 @@ impl BroadcastTopology {
 
 // Rebuilds only gossip-derived contact state while reusing the epoch-stable
 // ordering and weighted shuffle.
-fn new_cluster_nodes_from_topology<T>(
+fn new_cluster_nodes_from_topology<T: 'static>(
     topology: &BroadcastTopology,
     cluster_info: &ClusterInfo,
     use_cha_cha_8: bool,
 ) -> ClusterNodes<T> {
+    assert!(
+        TypeId::of::<T>() == TypeId::of::<BroadcastStage>(),
+        "broadcast topology cannot construct ClusterNodes for a non-broadcast stage"
+    );
     let gossip = cluster_info.tvu_peers(|node| ContactInfo::from(node));
     let num_staked = topology.nodes.len();
     let mut nodes = Vec::with_capacity(num_staked.max(gossip.len()).saturating_add(1));
