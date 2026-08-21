@@ -419,11 +419,10 @@ where
         };
         let lock_results = [const { Ok(()) }; CHECK_CHUNK];
         let mut error_counters = TransactionErrorMetrics::default();
-        let results = bank.check_transactions::<R::Transaction>(
+        let results = bank.check_transactions_for_scheduling::<R::Transaction>(
             &txs,
             &lock_results[..txs.len()],
             bank.max_processing_age(),
-            true,
             &mut error_counters,
         );
 
