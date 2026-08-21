@@ -310,7 +310,7 @@ pub(crate) mod external {
             receiver: &mut shaq::spsc::Consumer<PackToWorkerMessage>,
             should_drain_executes: &mut bool,
         ) -> Result<IterationResult, ExternalConsumeWorkerError> {
-            self.allocator.clean_remote_free_lists();
+            self.allocator.clean_remote_frees();
             let capacity = NonZeroUsize::new(receiver.capacity())
                 .expect("shaq queue capacity must be non-zero");
             let Some(messages) = receiver.try_reserve_read_batch(capacity) else {
