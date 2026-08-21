@@ -181,10 +181,11 @@ impl<'a> ShrinkCollector<'a> for AliveAccounts<'a> {
     }
     fn add(
         &mut self,
-        _ref_count: RefCount,
+        ref_count: RefCount,
         account: &'a AccountFromStorage,
-        _slot_list: &[(Slot, AccountInfo)],
+        slot_list: &[(Slot, AccountInfo)],
     ) {
+        assert_eq!(ref_count as usize, slot_list.len());
         self.accounts.push(account);
         self.bytes = self.bytes.saturating_add(account.stored_size());
     }
@@ -219,6 +220,7 @@ impl<'a> ShrinkCollector<'a> for AliveAccountsSeparated<'a> {
         account: &'a AccountFromStorage,
         slot_list: &[(Slot, AccountInfo)],
     ) {
+        assert_eq!(ref_count as usize, slot_list.len());
         let other = if ref_count == 1 {
             &mut self.no_duplicates
         } else if slot_list.len() == 1

@@ -1807,18 +1807,8 @@ mod tests {
                             infos = infos.into_iter().rev().collect();
                         }
 
-                        let original_results = storages
-                            .iter()
-                            .map(|store| db.get_unique_accounts_from_storage(store))
-                            .collect::<Vec<_>>();
                         if two_refs {
-                            original_results.iter().for_each(|results| {
-                                results.stored_accounts.iter().for_each(|account| {
-                                    db.accounts_index.get_and_then(account.pubkey(), |entry| {
-                                        (false, entry.unwrap().addref())
-                                    });
-                                })
-                            });
+                            add_older_ref(&db, &storages);
                         }
 
                         let original_results = storages
@@ -2292,6 +2282,8 @@ mod tests {
         let pk_with_2_refs = account_with_2_refs.pubkey();
         let mut account_with_1_ref = account_shared_data_with_2_refs.clone();
         _ = account_with_1_ref.checked_add_lamports(1);
+        // only pk_with_2_refs is in the storage so far, so only it gets the older entry
+        add_older_ref(&db, &storages);
         append_single_account_with_default_hash(
             &storage,
             &pk_with_1_ref,
@@ -2299,12 +2291,6 @@ mod tests {
             true,
             Some(&db.accounts_index),
         );
-        original_results.iter().for_each(|results| {
-            results.stored_accounts.iter().for_each(|account| {
-                db.accounts_index
-                    .get_and_then(account.pubkey(), |entry| (true, entry.unwrap().addref()));
-            })
-        });
 
         // update to get both accounts in the storage
         let original_results = storages
@@ -3760,21 +3746,13 @@ mod tests {
                 let account = AccountFromStorage::new(offset, &stored_account);
                 let slot = 1;
                 let capacity = 0;
-                for i in 0..4usize {
+                for i in 0..3usize {
                     let mut alive_accounts = AliveAccountsSeparated::with_capacity(capacity, slot);
                     let lamports = 1;
 
                     match i {
                         0 => {
-                            // empty slot list (ignored anyway) because ref_count = 1
-                            let slot_list = vec![];
-                            alive_accounts.add(1, &account, &slot_list);
-                            assert!(!alive_accounts.no_duplicates.accounts.is_empty());
-                            assert!(alive_accounts.not_newest_duplicate.accounts.is_empty());
-                            assert!(alive_accounts.newest_duplicate.accounts.is_empty());
-                        }
-                        1 => {
-                            // non-empty slot list (but ignored) because slot_list = 1
+                            // single slot list because ref_count = 1
                             let slot_list = vec![(
                                 slot,
                                 AccountInfo::new(
@@ -3782,12 +3760,12 @@ mod tests {
                                     lamports == 0,
                                 ),
                             )];
-                            alive_accounts.add(2, &account, &slot_list);
-                            assert!(alive_accounts.no_duplicates.accounts.is_empty());
+                            alive_accounts.add(1, &account, &slot_list);
+                            assert!(!alive_accounts.no_duplicates.accounts.is_empty());
                             assert!(alive_accounts.not_newest_duplicate.accounts.is_empty());
-                            assert!(!alive_accounts.newest_duplicate.accounts.is_empty());
+                            assert!(alive_accounts.newest_duplicate.accounts.is_empty());
                         }
-                        2 => {
+                        1 => {
                             // multiple slot list, this is not the newest, so not_newest_duplicate
                             let slot_list = vec![
                                 (
@@ -3810,7 +3788,7 @@ mod tests {
                             assert!(!alive_accounts.not_newest_duplicate.accounts.is_empty());
                             assert!(alive_accounts.newest_duplicate.accounts.is_empty());
                         }
-                        3 => {
+                        2 => {
                             // multiple slot list, ref_count=2, this is newest
                             let slot_list = vec![
                                 (
