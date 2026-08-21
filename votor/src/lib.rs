@@ -15,6 +15,7 @@ mod event_handler;
 pub mod peer_list_updater;
 pub mod root_utils;
 pub mod slot_clock;
+pub mod standstill;
 mod timer_manager;
 pub mod vote_history;
 pub mod vote_history_storage;

@@ -9,12 +9,13 @@ mod stats;
 
 use {
     crate::{
-        common::{DELTA_STANDSTILL, blocking_send},
+        common::blocking_send,
         consensus_pool::{
             ConsensusPool,
             parent_ready_tracker::{BlockProductionParent, ParentReady},
         },
         event::{LeaderWindowInfo, RepairEvent, RepairEventSender, VotorEvent, VotorEventSender},
+        standstill::DELTA_STANDSTILL,
         voting_service::BLSOp,
         votor::ExitOnDrop,
     },

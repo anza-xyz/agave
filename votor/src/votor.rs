@@ -55,6 +55,7 @@ use {
         event_handler::{EventHandler, EventHandlerContext},
         root_utils::RootContext,
         slot_clock::SharedAlpenglowSlotClock,
+        standstill::StandstillSignal,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
@@ -130,6 +131,7 @@ pub struct VotorConfig {
     pub alpenglow_slot_clock: SharedAlpenglowSlotClock,
     pub consensus_metrics_sender: ConsensusMetricsEventSender,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+    pub standstill_signal: Arc<StandstillSignal>,
     pub bank_forks_controller: Arc<dyn BankForksController>,
 
     // Senders / Notifiers
@@ -203,6 +205,7 @@ impl Votor {
             consensus_metrics_receiver,
             generated_cert_types,
             highest_finalized,
+            standstill_signal,
             bank_forks_controller,
             own_votes_receiver,
             footer_certs_receiver,
@@ -264,6 +267,7 @@ impl Votor {
             migration_status: migration_status.clone(),
             event_receiver,
             timer_manager: Arc::clone(&timer_manager),
+            standstill_signal,
             shared_context,
             voting_context,
             root_context,
