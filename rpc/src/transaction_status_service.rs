@@ -272,6 +272,12 @@ impl TransactionStatusService {
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
             }
+            TransactionStatusMessage::PurgeTransactionHistory { slot, done_sender } => {
+                if enable_rpc_transaction_history {
+                    blockstore.purge_transaction_history_for_slot(slot)?;
+                }
+                let _ = done_sender.send(());
+            }
         }
         Ok(())
     }
@@ -364,7 +370,10 @@ pub(crate) mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_runtime::{
+            bank::{Bank, TransactionBalancesSet},
+            transaction_execution::TransactionStatusSender,
+        },
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -703,5 +712,62 @@ pub(crate) mod tests {
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
         );
+    }
+
+    #[test]
+    fn test_purge_transaction_history_for_slot() {
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
+        let transaction_status_sender = TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let slot = 42;
+        let signature = Signature::from([42; 64]);
+        let address = Pubkey::new_unique();
+
+        blockstore
+            .write_transaction_status(
+                slot,
+                signature,
+                std::iter::once((&address, true)),
+                TransactionStatusMeta::default(),
+                0,
+            )
+            .unwrap();
+        blockstore
+            .write_transaction_memos(&signature, slot, "memo".to_string())
+            .unwrap();
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let transaction_status_service = TransactionStatusService::new(
+            transaction_status_receiver,
+            Arc::new(AtomicU64::default()),
+            true,
+            None,
+            blockstore.clone(),
+            false,
+            None,
+            exit.clone(),
+        );
+
+        transaction_status_sender
+            .send_purge_transaction_history_for_slot(slot)
+            .unwrap();
+
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, slot)
+                .unwrap()
+                .is_none()
+        );
+        transaction_status_service.quiesce_and_join_for_tests(exit);
     }
 }

@@ -446,6 +446,40 @@ impl Blockstore {
         Ok(transaction_status_empty && address_signatures_empty)
     }
 
+    /// Removes all transaction history associated with `slot`.
+    ///
+    /// The transaction-status, transaction-memo, and address-signature columns
+    /// are not ordered by slot, so each column must be scanned in full. Matching
+    /// entries are deleted together in a single write batch. Callers must ensure
+    /// that no more transaction-history writes for `slot` can be submitted before
+    /// calling this method.
+    pub fn purge_transaction_history_for_slot(&self, slot: Slot) -> Result<()> {
+        let mut write_batch = self.get_write_batch();
+
+        for (index, _) in self.transaction_status_cf.iter(IteratorMode::Start)? {
+            if index.1 == slot {
+                self.transaction_status_cf
+                    .delete_in_batch(&mut write_batch, index);
+            }
+        }
+
+        for (index, _) in self.transaction_memos_cf.iter(IteratorMode::Start)? {
+            if index.1 == slot {
+                self.transaction_memos_cf
+                    .delete_in_batch(&mut write_batch, index);
+            }
+        }
+
+        for (index, _) in self.address_signatures_cf.iter(IteratorMode::Start)? {
+            if index.1 == slot {
+                self.address_signatures_cf
+                    .delete_in_batch(&mut write_batch, index);
+            }
+        }
+
+        self.write_batch(write_batch)
+    }
+
     /// Purges special columns (using a non-Slot primary-index) exactly, by
     /// deserializing each slot being purged and iterating through all
     /// transactions to determine the keys of individual records.
@@ -1067,6 +1101,75 @@ pub mod tests {
             .iter(IteratorMode::Start)
             .unwrap();
         assert_eq!(status_entry_iterator.next(), None);
+    }
+
+    #[test]
+    fn test_purge_transaction_history_for_slot() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let purged_slot = 42;
+        let retained_slot = purged_slot + 1;
+        let signature = Signature::new_unique();
+        let address = Pubkey::new_unique();
+
+        for slot in [purged_slot, retained_slot] {
+            blockstore
+                .write_transaction_status(
+                    slot,
+                    signature,
+                    std::iter::once((&address, true)),
+                    TransactionStatusMeta::default(),
+                    0,
+                )
+                .unwrap();
+            blockstore
+                .write_transaction_memos(&signature, slot, format!("memo for slot {slot}"))
+                .unwrap();
+        }
+
+        blockstore
+            .purge_transaction_history_for_slot(purged_slot)
+            .unwrap();
+
+        assert!(
+            blockstore
+                .read_transaction_status((signature, purged_slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, purged_slot)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((address, purged_slot, 0, signature))
+                .unwrap()
+                .is_none()
+        );
+
+        assert!(
+            blockstore
+                .read_transaction_status((signature, retained_slot))
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            blockstore
+                .read_transaction_memos(signature, retained_slot)
+                .unwrap(),
+            Some(format!("memo for slot {retained_slot}"))
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((address, retained_slot, 0, signature))
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test_case(false; "valid prefix")]

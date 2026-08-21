@@ -25,7 +25,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, leader_schedule_utils::leader_slot_index,
-        vote_sender_types::ReplayVoteSender,
+        transaction_execution::TransactionStatusSender, vote_sender_types::ReplayVoteSender,
     },
     std::sync::{Arc, RwLock},
 };
@@ -124,6 +124,7 @@ fn try_restart_slot_from_update_parent(
     migration_status: &MigrationStatus,
     source: &str,
     entry_notification_sender: Option<&EntryNotifierSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
 ) -> bool {
     if !migration_status.should_allow_block_markers(slot) {
         return false;
@@ -193,6 +194,11 @@ fn try_restart_slot_from_update_parent(
         bank.bank_id()
     });
     ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
+    if let Some(transaction_status_sender) = transaction_status_sender {
+        transaction_status_sender
+            .send_purge_transaction_history_for_slot(slot)
+            .expect("TransactionStatusService failed to purge UpdateParent transaction history");
+    }
     if let Some(cleared_bank_id) = cleared_bank_id {
         let update_parent = UpdateParentInfo::from_slot_meta(slot, &slot_meta)
             .expect("UpdateParent metadata must include a parent slot");
@@ -226,6 +232,7 @@ pub(super) fn process_soft_dead_slots(
     replay_vote_sender: &ReplayVoteSender,
     migration_status: &MigrationStatus,
     entry_notification_sender: Option<&EntryNotifierSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
 ) {
     let soft_dead_slots = progress
         .iter()
@@ -267,6 +274,7 @@ pub(super) fn process_soft_dead_slots(
                 migration_status,
                 "soft-dead scan",
                 entry_notification_sender,
+                transaction_status_sender,
             );
             continue;
         }
@@ -304,6 +312,7 @@ pub(super) fn process_soft_dead_slots(
 /// Handles UpdateParent signals by clearing slot state so replay restarts from
 /// the new parent. Skips live own-leader banks, slots replay has not started,
 /// and slots that already replayed past the UpdateParent marker.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_update_parent_interrupts(
     my_pubkey: &Pubkey,
     blockstore: &Blockstore,
@@ -314,6 +323,7 @@ pub(super) fn handle_update_parent_interrupts(
     replay_vote_sender: &ReplayVoteSender,
     migration_status: &MigrationStatus,
     entry_notification_sender: Option<&EntryNotifierSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
 ) {
     while let Ok(signal) = update_parent_receiver.try_recv() {
         try_restart_slot_from_update_parent(
@@ -327,6 +337,7 @@ pub(super) fn handle_update_parent_interrupts(
             migration_status,
             "UpdateParent signal",
             entry_notification_sender,
+            transaction_status_sender,
         );
     }
 }
@@ -412,6 +423,16 @@ pub(super) fn handle_abandoned_bank(
         progress,
         async_verification_freelist,
     );
+
+    if let Some(transaction_status_sender) = process_active_banks_context
+        .transaction_status_sender
+        .as_ref()
+    {
+        transaction_status_sender
+            .send_purge_transaction_history_for_slot(bank_slot)
+            .expect("TransactionStatusService failed to purge UpdateParent transaction history")
+    }
+
     notify_entry_update_parent(
         process_active_banks_context
             .entry_notification_sender
