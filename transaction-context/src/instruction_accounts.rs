@@ -373,11 +373,10 @@ impl BorrowedInstructionAccount<'_, '_> {
 fn is_zeroed(buf: &[u8]) -> bool {
     const ZEROS_LEN: usize = 1024;
     const ZEROS: [u8; ZEROS_LEN] = [0; ZEROS_LEN];
-    let mut chunks = buf.chunks_exact(ZEROS_LEN);
+    let (chunks, remainder) = buf.as_chunks::<ZEROS_LEN>();
 
     #[expect(clippy::indexing_slicing)]
     {
-        chunks.all(|chunk| chunk == &ZEROS[..])
-            && chunks.remainder() == &ZEROS[..chunks.remainder().len()]
+        chunks.iter().all(|chunk| chunk == &ZEROS[..]) && remainder == &ZEROS[..remainder.len()]
     }
 }

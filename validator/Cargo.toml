@@ -10,6 +10,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -25,7 +26,9 @@ agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
+agave-votor-transport = { workspace = true }
 agave-xdp = { workspace = true }
+arc-swap = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 clap = { workspace = true }

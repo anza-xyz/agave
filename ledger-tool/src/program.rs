@@ -4,9 +4,7 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     serde_json::Result,
-    solana_account::{
-        AccountSharedData, create_account_shared_data_for_test, state_traits::StateMut,
-    },
+    solana_account::{AccountSharedData, WritableAccount},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
@@ -279,7 +277,6 @@ fn load_program<'a>(
         program_id: program_id.to_string(),
         ..LoadProgramMetrics::default()
     };
-    let account_size = contents.len();
     let program_runtime_environment = create_program_runtime_environment(
         invoke_context.get_feature_set(),
         invoke_context.get_compute_budget(),
@@ -290,13 +287,11 @@ fn load_program<'a>(
     // Allowing mut here, since it may be needed for jit compile, which is under a config flag
     #[allow(unused_mut)]
     let mut verified_executable = if is_elf {
-        let result = ProgramCacheEntry::new(
+        let result = ProgramCacheEntry::load(
             &loader_key,
             ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             slot,
-            slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &contents,
-            account_size,
             &mut load_program_metrics,
         );
         match result {
@@ -415,7 +410,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         if bpf_loader_upgradeable::check_id(&owner)
                             && let Ok(UpgradeableLoaderState::Program {
                                 programdata_address,
-                            }) = account.state()
+                            }) = bincode::deserialize(account.data())
                         {
                             debug!("Program data address {programdata_address}");
                             if bank
@@ -474,10 +469,14 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
         AccountSharedData::new(0, 0, &loader_id),
     ));
-    transaction_accounts.push((
-        sysvar::epoch_schedule::id(),
-        create_account_shared_data_for_test(bank.epoch_schedule()),
-    ));
+    let mut epoch_schedule_account =
+        AccountSharedData::new(1, solana_epoch_schedule::SIZE, &sysvar::id());
+    wincode::serialize_into(
+        epoch_schedule_account.data_as_mut_slice(),
+        bank.epoch_schedule(),
+    )
+    .unwrap();
+    transaction_accounts.push((sysvar::epoch_schedule::id(), epoch_schedule_account));
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program

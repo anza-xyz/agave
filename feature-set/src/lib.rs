@@ -72,10 +72,8 @@ pub struct FeatureSnapshot {
     pub set_lamports_per_byte_to_5080: bool,
     pub set_lamports_per_byte_to_2575: bool,
     pub set_lamports_per_byte_to_1322: bool,
-    pub limit_instruction_accounts: bool,
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
-    pub validator_admission_ticket: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub upgrade_bpf_stake_program_to_v5: bool,
     pub loader_v3_minimum_extend_program_size: bool,
@@ -173,10 +171,8 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             set_lamports_per_byte_to_5080: is_active(&set_lamports_per_byte_to_5080::ID),
             set_lamports_per_byte_to_2575: is_active(&set_lamports_per_byte_to_2575::ID),
             set_lamports_per_byte_to_1322: is_active(&set_lamports_per_byte_to_1322::ID),
-            limit_instruction_accounts: is_active(&limit_instruction_accounts::ID),
             block_revenue_sharing: is_active(&block_revenue_sharing::ID),
             vote_account_initialize_v2: is_active(&vote_account_initialize_v2::ID),
-            validator_admission_ticket: is_active(&validator_admission_ticket::ID),
             direct_account_pointers_in_program_input: is_active(
                 &direct_account_pointers_in_program_input::ID,
             ),
@@ -910,7 +906,7 @@ pub mod update_hashes_per_tick {
 }
 
 pub mod enable_big_mod_exp_syscall {
-    solana_pubkey::declare_id!("EBq48m8irRKuE7ZnMTLvLg2UuGSqhe8s8oMqnmja1fJw");
+    solana_pubkey::declare_id!("expH2ppKPW2ANEdEmAjfhSEcnBQJfmoX4FjuNpe9ttg");
 }
 
 pub mod disable_builtin_loader_ownership_chains {
@@ -1294,7 +1290,7 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
-    solana_pubkey::declare_id!("a1p3RiCfMmzm5jgCva97UUNwUiVLq5EJhtusRWHDBsp");
+    solana_pubkey::declare_id!("A1pengvuM6JEcyNuTnMqepBKhwHE3N6PmUrdATGawhJS");
 }
 
 pub mod disable_zk_elgamal_proof_program {
@@ -1489,7 +1485,7 @@ pub mod enable_sha512_syscall {
 }
 
 pub mod relax_post_exec_min_balance_check {
-    solana_pubkey::declare_id!("DEJmsCntuYqbXtL5z5TxbaxJXFUJAFjf7TqWSF7YWjQg");
+    solana_pubkey::declare_id!("BY4JhHLahVzS9ynfDz4exzGPbVXhFmJvEyMWsXbDBqME");
 }
 
 pub mod enable_tx_v1 {
@@ -1536,6 +1532,12 @@ pub mod alpenglow_fast_leader_handover {
 
 pub mod relax_fee_payer_constraint {
     solana_pubkey::declare_id!("FEEXbxUuKobtrt1qNK5pjtzbPQhsppBTrNNG74xu4mai");
+}
+
+pub mod double_disinflation_rate {
+    solana_pubkey::declare_id!("55oikhjJ2LUi1xdgJ17ueRyHFURZEw32asT3iAKfh7gg");
+    /// Taper (yearly disinflation rate) applied from activation onward.
+    pub const TAPER: f64 = 0.30;
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2026,7 +2028,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             enable_big_mod_exp_syscall::id(),
-            "add big_mod_exp syscall #28503",
+            "SIMD-0529: big_integer mod_exp syscall",
         ),
         (
             disable_builtin_loader_ownership_chains::id(),
@@ -2619,6 +2621,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_fee_payer_constraint::id(),
             "SIMD-0290: Relax block constraint requiring valid fee-payer",
+        ),
+        (
+            double_disinflation_rate::id(),
+            "SIMD-0550: Double disinflation rate",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

@@ -3,7 +3,6 @@ use {
         error::{LedgerToolError, Result},
         ledger_utils::get_program_ids,
     },
-    agave_votor::consensus_pool::certificate_builder::MAXIMUM_VALIDATORS,
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
@@ -49,6 +48,12 @@ use {
         sync::Arc,
     },
 };
+
+/// Maximum number of validators in a certificate.
+///
+/// There are around 1500 validators currently. For a clean power-of-two
+/// implementation, we should choose either 2048 or 4096.
+const MAXIMUM_VALIDATORS: usize = 4096;
 
 #[derive(Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -885,7 +890,7 @@ pub fn output_slot(
             // entries and leave the metadata fields empty
             let (components, _, _) = blockstore.get_slot_components_with_shred_info(
                 slot,
-                /*shred_start_index:*/ 0,
+                u64::from(meta.replay_fec_set_index),
                 allow_dead_slots,
             )?;
 
@@ -950,7 +955,7 @@ pub fn output_slot(
 
     if verbose_level == 0 {
         if *output_format == OutputFormat::Display {
-            // Given that Blockstore::get_complete_block_with_entries() returned Ok(_), we know
+            // Given that Blockstore::get_complete_block_with_components() returned Ok(_), we know
             // that we have a full block so meta.consumed is the number of shreds in the block
             println!(
                 "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, is_full: \

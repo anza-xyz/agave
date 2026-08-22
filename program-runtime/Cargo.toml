@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -21,7 +22,11 @@ name = "solana_program_runtime"
 [features]
 agave-unstable-api = []
 conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
-dev-context-only-utils = ["dep:qualifier_attr", "dep:solana-message"]
+dev-context-only-utils = [
+    "dep:qualifier_attr",
+    "dep:solana-message",
+    "solana-epoch-schedule/wincode",
+]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []
@@ -35,11 +40,10 @@ bincode = { workspace = true }
 cfg-if = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
-percentage = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true }
 solana-account-info = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-rewards = { workspace = true }
@@ -72,7 +76,7 @@ solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true }
+solana-sysvar = { workspace = true, features = ["serde"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 thiserror = { workspace = true }

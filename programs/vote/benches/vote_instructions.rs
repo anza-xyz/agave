@@ -2,7 +2,7 @@ use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     bincode::serialize,
     criterion::{Criterion, criterion_group, criterion_main},
-    solana_account::{self as account, Account, AccountSharedData, create_account_for_test},
+    solana_account::{Account, AccountSharedData, WritableAccount},
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -15,6 +15,7 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::{sysvar, vote::id},
     solana_slot_hashes::{MAX_ENTRIES, SlotHashes},
+    solana_sysvar_id::SysvarId,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::{
@@ -23,18 +24,37 @@ use {
         vote_state::{
             MAX_LOCKOUT_HISTORY, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
             VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
-            VoteStateV4, VoteStateVersions, create_v4_account_with_authorized,
+            VoteStateV4, VoteStateVersions, VoterWithBLSArgs,
+            create_bls_pubkey_and_proof_of_possession, create_v4_account_with_authorized,
             handler::VoteStateHandler,
         },
     },
 };
 
+fn create_sysvar_account<T>(value: &T) -> AccountSharedData
+where
+    T: wincode::Serialize<Src = T> + SysvarId,
+{
+    let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+    let canonical_data_len = match T::id() {
+        sysvar::clock::ID => solana_clock::SIZE,
+        sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
+        sysvar::rent::ID => solana_rent::SIZE,
+        sysvar::slot_hashes::ID => solana_slot_hashes::SIZE,
+        id => panic!("unsupported sysvar: {id}"),
+    };
+    let required_data_len = canonical_data_len.max(serialized_len);
+    let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
+    wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
+    account
+}
+
 fn create_default_rent_account() -> AccountSharedData {
-    account::create_account_shared_data_for_test(&Rent::free())
+    create_sysvar_account(&Rent::free())
 }
 
 fn create_default_clock_account() -> AccountSharedData {
-    account::create_account_shared_data_for_test(&Clock::default())
+    create_sysvar_account(&Clock::default())
 }
 
 fn create_accounts() -> (
@@ -86,16 +106,12 @@ fn create_accounts() -> (
     };
 
     let transaction_accounts = vec![
-        (solana_vote_program::id(), AccountSharedData::default()),
         (vote_pubkey, AccountSharedData::from(vote_account)),
         (
             sysvar::slot_hashes::id(),
-            AccountSharedData::from(create_account_for_test(&slot_hashes)),
+            create_sysvar_account(&slot_hashes),
         ),
-        (
-            sysvar::clock::id(),
-            AccountSharedData::from(create_account_for_test(&clock)),
-        ),
+        (sysvar::clock::id(), create_sysvar_account(&clock)),
         (authority_pubkey, AccountSharedData::default()),
     ];
     let instruction_account_metas = vec![
@@ -178,6 +194,21 @@ fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountShar
     )
 }
 
+/// Build the `VoterWithBLS` voter-authorization form for `vote_pubkey`.
+///
+/// Once `bls_pubkey_management_in_vote_account` is enabled (as it is under the
+/// mock harness' all-features-enabled set), the legacy `VoteAuthorize::Voter`
+/// form is rejected for accounts that have a BLS key, so a fresh BLS pubkey and
+/// proof-of-possession must be supplied.
+fn voter_with_bls(vote_pubkey: &Pubkey) -> VoteAuthorize {
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(vote_pubkey);
+    VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+        bls_pubkey,
+        bls_proof_of_possession,
+    })
+}
+
 fn process_instruction(
     instruction_data: &[u8],
     transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
@@ -232,10 +263,10 @@ impl BenchAuthorize {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_sysvar_account(&clock);
         let instruction_data = serialize(&VoteInstruction::Authorize(
             authorized_voter_pubkey,
-            VoteAuthorize::Voter,
+            voter_with_bls(&vote_pubkey),
         ))
         .unwrap();
         let transaction_accounts = vec![
@@ -506,11 +537,11 @@ impl BenchUpdateCommission {
             // Add the sysvar accounts so they're in the cache for mock processing
             (
                 sysvar::clock::id(),
-                account::create_account_shared_data_for_test(&Clock::default()),
+                create_sysvar_account(&Clock::default()),
             ),
             (
                 sysvar::epoch_schedule::id(),
-                account::create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
+                create_sysvar_account(&EpochSchedule::without_warmup()),
             ),
         ];
         let instruction_accounts = vec![
@@ -599,10 +630,23 @@ impl BenchAuthorizeChecked {
     fn new() -> Self {
         let vote_pubkey = Pubkey::new_unique();
         let new_authorized_pubkey = Pubkey::new_unique();
-        let vote_account = AccountSharedData::new(100, VoteStateV3::size_of(), &id());
-        let clock_address = sysvar::clock::id();
-        let clock_account = account::create_account_shared_data_for_test(&Clock::default());
         let default_authorized_pubkey = Pubkey::default();
+        let node_pubkey = solana_pubkey::new_rand();
+        // Initialized V4 vote account whose current voter/withdrawer authority is
+        // `default_authorized_pubkey` (the signer below).
+        let vote_account = create_v4_account_with_authorized(
+            &node_pubkey,
+            &default_authorized_pubkey,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+            &default_authorized_pubkey,
+            0,
+            &default_authorized_pubkey,
+            0,
+            &node_pubkey,
+            100,
+        );
+        let clock_address = sysvar::clock::id();
+        let clock_account = create_sysvar_account(&Clock::default());
         let authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
         let new_authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
         let transaction_accounts = vec![
@@ -634,8 +678,10 @@ impl BenchAuthorizeChecked {
             },
         ];
 
-        let instruction_data =
-            serialize(&VoteInstruction::AuthorizeChecked(VoteAuthorize::Voter)).unwrap();
+        let instruction_data = serialize(&VoteInstruction::AuthorizeChecked(voter_with_bls(
+            &vote_pubkey,
+        )))
+        .unwrap();
         Self {
             instruction_data,
             transaction_accounts,
@@ -748,7 +794,7 @@ impl BenchAuthorizeWithSeed {
             &node_pubkey,
             100,
         );
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_sysvar_account(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -775,7 +821,7 @@ impl BenchAuthorizeWithSeed {
             },
         ];
 
-        let authorization_type = VoteAuthorize::Voter;
+        let authorization_type = voter_with_bls(&vote_pubkey);
         let instruction_data = serialize(&VoteInstruction::AuthorizeWithSeed(
             VoteAuthorizeWithSeedArgs {
                 authorization_type,
@@ -809,8 +855,8 @@ struct BenchAuthorizeCheckedWithSeed {
 
 impl BenchAuthorizeCheckedWithSeed {
     fn new() -> Self {
-        let authorization_type: VoteAuthorize = VoteAuthorize::Voter;
         let vote_pubkey = Pubkey::new_unique();
+        let authorization_type = voter_with_bls(&vote_pubkey);
         let current_authority_base_key = Pubkey::new_unique();
         let current_authority_owner = Pubkey::new_unique();
         let current_authority_seed = String::from("VOTER_SEED");
@@ -847,7 +893,7 @@ impl BenchAuthorizeCheckedWithSeed {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_sysvar_account(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -916,7 +962,7 @@ impl BenchCompactUpdateVoteState {
         let vote = Vote::new(vec![1], Hash::default());
         let vote_state_update = VoteStateUpdate::from(vec![(1, 1)]);
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_sysvar_account(&slot_hashes);
         let instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,
@@ -978,7 +1024,7 @@ impl BenchTowerSync {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote = Vote::new(vec![1], Hash::default());
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_sysvar_account(&slot_hashes);
         let instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,

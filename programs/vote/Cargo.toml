@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -54,29 +55,37 @@ solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
-solana-vote-interface = { workspace = true, features = ["bincode"] }
+solana-vote-interface = { workspace = true, features = ["bincode", "wincode"] }
 
 [dev-dependencies]
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
-solana-account = { workspace = true }
-solana-clock = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
+solana-clock = { workspace = true, features = ["wincode"] }
+solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-fee-calculator = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
 solana-program-runtime = { path = "../../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-rent = { workspace = true }
+solana-rent = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
 solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
+solana-sysvar-id = { workspace = true }
 solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
+wincode = { workspace = true }
 
 [[bench]]
 name = "vote_instructions"
+harness = false
+
+[[bench]]
+name = "process_vote"
 harness = false
 
 [lints]

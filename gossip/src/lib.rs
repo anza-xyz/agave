@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod cluster_info;
@@ -52,6 +51,6 @@ extern crate solana_metrics;
 pub use protocol::gossip_decode_to_effects;
 
 #[cfg(feature = "conformance")]
-mod harness;
+pub mod harness;
 
 mod wire_format_tests;

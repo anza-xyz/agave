@@ -327,9 +327,8 @@ mod tests {
         let mut tx_cost = CostModel::calculate_cost(&tx, &bank.feature_set);
         let actual_execution_cu = 1;
         let actual_loaded_accounts_data_size = 64 * 1024;
-        let usage_cost_details = tx_cost.usage_cost_details_mut();
-        usage_cost_details.programs_execution_cost = actual_execution_cu;
-        usage_cost_details.loaded_accounts_data_size_cost =
+        tx_cost.programs_execution_cost = actual_execution_cu;
+        tx_cost.loaded_accounts_data_size_cost =
             CostModel::calculate_loaded_accounts_data_size_cost(
                 actual_loaded_accounts_data_size,
                 &bank.feature_set,

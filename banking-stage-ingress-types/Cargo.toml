@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -16,10 +17,12 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = ["dep:wincode"]
 
 [dependencies]
 crossbeam-channel = { workspace = true }
 solana-perf = { workspace = true }
+wincode = { workspace = true, optional = true }
 
 [lints]
 workspace = true

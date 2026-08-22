@@ -168,6 +168,8 @@ pub struct ProgramCacheStats {
     pub replacements: AtomicU64,
     /// a program was only used once before being unloaded
     pub one_hit_wonders: AtomicU64,
+    /// a program got pruned because it was unloaded for too long or a tombstone
+    pub prunes_stale: AtomicU64,
     /// a program became unreachable in the fork graph because of rerooting
     pub prunes_orphan: AtomicU64,
     /// a program got pruned because it was not recompiled for the next epoch
@@ -191,6 +193,7 @@ impl ProgramCacheStats {
         let lost_insertions = self.lost_insertions.load(Ordering::Relaxed);
         let replacements = self.replacements.load(Ordering::Relaxed);
         let one_hit_wonders = self.one_hit_wonders.load(Ordering::Relaxed);
+        let prunes_stale = self.prunes_stale.load(Ordering::Relaxed);
         let prunes_orphan = self.prunes_orphan.load(Ordering::Relaxed);
         let prunes_environment = self.prunes_environment.load(Ordering::Relaxed);
         let empty_entries = self.empty_entries.load(Ordering::Relaxed);
@@ -199,8 +202,8 @@ impl ProgramCacheStats {
             "Loaded Programs Cache Stats -- Hits: {hits}, Misses: {misses}, Evictions: \
              {evictions}, Reloads: {reloads}, Insertions: {insertions}, Lost-Insertions: \
              {lost_insertions}, Replacements: {replacements}, One-Hit-Wonders: {one_hit_wonders}, \
-             Prunes-Orphan: {prunes_orphan}, Prunes-Environment: {prunes_environment}, Empty: \
-             {empty_entries}, Water-Level: {water_level}"
+             Prunes-Stale: {prunes_stale}, Prunes-Orphan: {prunes_orphan}, Prunes-Environment: \
+             {prunes_environment}, Empty: {empty_entries}, Water-Level: {water_level}"
         );
 
         if log_enabled!(log::Level::Trace) && !self.evictions.is_empty() {

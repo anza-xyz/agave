@@ -252,16 +252,25 @@ where
             }
 
             self.receive_completed()?;
-            let scheduled = self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
-            if scheduled == 0 {
+            let mut receiving_stats = self.drain_check_results(&decision);
+            let _scheduled = self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
+            if decision.bank().is_none() {
                 let (_, clean_time_us) = measure_us!(self.incremental_recheck());
                 self.timing_metrics.update(|timing_metrics| {
                     timing_metrics.clean_time_us += clean_time_us;
                 });
             }
-            let receiving_stats = self.receive_and_buffer_packets(&decision).map_err(|_| {
-                SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
-            })?;
+            receiving_stats.accumulate(self.receive_and_buffer_packets(&decision).map_err(
+                |err| match err {
+                    DisconnectedError::Receiver => {
+                        SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
+                    }
+                    DisconnectedError::CheckWorker => {
+                        SchedulerError::DisconnectedSendChannel("check worker disconnected")
+                    }
+                },
+            )?);
+            self.update_receiving_metrics(&receiving_stats);
             // Report metrics only if there is data.
             // Reset intervals when appropriate, regardless of report.
             let should_report = self.count_metrics.interval_has_data();
@@ -452,10 +461,16 @@ where
         &mut self,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        let receiving_stats = self
-            .receive_and_buffer
-            .receive_and_buffer_packets(&mut self.container, decision)?;
+        self.receive_and_buffer
+            .receive_and_buffer_packets(&mut self.container, decision)
+    }
 
+    fn drain_check_results(&mut self, decision: &BufferedPacketsDecision) -> ReceivingStats {
+        self.receive_and_buffer
+            .drain_check_results(&mut self.container, decision)
+    }
+
+    fn update_receiving_metrics(&mut self, receiving_stats: &ReceivingStats) {
         self.count_metrics.update(|count_metrics| {
             let ReceivingStats {
                 num_received,
@@ -467,8 +482,11 @@ where
                 num_dropped_on_already_processed,
                 num_dropped_on_fee_payer,
                 num_dropped_on_filter_key,
+                num_dropped_on_check_work_queue_full,
                 num_dropped_on_capacity,
+                num_dropped_on_nonce_dedup,
                 num_buffered,
+                num_evicted_on_nonce_dedup,
                 receive_time_us: _,
                 buffer_time_us: _,
             } = &receiving_stats;
@@ -484,16 +502,18 @@ where
                 *num_dropped_on_already_processed;
             count_metrics.num_dropped_on_receive_fee_payer += *num_dropped_on_fee_payer;
             count_metrics.num_dropped_on_filter_key += *num_dropped_on_filter_key;
+            count_metrics.num_dropped_on_check_work_queue_full +=
+                *num_dropped_on_check_work_queue_full;
             count_metrics.num_dropped_on_capacity += *num_dropped_on_capacity;
+            count_metrics.num_dropped_on_nonce_dedup += *num_dropped_on_nonce_dedup;
             count_metrics.num_buffered += *num_buffered;
+            count_metrics.num_evicted_on_nonce_dedup += *num_evicted_on_nonce_dedup;
         });
 
         self.timing_metrics.update(|timing_metrics| {
             timing_metrics.receive_time_us += receiving_stats.receive_time_us;
             timing_metrics.buffer_time_us += receiving_stats.buffer_time_us;
         });
-
-        Ok(receiving_stats)
     }
 }
 
@@ -533,26 +553,36 @@ mod tests {
             consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
-            transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
+            transaction_scheduler::{
+                check_worker::spawn_check_workers,
+                greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
+            },
         },
-        agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
+        agave_banking_stage_ingress_types::{
+            BankingPacketBatch, BankingPacketReceiver, to_banking_packet_batch,
+        },
         crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
+        solana_account::AccountSharedData,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
-        solana_perf::packet::{NUM_PACKETS, PacketBatch, to_packet_batches},
+        solana_nonce::{self as nonce, state::DurableNonce},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_runtime_transaction::transaction_meta::TransactionMeta,
+        solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
-        std::sync::{Arc, RwLock},
+        std::{
+            num::NonZeroUsize,
+            sync::{Arc, RwLock},
+        },
     };
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
@@ -566,7 +596,7 @@ mod tests {
         #[allow(dead_code)]
         bank_forks: Arc<RwLock<BankForks>>,
         mint_keypair: Keypair,
-        banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
+        banking_packet_sender: Sender<BankingPacketBatch>,
         shared_leader_state: SharedLeaderState,
         consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,
@@ -576,11 +606,16 @@ mod tests {
         receiver: BankingPacketReceiver,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> TransactionViewReceiveAndBuffer {
-        TransactionViewReceiveAndBuffer {
-            receiver,
-            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
-            filter_keys: Arc::default(),
-        }
+        let (check_work_sender, check_work_receiver) = bounded(10_000);
+        let (check_result_sender, check_result_receiver) = bounded(10_000);
+        let _check_worker_handles = spawn_check_workers(
+            NonZeroUsize::new(1).unwrap(),
+            check_work_receiver,
+            check_result_sender,
+            bank_forks.read().unwrap().sharable_banks(),
+            Arc::default(),
+        );
+        TransactionViewReceiveAndBuffer::new(receiver, check_work_sender, check_result_receiver)
     }
 
     #[allow(clippy::type_complexity)]
@@ -666,8 +701,148 @@ mod tests {
         Transaction::new(&vec![from_keypair], message, recent_blockhash)
     }
 
-    fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS))
+    fn create_nonce_account_and_transaction(
+        bank: &Bank,
+        mint_keypair: &Keypair,
+    ) -> (Transaction, Pubkey) {
+        let nonce_pubkey = Pubkey::new_unique();
+        let nonce_data = nonce::state::Data::new(
+            mint_keypair.pubkey(),
+            DurableNonce::from_blockhash(&Hash::new_unique()),
+            5000,
+        );
+        let nonce_account = AccountSharedData::new_data(
+            bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size()),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
+            &system_program::id(),
+        )
+        .unwrap();
+        bank.store_account(&nonce_pubkey, &nonce_account);
+
+        let ixs = [
+            system_instruction::advance_nonce_account(&nonce_pubkey, &mint_keypair.pubkey()),
+            system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 1),
+        ];
+        let message = Message::new(&ixs, Some(&mint_keypair.pubkey()));
+        let transaction = Transaction::new(&[mint_keypair], message, nonce_data.blockhash());
+        (transaction, nonce_pubkey)
+    }
+
+    // `clear_container()` removes nonce map entries with nonce transactions
+    #[test]
+    fn test_clear_container_clears_nonce_entry() {
+        let (mut test_frame, mut scheduler_controller) =
+            create_test_frame(1, test_create_transaction_view_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            banking_packet_sender,
+            ..
+        } = &mut test_frame;
+
+        let (transaction, nonce_pubkey) = create_nonce_account_and_transaction(bank, mint_keypair);
+        banking_packet_sender
+            .send(to_banking_packet_batch(&[transaction]))
+            .unwrap();
+        test_receive_all(&mut scheduler_controller, &BufferedPacketsDecision::Hold);
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        scheduler_controller.clear_container();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
+    }
+
+    // `incremental_recheck()` removes nonce map entries with nonce transactions
+    #[test]
+    fn test_incremental_recheck_clears_nonce_entry() {
+        let (mut test_frame, mut scheduler_controller) =
+            create_test_frame(1, test_create_transaction_view_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            banking_packet_sender,
+            ..
+        } = &mut test_frame;
+
+        let (transaction, nonce_pubkey) = create_nonce_account_and_transaction(bank, mint_keypair);
+        banking_packet_sender
+            .send(to_banking_packet_batch(std::slice::from_ref(&transaction)))
+            .unwrap();
+        test_receive_all(&mut scheduler_controller, &BufferedPacketsDecision::Hold);
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        bank.process_transaction(&transaction).unwrap();
+        scheduler_controller.incremental_recheck();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
+    }
+
+    fn test_receive_all<R: ReceiveAndBuffer>(
+        scheduler_controller: &mut SchedulerController<R, impl Scheduler<R::Transaction>>,
+        decision: &BufferedPacketsDecision,
+    ) {
+        fn count_check_results(stats: &ReceivingStats) -> usize {
+            stats.num_dropped_without_parsing
+                + stats.num_dropped_on_parsing_and_sanitization
+                + stats.num_dropped_on_lock_validation
+                + stats.num_dropped_on_compute_budget
+                + stats.num_dropped_on_age
+                + stats.num_dropped_on_already_processed
+                + stats.num_dropped_on_fee_payer
+                + stats.num_dropped_on_filter_key
+                + stats.num_dropped_on_nonce_dedup
+                + stats.num_buffered
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut num_received = 0;
+        let mut num_check_results = 0;
+        loop {
+            let check_result_stats = scheduler_controller.drain_check_results(decision);
+            let stats = scheduler_controller
+                .receive_and_buffer_packets(decision)
+                .unwrap();
+            if num_received == 0
+                && num_check_results == 0
+                && stats.num_received == 0
+                && count_check_results(&check_result_stats) == 0
+            {
+                return;
+            }
+            num_received += stats.num_received;
+            num_check_results += count_check_results(&check_result_stats);
+            if num_received > 0 && num_check_results == num_received {
+                return;
+            }
+
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for check-worker results"
+            );
+            std::thread::yield_now();
+        }
     }
 
     // Helper function to let test receive and then schedule packets.
@@ -686,15 +861,7 @@ mod tests {
         assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
         assert!(scheduler_controller.receive_completed().is_ok());
 
-        // Time is not a reliable way for deterministic testing.
-        // Loop here until no more packets are received, this avoids parallel
-        // tests from inconsistently timing out and not receiving
-        // from the channel.
-        while scheduler_controller
-            .receive_and_buffer_packets(&decision)
-            .map(|n| n.num_received > 0)
-            .unwrap_or_default()
-        {}
+        test_receive_all(scheduler_controller, &decision);
         let now = Instant::now();
         let slot_time = decision
             .bank()

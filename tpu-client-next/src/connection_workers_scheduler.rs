@@ -4,16 +4,16 @@
 use {
     super::leader_updater::LeaderUpdater,
     crate::{
-        SendTransactionStats,
+        SendTransactionStats, WireTransaction,
         connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
         logging::debug,
         quic_networking::{
             QuicClientCertificate, QuicError, create_client_config, create_client_endpoint,
         },
-        transaction_batch::TransactionBatch,
         workers_cache::{WorkersCache, WorkersCacheError, shutdown_worker},
     },
     async_trait::async_trait,
+    itertools::Itertools,
     quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
     std::{
@@ -25,7 +25,6 @@ use {
     tokio::sync::{mpsc, watch},
     tokio_util::sync::CancellationToken,
 };
-pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 
 /// The [`ConnectionWorkersScheduler`] sends transactions from the provided
 /// receiver channel to upcoming leaders. It obtains information about future
@@ -35,7 +34,7 @@ pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 /// connections, schedules and oversees connection workers.
 pub struct ConnectionWorkersScheduler {
     leader_updater: Box<dyn LeaderUpdater>,
-    transaction_receiver: TransactionReceiver,
+    transaction_receiver: mpsc::Receiver<WireTransaction>,
     update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
     cancel: CancellationToken,
     stats: Arc<SendTransactionStats>,
@@ -88,11 +87,7 @@ pub struct ConnectionWorkersSchedulerConfig {
     /// The number of connections to be maintained by the scheduler.
     pub num_connections: NonZeroUsize,
 
-    /// Whether to skip checking the transaction blockhash expiration.
-    pub skip_check_transaction_age: bool,
-
-    /// The size of the channel used to transmit transaction batches to the
-    /// worker tasks.
+    /// The size of the channel used to transmit transactions to worker tasks.
     pub worker_channel_size: usize,
 
     /// The maximum number of reconnection attempts allowed in case of
@@ -139,14 +134,13 @@ impl From<StakeIdentity> for QuicClientCertificate {
 }
 
 /// The [`WorkersBroadcaster`] trait defines a customizable mechanism for
-/// sending transaction batches to workers corresponding to the provided list of
+/// sending transactions to workers corresponding to the provided list of
 /// addresses. Implementations of this trait are used by the
 /// [`ConnectionWorkersScheduler`] to distribute transactions to workers
 /// accordingly.
 #[async_trait]
 pub trait WorkersBroadcaster: Send + Sync {
-    /// Sends a `transaction_batch` to workers associated with the given
-    /// `leaders` addresses.
+    /// Sends a `transaction` to workers associated with the given `leaders` addresses.
     ///
     /// Returns error if a critical issue occurs, e.g. the implementation
     /// encounters an unrecoverable error. In this case, it will trigger
@@ -155,7 +149,7 @@ pub trait WorkersBroadcaster: Send + Sync {
         &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
-        transaction_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), ConnectionWorkersSchedulerError>;
 }
 
@@ -164,7 +158,7 @@ impl ConnectionWorkersScheduler {
     /// the network's upcoming leaders.
     pub fn new(
         leader_updater: Box<dyn LeaderUpdater>,
-        transaction_receiver: mpsc::Receiver<TransactionBatch>,
+        transaction_receiver: mpsc::Receiver<WireTransaction>,
         update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
         cancel: CancellationToken,
     ) -> Self {
@@ -201,7 +195,7 @@ impl ConnectionWorkersScheduler {
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to the network's
-    /// upcoming leaders. `broadcaster` allows to customize the way transactions are send to the
+    /// upcoming leaders. `broadcaster` allows customizing how transactions are sent to the
     /// leaders, see [`WorkersBroadcaster`].
     ///
     /// Runs the main loop that handles worker scheduling and management for connections. Returns
@@ -215,7 +209,6 @@ impl ConnectionWorkersScheduler {
             bind,
             stake_identity,
             num_connections,
-            skip_check_transaction_age,
             worker_channel_size,
             max_reconnect_attempts,
             leaders_fanout,
@@ -241,10 +234,14 @@ impl ConnectionWorkersScheduler {
         // channel is dropped.
         let mut identity_updater_is_active = true;
 
+        let mut next_leaders = Vec::with_capacity(leaders_fanout.connect);
+        let mut connect_leaders = Vec::with_capacity(leaders_fanout.connect);
+        let mut send_leaders = Vec::with_capacity(leaders_fanout.send);
+
         loop {
-            let transaction_batch: TransactionBatch = tokio::select! {
+            let transaction: WireTransaction = tokio::select! {
                 recv_res = transaction_receiver.recv() => match recv_res {
-                    Some(txs) => txs,
+                    Some(transaction) => transaction,
                     None => {
                         debug!("End of `transaction_receiver`: shutting down.");
                         break;
@@ -253,12 +250,18 @@ impl ConnectionWorkersScheduler {
                 res = update_identity_receiver.changed(), if identity_updater_is_active => {
                     let Ok(()) = res else {
                         // Sender has been dropped; log and continue
-                        debug!("Certificate update channel closed; continuing without further updates.");
+                        debug!(
+                            "Certificate update channel closed; continuing without further \
+                             updates."
+                        );
                         identity_updater_is_active = false;
                         continue;
                     };
 
-                    let client_config = build_client_config(update_identity_receiver.borrow_and_update().as_ref(), initial_congestion_window);
+                    let client_config = build_client_config(
+                        update_identity_receiver.borrow_and_update().as_ref(),
+                        initial_congestion_window,
+                    );
                     endpoint.set_default_client_config(client_config);
                     // Flush workers since they are handling connections created
                     // with outdated certificate.
@@ -272,17 +275,16 @@ impl ConnectionWorkersScheduler {
                 }
             };
 
-            let connect_leaders = leader_updater.next_leaders(leaders_fanout.connect);
-            let send_leaders = extract_send_leaders(&connect_leaders, leaders_fanout.send);
+            next_leaders.clear();
+            leader_updater.next_leaders(leaders_fanout.connect, &mut next_leaders);
+            select_unique_leaders(&next_leaders, leaders_fanout.connect, &mut connect_leaders);
 
-            // add future leaders to the cache to hide the latency of opening
-            // the connection.
-            for peer in connect_leaders {
+            // add future leaders to the cache to hide the latency of opening the connection.
+            for peer in &connect_leaders {
                 if let Some(evicted_worker) = workers.ensure_worker(
-                    peer,
+                    *peer,
                     &endpoint,
                     worker_channel_size,
-                    skip_check_transaction_age,
                     max_reconnect_attempts,
                     DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
                     stats.clone(),
@@ -291,8 +293,10 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
+            select_unique_leaders(&next_leaders, leaders_fanout.send, &mut send_leaders);
+
             if let Err(error) = broadcaster
-                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .send_to_workers(&mut workers, &send_leaders, transaction)
                 .await
             {
                 last_error = Some(error);
@@ -303,7 +307,6 @@ impl ConnectionWorkersScheduler {
         workers.shutdown().await;
 
         endpoint.close(0u32.into(), b"Closing connection");
-        leader_updater.stop().await;
         if let Some(error) = last_error {
             return Err(error);
         }
@@ -333,9 +336,9 @@ fn build_client_config(
     create_client_config(client_certificate, initial_congestion_window)
 }
 
-/// [`NonblockingBroadcaster`] attempts to immediately send transactions to all
-/// the workers. If worker cannot accept transactions because it's channel is
-/// full, the transactions will not be sent to this worker.
+/// [`NonblockingBroadcaster`] attempts to immediately send transactions to all the workers. If a
+/// worker cannot accept a transaction because its channel is full, the transaction will not be sent
+/// to that worker.
 pub struct NonblockingBroadcaster;
 
 #[async_trait]
@@ -344,13 +347,12 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
         &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
-        transaction_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for new_leader in leaders {
-            let send_res =
-                workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
+            let send_res = workers.try_send_transaction_to_address(new_leader, transaction.clone());
             if let Err(err) = send_res {
-                debug!("Failed to send transactions to {new_leader:?}, worker send error: {err}.");
+                debug!("Failed to send transaction to {new_leader:?}, worker send error: {err}.");
                 if err == WorkersCacheError::ReceiverDropped {
                     // Remove the worker from the cache if the peer has disconnected.
                     if let Some(pop_worker) = workers.pop(*new_leader) {
@@ -363,23 +365,12 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
     }
 }
 
-/// Extracts a list of unique leader addresses to which transactions will be sent.
-///
-/// This function selects up to `send_fanout` addresses from the `leaders` list, ensuring that
-/// only unique addresses are included while maintaining their original order.
-pub fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
-    let send_count = send_fanout.min(leaders.len());
-    remove_duplicates(&leaders[..send_count])
-}
-
-/// Removes duplicate `SocketAddr` elements from the given slice while
-/// preserving their original order.
-fn remove_duplicates(input: &[SocketAddr]) -> Vec<SocketAddr> {
-    let mut res = Vec::with_capacity(input.len());
-    for address in input {
-        if !res.contains(address) {
-            res.push(*address);
-        }
-    }
-    res
+/// Replaces `selected_leaders` with unique TPU addresses from the first `max_leaders` candidates.
+fn select_unique_leaders(
+    leaders: &[SocketAddr],
+    max_leaders: usize,
+    selected_leaders: &mut Vec<SocketAddr>,
+) {
+    selected_leaders.clear();
+    selected_leaders.extend(leaders.iter().take(max_leaders).copied().unique());
 }

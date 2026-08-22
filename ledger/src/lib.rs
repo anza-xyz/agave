@@ -12,7 +12,6 @@ pub mod block_error;
 pub mod blockstore;
 pub mod ancestor_iterator;
 pub mod bit_vec;
-pub mod blockstore_cleanup_service;
 pub mod blockstore_db;
 pub mod blockstore_meta;
 pub mod blockstore_metric_report_service;
@@ -31,6 +30,7 @@ mod shredder;
 pub mod sigverify_shreds;
 pub mod slot_stats;
 mod staking_utils;
+mod thread_pool;
 mod transaction_address_lookup_table_scanner;
 pub mod use_snapshot_archives_at_startup;
 

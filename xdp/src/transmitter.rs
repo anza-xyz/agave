@@ -1,10 +1,11 @@
 #[cfg(target_os = "linux")]
-pub use crate::tx_loop::TrySendError;
+pub use crate::{neighbors::NeighborIntervals, tx_loop::TrySendError};
 use {
     crate::ecn_codepoint::EcnCodepoint,
     bytes::Bytes,
     std::{
         error::Error,
+        io,
         net::{SocketAddr, SocketAddrV4},
         sync::{Arc, atomic::AtomicBool},
         thread,
@@ -15,10 +16,11 @@ use {
     crate::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
+        neighbors::NeighborsObserver,
         route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
         tx_loop::{self, TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
-        umem::{OwnedUmem, PageAlignedMemory},
+        umem::OwnedUmem,
     },
     agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
     arc_swap::ArcSwap,
@@ -88,6 +90,21 @@ impl XdpConfig {
             queues,
             zero_copy,
             tx_channel_cap: XdpConfig::DEFAULT_TX_CHANNEL_CAP,
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn with_tx_channel_cap(
+        interface: Option<impl Into<String>>,
+        queues: Vec<QueueCpuBinding>,
+        zero_copy: bool,
+        tx_channel_cap: usize,
+    ) -> Self {
+        Self {
+            interface: interface.map(|s| s.into()),
+            queues,
+            zero_copy,
+            tx_channel_cap,
         }
     }
 }
@@ -193,7 +210,7 @@ pub struct XdpSender {
 
 pub enum XdpAddrs {
     Single(SocketAddr),
-    Multi(Vec<SocketAddr>),
+    Multi(Arc<[SocketAddr]>),
 }
 
 impl From<SocketAddr> for XdpAddrs {
@@ -206,6 +223,13 @@ impl From<SocketAddr> for XdpAddrs {
 impl From<Vec<SocketAddr>> for XdpAddrs {
     #[inline]
     fn from(addrs: Vec<SocketAddr>) -> Self {
+        XdpAddrs::Multi(addrs.into())
+    }
+}
+
+impl From<Arc<[SocketAddr]>> for XdpAddrs {
+    #[inline]
+    fn from(addrs: Arc<[SocketAddr]>) -> Self {
         XdpAddrs::Multi(addrs)
     }
 }
@@ -221,6 +245,58 @@ impl AsRef<[SocketAddr]> for XdpAddrs {
 }
 
 impl XdpSender {
+    /// Validate positions for a sender subset before an `XdpSender` is available.
+    pub fn validate_subset_positions(
+        positions: &[usize],
+        sender_count: usize,
+    ) -> Result<(), io::Error> {
+        fn invalid_input(message: impl Into<String>) -> io::Error {
+            io::Error::new(io::ErrorKind::InvalidInput, message.into())
+        }
+
+        if positions.is_empty() {
+            return Err(invalid_input("XDP sender subset cannot be empty"));
+        }
+        if let Some(&position) = positions.iter().find(|&&position| position >= sender_count) {
+            return Err(invalid_input(format!(
+                "XDP sender subset position {position} is out of range for {sender_count} \
+                 configured XDP sender(s)"
+            )));
+        }
+        if let Some((_, &position)) = positions
+            .iter()
+            .enumerate()
+            .find(|(i, position)| positions[..*i].contains(position))
+        {
+            return Err(invalid_input(format!(
+                "XDP sender subset position {position} is repeated"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Return a sender restricted to `positions` in this sender's queue list, in the given order.
+    ///
+    /// `positions` must be non-empty and free of duplicates, and each element must be less than
+    /// `self.len()`. Position `i` of the returned sender maps to `positions[i]` of this one, so
+    /// the order determines which queue each `try_send` index lands on.
+    #[cfg(target_os = "linux")]
+    pub fn subset(&self, positions: &[usize]) -> Result<XdpSender, io::Error> {
+        Self::validate_subset_positions(positions, self.len())?;
+
+        Ok(XdpSender {
+            senders: positions.iter().map(|&i| self.senders[i].clone()).collect(),
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn subset(&self, _positions: &[usize]) -> Result<XdpSender, io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "XDP is only supported on Linux",
+        ))
+    }
+
     #[inline]
     pub fn try_send(
         &self,
@@ -267,10 +343,12 @@ pub struct TransmitterBuilder {}
 
 #[cfg(target_os = "linux")]
 pub struct TransmitterBuilder {
-    tx_loops: Vec<TxLoop<OwnedUmem<PageAlignedMemory>>>,
+    tx_loops: Vec<TxLoop<OwnedUmem>>,
     tx_channel_cap: usize,
     maybe_ebpf: Option<Ebpf>,
     atomic_router: Arc<ArcSwap<Router>>,
+    neighbors: NeighborsObserver,
+    neighbors_monitor_handle: thread::JoinHandle<()>,
     route_monitor_handle: thread::JoinHandle<()>,
 }
 
@@ -282,7 +360,24 @@ impl TransmitterBuilder {
 
     #[cfg(target_os = "linux")]
     pub fn new(config: XdpConfig, exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
+        Self::new_with_intervals(
+            config,
+            exit,
+            NeighborIntervals {
+                use_interval: Duration::from_secs(30),
+                miss_interval: Duration::from_secs(1),
+            },
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn new_with_intervals(
+        config: XdpConfig,
+        exit: Arc<AtomicBool>,
+        neighbor_intervals: NeighborIntervals,
+    ) -> Result<Self, Box<dyn Error>> {
         use {
+            crate::neighbors::NeighborsRefresher,
             caps::Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
             log::debug,
             std::{collections::HashSet, io},
@@ -367,6 +462,15 @@ impl TransmitterBuilder {
             router.routing_table()
         );
 
+        fn retain_cap_net_admin() {
+            // we need to retain CAP_NET_ADMIN in case the netlink socket needs reinitialized
+            let retained_caps = caps::CapsHashSet::from_iter([caps::Capability::CAP_NET_ADMIN]);
+            caps::set(None, caps::CapSet::Effective, &retained_caps)
+                .expect("linux allows effective capset to be set");
+            caps::set(None, caps::CapSet::Permitted, &retained_caps)
+                .expect("linux allows permitted capset to be set");
+        }
+
         // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(router));
         let route_monitor_handle = RouteMonitor::start(
@@ -375,15 +479,15 @@ impl TransmitterBuilder {
             exit.clone(),
             ROUTE_MONITOR_UPDATE_INTERVAL,
             || {
-                // we need to retain CAP_NET_ADMIN in case the netlink socket needs reinitialized
-                let retained_caps = caps::CapsHashSet::from_iter([caps::Capability::CAP_NET_ADMIN]);
-                caps::set(None, caps::CapSet::Effective, &retained_caps)
-                    .expect("linux allows effective capset to be set");
-                caps::set(None, caps::CapSet::Permitted, &retained_caps)
-                    .expect("linux allows permitted capset to be set");
+                retain_cap_net_admin();
                 info!("route monitor thread started");
             },
         );
+        let (neighbors_monitor_handle, neighbors) =
+            NeighborsRefresher::start(exit, neighbor_intervals, || {
+                retain_cap_net_admin();
+                info!("neighbors thread started");
+            })?;
 
         let maybe_ebpf = maybe_ebpf_result.transpose()?;
 
@@ -392,8 +496,18 @@ impl TransmitterBuilder {
             tx_channel_cap,
             maybe_ebpf,
             atomic_router,
+            neighbors,
+            neighbors_monitor_handle,
             route_monitor_handle,
         })
+    }
+
+    pub fn sender_count(&self) -> usize {
+        #[cfg(target_os = "linux")]
+        return self.tx_loops.len();
+
+        #[cfg(not(target_os = "linux"))]
+        0
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -410,11 +524,13 @@ impl TransmitterBuilder {
             tx_channel_cap,
             maybe_ebpf,
             atomic_router,
+            neighbors,
+            neighbors_monitor_handle,
             route_monitor_handle,
         } = self;
 
         let drop_queue = Arc::new(ArrayQueue::new(DROP_CHANNEL_CAP));
-        let mut threads = vec![route_monitor_handle];
+        let mut threads = vec![route_monitor_handle, neighbors_monitor_handle];
 
         threads.push(
             Builder::new()
@@ -447,6 +563,7 @@ impl TransmitterBuilder {
             let (sender, receiver) = tx_loop::channel(tx_channel_cap);
             let drop_queue = Arc::clone(&drop_queue);
             let atomic_router = Arc::clone(&atomic_router);
+            let mut neighbors = neighbors.clone();
             threads.push(
                 Builder::new()
                     .name(format!("solTransmIO{i:02}"))
@@ -458,13 +575,7 @@ impl TransmitterBuilder {
                                     drop(item);
                                 }
                             },
-                            move |ip| {
-                                let r = atomic_router.load();
-                                match ip {
-                                    IpAddr::V4(ip) => r.route_v4(*ip).ok(),
-                                    IpAddr::V6(_) => None,
-                                }
-                            },
+                            move |ip| route(ip, &atomic_router.load(), &mut neighbors),
                         )
                     })
                     .unwrap(),
@@ -474,6 +585,34 @@ impl TransmitterBuilder {
 
         (Transmitter { threads }, XdpSender { senders })
     }
+}
+
+#[cfg(target_os = "linux")]
+fn route(
+    ip: &IpAddr,
+    router: &Router,
+    neighbors: &mut NeighborsObserver,
+) -> Option<crate::route::NextHop> {
+    let IpAddr::V4(ip) = ip else {
+        return None;
+    };
+
+    let next_hop = router.route_v4(*ip).ok()?;
+    if next_hop.neigh_requires_refresh {
+        if let Some(gre) = next_hop.gre.as_ref() {
+            neighbors.observe(
+                gre.underlay_if_index,
+                gre.underlay_ip_addr,
+                gre.underlay_mac_addr.is_some(),
+            );
+        } else {
+            let IpAddr::V4(neighbor_ip) = next_hop.ip_addr else {
+                return None;
+            };
+            neighbors.observe(next_hop.if_index, neighbor_ip, next_hop.mac_addr.is_some());
+        }
+    }
+    Some(next_hop)
 }
 
 impl Transmitter {
@@ -537,5 +676,61 @@ impl Drop for CapGuard {
             caps::drop(None, caps::CapSet::Effective, *capability)
                 .unwrap_or_else(|err| panic!("drop {capability:?} capability: {err}"));
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use {
+        super::*,
+        crate::tx_loop::{Receiver, TryRecvError, TxReceiver},
+    };
+
+    /// The receivers are returned so they stay connected for the lifetime of the test.
+    fn sender_with_receivers(sender_count: usize) -> (XdpSender, Vec<TxReceiver<BytesTxPacket>>) {
+        let (senders, receivers) = (0..sender_count).map(|_| tx_loop::channel(1)).unzip();
+        (XdpSender { senders }, receivers)
+    }
+
+    fn packet() -> BytesTxPacket {
+        BytesTxPacket::new(
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 2)),
+            None,
+            Bytes::new(),
+        )
+    }
+
+    #[test]
+    fn subset_rejects_invalid_positions() {
+        let (sender, _receivers) = sender_with_receivers(2);
+        for (positions, expected) in [
+            (&[][..], "cannot be empty"),
+            (&[0, 2][..], "out of range"),
+            (&[1, 0, 1][..], "is repeated"),
+        ] {
+            let Err(error) = sender.subset(positions) else {
+                panic!("invalid subset {positions:?} must fail");
+            };
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert!(
+                error.to_string().contains(expected),
+                "unexpected error for {positions:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn subset_maps_positions_in_order() {
+        let (sender, receivers) = sender_with_receivers(3);
+        let subset = sender.subset(&[2, 0]).unwrap();
+        assert_eq!(subset.len(), 2);
+
+        subset.try_send(0, packet()).unwrap();
+        subset.try_send(1, packet()).unwrap();
+
+        assert!(receivers[2].try_recv().is_ok());
+        assert!(receivers[0].try_recv().is_ok());
+        assert!(matches!(receivers[1].try_recv(), Err(TryRecvError::Empty)));
     }
 }

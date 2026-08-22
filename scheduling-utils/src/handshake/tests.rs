@@ -63,21 +63,18 @@ fn message_passing_on_all_queues() {
 
         // Send a tpu_to_pack message.
         session.tpu_to_pack.producer.try_write(tpu_to_pack).unwrap();
-        session.tpu_to_pack.producer.commit();
 
         // Send a progress_tracker message.
         session
             .progress_tracker
             .try_write(progress_tracker)
             .unwrap();
-        session.progress_tracker.commit();
 
         // Receive pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
             let msg = loop {
-                worker.pack_to_worker.sync();
                 if let Some(msg) = worker.pack_to_worker.try_read() {
-                    break *msg;
+                    break msg;
                 }
             };
             assert_eq!(
@@ -101,7 +98,6 @@ fn message_passing_on_all_queues() {
                     ..worker_to_pack
                 })
                 .unwrap();
-            worker.worker_to_pack.commit();
         }
     });
     let client_handle = std::thread::spawn(move || {
@@ -123,18 +119,16 @@ fn message_passing_on_all_queues() {
 
         // Receive tpu_to_pack message.
         let msg = loop {
-            session.tpu_to_pack.sync();
             if let Some(msg) = session.tpu_to_pack.try_read() {
-                break *msg;
+                break msg;
             };
         };
         assert_eq!(msg, tpu_to_pack);
 
         // Receive progress_tracker message.
         let msg = loop {
-            session.progress_tracker.sync();
             if let Some(msg) = session.progress_tracker.try_read() {
-                break *msg;
+                break msg;
             };
         };
         assert_eq!(msg, progress_tracker);
@@ -148,15 +142,13 @@ fn message_passing_on_all_queues() {
                     ..pack_to_worker
                 })
                 .unwrap();
-            worker.pack_to_worker.commit();
         }
 
         // Receive worker_to_pack messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
             let msg = loop {
-                worker.worker_to_pack.sync();
                 if let Some(msg) = worker.worker_to_pack.try_read() {
-                    break *msg;
+                    break msg;
                 }
             };
             assert_eq!(

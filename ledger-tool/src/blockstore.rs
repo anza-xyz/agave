@@ -11,7 +11,6 @@ use {
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit, values_t_or_exit,
     },
-    itertools::Itertools,
     log::*,
     regex::Regex,
     serde_json::json,
@@ -165,8 +164,12 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
 
 /// Returns true if the supplied slot contains any nonvote transactions
 fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
+    let Some(slot_meta) = blockstore.meta(slot).expect("Failed to get slot meta") else {
+        return false;
+    };
+
     let (entries, _, _) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, false)
+        .get_slot_entries_with_shred_info(slot, u64::from(slot_meta.replay_fec_set_index), false)
         .expect("Failed to get slot entries");
 
     entries
@@ -457,14 +460,6 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                  ledger]",
             ))
             .arg(
-                Arg::with_name("batch_size")
-                    .long("batch-size")
-                    .value_name("NUM")
-                    .takes_value(true)
-                    .default_value("1000")
-                    .help("Removes at most BATCH_SIZE slots while purging in loop"),
-            )
-            .arg(
                 Arg::with_name("dead_slots_only")
                     .long("dead-slots-only")
                     .required(false)
@@ -635,6 +630,8 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 arg_matches,
                 AccessType::PrimaryForMaintenance,
             );
+            let mut pinnable_slice = target.new_pinnable_slice();
+            let mut write_batch = target.get_write_batch();
 
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
@@ -642,7 +639,10 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 }
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                if target.insert_cow_shreds(shreds, true).is_err() {
+                if target
+                    .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
+                    .is_err()
+                {
                     warn!("error inserting shreds for slot {slot}");
                 }
             }
@@ -717,7 +717,14 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 .into_iter()
                 .rev()
             {
-                let blockhash = blockstore.get_slot_entries(slot, 0)?.last().unwrap().hash;
+                let slot_meta = blockstore
+                    .meta(slot)?
+                    .ok_or(BlockstoreError::SlotUnavailable)?;
+                let blockhash = blockstore
+                    .get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?
+                    .last()
+                    .unwrap()
+                    .hash;
                 println!("{slot}: {blockhash:?}");
             }
         }
@@ -810,7 +817,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let start_slot = value_t_or_exit!(arg_matches, "start_slot", Slot);
             let end_slot = value_t!(arg_matches, "end_slot", Slot).ok();
             let dead_slots_only = arg_matches.is_present("dead_slots_only");
-            let batch_size = value_t_or_exit!(arg_matches, "batch_size", usize);
 
             let blockstore = crate::open_blockstore(
                 &ledger_path,
@@ -836,41 +842,23 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 )));
             }
 
-            info!(
-                "Purging data from slots {} to {} ({} slots) (dead slot only: {})",
-                start_slot,
-                end_slot,
-                end_slot - start_slot,
-                dead_slots_only,
-            );
-            let purge_from_blockstore =
-                |start_slot, end_slot| -> std::result::Result<(), BlockstoreError> {
-                    blockstore.purge_from_next_slots(start_slot, end_slot);
-                    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact)
-                };
             if !dead_slots_only {
-                let slots_iter = &(start_slot..=end_slot).chunks(batch_size);
-                for slots in slots_iter {
-                    let slots = slots.collect::<Vec<_>>();
-                    assert!(!slots.is_empty());
-
-                    let start_slot = *slots.first().unwrap();
-                    let end_slot = *slots.last().unwrap();
-                    info!(
-                        "Purging chunked slots from {} to {} ({} slots)",
-                        start_slot,
-                        end_slot,
-                        end_slot - start_slot
-                    );
-                    purge_from_blockstore(start_slot, end_slot)?;
-                }
+                blockstore.purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)?;
             } else {
-                let dead_slots_iter = blockstore
+                let dead_slots: Vec<_> = blockstore
                     .dead_slots_iterator(start_slot)?
-                    .take_while(|s| *s <= end_slot);
-                for dead_slot in dead_slots_iter {
+                    .take_while(|s| *s <= end_slot)
+                    .collect();
+                // Iterate the slots in reverse order so that purging does not
+                // retain an empty `SlotMeta` for dead slots that are chained to
+                // each other
+                for dead_slot in dead_slots.into_iter().rev() {
                     info!("Purging dead slot {dead_slot}");
-                    purge_from_blockstore(dead_slot, dead_slot)?;
+                    blockstore.purge_slots_cleanup_chaining(
+                        dead_slot,
+                        dead_slot,
+                        PurgeType::Exact,
+                    )?;
                 }
             }
         }

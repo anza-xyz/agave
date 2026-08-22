@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     assert_matches::assert_matches,
-    solana_account::state_traits::StateMut,
+    solana_account::state_traits::StateMutWincode as _,
     solana_cli::{
         check_balance,
         cli::{CliCommand, CliConfig, process_command, request_and_confirm_airdrop},

@@ -40,7 +40,7 @@ use {
 
 mod serde_stakes;
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) use serde_stakes::DeserializableStakes;
+pub(crate) use serde_stakes::DeserializableDelegationStakes;
 pub use serde_stakes::SerdeStakesToStakeFormat;
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
@@ -336,13 +336,13 @@ impl Stakes<StakeAccount> {
         }
     }
 
-    /// Creates a Stake<StakeAccount> from DeserializableStakes<Delegation> by loading the
+    /// Creates a Stake<StakeAccount> from DeserializableDelegationStakes by loading the
     /// full account state for respective stake pubkeys. get_account function
     /// should return the account at the respective slot where stakes where
     /// cached.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn load_from_deserialized_delegations<F>(
-        stakes: DeserializableStakes<Delegation>,
+        stakes: DeserializableDelegationStakes,
         get_account: F,
     ) -> Result<Self, Error>
     where
@@ -699,68 +699,46 @@ impl Stakes<StakeAccount> {
     }
 }
 
-/// This conversion is very memory intensive so should only be used in
-/// development contexts.
+/// Macro to generate `From<Stakes<From>> for Stakes<To>` impls.
 #[cfg(feature = "dev-context-only-utils")]
-impl From<Stakes<StakeAccount>> for Stakes<Delegation> {
-    fn from(stakes: Stakes<StakeAccount>) -> Self {
-        let stake_delegations = stakes
-            .stake_delegations
-            .into_iter()
-            .map(|(pubkey, stake_account)| (pubkey, *stake_account.delegation()))
-            .collect();
-        Self {
-            vote_accounts: stakes.vote_accounts,
-            stake_delegations,
-            delegated_stakes: DelegatedStakes::default(),
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
+macro_rules! impl_stake_format_conversion {
+    ($from:ty, $to:ty, |$binding:ident| $expr:expr) => {
+        /// This conversion is memory intensive so should only be used in development contexts.
+        impl From<Stakes<$from>> for Stakes<$to> {
+            fn from(stakes: Stakes<$from>) -> Self {
+                let Stakes {
+                    vote_accounts,
+                    stake_delegations,
+                    delegated_stakes: _,
+                    unused,
+                    epoch,
+                    stake_history,
+                } = stakes;
+                let stake_delegations = stake_delegations
+                    .into_iter()
+                    .map(|(pubkey, $binding)| (pubkey, $expr))
+                    .collect();
+                Self {
+                    vote_accounts,
+                    stake_delegations,
+                    delegated_stakes: DelegatedStakes::default(),
+                    unused,
+                    epoch,
+                    stake_history,
+                }
+            }
         }
-    }
+    };
 }
 
-/// This conversion is very memory intensive so should only be used in
-/// development contexts.
 #[cfg(feature = "dev-context-only-utils")]
-impl From<Stakes<StakeAccount>> for Stakes<Stake> {
-    fn from(stakes: Stakes<StakeAccount>) -> Self {
-        let stake_delegations = stakes
-            .stake_delegations
-            .into_iter()
-            .map(|(pubkey, stake_account)| (pubkey, *stake_account.stake()))
-            .collect();
-        Self {
-            vote_accounts: stakes.vote_accounts,
-            stake_delegations,
-            delegated_stakes: DelegatedStakes::default(),
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
-        }
-    }
-}
+impl_stake_format_conversion!(StakeAccount, Delegation, |sa| *sa.delegation());
 
-/// This conversion is memory intensive so should only be used in development
-/// contexts.
 #[cfg(feature = "dev-context-only-utils")]
-impl From<Stakes<Stake>> for Stakes<Delegation> {
-    fn from(stakes: Stakes<Stake>) -> Self {
-        let stake_delegations = stakes
-            .stake_delegations
-            .into_iter()
-            .map(|(pubkey, stake)| (pubkey, stake.delegation))
-            .collect();
-        Self {
-            vote_accounts: stakes.vote_accounts,
-            stake_delegations,
-            delegated_stakes: DelegatedStakes::default(),
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
-        }
-    }
-}
+impl_stake_format_conversion!(StakeAccount, Stake, |sa| *sa.stake());
+
+#[cfg(feature = "dev-context-only-utils")]
+impl_stake_format_conversion!(Stake, Delegation, |stake| stake.delegation);
 
 fn merge_delegated_stakes(
     mut stakes: HashMap</*voter:*/ Pubkey, /*stake:*/ u64>,
@@ -834,7 +812,7 @@ pub(crate) mod tests {
         super::*,
         crate::{stake_delegation::effective_stake, stake_utils},
         rayon::ThreadPoolBuilder,
-        solana_account::WritableAccount,
+        solana_account::{WritableAccount, state_traits::StateMutWincode as _},
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_stake_interface::{self as stake, state::StakeStateV2},
@@ -842,9 +820,9 @@ pub(crate) mod tests {
         solana_vote_program::vote_state,
     };
 
-    impl<T: Clone> Stakes<T> {
+    impl Stakes<Delegation> {
         /// Convert deserialized stakes into runtime stakes representation
-        pub(crate) fn from_deserialized(stakes: DeserializableStakes<T>) -> Self {
+        pub(crate) fn from_deserialized(stakes: DeserializableDelegationStakes) -> Self {
             Self {
                 vote_accounts: stakes.vote_accounts,
                 stake_delegations: ImblHashMap::from_iter(stakes.stake_delegations),
@@ -926,11 +904,8 @@ pub(crate) mod tests {
 
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
             stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
-            let stake = stake_account
-                .deserialize_data::<StakeStateV2>()
-                .unwrap()
-                .stake()
-                .unwrap();
+            let stake_state: StakeStateV2 = stake_account.state().unwrap();
+            let stake = stake_state.stake().unwrap();
             {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
@@ -961,11 +936,8 @@ pub(crate) mod tests {
             let mut stake_account =
                 create_stake_account(42, &vote_pubkey, &solana_pubkey::new_rand(), &rent);
             stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
-            let stake = stake_account
-                .deserialize_data::<StakeStateV2>()
-                .unwrap()
-                .stake()
-                .unwrap();
+            let stake_state: StakeStateV2 = stake_account.state().unwrap();
+            let stake = stake_state.stake().unwrap();
             {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
@@ -1067,7 +1039,7 @@ pub(crate) mod tests {
         let cache_data = vote_account.data().to_vec();
         let mut pushed = vote_account.data().to_vec();
         pushed.push(0);
-        vote_account.set_data(pushed);
+        vote_account.set_data_from_slice(&pushed);
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
 
         {
@@ -1078,7 +1050,7 @@ pub(crate) mod tests {
         }
 
         // Vote account uninitialized
-        vote_account.set_data(vec![0; VoteStateV4::size_of()]);
+        vote_account.set_data_from_slice(&vec![0; VoteStateV4::size_of()]);
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
 
         {
@@ -1088,7 +1060,7 @@ pub(crate) mod tests {
             assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey), 0);
         }
 
-        vote_account.set_data(cache_data);
+        vote_account.set_data_from_slice(&cache_data);
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
 
         {
@@ -1119,11 +1091,8 @@ pub(crate) mod tests {
         // delegates to vote_pubkey
         stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
 
-        let stake = stake_account
-            .deserialize_data::<StakeStateV2>()
-            .unwrap()
-            .stake()
-            .unwrap();
+        let stake_state: StakeStateV2 = stake_account.state().unwrap();
+        let stake = stake_state.stake().unwrap();
 
         {
             let stakes = stakes_cache.stakes();
@@ -1194,11 +1163,8 @@ pub(crate) mod tests {
 
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
         stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
-        let stake = stake_account
-            .deserialize_data::<StakeStateV2>()
-            .unwrap()
-            .stake()
-            .unwrap();
+        let stake_state: StakeStateV2 = stake_account.state().unwrap();
+        let stake = stake_state.stake().unwrap();
 
         let initial_expected_stake = {
             let stakes = stakes_cache.stakes();

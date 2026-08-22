@@ -3,56 +3,55 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
+// Costs are stored in compute units.
 #[derive(Debug)]
 pub struct TransactionCost<'a, Tx> {
-    usage_cost: UsageCostDetails<'a, Tx>,
+    pub transaction: &'a Tx,
+    pub signature_cost: u64,
+    pub write_lock_cost: u64,
+    pub data_bytes_cost: u16,
+    pub programs_execution_cost: u64,
+    pub loaded_accounts_data_size_cost: u64,
+    pub allocated_accounts_data_size: u64,
 }
 
 impl<'a, Tx> TransactionCost<'a, Tx> {
-    pub fn new(usage_cost: UsageCostDetails<'a, Tx>) -> Self {
-        Self { usage_cost }
-    }
-
-    pub fn usage_cost_details(&self) -> &UsageCostDetails<'a, Tx> {
-        &self.usage_cost
-    }
-
-    pub fn usage_cost_details_mut(&mut self) -> &mut UsageCostDetails<'a, Tx> {
-        &mut self.usage_cost
-    }
-
     pub fn sum(&self) -> u64 {
-        self.usage_cost.sum()
+        self.signature_cost
+            .saturating_add(self.write_lock_cost)
+            .saturating_add(u64::from(self.data_bytes_cost))
+            .saturating_add(self.programs_execution_cost)
+            .saturating_add(self.loaded_accounts_data_size_cost)
     }
 
     pub fn programs_execution_cost(&self) -> u64 {
-        self.usage_cost.programs_execution_cost
+        self.programs_execution_cost
     }
 
     pub fn data_bytes_cost(&self) -> u16 {
-        self.usage_cost.data_bytes_cost
+        self.data_bytes_cost
     }
 
     pub fn allocated_accounts_data_size(&self) -> u64 {
-        self.usage_cost.allocated_accounts_data_size
+        self.allocated_accounts_data_size
     }
 
     pub fn loaded_accounts_data_size_cost(&self) -> u64 {
-        self.usage_cost.loaded_accounts_data_size_cost
+        self.loaded_accounts_data_size_cost
     }
 
     pub fn signature_cost(&self) -> u64 {
-        self.usage_cost.signature_cost
+        self.signature_cost
     }
 
     pub fn write_lock_cost(&self) -> u64 {
-        self.usage_cost.write_lock_cost
+        self.write_lock_cost
     }
 }
 
 impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
     pub fn writable_accounts(&self) -> impl Iterator<Item = &Pubkey> {
-        let transaction = self.usage_cost.transaction;
+        let transaction = self.transaction;
         transaction
             .account_keys()
             .iter()
@@ -63,53 +62,27 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
 
 impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn num_transaction_signatures(&self) -> u64 {
-        self.usage_cost
-            .transaction
+        self.transaction
             .signature_details()
             .num_transaction_signatures()
     }
 
     pub fn num_secp256k1_instruction_signatures(&self) -> u64 {
-        self.usage_cost
-            .transaction
+        self.transaction
             .signature_details()
             .num_secp256k1_instruction_signatures()
     }
 
     pub fn num_ed25519_instruction_signatures(&self) -> u64 {
-        self.usage_cost
-            .transaction
+        self.transaction
             .signature_details()
             .num_ed25519_instruction_signatures()
     }
 
     pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
-        self.usage_cost
-            .transaction
+        self.transaction
             .signature_details()
             .num_secp256r1_instruction_signatures()
-    }
-}
-
-// costs are stored in number of 'compute unit's
-#[derive(Debug)]
-pub struct UsageCostDetails<'a, Tx> {
-    pub transaction: &'a Tx,
-    pub signature_cost: u64,
-    pub write_lock_cost: u64,
-    pub data_bytes_cost: u16,
-    pub programs_execution_cost: u64,
-    pub loaded_accounts_data_size_cost: u64,
-    pub allocated_accounts_data_size: u64,
-}
-
-impl<Tx> UsageCostDetails<'_, Tx> {
-    pub fn sum(&self) -> u64 {
-        self.signature_cost
-            .saturating_add(self.write_lock_cost)
-            .saturating_add(u64::from(self.data_bytes_cost))
-            .saturating_add(self.programs_execution_cost)
-            .saturating_add(self.loaded_accounts_data_size_cost)
     }
 }
 
@@ -142,6 +115,14 @@ impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTrans
 
     fn num_write_locks(&self) -> u64 {
         unimplemented!("WritableKeysTransaction::num_write_locks")
+    }
+
+    fn num_readonly_signed_static_accounts(&self) -> u8 {
+        unimplemented!("WritableKeysTransaction::num_readonly_signed_static_accounts")
+    }
+
+    fn num_readonly_unsigned_static_accounts(&self) -> u8 {
+        unimplemented!("WritableKeysTransaction::num_readonly_unsigned_static_accounts")
     }
 
     fn recent_blockhash(&self) -> &solana_hash::Hash {
@@ -190,16 +171,9 @@ impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTrans
     > {
         core::iter::empty()
     }
-}
 
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
-    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
-        solana_message::AccountKeys::new(&self.writable_keys, None)
-    }
-
-    fn is_writable(&self, _index: usize) -> bool {
-        true
+    fn is_requested_writable(&self, _index: usize) -> bool {
+        unimplemented!("WritableKeysTransaction::is_requested_writable")
     }
 
     fn is_signer(&self, _index: usize) -> bool {
@@ -212,7 +186,18 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_transaction::SVMTransaction for WritableKeysTransaction {
+impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
+    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
+        solana_message::AccountKeys::new(&self.writable_keys, None)
+    }
+
+    fn is_writable(&self, _index: usize) -> bool {
+        true
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl solana_svm_transaction::svm_transaction::SVMStaticTransaction for WritableKeysTransaction {
     fn signature(&self) -> &solana_signature::Signature {
         unimplemented!("WritableKeysTransaction::signature")
     }
@@ -254,6 +239,19 @@ impl solana_runtime_transaction::transaction_meta::TransactionMeta for WritableK
 }
 
 #[cfg(feature = "dev-context-only-utils")]
+impl solana_runtime_transaction::transaction_with_meta::StaticTransactionWithMeta
+    for WritableKeysTransaction
+{
+    fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
+        unimplemented!("WritableKeysTransaction::to_versioned_transaction")
+    }
+
+    fn serialized_size(&self) -> usize {
+        unimplemented!("WritableKeysTransaction::serialized_size")
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
 impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
     for WritableKeysTransaction
 {
@@ -262,14 +260,6 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
         &self,
     ) -> std::borrow::Cow<'_, solana_transaction::sanitized::SanitizedTransaction> {
         unimplemented!("WritableKeysTransaction::as_sanitized_transaction");
-    }
-
-    fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
-        unimplemented!("WritableKeysTransaction::to_versioned_transaction")
-    }
-
-    fn serialized_size(&self) -> usize {
-        unimplemented!("WritableKeysTransaction::serialized_size")
     }
 }
 
@@ -324,7 +314,6 @@ mod tests {
             Some(true),
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
-            true,
         )
         .unwrap();
 
@@ -352,7 +341,7 @@ mod tests {
                     MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
                     &feature_set,
                 );
-            let vote_program_usage_details = UsageCostDetails {
+            let vote_program_cost = TransactionCost {
                 transaction: &vote_transaction,
                 signature_cost,
                 write_lock_cost,
@@ -361,7 +350,7 @@ mod tests {
                 loaded_accounts_data_size_cost,
                 allocated_accounts_data_size: 0,
             };
-            let expected_cost = vote_program_usage_details.sum();
+            let expected_cost = vote_program_cost.sum();
 
             let vote_cost = CostModel::calculate_cost(&vote_transaction, &feature_set);
             assert_eq!(expected_cost, vote_cost.sum());
@@ -379,7 +368,6 @@ mod tests {
             Some(false),
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
-            true,
         )
         .unwrap();
 

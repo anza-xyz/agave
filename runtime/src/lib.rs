@@ -49,6 +49,7 @@ pub mod stake_weighted_timestamp;
 pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
+mod sysvar_account;
 pub mod test_utils;
 pub mod transaction_balances;
 pub mod transaction_batch;

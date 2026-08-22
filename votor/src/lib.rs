@@ -4,6 +4,7 @@
 #[macro_use]
 extern crate log;
 
+pub mod aggregate_accumulator;
 pub mod commitment;
 pub mod common;
 pub mod consensus_metrics;
@@ -11,8 +12,9 @@ pub mod consensus_pool;
 mod consensus_pool_service;
 pub mod event;
 mod event_handler;
+pub mod peer_list_updater;
 pub mod root_utils;
-mod staked_validators_cache;
+pub mod slot_clock;
 mod timer_manager;
 pub mod vote_history;
 pub mod vote_history_storage;
@@ -27,12 +29,25 @@ extern crate solana_frozen_abi_macro;
 #[cfg(test)]
 mod tests {
     use {
+        agave_votor_messages::{
+            consensus_message::VoteMessage, sig_verified_messages::VoteAggregate,
+        },
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
+        solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::sync::Arc,
     };
+
+    pub(crate) fn new_vote_aggregate(bank: &Bank, msg: VoteMessage) -> VoteAggregate {
+        let rank_map = bank
+            .epoch_stakes_from_slot(msg.vote.slot())
+            .unwrap()
+            .bls_pubkey_to_rank_map();
+        let max_validators = rank_map.len();
+        VoteAggregate::new_from_verified_vote(max_validators, msg)
+    }
 
     pub(crate) fn get_cluster_info(keypair: Keypair) -> Arc<ClusterInfo> {
         Arc::new(ClusterInfo::new(

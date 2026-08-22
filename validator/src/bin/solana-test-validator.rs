@@ -11,7 +11,7 @@ use {
     solana_account::AccountSharedData,
     solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
     solana_clap_utils::{
-        input_parsers::{pubkey_of, pubkeys_of, value_of},
+        input_parsers::{pubkey_of, pubkeys_of},
         input_validators::normalize_to_url_if_moniker,
     },
     solana_clock::Slot,
@@ -20,6 +20,7 @@ use {
     solana_faucet::faucet::{Faucet, run_faucet},
     solana_inflation::Inflation,
     solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
+    solana_ledger::blockstore_options::BlockstoreCleanupStrategy,
     solana_native_token::sol_str_to_lamports,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -38,7 +39,7 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         process::exit,
-        sync::{Arc, Mutex, RwLock},
+        sync::{Arc, Mutex},
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     },
@@ -387,15 +388,11 @@ fn main() {
 
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
     if matches.is_present("alpenglow")
-        && features_to_deactivate.iter().any(|feature| {
-            *feature == agave_feature_set::alpenglow::id()
-                || *feature == agave_feature_set::validator_admission_ticket::id()
-        })
+        && features_to_deactivate
+            .iter()
+            .any(|feature| *feature == agave_feature_set::alpenglow::id())
     {
-        println!(
-            "Error: --alpenglow requires both the alpenglow and validator_admission_ticket \
-             features to be active"
-        );
+        println!("Error: --alpenglow requires the alpenglow feature to be active");
         exit(1);
     }
 
@@ -423,8 +420,20 @@ fn main() {
         );
     }
 
+    let cleanup_strategy = if matches.is_present("limit_ledger_size") {
+        println!("Warning: --limit-ledger-size is deprecated, use --limit-blockstore-size instead");
+        // Use `.unwrap_or()` here instead of setting `.default_value()` on the
+        // argument; `.default_value()` would create problems because
+        // --limit-leder-size and --limit-blockstore-size are conflicting
+        let limit = value_t!(matches, "limit_ledger_size", u64).unwrap_or(10_000);
+        BlockstoreCleanupStrategy::CountDataShreds(limit)
+    } else {
+        let limit = value_t_or_exit!(matches, "limit_blockstore_size", u64);
+        BlockstoreCleanupStrategy::CountDataAndCodingShreds(limit)
+    };
+
     let mut genesis = TestValidatorGenesis::default();
-    genesis.max_ledger_shreds = value_of(&matches, "limit_ledger_size");
+    genesis.blockstore_cleanup_strategy = cleanup_strategy;
     genesis.max_genesis_archive_unpacked_size = Some(u64::MAX);
     genesis.log_messages_bytes_limit = value_t!(matches, "log_messages_bytes_limit", usize).ok();
     genesis.transaction_account_lock_limit =
@@ -434,7 +443,7 @@ fn main() {
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
     let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(ledger_path.clone()));
 
-    let admin_service_post_init = Arc::new(RwLock::new(None));
+    let admin_service_post_init = genesis.admin_rpc_service_post_init.clone();
     // If geyser_plugin_config value is invalid, the validator will exit when the values are extracted below
     let (rpc_to_plugin_manager_sender, rpc_to_plugin_manager_receiver) =
         if matches.is_present("geyser_plugin_config") {

@@ -1,11 +1,15 @@
 use {
-    crate::{blockstore::*, blockstore_meta::SlotMeta},
+    crate::{
+        blockstore::*,
+        blockstore_meta::{NextSlots, SlotMeta},
+    },
     log::*,
+    smallvec::smallvec,
     solana_clock::Slot,
 };
 
 pub struct RootedSlotIterator<'a> {
-    next_slots: Vec<Slot>,
+    next_slots: NextSlots,
     prev_root: Slot,
     blockstore: &'a Blockstore,
 }
@@ -14,7 +18,7 @@ impl<'a> RootedSlotIterator<'a> {
     pub fn new(start_slot: Slot, blockstore: &'a Blockstore) -> Result<Self> {
         if blockstore.is_root(start_slot) {
             Ok(Self {
-                next_slots: vec![start_slot],
+                next_slots: smallvec![start_slot],
                 prev_root: start_slot,
                 blockstore,
             })

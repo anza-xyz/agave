@@ -3,7 +3,9 @@
 use {
     criterion::{Criterion, criterion_group, criterion_main},
     itertools::iproduct,
-    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
+    },
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_runtime::{

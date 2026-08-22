@@ -1,4 +1,4 @@
-pub use solana_client::connection_cache::Protocol;
+pub use solana_net_utils::Protocol;
 use {
     crate::{
         crds_data::MAX_WALLCLOCK,
@@ -6,11 +6,10 @@ use {
         tlv::{self, TlvDecodeError, TlvRecord},
     },
     assert_matches::{assert_matches, debug_assert_matches},
-    serde::{Deserialize, Deserializer, Serialize},
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_serde_varint as serde_varint, solana_short_vec as short_vec,
+    solana_short_vec as short_vec,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
@@ -86,14 +85,13 @@ pub enum Error {
     derive(StableAbi),
     frozen_abi(
         abi_digest = "8uEsgsqpoykiQgP3Majk8kurCVNB3TESe9dejgDowub4",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, SchemaWrite)]
+#[derive(Clone, Debug, Eq, PartialEq, SchemaWrite)]
 pub struct ContactInfo {
     pubkey: Pubkey,
-    #[serde(with = "serde_varint")]
     #[wincode(with = "solana_wincode_varint::Leb128Int<u64>")]
     wallclock: u64,
     // When the node instance was first created.
@@ -102,28 +100,23 @@ pub struct ContactInfo {
     shred_version: u16,
     version: solana_version::Version,
     // All IP addresses are unique and referenced at least once in sockets.
-    #[serde(with = "short_vec")]
     #[wincode(with = "wincode::containers::Vec<IpAddr, short_vec::ShortU16>")]
     addrs: Vec<IpAddr>,
     // All sockets have a unique key and a valid IP address index.
-    #[serde(with = "short_vec")]
     #[wincode(with = "wincode::containers::Vec<SocketEntry, short_vec::ShortU16>")]
     sockets: Vec<SocketEntry>,
-    #[serde(with = "short_vec")]
     #[wincode(with = "wincode::containers::Vec<Extension, short_vec::ShortU16>")]
     extensions: Vec<Extension>,
     // Only sanitized socket-addrs can be cached!
-    #[serde(skip_serializing)]
     #[wincode(skip(default_val = EMPTY_SOCKET_ADDR_CACHE))]
     cache: [SocketAddr; SOCKET_CACHE_SIZE],
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize, SchemaWrite, SchemaRead)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
 pub(crate) struct SocketEntry {
     pub(crate) key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
     pub(crate) index: u8, // IpAddr index in the accompanying addrs vector.
-    #[serde(with = "serde_varint")]
     #[wincode(with = "solana_wincode_varint::Leb128Int<u16>")]
     pub(crate) offset: u16, // Port offset with respect to the previous entry.
 }
@@ -143,26 +136,21 @@ define_tlv_enum!(
 );
 
 // As part of deserialization, self.addrs and self.sockets should be cross
-// verified and self.cache needs to be populated. This type serves as a
-// workaround since serde does not have an initializer.
-// https://github.com/serde-rs/serde/issues/642
-#[derive(Deserialize, SchemaRead)]
+// verified and self.cache needs to be populated. This type is the raw wire
+// shape, converted into ContactInfo via TryFrom once those checks pass.
+#[derive(SchemaRead)]
 struct ContactInfoLite {
     pubkey: Pubkey,
-    #[serde(with = "serde_varint")]
     #[wincode(with = "solana_wincode_varint::Leb128Int<u64>")]
     wallclock: u64,
     outset: u64,
     shred_version: u16,
     version: solana_version::Version,
-    #[serde(with = "short_vec")]
     #[wincode(with = "wincode::containers::Vec<IpAddr, short_vec::ShortU16>")]
     addrs: Vec<IpAddr>,
-    #[serde(with = "short_vec")]
     #[wincode(with = "wincode::containers::Vec<SocketEntry, short_vec::ShortU16>")]
     sockets: Vec<SocketEntry>,
     #[allow(dead_code)]
-    #[serde(with = "short_vec")]
     #[wincode(with = "wincode::containers::Vec<TlvRecord, short_vec::ShortU16>")]
     extensions: Vec<TlvRecord>,
 }
@@ -566,16 +554,6 @@ impl Default for ContactInfo {
     }
 }
 
-impl<'de> Deserialize<'de> for ContactInfo {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let node = ContactInfoLite::deserialize(deserializer)?;
-        ContactInfo::try_from(node).map_err(serde::de::Error::custom)
-    }
-}
-
 impl TryFrom<ContactInfoLite> for ContactInfo {
     type Error = Error;
 
@@ -709,23 +687,6 @@ fn sanitize_entries(addrs: &[IpAddr], sockets: &[SocketEntry]) -> Result<(), Err
         return Err(Error::PortOffsetsOverflow);
     }
     Ok(())
-}
-
-#[cfg(all(test, feature = "frozen-abi"))]
-impl solana_frozen_abi::abi_example::AbiExample for ContactInfo {
-    fn example() -> Self {
-        Self {
-            pubkey: Pubkey::example(),
-            wallclock: u64::example(),
-            outset: u64::example(),
-            shred_version: u16::example(),
-            version: solana_version::Version::example(),
-            addrs: Vec::<IpAddr>::example(),
-            sockets: Vec::<SocketEntry>::example(),
-            extensions: vec![],
-            cache: EMPTY_SOCKET_ADDR_CACHE,
-        }
-    }
 }
 
 // `ContactInfo` derives only `StableAbi` (not `StableAbiSample`): `cache` is a
@@ -930,8 +891,7 @@ mod tests {
             extensions: Vec::default(),
             cache: EMPTY_SOCKET_ADDR_CACHE,
         };
-        let bytes = bincode::serialize(&node).unwrap();
-        assert!(bincode::deserialize::<ContactInfo>(&bytes).is_err());
+        let bytes = wincode::serialize(&node).unwrap();
         assert!(wincode::deserialize::<ContactInfo>(&bytes).is_err());
     }
 
@@ -1059,11 +1019,9 @@ mod tests {
                 )
                 .is_ok()
             );
-            // Assert that serde round trips.
+            // Assert that the wire encoding round trips.
             let bytes = wincode::serialize(&node).unwrap();
-            assert_eq!(bytes, bincode::serialize(&node).unwrap());
             let other: ContactInfo = wincode::deserialize(&bytes).unwrap();
-            assert_eq!(other, bincode::deserialize::<ContactInfo>(&bytes).unwrap());
             assert_eq!(node, other);
         }
     }
@@ -1178,43 +1136,6 @@ mod tests {
             assert!(!other.check_duplicate(&node));
             assert_eq!(node.overrides(&other), Some(false));
             assert_eq!(other.overrides(&node), Some(true));
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_contact_info() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let node = ContactInfo::new_rand(&mut rng, None);
-
-            let bincode_bytes = bincode::serialize(&node).unwrap();
-            let wincode_decoded: ContactInfo = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(node, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&node).unwrap();
-            assert_eq!(wincode_bytes, bincode_bytes);
-            let bincode_decoded: ContactInfo = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(node, bincode_decoded);
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_socket_entry() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let entry = SocketEntry {
-                key: rng.random(),
-                index: rng.random(),
-                offset: rng.random(),
-            };
-
-            let bincode_bytes = bincode::serialize(&entry).unwrap();
-            let wincode_decoded: SocketEntry = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(entry, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&entry).unwrap();
-            let bincode_decoded: SocketEntry = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(entry, bincode_decoded);
         }
     }
 }

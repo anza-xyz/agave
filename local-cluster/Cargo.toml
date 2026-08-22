@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -17,9 +18,11 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
+    "agave-votor/dev-context-only-utils",
     "solana-core/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
     "solana-tpu-client-next/dev-context-only-utils",
+    "agave-votor-transport/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -28,14 +31,15 @@ agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
+arc-swap = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { workspace = true }
-solana-client = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
@@ -61,7 +65,6 @@ solana-poh-config = { workspace = true }
 solana-program-binaries = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
-solana-quic-client = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
@@ -70,7 +73,7 @@ solana-sdk-ids = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signer = { workspace = true }
 solana-slot-hashes = { workspace = true }
-solana-stake-interface = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-streamer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }

@@ -121,7 +121,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             bank,
             &work.transactions,
             &work.max_ages,
-            ExecutionFlags {
+            &ExecutionFlags {
                 drop_on_failure: false,
                 all_or_nothing: false,
             },
@@ -210,7 +210,6 @@ pub(crate) mod external {
         solana_account::ReadableAccount,
         solana_clock::Slot,
         solana_cost_model::cost_model::CostModel,
-        solana_message::v0::LoadedAddresses,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -219,8 +218,9 @@ pub(crate) mod external {
         solana_runtime_transaction::{
             runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
         },
+        solana_svm_transaction::svm_message::SVMMessage,
         solana_transaction::TransactionError,
-        std::ptr::NonNull,
+        std::{num::NonZeroUsize, ptr::NonNull},
     };
 
     #[derive(Debug, Error)]
@@ -311,29 +311,19 @@ pub(crate) mod external {
             should_drain_executes: &mut bool,
         ) -> Result<IterationResult, ExternalConsumeWorkerError> {
             self.allocator.clean_remote_free_lists();
-            if receiver.is_empty() {
-                receiver.sync();
-                *should_drain_executes = false;
+            let capacity = NonZeroUsize::new(receiver.capacity())
+                .expect("shaq queue capacity must be non-zero");
+            let Some(messages) = receiver.try_reserve_read_batch(capacity) else {
+                return Ok(IterationResult::Idle);
+            };
+
+            *should_drain_executes = false;
+            for message in messages {
+                // If the bank is unavailable, drain executes for the remainder of the batch.
+                *should_drain_executes |= self.process_message(&message, *should_drain_executes)?;
             }
 
-            match receiver.try_read() {
-                Some(message) => {
-                    self.sender.sync();
-
-                    // Process message, if bank is unavailable enable draining for the
-                    // remainder of the current batch (i.e. what our `receiver.sync()`
-                    // fetched).
-                    *should_drain_executes |=
-                        self.process_message(message, *should_drain_executes)?;
-
-                    // Publish our send & read offsets.
-                    self.sender.commit();
-                    receiver.finalize();
-
-                    Ok(IterationResult::ProcessedMessage)
-                }
-                None => Ok(IterationResult::Idle),
-            }
+            Ok(IterationResult::ProcessedMessage)
         }
 
         /// Return true if fetching a bank for execution timed out.
@@ -425,12 +415,11 @@ pub(crate) mod external {
 
                 return Ok(false);
             }
-
             let output = self.consumer.process_and_record_aged_transactions(
                 bank,
                 &transactions,
                 &max_ages,
-                execution_flags,
+                &execution_flags,
             );
 
             self.metrics.update_for_consume(&output);
@@ -458,6 +447,7 @@ pub(crate) mod external {
                     &transactions,
                     &commit_results,
                     bank,
+                    &execution_flags,
                 ),
             )?;
 
@@ -505,7 +495,6 @@ pub(crate) mod external {
                 Self::parse_transactions_and_populate_initial_check_responses(
                     message,
                     &batch,
-                    &root_bank,
                     responses_ptr,
                 )
             };
@@ -599,6 +588,7 @@ pub(crate) mod external {
             transactions: &'a [impl TransactionWithMeta],
             commit_results: &'a [CommitTransactionDetails],
             bank: &'a Bank,
+            execution_flags: &'a ExecutionFlags,
         ) -> impl ExactSizeIterator<Item = ExecutionResponse> + 'a {
             assert_eq!(transactions.len(), commit_results.len());
             let mut transactions_iterator = transactions.iter();
@@ -615,7 +605,12 @@ pub(crate) mod external {
                         let commit_details = commit_result_iterator.next().expect(
                             "commit result iterator must contain element for each sent transaction",
                         );
-                        Self::response_from_commit_details(tx, commit_details, bank)
+                        Self::response_from_commit_details(
+                            tx,
+                            commit_details,
+                            bank,
+                            execution_flags,
+                        )
                     }
                     Err(err) => ExecutionResponse {
                         execution_slot: bank.slot(),
@@ -699,42 +694,43 @@ pub(crate) mod external {
                     "max_age_iter iterator must contain element for each sent parsed transaction",
                 );
 
-                // There are 3 cases here:
-                // 1. None - Tx format does not support ATL
-                // 2. Some(empty) - V0 Tx with no ATL
-                // 3. Some(keys) - V0 Tx with ATL
-                // Only in case 3 will we create a shared allocation and copy keys.
-                let (sharable_keys, alt_invalidation_slot) = match transaction.loaded_addresses() {
-                    Some(loaded_addresses) if !loaded_addresses.is_empty() => {
-                        let num_pubkeys = loaded_addresses.len();
-                        let pubkeys_allocation = self
-                            .allocator
-                            .allocate(
-                                num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32
-                            )
-                            .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
-                            .cast();
-                        // SAFETY: non-overlapping and appropriately sized.
-                        unsafe {
-                            Self::copy_loaded_addresses(loaded_addresses, pubkeys_allocation)
-                        };
-                        // SAFETY: pubkeys_allocation was allocated by allocator
-                        let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
-                        (
-                            SharablePubkeys {
-                                offset,
-                                num_pubkeys: num_pubkeys as u32,
-                            },
-                            max_age.alt_invalidation_slot,
+                // Address table lookups are sanitized to contain at least one account, so there
+                // are loaded keys exactly when account keys outnumber static account keys.
+                let account_keys = transaction.account_keys();
+                let num_static_account_keys = transaction.static_account_keys().len();
+                let (sharable_keys, alt_invalidation_slot) = if account_keys.len()
+                    > num_static_account_keys
+                {
+                    let num_pubkeys = account_keys.len().wrapping_sub(num_static_account_keys);
+                    let pubkeys_allocation = self
+                        .allocator
+                        .allocate(num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32)
+                        .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
+                        .cast();
+                    // SAFETY: non-overlapping and appropriately sized.
+                    unsafe {
+                        Self::copy_loaded_addresses(
+                            account_keys.iter().skip(num_static_account_keys),
+                            pubkeys_allocation,
                         )
-                    }
-                    _ => (
+                    };
+                    // SAFETY: pubkeys_allocation was allocated by allocator
+                    let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
+                    (
+                        SharablePubkeys {
+                            offset,
+                            num_pubkeys: num_pubkeys as u32,
+                        },
+                        max_age.alt_invalidation_slot,
+                    )
+                } else {
+                    (
                         SharablePubkeys {
                             offset: 0,
                             num_pubkeys: 0,
                         },
                         u64::MAX,
-                    ),
+                    )
                 };
 
                 response.resolution_slot = resolution_slot;
@@ -776,15 +772,13 @@ pub(crate) mod external {
         unsafe fn parse_transactions_and_populate_initial_check_responses<'a>(
             message: &PackToWorkerMessage,
             batch: &TransactionPtrBatch,
-            bank: &Bank,
             responses_ptr: NonNull<CheckResponse>,
         ) -> (
             ArrayVec<Result<(), TransactionViewError>, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<TxView, MAX_TRANSACTIONS_PER_MESSAGE>,
             &'a mut [CheckResponse],
         ) {
-            let sanitize_config =
-                sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
+            let sanitize_config = sanitize_config();
             let mut parsing_results = ArrayVec::new();
             let mut parsed_transactions = ArrayVec::new();
             for (tx_ptr, _) in batch.iter() {
@@ -900,13 +894,8 @@ pub(crate) mod external {
                 );
 
                 let fee_payer_balance = working_bank
-                    .rc
-                    .accounts
-                    .load_with_fixed_root(
-                        &working_bank.ancestors,
-                        &transaction.static_account_keys()[0],
-                    )
-                    .map(|(account, _slot)| account.lamports())
+                    .get_account_with_fixed_root(&transaction.static_account_keys()[0])
+                    .map(|account| account.lamports())
                     .unwrap_or(0);
 
                 let response = &mut responses[transaction_index];
@@ -977,8 +966,7 @@ pub(crate) mod external {
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<MaxAge, MAX_TRANSACTIONS_PER_MESSAGE>,
         ) {
-            let sanitize_config =
-                sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
+            let sanitize_config = sanitize_config();
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = ArrayVec::new();
@@ -1029,18 +1017,12 @@ pub(crate) mod external {
         /// # Safety
         /// - destination is appropriately sized
         /// - destination does not overlap with loaded_addresses allocation
-        unsafe fn copy_loaded_addresses(loaded_addresses: &LoadedAddresses, dest: NonNull<Pubkey>) {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    loaded_addresses.writable.as_ptr(),
-                    dest.as_ptr(),
-                    loaded_addresses.writable.len(),
-                );
-                core::ptr::copy_nonoverlapping(
-                    loaded_addresses.readonly.as_ptr(),
-                    dest.add(loaded_addresses.writable.len()).as_ptr(),
-                    loaded_addresses.readonly.len(),
-                );
+        unsafe fn copy_loaded_addresses<'a>(
+            loaded_addresses: impl Iterator<Item = &'a Pubkey>,
+            dest: NonNull<Pubkey>,
+        ) {
+            for (index, pubkey) in loaded_addresses.enumerate() {
+                unsafe { dest.add(index).write(*pubkey) };
             }
         }
 
@@ -1072,6 +1054,7 @@ pub(crate) mod external {
             tx: &impl TransactionWithMeta,
             commit_details: &CommitTransactionDetails,
             bank: &Bank,
+            execution_flags: &ExecutionFlags,
         ) -> ExecutionResponse {
             match commit_details {
                 CommitTransactionDetails::Committed {
@@ -1095,6 +1078,7 @@ pub(crate) mod external {
                     execution_slot: bank.slot(),
                     not_included_reason: transaction_error_to_not_included_reason(
                         transaction_error,
+                        execution_flags.all_or_nothing,
                     ),
                     cost_units: 0,
                     fee_payer_balance: 0,
@@ -1128,6 +1112,7 @@ pub(crate) mod external {
             solana_keypair::Keypair,
             solana_leader_schedule::SlotLeader,
             solana_ledger::genesis_utils::GenesisConfigInfo,
+            solana_message::v0::LoadedAddresses,
             solana_poh::{
                 record_channels::{RecordReceiver, record_channels},
                 transaction_recorder::TransactionRecorder,
@@ -1184,7 +1169,6 @@ pub(crate) mod external {
 
             fn send_message(&mut self, message: PackToWorkerMessage) {
                 self.pack_to_worker.try_write(message).unwrap();
-                self.pack_to_worker.commit();
             }
 
             fn iterate(&mut self) -> Result<(), ExternalConsumeWorkerError> {
@@ -1196,10 +1180,7 @@ pub(crate) mod external {
             }
 
             fn recv_response(&mut self) -> WorkerToPackMessage {
-                self.worker_to_pack.sync();
-                let message = *self.worker_to_pack.try_read().unwrap();
-                self.worker_to_pack.finalize();
-                message
+                self.worker_to_pack.try_read().unwrap()
             }
 
             fn execution_responses(
@@ -1455,13 +1436,17 @@ pub(crate) mod external {
                         &simple_tx[..],
                         &bank,
                         bank.get_transaction_account_lock_limit(),
-                        &sanitize_config(true),
+                        &sanitize_config(),
                     )
                     .ok()
                     .unwrap()
                     .0
                 })
                 .collect::<Vec<_>>();
+            let execution_flags = ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            };
 
             let responses = ExternalWorker::consume_response_iterator(
                 &[
@@ -1492,6 +1477,7 @@ pub(crate) mod external {
                     ),
                 ],
                 &bank,
+                &execution_flags,
             )
             .collect::<Vec<_>>();
 
@@ -1524,6 +1510,56 @@ pub(crate) mod external {
                     }
                 ]
             )
+        }
+
+        #[test_case(
+            true,
+            not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE;
+            "all_or_nothing"
+        )]
+        #[test_case(
+            false,
+            not_included_reasons::PARTIAL_BATCH_CANCELLED;
+            "partial_batch"
+        )]
+        fn test_commit_cancelled_response_reason_uses_batch_mode(
+            all_or_nothing: bool,
+            expected_not_included_reason: u8,
+        ) {
+            let simple_tx = wincode::serialize(&transfer(
+                &solana_keypair::Keypair::new(),
+                &solana_pubkey::Pubkey::new_unique(),
+                1,
+                solana_hash::Hash::default(),
+            ))
+            .unwrap();
+            let bank = Bank::default_for_tests();
+            let tx = translate_to_runtime_view(
+                &simple_tx[..],
+                &bank,
+                bank.get_transaction_account_lock_limit(),
+                &sanitize_config(),
+            )
+            .ok()
+            .unwrap()
+            .0;
+            let commit_details =
+                CommitTransactionDetails::NotCommitted(TransactionError::CommitCancelled);
+            let execution_flags = ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing,
+            };
+
+            assert_eq!(
+                ExternalWorker::response_from_commit_details(
+                    &tx,
+                    &commit_details,
+                    &bank,
+                    &execution_flags,
+                )
+                .not_included_reason,
+                expected_not_included_reason
+            );
         }
 
         #[test]
@@ -1643,10 +1679,8 @@ pub(crate) mod external {
 
             let parsing_results = [Ok(()), Err(TransactionViewError::ParseError), Ok(())];
             let parsed_transactions = [
-                SanitizedTransactionView::try_new_sanitized(&tx1[..], &sanitize_config(true))
-                    .unwrap(),
-                SanitizedTransactionView::try_new_sanitized(&tx2[..], &sanitize_config(true))
-                    .unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx1[..], &sanitize_config()).unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx2[..], &sanitize_config()).unwrap(),
             ];
             bank.store_account(
                 &parsed_transactions[1].static_account_keys()[0],
@@ -1696,7 +1730,7 @@ pub(crate) mod external {
             ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
                 RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                     RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                        SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config(true))
+                        SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config())
                             .unwrap(),
                         solana_transaction::sanitized::MessageHash::Compute,
                         Some(false),
@@ -1795,7 +1829,10 @@ pub(crate) mod external {
             let mut buffer = vec![Pubkey::default(); 7];
             unsafe {
                 ExternalWorker::copy_loaded_addresses(
-                    &loaded_addresses,
+                    loaded_addresses
+                        .writable
+                        .iter()
+                        .chain(&loaded_addresses.readonly),
                     NonNull::new(buffer.as_mut_ptr()).unwrap(),
                 )
             };
@@ -2099,10 +2136,6 @@ pub(crate) mod external {
                 not_included_reasons::BANK_NOT_AVAILABLE
             );
 
-            test_frame.enable_execution();
-            test_frame.iterate().unwrap();
-            assert!(test_frame.should_drain_executes);
-
             let response = test_frame.recv_response();
             assert_eq!(response.processed_code, processed_codes::PROCESSED);
             let responses = test_frame.execution_responses(&response.responses);
@@ -2249,7 +2282,6 @@ pub(crate) mod external {
                 not_included_reasons::NONE
             );
 
-            test_frame.iterate().unwrap();
             let second = test_frame.recv_response();
             assert_eq!(second.batch, check_batch.region);
             let second_responses = test_frame.check_responses(&second.responses);
@@ -3300,7 +3332,6 @@ mod tests {
                 None,
                 loader,
                 &HashSet::default(),
-                bank.feature_set.snapshot().limit_instruction_accounts,
             )
             .unwrap()
         };

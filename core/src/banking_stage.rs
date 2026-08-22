@@ -19,11 +19,12 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::{BankingPacketReceiver, SchedulerPriorityFloor},
+    agave_votor::slot_clock::SharedAlpenglowSlotClock,
     crossbeam_channel::{Receiver, Sender, bounded},
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
-    solana_perf::packet::PACKETS_PER_BATCH,
+    solana_perf::packet::{PACKETS_PER_BATCH, PacketRef, bytes::Bytes},
     solana_poh::{
         poh_controller::PohController, poh_recorder::PohRecorder,
         transaction_recorder::TransactionRecorder,
@@ -49,6 +50,7 @@ use {
     tokio::sync::mpsc,
     tokio_util::sync::CancellationToken,
     transaction_scheduler::{
+        check_worker::spawn_check_workers,
         greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         receive_and_buffer::TransactionViewReceiveAndBuffer,
     },
@@ -83,6 +85,13 @@ const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
+
+fn packet_bytes(packet: PacketRef<'_>, packet_data: &[u8]) -> Bytes {
+    match packet {
+        PacketRef::Bytes(packet) => packet.buffer().clone(),
+        PacketRef::Packet(_) => Bytes::copy_from_slice(packet_data),
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct BankingStageStats {
@@ -332,6 +341,8 @@ pub struct BankingStage {
     transaction_recorder: TransactionRecorder,
     poh_recorder: Arc<RwLock<PohRecorder>>,
     bank_forks: Arc<RwLock<BankForks>>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    alpenglow_slot_clock: SharedAlpenglowSlotClock,
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
     filter_keys: Arc<HashSet<Pubkey>>,
@@ -355,6 +366,7 @@ impl BankingStage {
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
+        alpenglow_slot_clock: SharedAlpenglowSlotClock,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         filter_keys: Arc<HashSet<Pubkey>>,
         priority_floor: Arc<SchedulerPriorityFloor>,
@@ -377,6 +389,7 @@ impl BankingStage {
             transaction_recorder,
             poh_recorder,
             bank_forks,
+            alpenglow_slot_clock,
             committer,
             log_messages_bytes_limit,
             filter_keys,
@@ -501,24 +514,35 @@ impl BankingStage {
 
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
+        const NUM_CHECK_WORKERS: NonZeroUsize = NonZeroUsize::new(8).unwrap();
+        const CHANNEL_CAPACITY: usize = 10_000;
 
         let exit = self.worker_exit_signal.clone();
 
         // Setup receive & buffer.
         let sharable_banks = self.bank_forks.read().unwrap().sharable_banks();
-        let receive_and_buffer = TransactionViewReceiveAndBuffer {
-            receiver: self.non_vote_receiver.clone(),
-            sharable_banks: sharable_banks.clone(),
-            filter_keys: self.filter_keys.clone(),
-        };
+        let priority_floor = self.priority_floor.clone();
+        let (check_work_sender, check_work_receiver) = bounded(CHANNEL_CAPACITY);
+        let (check_result_sender, check_result_receiver) = bounded(CHANNEL_CAPACITY);
+        let check_worker_handles = spawn_check_workers(
+            NUM_CHECK_WORKERS,
+            check_work_receiver,
+            check_result_sender,
+            sharable_banks.clone(),
+            self.filter_keys.clone(),
+        );
+        let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
+            self.non_vote_receiver.clone(),
+            check_work_sender,
+            check_result_receiver,
+        );
 
         // Spawn vote worker.
-        let mut threads = Vec::with_capacity(num_workers + 2);
+        let mut threads = Vec::with_capacity(num_workers + NUM_CHECK_WORKERS.get() + 2);
+        threads.extend(check_worker_handles);
         threads.push(self.spawn_vote_worker());
 
         // Create channels for communication between scheduler and workers
-        const CHANNEL_CAPACITY: usize = 10_000; // unlikely we'll ever hit this given default configuration.
-
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
             (0..num_workers).map(|_| bounded(CHANNEL_CAPACITY)).unzip();
         let (finished_work_sender, finished_work_receiver) =
@@ -561,7 +585,6 @@ impl BankingStage {
             finished_work_receiver,
             GreedySchedulerConfig::default(),
         );
-        let priority_floor = self.priority_floor.clone();
         let exit = exit.clone();
         let shutdown_signal = self.banking_shutdown_signal.clone();
         threads.push(
@@ -735,12 +758,15 @@ mod external {
 
                 (poh.shared_leader_state(), poh.ticks_per_slot())
             };
+            let migration_status = self.bank_forks.read().unwrap().migration_status();
             threads.push(progress_tracker::spawn(
                 self.worker_exit_signal.clone(),
                 progress_tracker,
                 shared_leader_state,
                 worker_metrics,
                 ticks_per_slot,
+                migration_status,
+                self.alpenglow_slot_clock.clone(),
             ));
 
             Ok(threads)
@@ -831,7 +857,9 @@ mod tests {
             banking_trace::{BankingTracer, Channels},
             validator::SchedulerPacing,
         },
-        agave_banking_stage_ingress_types::BankingPacketBatch,
+        agave_banking_stage_ingress_types::{
+            to_banking_packet_batch, to_single_banking_packet_batch,
+        },
         crossbeam_channel::bounded,
         itertools::Itertools,
         solana_entry::{
@@ -847,7 +875,6 @@ mod tests {
             },
             get_tmp_ledger_path_auto_delete,
         },
-        solana_perf::packet::to_packet_batches,
         solana_poh::{
             poh_recorder::{PohRecorderError, create_test_recorder},
             record_channels::record_channels,
@@ -916,6 +943,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
+            SharedAlpenglowSlotClock::default(),
             None,
             Arc::default(),
             Arc::new(SchedulerPriorityFloor::new()),
@@ -978,6 +1006,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
+            SharedAlpenglowSlotClock::default(),
             None,
             Arc::default(),
             Arc::new(SchedulerPriorityFloor::new()),
@@ -997,18 +1026,18 @@ mod tests {
         let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
 
         // send 'em over
-        let mut packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
-        packet_batches[0]
+        let mut packet_batch = to_banking_packet_batch(&[tx_no_ver, tx_anf, tx]);
+        Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
             .meta_mut()
             .set_discard(true); // set discard on `tx_no_ver`
 
         // glad they all fit
-        assert_eq!(packet_batches.len(), 1);
+        assert_eq!(packet_batch.len(), 3);
 
         non_vote_sender // no_ver, anf, tx
-            .send(BankingPacketBatch::new(packet_batches))
+            .send(packet_batch)
             .unwrap();
 
         // capture the entry receiver until we've received all our entries.
@@ -1087,18 +1116,14 @@ mod tests {
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
 
-        let packet_batches = to_packet_batches(&[tx], 1);
-        non_vote_sender
-            .send(BankingPacketBatch::new(packet_batches))
-            .unwrap();
+        let packet_batches = to_single_banking_packet_batch(&tx);
+        non_vote_sender.send(packet_batches).unwrap();
 
         // Process a second batch that uses the same from account, so conflicts with above TX
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
-        let packet_batches = to_packet_batches(&[tx], 1);
-        non_vote_sender
-            .send(BankingPacketBatch::new(packet_batches))
-            .unwrap();
+        let packet_batches = to_single_banking_packet_batch(&tx);
+        non_vote_sender.send(packet_batches).unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
@@ -1134,6 +1159,7 @@ mod tests {
                 replay_vote_sender,
                 None,
                 bank_forks,
+                SharedAlpenglowSlotClock::default(),
                 None,
                 Arc::default(),
                 Arc::new(SchedulerPriorityFloor::new()),
@@ -1204,8 +1230,8 @@ mod tests {
         let summary = recorder.record_transactions(bank.bank_id(), txs.clone());
         assert!(summary.result.is_ok());
         assert_eq!(
-            record_receiver.try_recv().unwrap().transaction_batches,
-            vec![txs.clone()]
+            record_receiver.try_recv().unwrap().transactions,
+            txs.clone()
         );
         assert!(record_receiver.try_recv().is_err());
 
@@ -1289,6 +1315,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
+            SharedAlpenglowSlotClock::default(),
             None,
             Arc::default(),
             Arc::new(SchedulerPriorityFloor::new()),
@@ -1342,9 +1369,9 @@ mod tests {
             })
             .collect_vec();
 
-        let non_vote_packet_batches = to_packet_batches(&txs, 10);
-        let tpu_packet_batches = to_packet_batches(&tpu_votes, 10);
-        let gossip_packet_batches = to_packet_batches(&gossip_votes, 10);
+        let non_vote_packet_batches = to_banking_packet_batch(&txs);
+        let tpu_packet_batches = to_banking_packet_batch(&tpu_votes);
+        let gossip_packet_batches = to_banking_packet_batch(&gossip_votes);
 
         // Send em all
         [
@@ -1355,11 +1382,7 @@ mod tests {
         .into_iter()
         .map(|(packet_batches, sender)| {
             Builder::new()
-                .spawn(move || {
-                    sender
-                        .send(BankingPacketBatch::new(packet_batches))
-                        .unwrap()
-                })
+                .spawn(move || sender.send(packet_batches).unwrap())
                 .unwrap()
         })
         .for_each(|handle| {

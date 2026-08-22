@@ -7,6 +7,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -31,7 +32,7 @@ bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-accounts-db = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-cli-output = { workspace = true }
@@ -75,7 +76,6 @@ tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 solana-sdk-ids = { workspace = true }
-# See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-test-validator = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 
 [lints]

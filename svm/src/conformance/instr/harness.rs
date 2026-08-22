@@ -5,10 +5,11 @@ use {
     crate::conformance::{
         callback::DefaultCallback,
         setup::{
-            InvokeContextFields, compute_budget, prepare_invoke_context_fields,
+            InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
             program_runtime_environments,
         },
     },
+    solana_account::AccountSharedData,
     solana_instruction::error::InstructionError,
     solana_program_runtime::{
         invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
@@ -17,19 +18,7 @@ use {
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_timings::ExecuteTimings,
-    std::rc::Rc,
-};
-#[cfg(feature = "conformance")]
-use {
-    crate::conformance::{
-        callback::ConformanceCallback,
-        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        setup::sysvar_cache_from_accounts,
-    },
-    agave_precompiles::is_precompile,
-    prost::Message,
-    protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
-    std::ffi::c_int,
+    std::{collections::HashMap, rc::Rc},
 };
 
 /// Execute a single instruction against the Solana VM with the default
@@ -55,10 +44,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let mut compute_budget = compute_budget(&input.feature_set);
     compute_budget.compute_unit_limit = input.cu_avail; // Clamp budget for execution by cu_avail
 
-    let loader_key = program_cache
-        .find(&input.instruction.program_id)
-        .expect("program not loaded in cache")
-        .account_owner();
+    let loader_key = program_loader_key(&input.accounts, &input.instruction.program_id);
 
     let program_runtime_environments =
         program_runtime_environments(&input.feature_set, &compute_budget);
@@ -113,10 +99,31 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         .map(|index| {
             *transaction_context
                 .get_key_of_account_at_index(index)
-                .clone()
                 .unwrap()
         })
-        .collect::<Vec<_>>();
+        .collect();
+
+    // Post-execution state of the accounts in the compiled message.
+    let mut executed: HashMap<Pubkey, AccountSharedData> = account_keys
+        .into_iter()
+        .zip(transaction_context.deconstruct_without_keys().unwrap())
+        .collect();
+
+    // Preserve input account order, overlaying executed state for accounts
+    // present in the compiled message.
+    let resulting_accounts = input
+        .accounts
+        .iter()
+        .map(|(pubkey, account)| {
+            (
+                *pubkey,
+                executed
+                    .remove(pubkey)
+                    .map(Into::into)
+                    .unwrap_or_else(|| account.clone()),
+            )
+        })
+        .collect();
 
     InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
@@ -125,125 +132,11 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             None
         },
         result: result.err(),
-        resulting_accounts: transaction_context
-            .deconstruct_without_keys()
-            .unwrap()
-            .into_iter()
-            .zip(account_keys)
-            .map(|(account, key)| (key, account.into()))
-            .collect(),
+        resulting_accounts,
         cu_avail,
         return_data,
         logs,
     }
-}
-
-#[cfg(feature = "conformance")]
-pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
-    let instr_context = InstrContext::from(input);
-
-    // When testing with protobuf, we fill the sysvar cache from input accounts.
-    let sysvar_cache = sysvar_cache_from_accounts(&instr_context.accounts);
-
-    // When testing with protobuf, we fill the program cache from input accounts.
-    let mut program_cache = {
-        let slot = sysvar_cache.get_clock().unwrap().slot;
-        let feature_set = &instr_context.feature_set;
-        let compute_budget = compute_budget(feature_set);
-        let environments = program_runtime_environments(feature_set, &compute_budget);
-
-        let mut cache = new_program_cache_with_builtins(slot);
-        fill_program_cache_from_accounts(
-            &mut cache,
-            environments.get_env_for_deployment(),
-            &instr_context.accounts,
-            slot,
-        );
-
-        cache
-    };
-
-    let mut effects = execute_instr_with_callback(
-        &instr_context,
-        &ConformanceCallback,
-        &mut program_cache,
-        &sysvar_cache,
-    );
-
-    // Precompile verification failures surface as `Custom`, but Firedancer
-    // reports a custom error code of 0 for precompiles.
-    if effects.custom_err.is_some()
-        && is_precompile(&instr_context.instruction.program_id, |_| true)
-    {
-        effects.custom_err = Some(0);
-    }
-
-    // TODO: Firedancer's tooling compares resulting account contents even
-    // when execution fails, so the harness must report them. Account
-    // contents are not meaningful on error (partial writes can diverge based
-    // on timing, e.g. with direct mapping or builtins), so once the tooling
-    // supports it, the harness should skip the account comparison on error
-    // entirely, which would also make the CU-exhaustion workaround below
-    // unnecessary.
-    direct_mapping_handle_cu_exhaustion(
-        instr_context.feature_set.virtual_address_space_adjustments,
-        effects.cu_avail,
-        effects.result.is_some(),
-        effects
-            .resulting_accounts
-            .iter_mut()
-            .map(|(_, account)| &mut account.data),
-    );
-
-    effects.into()
-}
-
-/// Due to how Firedancer's VM CU accounting works, when
-/// virtual_address_space_adjustments is enabled and execution fails with the
-/// CU meter exhausted, we cannot compare the data region of the accounts with
-/// Agave.  Clears each supplied data buffer in that case.
-#[cfg(feature = "conformance")]
-fn direct_mapping_handle_cu_exhaustion<'a>(
-    virtual_address_space_adjustments_active: bool,
-    cu_avail: u64,
-    has_err: bool,
-    account_data: impl IntoIterator<Item = &'a mut Vec<u8>>,
-) {
-    if virtual_address_space_adjustments_active && cu_avail == 0 && has_err {
-        for data in account_data {
-            data.clear();
-        }
-    }
-}
-
-/// # Safety
-///
-/// `in_ptr` must point to `in_sz` initialized bytes. `out_ptr` must point
-/// to a writable buffer of at least `*out_psz` bytes. On return, `*out_psz`
-/// is updated to the number of bytes written.
-#[cfg(feature = "conformance")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn sol_compat_instr_execute_v1(
-    out_ptr: *mut u8,
-    out_psz: *mut u64,
-    in_ptr: *mut u8,
-    in_sz: u64,
-) -> c_int {
-    let in_slice = unsafe { std::slice::from_raw_parts(in_ptr, in_sz as usize) };
-    let Ok(instr_context) = ProtoInstrContext::decode(in_slice) else {
-        return 0;
-    };
-    let instr_effects = execute_instr_proto(instr_context);
-    let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
-    let out_vec = instr_effects.encode_to_vec();
-    if out_vec.len() > out_slice.len() {
-        return 0;
-    }
-    out_slice[..out_vec.len()].copy_from_slice(&out_vec);
-    unsafe {
-        *out_psz = out_vec.len() as u64;
-    }
-    1
 }
 
 #[cfg(test)]
@@ -301,31 +194,6 @@ mod tests {
             }
         });
         sysvar_cache
-    }
-
-    #[cfg(feature = "conformance")]
-    fn proto_account(pubkey: Pubkey, account: Account) -> protosol::protos::AcctState {
-        protosol::protos::AcctState {
-            address: pubkey.to_bytes().to_vec(),
-            owner: account.owner.to_bytes().to_vec(),
-            lamports: account.lamports,
-            data: account.data,
-            executable: account.executable,
-        }
-    }
-
-    #[cfg(feature = "conformance")]
-    fn proto_sysvar_account<T: serde::Serialize>(
-        pubkey: Pubkey,
-        sysvar: &T,
-    ) -> protosol::protos::AcctState {
-        protosol::protos::AcctState {
-            address: pubkey.to_bytes().to_vec(),
-            owner: solana_sdk_ids::sysvar::id().to_bytes().to_vec(),
-            lamports: 1,
-            data: bincode::serialize(sysvar).unwrap(),
-            executable: false,
-        }
     }
 
     fn build_system_transfer_context(from: &Pubkey, to: &Pubkey, amount: u64) -> InstrContext {
@@ -403,14 +271,21 @@ mod tests {
     #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(); "loader_v3")]
     fn test_bpf_noop_program_exec(loader_key: Pubkey) {
         let program_id = Pubkey::new_unique();
+        let program_account = Account {
+            lamports: 1,
+            data: vec![],
+            owner: loader_key,
+            executable: true,
+            rent_epoch: u64::MAX,
+        };
         let context = InstrContext::new_with_default_budget(
             SVMFeatureSet::default(),
-            vec![],
+            vec![(program_id, program_account)],
             Instruction::new_with_bytes(program_id, &[], vec![]),
         );
         let sysvar_cache = sysvar_cache_with_rent();
 
-        let mut program_cache = new_program_cache_with_builtins(0);
+        let mut program_cache = new_program_cache_with_builtins(1);
         add_program_to_program_cache(
             &mut program_cache,
             &program_id,
@@ -422,48 +297,5 @@ mod tests {
         let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
         assert_eq!(effects.result, None);
         assert_eq!(effects.custom_err, None);
-    }
-
-    #[cfg(feature = "conformance")]
-    #[test]
-    #[should_panic(expected = "invariant violation: duplicate account load")]
-    fn test_duplicate_accounts_panic_with_invariant_violation() {
-        let from = Pubkey::new_unique();
-        let to = Pubkey::new_unique();
-        let duplicate = Pubkey::new_unique();
-        let instruction = solana_system_interface::instruction::transfer(&from, &to, 1);
-
-        execute_instr_proto(ProtoInstrContext {
-            program_id: solana_sdk_ids::system_program::id().to_bytes().to_vec(),
-            accounts: vec![
-                proto_account(from, system_account_with_lamports(FROM_BASE_LAMPORTS)),
-                proto_account(to, system_account_with_lamports(TO_BASE_LAMPORTS)),
-                proto_account(duplicate, system_account_with_lamports(1)),
-                proto_account(duplicate, system_account_with_lamports(1)),
-                proto_account(
-                    keyed_account_for_system_program().0,
-                    keyed_account_for_system_program().1,
-                ),
-                proto_sysvar_account(
-                    solana_sdk_ids::sysvar::clock::id(),
-                    &solana_clock::Clock::default(),
-                ),
-            ],
-            instr_accounts: vec![
-                protosol::protos::InstrAcct {
-                    index: 0,
-                    is_signer: true,
-                    is_writable: true,
-                },
-                protosol::protos::InstrAcct {
-                    index: 1,
-                    is_signer: false,
-                    is_writable: true,
-                },
-            ],
-            data: instruction.data,
-            cu_avail: SYSTEM_TRANSFER_CUS,
-            features: None,
-        });
     }
 }

@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_notify_account_restore_from_snapshot() {
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
@@ -114,23 +114,26 @@ mod tests {
         // to correct slots. Cache flush can skip writes if accounts have already been written to
         // a newer slot
         let slot0 = 0;
-        let storage0 = accounts_db.create_and_insert_store(slot0, /*size*/ 4_096);
+        let storage0 = accounts_db.create_store(slot0, /*size*/ 4_096);
         storage0
             .accounts
             .write_accounts(&(slot0, [(&key1, &account)].as_slice()));
+        accounts_db.storage.insert(Arc::new(storage0));
 
         let slot1 = 1;
-        let storage1 = accounts_db.create_and_insert_store(slot1, /*size*/ 4_096);
+        let storage1 = accounts_db.create_store(slot1, /*size*/ 4_096);
         storage1
             .accounts
             .write_accounts(&(slot1, [(&key1, &account)].as_slice()));
+        accounts_db.storage.insert(Arc::new(storage1));
 
         // Account with key2 is updated in a single slot, should get notified once
         let slot2 = 2;
-        let storage2 = accounts_db.create_and_insert_store(slot2, /*size*/ 4_096);
+        let storage2 = accounts_db.create_store(slot2, /*size*/ 4_096);
         storage2
             .accounts
             .write_accounts(&(slot2, [(&key2, &account)].as_slice()));
+        accounts_db.storage.insert(Arc::new(storage2));
 
         // Do the notification
         let notifier = GeyserTestPlugin::default();
@@ -173,7 +176,7 @@ mod tests {
     #[test]
     fn test_notify_account_at_accounts_update() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -267,7 +270,7 @@ mod tests {
     #[test]
     fn test_notify_closed_account() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         let accounts = Accounts::new(Arc::new(accounts_db));
 

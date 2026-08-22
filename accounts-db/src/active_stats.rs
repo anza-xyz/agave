@@ -8,10 +8,6 @@ pub struct ActiveStats {
     clean_construct_candidates: AtomicUsize,
     clean_scan_candidates: AtomicUsize,
     clean_old_accounts: AtomicUsize,
-    clean_collect_store_counts: AtomicUsize,
-    clean_calc_delete_deps: AtomicUsize,
-    clean_filter_zero_lamport: AtomicUsize,
-    clean_reclaims: AtomicUsize,
     squash_ancient: AtomicUsize,
     shrink: AtomicUsize,
     flush: AtomicUsize,
@@ -23,10 +19,6 @@ pub enum ActiveStatItem {
     CleanConstructCandidates,
     CleanScanCandidates,
     CleanOldAccounts,
-    CleanCollectStoreCounts,
-    CleanCalcDeleteDeps,
-    CleanFilterZeroLamport,
-    CleanReclaims,
     Shrink,
     SquashAncient,
     Flush,
@@ -65,10 +57,6 @@ impl ActiveStats {
             ActiveStatItem::CleanConstructCandidates => &self.clean_construct_candidates,
             ActiveStatItem::CleanScanCandidates => &self.clean_scan_candidates,
             ActiveStatItem::CleanOldAccounts => &self.clean_old_accounts,
-            ActiveStatItem::CleanCollectStoreCounts => &self.clean_collect_store_counts,
-            ActiveStatItem::CleanCalcDeleteDeps => &self.clean_calc_delete_deps,
-            ActiveStatItem::CleanFilterZeroLamport => &self.clean_filter_zero_lamport,
-            ActiveStatItem::CleanReclaims => &self.clean_reclaims,
             ActiveStatItem::Shrink => &self.shrink,
             ActiveStatItem::SquashAncient => &self.squash_ancient,
             ActiveStatItem::Flush => &self.flush,
@@ -85,22 +73,6 @@ impl ActiveStats {
             }
             ActiveStatItem::CleanOldAccounts => {
                 datapoint_info!("accounts_db_active", ("clean_old_accounts", value, i64))
-            }
-            ActiveStatItem::CleanCollectStoreCounts => {
-                datapoint_info!(
-                    "accounts_db_active",
-                    ("clean_collect_store_counts", value, i64),
-                )
-            }
-            ActiveStatItem::CleanCalcDeleteDeps => {
-                datapoint_info!("accounts_db_active", ("clean_calc_delete_deps", value, i64))
-            }
-            ActiveStatItem::CleanFilterZeroLamport => datapoint_info!(
-                "accounts_db_active",
-                ("clean_filter_zero_lamport", value, i64),
-            ),
-            ActiveStatItem::CleanReclaims => {
-                datapoint_info!("accounts_db_active", ("clean_reclaims", value, i64))
             }
             ActiveStatItem::SquashAncient => {
                 datapoint_info!("accounts_db_active", ("squash_ancient", value, i64))

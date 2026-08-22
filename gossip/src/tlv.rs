@@ -1,16 +1,14 @@
 use {
-    serde::{Deserialize, Serialize},
     solana_short_vec as short_vec,
     wincode::{ReadError, SchemaRead, SchemaWrite, WriteError},
 };
 
 /// Type-Length-Value encoding wrapper
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
 pub(crate) struct TlvRecord {
     // type
     pub(crate) typ: u8,
     // length and serialized bytes of the value
-    #[serde(with = "short_vec")]
     #[wincode(with = "wincode::containers::Vec<u8, short_vec::ShortU16>")]
     pub(crate) bytes: Vec<u8>,
 }
@@ -45,17 +43,6 @@ macro_rules! define_tlv_enum {
             fn write(writer: impl wincode::io::Writer, value: &Self::Src) -> wincode::WriteResult<()> {
                 let tlv_rec = TlvRecord::try_from(value).map_err(|_| wincode::WriteError::Custom("invalid as tlv_rec"))?;
                 <TlvRecord as wincode::SchemaWrite<C>>::write(writer, &tlv_rec)
-            }
-        }
-
-        // Serialize enum by first converting into TlvRecord, and then serializing that
-        impl serde::Serialize for $enum_name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde::Serializer,
-            {
-                let tlv_rec = TlvRecord::try_from(self).map_err(|e| serde::ser::Error::custom(e))?;
-                tlv_rec.serialize(serializer)
             }
         }
 
@@ -129,10 +116,7 @@ pub(crate) fn parse<'a, T: TryFrom<&'a TlvRecord>>(entries: &'a [TlvRecord]) -> 
 
 #[cfg(test)]
 mod tests {
-    use {
-        crate::tlv::{TlvDecodeError, TlvRecord},
-        rand::Rng,
-    };
+    use crate::tlv::{TlvDecodeError, TlvRecord};
 
     define_tlv_enum! (pub(crate) enum ExtensionNew {
         1=>Test(u64),
@@ -156,12 +140,7 @@ mod tests {
         ];
 
         let new_bytes = wincode::serialize(&new_tlv_data).unwrap();
-        assert_eq!(new_bytes, bincode::serialize(&new_tlv_data).unwrap());
         let tlv_vec: Vec<TlvRecord> = wincode::deserialize(&new_bytes).unwrap();
-        assert_eq!(
-            tlv_vec,
-            bincode::deserialize::<Vec<TlvRecord>>(&new_bytes).unwrap()
-        );
         // check that both TLV are encoded correctly
         let new: Vec<ExtensionNew> = crate::tlv::parse(&tlv_vec);
         assert!(matches!(new[0], ExtensionNew::Test(42)));
@@ -190,13 +169,8 @@ mod tests {
             ExtensionLegacy::LegacyString(String::from("foo")),
         ];
         let legacy_bytes = wincode::serialize(&legacy_tlv_data).unwrap();
-        assert_eq!(legacy_bytes, bincode::serialize(&legacy_tlv_data).unwrap());
 
         let tlv_vec: Vec<TlvRecord> = wincode::deserialize(&legacy_bytes).unwrap();
-        assert_eq!(
-            tlv_vec,
-            bincode::deserialize::<Vec<TlvRecord>>(&legacy_bytes).unwrap()
-        );
         // Just in case make sure that legacy data is serialized correctly
         let legacy: Vec<ExtensionLegacy> = crate::tlv::parse(&tlv_vec);
         assert!(matches!(legacy[0], ExtensionLegacy::Test(42)));
@@ -213,43 +187,5 @@ mod tests {
         } else {
             panic!("Wrong deserialization")
         };
-    }
-
-    #[test]
-    fn test_wincode_compatibility_tlv_record() {
-        let mut rng = rand::rng();
-        // Test various byte lengths to exercise all ShortU16 varint widths:
-        //   0-127:   1-byte varint
-        //   128-16383: 2-byte varint
-        let lengths: &[usize] = &[0, 1, 64, 127, 128, 255, 1000, 16383];
-        for &len in lengths {
-            let record = TlvRecord {
-                typ: rng.random::<u8>(),
-                bytes: (0..len).map(|_| rng.random::<u8>()).collect(),
-            };
-            let bincode_bytes = bincode::serialize(&record).unwrap();
-            let wincode_bytes = wincode::serialize(&record).unwrap();
-            assert_eq!(
-                bincode_bytes, wincode_bytes,
-                "bytes differ for TlvRecord with len={len}"
-            );
-            let wincode_decoded: TlvRecord = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(record, wincode_decoded);
-            let bincode_decoded: TlvRecord = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(record, bincode_decoded);
-        }
-        // Also fuzz with random lengths and types
-        for _ in 0..1000 {
-            let len = rng.random_range(0usize..256);
-            let record = TlvRecord {
-                typ: rng.random::<u8>(),
-                bytes: (0..len).map(|_| rng.random::<u8>()).collect(),
-            };
-            let bincode_bytes = bincode::serialize(&record).unwrap();
-            let wincode_bytes = wincode::serialize(&record).unwrap();
-            assert_eq!(bincode_bytes, wincode_bytes);
-            let wincode_decoded: TlvRecord = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(record, wincode_decoded);
-        }
     }
 }

@@ -4,15 +4,19 @@
 /// discover the rest of the network.
 use log::*;
 use {
-    crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
+    crate::local_cluster::LocalCluster,
+    agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS,
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
     },
-    crossbeam_channel::bounded,
+    agave_votor_transport::{
+        PeerList,
+        endpoint::{Datagram, QuicDatagramEndpoint},
+    },
+    crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
-    solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_core::consensus::tower_storage::{
@@ -33,19 +37,14 @@ use {
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-    solana_perf::packet::{PacketRef, packet_config},
+    solana_perf::packet::packet_config,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_signer::Signer,
-    solana_streamer::{
-        nonblocking::simple_qos::SimpleQosConfig,
-        quic::{QuicStreamerConfig, spawn_simple_qos_server},
-        streamer::StakedNodes,
-    },
+    solana_runtime::bank_forks::BankForks,
+    solana_signer::{Signer, signers::Signers},
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
     solana_tpu_client_next::{
         client_builder::{ClientBuilder, TransactionSender},
         leader_updater::create_pinned_leader_updater,
@@ -66,12 +65,14 @@ use {
         thread::{JoinHandle, sleep},
         time::{Duration, Instant},
     },
+    tokio::runtime::{Builder as TokioBuilder, Runtime},
     tokio_util::sync::CancellationToken,
     wincode,
 };
 
 /// Packages a multi-threaded tokio runtime with a tpu-client-next sender, providing
 /// a synchronous interface for sending transactions in local-cluster tests.
+#[derive(Clone)]
 pub struct TpuSender {
     runtime: Arc<tokio::runtime::Runtime>,
 }
@@ -81,7 +82,7 @@ impl TpuSender {
     pub fn new() -> Self {
         Self {
             runtime: Arc::new(
-                tokio::runtime::Builder::new_multi_thread()
+                TokioBuilder::new_multi_thread()
                     .worker_threads(4)
                     .enable_all()
                     .build()
@@ -115,15 +116,25 @@ impl TpuSender {
         result
     }
 
-    fn send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
+    /// Send a pre-serialized transaction wire frame through an open `sender`.
+    pub fn send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
         self.runtime
-            .block_on(async { sender.send_transactions_in_batch(vec![wire_tx]).await })
+            .block_on(async { sender.send_transaction(wire_tx).await })
             .expect("TpuSender: should send transactions in batch");
+    }
+
+    /// Send a pre-serialized wire frame, logging any error rather than panicking.
+    ///
+    /// Use this in tests that tolerate transient send failures (e.g. partition tests).
+    pub fn try_send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
+        if let Err(e) = sender.try_send_transaction(wire_tx) {
+            debug!("TpuSender: send_wire_transaction failed: {e:?}");
+        }
     }
 
     /// Send and confirm `transaction` with retries via `sender`, using `rpc_client` for
     /// confirmation and blockhash refresh.
-    fn send_and_confirm_transaction<T: solana_signer::signers::Signers + ?Sized>(
+    fn send_and_confirm_transaction<T: Signers + ?Sized>(
         &self,
         sender: &TransactionSender,
         rpc_client: &RpcClient,
@@ -146,6 +157,29 @@ impl TpuSender {
             warn!("send_and_confirm_transaction: attempt {attempt} failed, retrying");
         }
         Err(std::io::Error::other("failed to confirm transaction after max retries").into())
+    }
+
+    /// Open a QUIC connection to `tpu_addr` and send-and-confirm `transaction` with retries.
+    ///
+    /// Uses `rpc_client` to poll for confirmation and refresh the blockhash between attempts.
+    pub fn send_transaction_with_retries<T: Signers + ?Sized>(
+        &self,
+        tpu_addr: SocketAddr,
+        rpc_client: &RpcClient,
+        signers: &T,
+        transaction: &mut Transaction,
+        attempts: usize,
+    ) -> Result<(), TransportError> {
+        let sender_clone = self.clone();
+        self.with_connection(tpu_addr, move |sender| {
+            sender_clone.send_and_confirm_transaction(
+                sender,
+                rpc_client,
+                signers,
+                transaction,
+                attempts,
+            )
+        })
     }
 }
 
@@ -588,59 +622,74 @@ pub fn check_for_new_processed(
     );
 }
 
-/// Start a QUIC streamer to listen for votes and certificates.
-/// Returns a cancellation token, the server thread handle, and a receiver for packet batches.
-pub fn start_quic_streamer_to_listen_for_votes_and_certs(
+/// Spawn a votor endpoint to sniff vote / cert traffic.
+///
+/// Returned Runtime instance must outlive the QuicDatagramEndpoint.
+pub fn start_datagram_listener_for_alpenglow_votor(
     vote_listener_socket: UdpSocket,
-    validator_keys: &[Arc<Keypair>],
-    node_stakes: &[u64],
-) -> (
-    CancellationToken,
-    JoinHandle<()>,
-    crossbeam_channel::Receiver<solana_streamer::packet::PacketBatch>,
-) {
+    listener_keypair: Keypair,
+    admitted_peers: &[Pubkey],
+) -> (Runtime, Receiver<Datagram>, QuicDatagramEndpoint) {
+    let rt = TokioBuilder::new_multi_thread()
+        .enable_all()
+        .worker_threads(2)
+        .thread_name("solAlpenglowListen")
+        .build()
+        .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
-    let cancel = CancellationToken::new();
-    let stakes = validator_keys
+    // Admit every peer from `admitted_peers`. Pushing is off, so the listener's
+    // outbound loop never connects to them.
+    let peers = admitted_peers
         .iter()
-        .zip(node_stakes)
-        .map(|(keypair, stake)| (keypair.pubkey(), *stake))
-        .collect();
-    let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
-        Arc::new(stakes),
-        HashMap::<Pubkey, u64>::default(), // overrides
-    )));
-    let (result, _banlist) = spawn_simple_qos_server(
-        "solAlpenglowTest",
-        "alpenglow_local_cluster_test",
-        [vote_listener_socket.into()],
-        &Keypair::new(),
+        .map(|pubkey| (*pubkey, None))
+        .collect::<HashMap<_, _>>();
+    let (peer_list_sender, peer_list_receiver) = tokio::sync::watch::channel(Arc::new(PeerList {
+        peers,
+        push_enabled: false,
+    }));
+    // We want the sender to stay alive so the endpoint does not exit prematurely.
+    Box::leak(Box::new(peer_list_sender));
+    let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
+    let (egress, endpoint) = QuicDatagramEndpoint::spawn(
+        rt.handle(),
+        &listener_keypair,
+        vec![vote_listener_socket],
+        client_socket,
         sender,
-        staked_nodes,
-        QuicStreamerConfig::default(),
-        SimpleQosConfig::default(),
-        cancel.clone(),
+        peer_list_receiver,
+        VOTOR_RATE_LIMIT_PPS,
+        CancellationToken::new(),
     )
-    .unwrap();
-    (cancel, result.thread, receiver)
+    .expect("alpenglow datagram listener");
+    // Keep the egress sender alive (even though we do not use it) so the channel stays open.
+    Box::leak(Box::new(egress));
+    (rt, receiver, endpoint)
 }
 
-fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> Option<VoteMessage> {
-    let Ok(msg) = wincode::config::deserialize_exact::<VersionedWireConsensusMessage, _>(
-        packet.data(..).unwrap_or_default(),
+fn convert_datagram_to_vote_message(
+    bank_forks: &RwLock<BankForks>,
+    datagram: &Datagram,
+    my_shred_version: u16,
+) -> Option<VoteMessage> {
+    let sender = datagram.peer_pubkey;
+    let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
+        &datagram.message[..],
         packet_config(),
+        my_shred_version,
     ) else {
         return None;
     };
-    let DecodedWireConsensusMessage::Vote(vote_msg) =
-        DecodedWireConsensusMessage::try_new(msg, my_shred_version).unwrap()
-    else {
+    let DecodedWireConsensusMessage::Vote(vote_msg) = DecodedWireConsensusMessage::new(msg) else {
         return None;
     };
+    let bank = bank_forks.read().unwrap().root_bank();
+    let rank_map = bank.get_rank_map(vote_msg.vote.slot())?;
+    let (rank, sender_entry) = rank_map.get_ranked_entry_for_node(&sender)?;
     Some(VoteMessage {
         vote: vote_msg.vote,
         signature: vote_msg.signature,
-        rank: vote_msg.rank,
+        rank,
+        stake: sender_entry.stake,
     })
 }
 
@@ -651,8 +700,8 @@ pub fn check_for_new_notarized_votes(
     contact_infos: &[ContactInfo],
     test_name: &str,
     vote_listener_socket: UdpSocket,
-    validator_keys: &[Arc<Keypair>],
-    node_stakes: &[u64],
+    listener_keypair: Keypair,
+    bank_forks: Arc<RwLock<BankForks>>,
 ) {
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
@@ -673,72 +722,65 @@ pub fn check_for_new_notarized_votes(
     let contact_infos_owned: Vec<ContactInfo> = contact_infos.to_vec();
     let test_name_owned = test_name.to_string();
 
-    let (cancel, quic_server_thread, receiver) = start_quic_streamer_to_listen_for_votes_and_certs(
+    let admitted_peers: Vec<Pubkey> = contact_infos.iter().map(|node| *node.pubkey()).collect();
+    let (_rt, receiver, _endpoint) = start_datagram_listener_for_alpenglow_votor(
         vote_listener_socket,
-        validator_keys,
-        node_stakes,
+        listener_keypair,
+        &admitted_peers,
     );
 
     // Now start vote listener and wait for new notarized votes.
-    let vote_listener = std::thread::spawn({
-        let mut num_new_notarized_votes = contact_infos_owned.iter().map(|_| 0).collect::<Vec<_>>();
-        let mut last_notarized = contact_infos_owned
-            .iter()
-            .map(|_| current_slot)
-            .collect::<Vec<_>>();
-        let mut last_print = Instant::now();
-        let mut done = false;
+    std::thread::scope(|s| {
+        s.spawn(move || {
+            let mut num_new_notarized_votes =
+                contact_infos_owned.iter().map(|_| 0).collect::<Vec<_>>();
+            let mut last_notarized = contact_infos_owned
+                .iter()
+                .map(|_| current_slot)
+                .collect::<Vec<_>>();
+            let mut last_print = Instant::now();
+            let mut done = false;
 
-        move || {
             while !done {
                 assert!(loop_start.elapsed() < loop_timeout);
-                let Ok(packet_batch) = receiver.recv_timeout(Duration::from_millis(100)) else {
+                let Ok(datagram) = receiver.recv_timeout(Duration::from_millis(100)) else {
                     continue;
                 };
-                for packet in packet_batch.iter() {
-                    let Some(vote_message) =
-                        convert_packet_to_vote_message(packet, my_shred_version)
-                    else {
-                        continue;
-                    };
-                    let vote = vote_message.vote;
-                    if !vote.is_notarization() {
-                        continue;
-                    }
-                    let rank = vote_message.rank;
-                    if rank >= contact_infos_owned.len() as u16 {
-                        warn!(
-                            "Received vote with rank {} which is greater than number of nodes {}",
-                            rank,
-                            contact_infos_owned.len()
-                        );
-                        continue;
-                    }
-                    let slot = vote.slot();
-                    if slot <= last_notarized[rank as usize] {
-                        continue;
-                    }
-                    last_notarized[rank as usize] = slot;
-                    num_new_notarized_votes[rank as usize] += 1;
-                    done = num_new_notarized_votes.iter().all(|&x| x > num_new_votes);
-                    if done || last_print.elapsed().as_secs() > 3 {
-                        info!(
-                            "{test_name_owned} waiting for {num_new_votes} new notarized votes.. \
-                             observed: {num_new_notarized_votes:?}"
-                        );
-                        last_print = Instant::now();
-                    }
+                let Some(vote_message) =
+                    convert_datagram_to_vote_message(&bank_forks, &datagram, my_shred_version)
+                else {
+                    continue;
+                };
+                let vote = vote_message.vote;
+                if !vote.is_notarization() {
+                    continue;
                 }
-                if done {
-                    cancel.cancel();
+                let rank = vote_message.rank;
+                if rank >= contact_infos_owned.len() as u16 {
+                    warn!(
+                        "Received vote with rank {} which is greater than number of nodes {}",
+                        rank,
+                        contact_infos_owned.len()
+                    );
+                    continue;
+                }
+                let slot = vote.slot();
+                if slot <= last_notarized[rank as usize] {
+                    continue;
+                }
+                last_notarized[rank as usize] = slot;
+                num_new_notarized_votes[rank as usize] += 1;
+                done = num_new_notarized_votes.iter().all(|&x| x > num_new_votes);
+                if done || last_print.elapsed().as_secs() > 3 {
+                    info!(
+                        "{test_name_owned} waiting for {num_new_votes} new notarized votes.. \
+                         observed: {num_new_notarized_votes:?}"
+                    );
+                    last_print = Instant::now();
                 }
             }
-        }
+        });
     });
-    vote_listener.join().expect("Vote listener thread panicked");
-    quic_server_thread
-        .join()
-        .expect("QUIC server thread panicked");
 }
 
 pub fn check_no_new_roots(
@@ -997,25 +1039,5 @@ pub fn submit_vote_to_cluster_gossip(
         node_keypair.pubkey(),
         gossip_addr,
         socket_addr_space,
-    )
-}
-
-pub fn new_tpu_quic_client(
-    contact_info: &ContactInfo,
-    connection_cache: Arc<ConnectionCache>,
-) -> Result<QuicTpuClient, TpuSenderError> {
-    let rpc_pubsub_url = format!("ws://{}/", contact_info.rpc_pubsub().unwrap());
-    let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
-
-    let cache = match &*connection_cache {
-        ConnectionCache::Quic(cache) => cache,
-        ConnectionCache::Udp(_) => panic!("Expected a Quic ConnectionCache. Got UDP"),
-    };
-
-    TpuClient::new_with_connection_cache(
-        Arc::new(RpcClient::new(rpc_url)),
-        rpc_pubsub_url.as_str(),
-        TpuClientConfig::default(),
-        cache.clone(),
     )
 }

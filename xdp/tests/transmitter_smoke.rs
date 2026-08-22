@@ -6,10 +6,11 @@ use {
     agave_cpu_utils::cpu_affinity,
     agave_xdp::{
         gre::packet::GRE_HEADER_BASE_SIZE,
-        netlink::MacAddress,
+        netlink::{MacAddress, netlink_get_neighbors},
         packet::{ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE},
         transmitter::{
-            BytesTxPacket, QueueCpuBinding, Transmitter, TransmitterBuilder, XdpConfig, XdpSender,
+            BytesTxPacket, NeighborIntervals, QueueCpuBinding, Transmitter, TransmitterBuilder,
+            XdpConfig, XdpSender,
         },
     },
     bytes::Bytes,
@@ -22,8 +23,9 @@ use {
         },
     },
     std::{
-        io, mem,
-        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        fs, io, mem,
+        net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+        ops::Range,
         os::fd::{AsFd, AsRawFd, OwnedFd},
         sync::{
             Arc,
@@ -33,14 +35,22 @@ use {
     },
 };
 
-fn transmitter_cpu() -> usize {
+const TEST_TX_CHANNEL_CAP: usize = 16;
+
+fn transmitter_cpus<const COUNT: usize>() -> [usize; COUNT] {
     let cores = cpu_affinity(None).expect("linux provides affine cores");
     assert!(
-        cores.len() >= 2,
-        "transmitter smoke test requires at least 2 affine CPU cores, found {}",
+        cores.len() > COUNT,
+        "transmitter smoke test requires at least {} affine CPU cores, found {}",
+        COUNT.saturating_add(1),
         cores.len(),
     );
-    **cores.first().expect("at least two affine cores")
+    std::array::from_fn(|index| *cores[index])
+}
+
+fn transmitter_cpu() -> usize {
+    let [cpu_id] = transmitter_cpus();
+    cpu_id
 }
 
 struct PacketSocket {
@@ -113,39 +123,41 @@ impl PacketSocket {
         Ok(Self { fd })
     }
 
-    fn recv_matching_udp(
+    fn recv_matching_udp<'a>(
         &self,
+        buf: &'a mut [u8],
         expected: &ExpectedUdpPacket<'_>,
         timeout: Duration,
-    ) -> io::Result<Vec<u8>> {
-        self.recv_matching_payload("matching UDP frame", timeout, |frame| {
+    ) -> io::Result<&'a [u8]> {
+        self.recv_matching_payload("matching UDP frame", buf, timeout, |frame| {
             matching_udp_payload(frame, expected)
         })
     }
 
-    fn recv_matching_gre_udp(
+    fn recv_matching_gre_udp<'a>(
         &self,
+        buf: &'a mut [u8],
         expected: &ExpectedGreUdpPacket<'_>,
         timeout: Duration,
-    ) -> io::Result<Vec<u8>> {
-        self.recv_matching_payload("matching GRE UDP frame", timeout, |frame| {
+    ) -> io::Result<&'a [u8]> {
+        self.recv_matching_payload("matching GRE UDP frame", buf, timeout, |frame| {
             matching_gre_udp_payload(frame, expected)
         })
     }
 
-    fn recv_matching_payload<F>(
+    fn recv_matching_payload<'a, F>(
         &self,
         description: &str,
+        buf: &'a mut [u8],
         timeout: Duration,
         mut matcher: F,
-    ) -> io::Result<Vec<u8>>
+    ) -> io::Result<&'a [u8]>
     where
-        F: for<'a> FnMut(&'a [u8]) -> Option<&'a [u8]>,
+        F: FnMut(&[u8]) -> Option<Range<usize>>,
     {
         let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "timeout overflows instant")
         })?;
-        let mut frame = [0u8; 2048];
         loop {
             let now = Instant::now();
             if now >= deadline {
@@ -164,14 +176,14 @@ impl PacketSocket {
                 Err(err) => return Err(io::Error::from(err)),
             }
 
-            let len = match recv(self.fd.as_raw_fd(), &mut frame, MsgFlags::empty()) {
+            let len = match recv(self.fd.as_raw_fd(), buf, MsgFlags::empty()) {
                 Ok(len) => len,
                 Err(Errno::EINTR) => continue,
                 Err(err) => return Err(io::Error::from(err)),
             };
-            let frame = &frame[..len];
-            if let Some(payload) = matcher(frame) {
-                return Ok(payload.to_vec());
+            let frame = &buf[..len];
+            if let Some(payload_range) = matcher(frame) {
+                return Ok(&buf[payload_range]);
             }
         }
     }
@@ -207,7 +219,7 @@ struct ExpectedUdpDatagram<'a> {
     payload: &'a [u8],
 }
 
-fn matching_udp_payload<'a>(frame: &'a [u8], expected: &ExpectedUdpPacket<'_>) -> Option<&'a [u8]> {
+fn matching_udp_payload(frame: &[u8], expected: &ExpectedUdpPacket<'_>) -> Option<Range<usize>> {
     if frame.len() < ETH_HEADER_SIZE {
         return None;
     }
@@ -218,7 +230,7 @@ fn matching_udp_payload<'a>(frame: &'a [u8], expected: &ExpectedUdpPacket<'_>) -
         return None;
     }
 
-    matching_ipv4_udp_payload(
+    let payload_range = matching_ipv4_udp_payload(
         &frame[ETH_HEADER_SIZE..],
         &ExpectedUdpDatagram {
             src_ip: expected.src_ip,
@@ -227,13 +239,17 @@ fn matching_udp_payload<'a>(frame: &'a [u8], expected: &ExpectedUdpPacket<'_>) -
             dst_port: expected.dst_port,
             payload: expected.payload,
         },
+    )?;
+    Some(
+        payload_range.start.checked_add(ETH_HEADER_SIZE).unwrap()
+            ..payload_range.end.checked_add(ETH_HEADER_SIZE).unwrap(),
     )
 }
 
-fn matching_gre_udp_payload<'a>(
-    frame: &'a [u8],
+fn matching_gre_udp_payload(
+    frame: &[u8],
     expected: &ExpectedGreUdpPacket<'_>,
-) -> Option<&'a [u8]> {
+) -> Option<Range<usize>> {
     const GRE_FLAGS_VERSION_BASIC: u16 = 0x0000;
 
     if frame.len() < ETH_HEADER_SIZE.checked_add(IP_HEADER_SIZE)? {
@@ -273,7 +289,7 @@ fn matching_gre_udp_payload<'a>(
     }
 
     let inner_offset = gre_offset.checked_add(GRE_HEADER_BASE_SIZE)?;
-    matching_ipv4_udp_payload(
+    let payload_range = matching_ipv4_udp_payload(
         frame.get(inner_offset..)?,
         &ExpectedUdpDatagram {
             src_ip: expected.inner_src_ip,
@@ -282,13 +298,17 @@ fn matching_gre_udp_payload<'a>(
             dst_port: expected.dst_port,
             payload: expected.payload,
         },
+    )?;
+    Some(
+        payload_range.start.checked_add(inner_offset).unwrap()
+            ..payload_range.end.checked_add(inner_offset).unwrap(),
     )
 }
 
-fn matching_ipv4_udp_payload<'a>(
-    ip: &'a [u8],
+fn matching_ipv4_udp_payload(
+    ip: &[u8],
     expected: &ExpectedUdpDatagram<'_>,
-) -> Option<&'a [u8]> {
+) -> Option<Range<usize>> {
     let min_udp_len = IP_HEADER_SIZE.checked_add(UDP_HEADER_SIZE)?;
     if ip.len() < min_udp_len {
         return None;
@@ -316,8 +336,11 @@ fn matching_ipv4_udp_payload<'a>(
     if udp_len < UDP_HEADER_SIZE || udp.len() < udp_len {
         return None;
     }
-    let payload = &udp[UDP_HEADER_SIZE..udp_len];
-    (payload == expected.payload).then_some(payload)
+
+    let payload_start = ihl.checked_add(UDP_HEADER_SIZE).unwrap();
+    let payload_end = ihl.checked_add(udp_len).unwrap();
+    let payload = &ip[payload_start..payload_end];
+    (payload == expected.payload).then_some(payload_start..payload_end)
 }
 
 #[test]
@@ -326,7 +349,7 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     let cpu_id = transmitter_cpu();
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
 
     let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
@@ -336,15 +359,15 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     let payload = Bytes::from_static(b"agave-xdp-transmitter-smoke");
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::with_tx_channel_cap(
         Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
             cpu: cpu_id,
         }],
         false,
+        TEST_TX_CHANNEL_CAP,
     );
-    config.tx_channel_cap = 16;
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build copy-mode transmitter")
@@ -362,8 +385,10 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
         .try_send(0, packet)
         .expect("queue packet through XdpSender::try_send");
 
+    let mut buf = [0u8; 2048];
     let received = receiver
         .recv_matching_udp(
+            &mut buf,
             &ExpectedUdpPacket {
                 src_mac: links.left_mac,
                 dst_mac: links.right_mac,
@@ -381,11 +406,236 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
 
 #[test]
 #[ignore = "requires root and network namespace privileges"]
+fn transmitter_resolves_neighbors() {
+    let cpu_id = transmitter_cpu();
+
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
+
+    // both veth endpoints are local, configure the peer to accept ARP from a local source address.
+    fs::write("/proc/sys/net/ipv4/conf/axdp1/accept_local", "1")
+        .expect("enable accept_local on veth peer");
+
+    let neighbor_intervals = NeighborIntervals {
+        use_interval: Duration::from_millis(100),
+        miss_interval: Duration::from_millis(10),
+    };
+    // how long before a neighbor entry is considered stale and needs to be touched again
+    fs::write(
+        "/proc/sys/net/ipv4/neigh/axdp0/base_reachable_time_ms",
+        "500",
+    )
+    .expect("shorten neighbor reachable time");
+    fs::write("/proc/sys/net/ipv4/neigh/axdp0/delay_first_probe_time", "0")
+        .expect("disable neighbor probe delay");
+
+    let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
+    let dst_port = 45_682;
+    let src_port = 12_348;
+    let destination = SocketAddr::V4(SocketAddrV4::new(links.right_ip, dst_port));
+
+    let exit = Arc::new(AtomicBool::new(false));
+    let config = XdpConfig::with_tx_channel_cap(
+        Some(common::LEFT_IFACE.to_string()),
+        vec![QueueCpuBinding {
+            queue: 0,
+            cpu: cpu_id,
+        }],
+        false,
+        TEST_TX_CHANNEL_CAP,
+    );
+    let (transmitter, sender) =
+        TransmitterBuilder::new_with_intervals(config, Arc::clone(&exit), neighbor_intervals)
+            .expect("build copy-mode transmitter")
+            .build();
+    let transmitter = TransmitterGuard::new(transmitter, sender, exit);
+
+    let neighbors = netlink_get_neighbors(None, libc::AF_INET as u8).expect("read neighbor table");
+    assert!(
+        neighbors.iter().all(|neighbor| {
+            neighbor.ifindex != links.left_if_index as i32
+                || neighbor.destination != Some(IpAddr::V4(links.right_ip))
+        }),
+        "neighbor unexpectedly exists before sending"
+    );
+
+    // this should resolve the neighbor. The packet is lost because the neighbor is not yet
+    // reachable.
+    let packet = BytesTxPacket::new(
+        SocketAddrV4::new(links.left_ip, src_port),
+        destination,
+        None,
+        Bytes::from_static(b"agave-xdp-neighbor-resolution"),
+    );
+    transmitter
+        .sender()
+        .try_send(0, packet)
+        .expect("queue packet to resolve neighbor");
+
+    common::wait_until(
+        "neighbor to become reachable",
+        Duration::from_secs(3),
+        || {
+            netlink_get_neighbors(None, libc::AF_INET as u8)
+                .expect("read neighbor table")
+                .into_iter()
+                .find(|neighbor| {
+                    neighbor.ifindex == links.left_if_index as i32
+                        && neighbor.destination == Some(IpAddr::V4(links.right_ip))
+                        && neighbor.lladdr == Some(links.right_mac)
+                        && neighbor.state & libc::NUD_REACHABLE != 0
+                })
+        },
+    );
+
+    // now wait for it to go stale
+    common::wait_until("neighbor to become stale", Duration::from_secs(3), || {
+        netlink_get_neighbors(None, libc::AF_INET as u8)
+            .expect("read neighbor table")
+            .into_iter()
+            .find(|neighbor| {
+                neighbor.ifindex == links.left_if_index as i32
+                    && neighbor.destination == Some(IpAddr::V4(links.right_ip))
+                    && neighbor.lladdr == Some(links.right_mac)
+                    && neighbor.state & libc::NUD_STALE != 0
+            })
+    });
+
+    // this should refresh
+    let payload = Bytes::from_static(b"agave-xdp-neighbor-touch");
+    let packet = BytesTxPacket::new(
+        SocketAddrV4::new(links.left_ip, src_port),
+        destination,
+        None,
+        payload.clone(),
+    );
+    transmitter
+        .sender()
+        .try_send(0, packet)
+        .expect("queue packet to touch stale neighbor");
+
+    common::wait_until(
+        "stale neighbor to be touched",
+        Duration::from_secs(3),
+        || {
+            netlink_get_neighbors(None, libc::AF_INET as u8)
+                .expect("read neighbor table")
+                .into_iter()
+                .find(|neighbor| {
+                    let touched = libc::NUD_DELAY | libc::NUD_PROBE | libc::NUD_REACHABLE;
+                    neighbor.ifindex == links.left_if_index as i32
+                        && neighbor.destination == Some(IpAddr::V4(links.right_ip))
+                        && neighbor.lladdr == Some(links.right_mac)
+                        && neighbor.state & touched != 0
+                })
+        },
+    );
+
+    let mut buf = [0u8; 2048];
+    let received = receiver
+        .recv_matching_udp(
+            &mut buf,
+            &ExpectedUdpPacket {
+                src_mac: links.left_mac,
+                dst_mac: links.right_mac,
+                src_ip: links.left_ip,
+                dst_ip: links.right_ip,
+                src_port,
+                dst_port,
+                payload: payload.as_ref(),
+            },
+            Duration::from_secs(3),
+        )
+        .expect("receive UDP frame after touching stale neighbor");
+    assert_eq!(received, payload.as_ref());
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn transmitter_sends_udp_payload_over_two_queues_in_copy_mode() {
+    let [first_cpu, second_cpu] = transmitter_cpus();
+
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(2);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+
+    let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
+    let src_port = 12_347;
+
+    let exit = Arc::new(AtomicBool::new(false));
+    let config = XdpConfig::with_tx_channel_cap(
+        Some(common::LEFT_IFACE.to_string()),
+        vec![
+            QueueCpuBinding {
+                queue: 0,
+                cpu: first_cpu,
+            },
+            QueueCpuBinding {
+                queue: 1,
+                cpu: second_cpu,
+            },
+        ],
+        false,
+        TEST_TX_CHANNEL_CAP,
+    );
+
+    let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
+        .expect("build two-queue copy-mode transmitter")
+        .build();
+    let transmitter = TransmitterGuard::new(transmitter, sender, exit);
+    assert_eq!(transmitter.sender().len(), 2);
+
+    let mut buf = [0u8; 2048];
+    for (sender_index, dst_port, payload) in [
+        (
+            0,
+            45_680,
+            Bytes::from_static(b"agave-xdp-transmitter-queue-0"),
+        ),
+        (
+            1,
+            45_681,
+            Bytes::from_static(b"agave-xdp-transmitter-queue-1"),
+        ),
+    ] {
+        let destination = SocketAddr::V4(SocketAddrV4::new(links.right_ip, dst_port));
+        let packet = BytesTxPacket::new(
+            SocketAddrV4::new(links.left_ip, src_port),
+            destination,
+            None,
+            payload.clone(),
+        );
+        transmitter
+            .sender()
+            .try_send(sender_index, packet)
+            .unwrap_or_else(|err| panic!("queue packet through sender {sender_index}: {err}"));
+
+        let received = receiver
+            .recv_matching_udp(
+                &mut buf,
+                &ExpectedUdpPacket {
+                    src_mac: links.left_mac,
+                    dst_mac: links.right_mac,
+                    src_ip: links.left_ip,
+                    dst_ip: links.right_ip,
+                    src_port,
+                    dst_port,
+                    payload: payload.as_ref(),
+                },
+                Duration::from_secs(3),
+            )
+            .unwrap_or_else(|err| panic!("receive UDP frame from sender {sender_index}: {err}"));
+        assert_eq!(received, payload.as_ref());
+    }
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
 fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     let cpu_id = transmitter_cpu();
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
     common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
@@ -401,15 +651,15 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     let payload = Bytes::from_static(b"agave-xdp-transmitter-gre-smoke");
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::with_tx_channel_cap(
         Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
             cpu: cpu_id,
         }],
         false,
+        TEST_TX_CHANNEL_CAP,
     );
-    config.tx_channel_cap = 16;
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build copy-mode transmitter")
@@ -427,8 +677,10 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
         .try_send(0, packet)
         .expect("queue packet through XdpSender::try_send");
 
+    let mut buf = [0u8; 2048];
     let received = receiver
         .recv_matching_gre_udp(
+            &mut buf,
             &ExpectedGreUdpPacket {
                 outer_src_mac: links.left_mac,
                 outer_dst_mac: links.right_mac,

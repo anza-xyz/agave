@@ -1,11 +1,16 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
+// The rng traits come straight from `rand` when sampling for tests, and from frozen-abi's re-export
+// when sampling for abi digests (which enables `frozen-abi` without the `rand` dependency). Both
+// resolve to the same `rand` crate, so `sample_vote_account` is shared between the two.
+#[cfg(feature = "dev-context-only-utils")]
+use rand::{Rng, RngCore};
+#[cfg(all(feature = "frozen-abi", not(feature = "dev-context-only-utils")))]
+use solana_frozen_abi::rand::{Rng, RngCore};
 use {
     crate::vote_state_view::VoteStateView,
     log::*,
-    serde::{
-        Deserialize, Serialize,
-        de::{MapAccess, Visitor},
-        ser::Serializer,
-    },
+    serde::{Deserialize, Deserializer, Serialize, ser::Serializer},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
@@ -13,18 +18,17 @@ use {
     std::{
         cmp::Ordering,
         collections::{HashMap, hash_map::Entry},
-        fmt,
         iter::FromIterator,
         mem,
         sync::{Arc, OnceLock},
     },
     thiserror::Error,
-    wincode::{TypeMeta, WriteResult},
+    wincode::{
+        ReadError, ReadResult, SchemaRead, TypeMeta, WriteResult, config::Config, io::Reader,
+    },
 };
-#[cfg(feature = "dev-context-only-utils")]
+#[cfg(any(feature = "dev-context-only-utils", feature = "frozen-abi"))]
 use {
-    qualifier_attr::field_qualifiers,
-    rand::Rng,
     solana_bls_signatures::Keypair as BLSKeypair,
     solana_clock::Clock,
     solana_keypair::Keypair,
@@ -34,7 +38,7 @@ use {
     },
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct VoteAccount(Arc<VoteAccountInner>);
 
@@ -46,28 +50,21 @@ pub enum Error {
     InvalidOwner(/*owner:*/ Pubkey),
 }
 
-// No `SchemaWrite`: `VoteAccount` has a custom impl that writes only `account` (see above).
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
 struct VoteAccountInner {
     account: AccountSharedData,
-    // Skipped by the custom serializer, and hard to instantiate other than via `AbiExample`.
-    #[cfg_attr(
-        feature = "frozen-abi",
-        stable_abi_sample(with = "solana_frozen_abi::abi_example::AbiExample::example()")
-    )]
     vote_state_view: VoteStateView,
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Serialize, Deserialize, SchemaWrite)]
+#[derive(Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(vote_accounts(pub))
 )]
 pub struct VoteAccounts {
-    #[serde(deserialize_with = "deserialize_accounts_hash_map")]
     vote_accounts: Arc<VoteAccountsHashMap>,
     // Inner Arc is meant to implement copy-on-write semantics.
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
@@ -120,19 +117,26 @@ impl VoteAccount {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_random() -> VoteAccount {
+        Self::sample_vote_account(&mut rand::rng())
+    }
+
+    /// Samples a valid, parseable vote account (owner = vote program, data = a well-formed
+    /// `VoteStateV4` with a real BLS keypair derived from `rng`) from `rng`. Shared by `new_random`
+    /// and the frozen-abi `StableAbi` sampler.
+    #[cfg(any(feature = "dev-context-only-utils", feature = "frozen-abi"))]
+    fn sample_vote_account(rng: &mut (impl RngCore + ?Sized)) -> VoteAccount {
         const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
-        let mut rng = rand::rng();
-        let authorized_voter_bls_proof_of_possession = [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE];
-        let keypair = Keypair::new();
+        let keypair = Keypair::new_from_array(rng.random());
         let bls_keypair =
             BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         let vote_init = VoteInitV2 {
-            node_pubkey: Pubkey::new_unique(),
+            node_pubkey: Pubkey::from(rng.random::<[u8; 32]>()),
             authorized_voter: keypair.pubkey(),
             authorized_voter_bls_pubkey: bls_keypair.public.to_bytes_compressed(),
-            authorized_voter_bls_proof_of_possession,
-            authorized_withdrawer: Pubkey::new_unique(),
+            // A valid proof of possession isn't required for the account to parse.
+            authorized_voter_bls_proof_of_possession: [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+            authorized_withdrawer: Pubkey::from(rng.random::<[u8; 32]>()),
             inflation_rewards_commission_bps: rng.random_range(0..10_000),
             block_revenue_commission_bps: rng.random_range(0..10_000),
         };
@@ -145,16 +149,17 @@ impl VoteAccount {
         };
         let vote_state = VoteStateV4::new(
             &vote_init,
-            &Pubkey::new_unique(),
-            &Pubkey::new_unique(),
+            &Pubkey::from(rng.random::<[u8; 32]>()),
+            &Pubkey::from(rng.random::<[u8; 32]>()),
             &clock,
         );
-        let account = AccountSharedData::new_data(
+        let data = wincode::serialize(&VoteStateVersions::new_v4(vote_state)).unwrap();
+        let mut account = AccountSharedData::new(
             rng.random(), // lamports
-            &VoteStateVersions::new_v4(vote_state),
+            data.len(),
             &solana_sdk_ids::vote::id(), // owner
-        )
-        .unwrap();
+        );
+        account.set_data_from_slice(&data);
         VoteAccount::try_from(account).unwrap()
     }
 }
@@ -416,6 +421,13 @@ impl VoteAccounts {
     }
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::stable_abi::StableAbi for VoteAccount {
+    fn random_with_context(rng: &mut (impl RngCore + ?Sized), _ctx: ()) -> Self {
+        Self::sample_vote_account(rng)
+    }
+}
+
 // `VoteAccount` serializes only its `account` (see the `Serialize` impl below). Mirror that for
 // wincode so the snapshot wire format matches bincode: `vote_state_view` is a parsed view of the
 // account data, rebuilt on read, and is intentionally not written.
@@ -440,6 +452,31 @@ impl Serialize for VoteAccount {
         S: Serializer,
     {
         self.0.account.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for VoteAccount {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let account = AccountSharedData::deserialize(deserializer)?;
+        VoteAccount::try_from(account).map_err(serde::de::Error::custom)
+    }
+}
+
+// Read-counterpart of the custom `SchemaWrite` above: read the inner `AccountSharedData` (the only
+// thing written) and rebuild the parsed `vote_state_view` via `try_from`, mirroring the `Deserialize`
+// impl. `VoteAccounts` then derives `SchemaRead` on top of this, just like the serde path.
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for VoteAccount {
+    type Dst = Self;
+
+    fn read(reader: impl Reader<'de>, dst: &mut mem::MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let account = <AccountSharedData as SchemaRead<'de, C>>::get(reader)?;
+        let vote_account = VoteAccount::try_from(account)
+            .map_err(|_| ReadError::InvalidValue("invalid vote account"))?;
+        dst.write(vote_account);
+        Ok(())
     }
 }
 
@@ -527,53 +564,6 @@ impl FromIterator<(Pubkey, (/*stake:*/ u64, VoteAccount))> for VoteAccounts {
     {
         Self::from(Arc::new(HashMap::from_iter(iter)))
     }
-}
-
-// This custom deserializer is needed to ensure compatibility at snapshot loading with versions
-// before https://github.com/anza-xyz/agave/pull/2659 which would theoretically allow invalid vote
-// accounts in VoteAccounts.
-//
-// In the (near) future we should remove this custom deserializer and make it a hard error when we
-// find invalid vote accounts in snapshots.
-fn deserialize_accounts_hash_map<'de, D>(
-    deserializer: D,
-) -> Result<Arc<VoteAccountsHashMap>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    struct VoteAccountsVisitor;
-
-    impl<'de> Visitor<'de> for VoteAccountsVisitor {
-        type Value = Arc<VoteAccountsHashMap>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a map of vote accounts")
-        }
-
-        fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
-        where
-            M: MapAccess<'de>,
-        {
-            let mut accounts = HashMap::new();
-
-            while let Some((pubkey, (stake, account))) =
-                access.next_entry::<Pubkey, (u64, AccountSharedData)>()?
-            {
-                match VoteAccount::try_from(account) {
-                    Ok(vote_account) => {
-                        accounts.insert(pubkey, (stake, vote_account));
-                    }
-                    Err(e) => {
-                        log::warn!("failed to deserialize vote account: {e}");
-                    }
-                }
-            }
-
-            Ok(Arc::new(accounts))
-        }
-    }
-
-    deserializer.deserialize_map(VoteAccountsVisitor)
 }
 
 #[cfg(test)]

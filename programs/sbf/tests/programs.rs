@@ -80,8 +80,8 @@ use {
     solana_svm::conformance::{
         instr::{context::InstrContext, harness::execute_instr},
         programs::{
-            add_program_to_program_cache, keyed_account_for_system_program,
-            new_program_cache_with_builtins,
+            add_program_to_program_cache, keyed_account_for_bpf_loader_program,
+            keyed_account_for_system_program, new_program_cache_with_builtins,
         },
     },
     std::{fs::File, io::Read, path::PathBuf},
@@ -102,7 +102,7 @@ fn load_program_elf(program_name: &str) -> Vec<u8> {
 
 #[cfg(feature = "sbf_rust")]
 fn default_program_cache() -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
-    new_program_cache_with_builtins(/* slot */ 0)
+    new_program_cache_with_builtins(/* slot */ 1)
 }
 
 fn default_program_cache_with_program(
@@ -119,6 +119,15 @@ fn default_program_cache_with_program(
         feature_set,
     );
     program_cache
+}
+
+fn upgradeable_program_accounts(program_id: &Pubkey, program_elf: &[u8]) -> Vec<(Pubkey, Account)> {
+    solana_program_binaries::bpf_loader_upgradeable_program_accounts(
+        program_id,
+        program_elf,
+        &Rent::default(),
+    )
+    .into()
 }
 
 #[cfg(feature = "sbf_rust")]
@@ -228,6 +237,7 @@ fn test_program_sbf_sanity() {
             ("alloc", true),
             ("alt_bn128", true),
             ("alt_bn128_compression", true),
+            ("big_mod_exp", true),
             ("sbf_to_sbf", true),
             ("float", true),
             ("multiple_static", true),
@@ -253,6 +263,7 @@ fn test_program_sbf_sanity() {
             ("solana_sbf_rust_alloc", true),
             ("solana_sbf_rust_alt_bn128", true),
             ("solana_sbf_rust_alt_bn128_compression", true),
+            ("solana_sbf_rust_big_mod_exp", true),
             ("solana_sbf_rust_curve25519", true),
             ("solana_sbf_rust_custom_heap", true),
             ("solana_sbf_rust_dep_crate", true),
@@ -305,7 +316,8 @@ fn test_program_sbf_sanity() {
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas);
 
-        let accounts = vec![(pubkey1, Account::default()), (pubkey2, Account::default())];
+        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+        accounts.extend([(pubkey1, Account::default()), (pubkey2, Account::default())]);
 
         let mut program_cache =
             default_program_cache_with_program(&program_id, &program_elf, &feature_set);
@@ -358,7 +370,16 @@ fn test_program_sbf_loader_deprecated() {
 
         let pubkey = Pubkey::new_unique();
         let accounts = vec![
-            (program_id, Account::new(0, 0, &bpf_loader_deprecated::id())),
+            (
+                program_id,
+                Account {
+                    lamports: 1,
+                    data: vec![],
+                    owner: bpf_loader_deprecated::id(),
+                    executable: true,
+                    rent_epoch: u64::MAX,
+                },
+            ),
             (pubkey, Account::default()),
         ];
 
@@ -466,10 +487,11 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
             },
         ),
         keyed_account_for_system_program(),
+        solana_svm::conformance::programs::keyed_account_for_bpf_loader_upgradeable_program(),
         (authority_pubkey, Account::default()),
     ];
 
-    let mut program_cache = default_program_cache();
+    let mut program_cache = new_program_cache_with_builtins(0);
     let sysvar_cache = default_sysvar_cache();
 
     // Build the deploy instruction (DeployWithMaxDataLen only, skip CreateAccount)
@@ -534,13 +556,15 @@ fn test_program_sbf_duplicate_accounts() {
             AccountMeta::new(pubkey, false),
             AccountMeta::new(pubkey, false),
         ];
+        let program_accounts = upgradeable_program_accounts(&program_id, &program_elf);
 
         let mut execute = |data: &[u8]| {
-            let accounts = vec![
+            let mut accounts = program_accounts.clone();
+            accounts.extend([
                 (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
                 (payee_pubkey, Account::new(10, 1, &program_id)),
                 (pubkey, account.clone()),
-            ];
+            ]);
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
             let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
             execute_instr(&context, &mut program_cache, &sysvar_cache)
@@ -584,11 +608,12 @@ fn test_program_sbf_duplicate_accounts() {
             AccountMeta::new_readonly(pubkey, true),
             AccountMeta::new_readonly(program_id, false),
         ];
-        let accounts = vec![
+        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+        accounts.extend([
             (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
             (payee_pubkey, Account::new(10, 1, &program_id)),
             (pubkey, Account::new(10, 1, &program_id)),
-        ];
+        ]);
         let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
         let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
         let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
@@ -621,7 +646,8 @@ fn test_program_sbf_error_handling() {
 
         let pubkey1 = Pubkey::new_unique();
 
-        let accounts = vec![(pubkey1, Account::default())];
+        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+        accounts.push((pubkey1, Account::default()));
 
         let mut program_cache =
             default_program_cache_with_program(&program_id, &program_elf, &feature_set);
@@ -706,7 +732,8 @@ fn test_return_data_and_log_data_syscall() {
         let feature_set = SVMFeatureSet::all_enabled();
 
         let pubkey = Pubkey::new_unique();
-        let accounts = vec![(pubkey, Account::default())];
+        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+        accounts.push((pubkey, Account::default()));
 
         let mut program_cache =
             default_program_cache_with_program(&program_id, &program_elf, &feature_set);
@@ -1376,17 +1403,21 @@ fn test_program_sbf_program_id_spoofing() {
     let from_pubkey = Pubkey::new_unique();
     let to_pubkey = Pubkey::new_unique();
 
-    let accounts = vec![
-        keyed_account_for_system_program(),
-        (
-            malicious_system_pubkey,
-            Account::new(0, 0, &bpf_loader_upgradeable::id()),
-        ),
+    let mut accounts = vec![keyed_account_for_system_program()];
+    accounts.extend(upgradeable_program_accounts(
+        &malicious_swap_pubkey,
+        &spoof1_elf,
+    ));
+    accounts.extend(upgradeable_program_accounts(
+        &malicious_system_pubkey,
+        &spoof1_system_elf,
+    ));
+    accounts.extend([
         (from_pubkey, Account::new(10, 0, &system_program::id())),
         (to_pubkey, Account::new(0, 0, &system_program::id())),
-    ];
+    ]);
 
-    let mut program_cache = new_program_cache_with_builtins(0);
+    let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
         &malicious_swap_pubkey,
@@ -1439,18 +1470,13 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let accounts = vec![
-        (
-            caller_pubkey,
-            Account::new(0, 0, &bpf_loader_upgradeable::id()),
-        ),
-        (
-            caller2_pubkey,
-            Account::new(0, 0, &bpf_loader_upgradeable::id()),
-        ),
-    ];
+    let mut accounts = upgradeable_program_accounts(&caller_pubkey, &caller_access_elf);
+    accounts.extend(upgradeable_program_accounts(
+        &caller2_pubkey,
+        &caller_access_elf,
+    ));
 
-    let mut program_cache = new_program_cache_with_builtins(0);
+    let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
         &caller_pubkey,
@@ -1491,10 +1517,9 @@ fn test_program_sbf_ro_modify() {
     let feature_set = SVMFeatureSet::all_enabled();
 
     let test_pubkey = Pubkey::new_unique();
-    let accounts = vec![
-        keyed_account_for_system_program(),
-        (test_pubkey, Account::new(10, 0, &system_program::id())),
-    ];
+    let mut accounts = vec![keyed_account_for_system_program()];
+    accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
+    accounts.push((test_pubkey, Account::new(10, 0, &system_program::id())));
 
     let mut program_cache =
         default_program_cache_with_program(&program_id, &program_elf, &feature_set);
@@ -1535,11 +1560,16 @@ fn test_program_sbf_call_depth() {
     let mut program_cache =
         default_program_cache_with_program(&program_id, &program_elf, &feature_set);
     let sysvar_cache = default_sysvar_cache();
+    let program_accounts = upgradeable_program_accounts(&program_id, &program_elf);
 
     let mut execute = |depth: usize| {
         let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
 
-        let context = InstrContext::new_with_default_budget(feature_set, vec![], instruction);
+        let context = InstrContext::new_with_default_budget(
+            feature_set,
+            program_accounts.clone(),
+            instruction,
+        );
 
         execute_instr(&context, &mut program_cache, &sysvar_cache)
     };
@@ -1561,10 +1591,7 @@ fn test_program_sbf_compute_budget() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let accounts = vec![(
-        program_id,
-        Account::new(0, 0, &bpf_loader_upgradeable::id()),
-    )];
+    let accounts = upgradeable_program_accounts(&program_id, &program_elf);
 
     let mut program_cache =
         default_program_cache_with_program(&program_id, &program_elf, &feature_set);
@@ -1642,7 +1669,8 @@ fn assert_instruction_count() {
             default_program_cache_with_program(&program_id, &program_elf, &feature_set);
 
         let account_pubkey = Pubkey::new_unique();
-        let accounts = vec![(account_pubkey, Account::new(0, 0, &program_id))];
+        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+        accounts.push((account_pubkey, Account::new(0, 0, &program_id)));
 
         let instruction_accounts = vec![AccountMeta {
             pubkey: account_pubkey,
@@ -1762,6 +1790,8 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
             account_metas.push(AccountMeta::new_readonly(pubkey, false));
         }
     }
+
+    accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
 
     // The provided instruction data will be set to the return data.
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
@@ -2287,7 +2317,18 @@ fn test_program_sbf_disguised_as_sbf_loader() {
         let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
         let instruction = Instruction::new_with_bytes(bpf_loader::id(), &[1], account_metas);
 
-        let context = InstrContext::new_with_default_budget(feature_set, vec![], instruction);
+        let context = InstrContext::new_with_default_budget(
+            feature_set,
+            vec![
+                keyed_account_for_bpf_loader_program(),
+                solana_program_binaries::bpf_loader_program_account(
+                    &program_id,
+                    &program_elf,
+                    &Rent::default(),
+                ),
+            ],
+            instruction,
+        );
 
         let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
         assert_eq!(effects.result, Some(InstructionError::UnsupportedProgramId));
@@ -2304,7 +2345,7 @@ fn test_program_reads_from_program_account() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let mut program_cache = new_program_cache_with_builtins(0);
+    let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
         &program_id,
@@ -2346,7 +2387,7 @@ fn test_program_sbf_c_dup() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let mut program_cache = new_program_cache_with_builtins(0);
+    let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
         &program_id,
@@ -2367,11 +2408,9 @@ fn test_program_sbf_c_dup() {
     ];
     let instruction = Instruction::new_with_bytes(program_id, &[4, 5, 6, 7], account_metas);
 
-    let context = InstrContext::new_with_default_budget(
-        feature_set,
-        vec![(account_address, account)],
-        instruction,
-    );
+    let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+    accounts.push((account_address, account));
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
     let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
     assert!(effects.result.is_none());
@@ -2558,7 +2597,8 @@ fn test_program_sbf_ro_account_modify() {
     let sysvar_cache = default_sysvar_cache();
 
     let argument_pubkey = Pubkey::new_unique();
-    let accounts = vec![(argument_pubkey, Account::new(42, 100, &program_id))];
+    let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+    accounts.push((argument_pubkey, Account::new(42, 100, &program_id)));
 
     let account_metas = vec![
         AccountMeta::new_readonly(argument_pubkey, false),
@@ -3483,7 +3523,7 @@ fn test_program_sbf_realloc_invoke() {
 
     // Realloc shrink, then CPI, then realloc extend
     let mut invoke_account = AccountSharedData::new(100_000_000, 10, &realloc_invoke_program_id);
-    invoke_account.set_data(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    invoke_account.set_data_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     bank.store_account(&invoke_pubkey, &invoke_account);
     let mut instruction_data = vec![];
     instruction_data.extend_from_slice(&[INVOKE_REALLOC_SHRINK_THEN_CPI_THEN_REALLOC_EXTEND, 1]);
@@ -4136,7 +4176,7 @@ fn test_cpi_account_data_updates() {
         // data length. The callee should see the extended data (asserted in the
         // callee program, not here).
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
+        account.set_data_from_slice(b"foo");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS];
         instruction_data.extend_from_slice(b"bar");
@@ -4170,7 +4210,7 @@ fn test_cpi_account_data_updates() {
         // region contains the new data. In this test the callee owns the account,
         // the caller can't write but the CPI glue still updates correctly.
         let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
-        account.set_data(b"foo".to_vec());
+        account.set_data_from_slice(b"foo");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_GROWS];
         instruction_data.extend_from_slice(b"bar");
@@ -4210,7 +4250,7 @@ fn test_cpi_account_data_updates() {
         // above, the callee owns the account but the changes are still reflected in
         // the caller even if things are readonly from the caller's POV.
         let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
-        account.set_data(b"foobar".to_vec());
+        account.set_data_from_slice(b"foobar");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
@@ -4252,7 +4292,7 @@ fn test_cpi_account_data_updates() {
         // correct value in the caller frame, and the realloc region must be zeroed
         // (again tested in the invoked program).
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
+        account.set_data_from_slice(b"foo");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
@@ -4289,7 +4329,7 @@ fn test_cpi_account_data_updates() {
         // _below_ the original data length. Both the spare capacity in the account
         // data _end_ the realloc region must be zeroed.
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
+        account.set_data_from_slice(b"foo");
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
@@ -4473,7 +4513,7 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
 
     let context = InstrContext {
         feature_set,
-        accounts: vec![],
+        accounts: upgradeable_program_accounts(&program_id, &program_elf),
         instruction,
         cu_avail: 10_000,
     };
@@ -4660,7 +4700,7 @@ fn test_update_callee_account() {
         // I. do CPI with account in read only (separate code path with virtual_address_space_adjustments)
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -4707,7 +4747,7 @@ fn test_update_callee_account() {
         // II. do CPI with account with resize to smaller and write
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4749,7 +4789,7 @@ fn test_update_callee_account() {
         // III. do CPI with account with resize to larger and write
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4790,7 +4830,7 @@ fn test_update_callee_account() {
         // IV. do CPI with account with resize to larger and write
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4841,7 +4881,7 @@ fn test_update_callee_account() {
         // V. clone data, modify and CPI
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
+        account.set_data_from_slice(&data);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5102,7 +5142,7 @@ fn test_clone_account_data() {
     // error in the caller
     let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
+    account.set_data_from_slice(&data);
 
     bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5135,7 +5175,7 @@ fn test_clone_account_data() {
     // we have only modified a copy of the data. Fails in caller
     let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
+    account.set_data_from_slice(&data);
 
     bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5167,7 +5207,7 @@ fn test_clone_account_data() {
     // Note the caller needs to modify the original account data, not the copy
     let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
+    account.set_data_from_slice(&data);
 
     bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5547,6 +5587,8 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
         let pubkey = accounts[i].0;
         account_metas.push(AccountMeta::new(pubkey, false));
     }
+
+    accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
 
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
 

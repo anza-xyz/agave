@@ -1,7 +1,6 @@
 //! Defines aggregates used for vote rewards.
 
 use {
-    crate::consensus_message::VoteMessage,
     solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -122,14 +121,7 @@ pub enum BuildRewardCertsRespError {
     /// Building either the skip or the notar reward cert failed.
     #[error("try_new() on skip or notar cert failed with {0}")]
     RewardCertTryNew(#[from] RewardCertError),
-    /// Experienced failure with encoding.
-    #[error("encode error {0:?}")]
-    Encode(EncodeError),
-}
-
-/// Message to add votes to the rewards container.
-#[derive(Debug)]
-pub struct AddVoteMessage {
-    /// List of [`VoteMessage`]s.
-    pub votes: Vec<VoteMessage>,
+    /// Encoding failed
+    #[error("encoding failed with {0:?}")]
+    Encoding(EncodeError),
 }

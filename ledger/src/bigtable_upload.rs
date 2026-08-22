@@ -1,9 +1,12 @@
 use {
-    crate::blockstore::Blockstore,
+    crate::blockstore::{
+        Blockstore, ConfirmedBlockComponent, VersionedConfirmedBlockWithComponents,
+    },
     crossbeam_channel::{bounded, unbounded},
     log::*,
     solana_clock::Slot,
     solana_measure::measure::Measure,
+    solana_transaction_status::VersionedConfirmedBlockWithSplitComponents,
     std::{
         cmp::{max, min},
         collections::HashSet,
@@ -39,6 +42,29 @@ impl Default for ConfirmedBlockUploadConfig {
 struct BlockstoreLoadStats {
     pub num_blocks_read: usize,
     pub elapsed: Duration,
+}
+
+fn get_confirmed_block_upload_data(
+    blockstore: &Blockstore,
+    slot: Slot,
+) -> Result<VersionedConfirmedBlockWithSplitComponents, Box<dyn std::error::Error>> {
+    let VersionedConfirmedBlockWithComponents { block, components } =
+        blockstore.get_rooted_block_with_components(slot, true)?;
+    let mut entries = Vec::new();
+    let mut markers = Vec::new();
+
+    for component in components {
+        match component {
+            ConfirmedBlockComponent::EntryBatch(entry_batch) => entries.extend(entry_batch),
+            ConfirmedBlockComponent::BlockMarker(marker) => markers.push(marker),
+        }
+    }
+
+    Ok(VersionedConfirmedBlockWithSplitComponents {
+        block,
+        entries,
+        markers,
+    })
 }
 
 /// Uploads a range of blocks from a Blockstore to bigtable LedgerStorage
@@ -174,10 +200,10 @@ pub async fn upload_confirmed_blocks(
                                     break;
                                 }
 
-                                let _ = match blockstore.get_rooted_block_with_entries(slot, true) {
-                                    Ok(confirmed_block_with_entries) => {
+                                let _ = match get_confirmed_block_upload_data(&blockstore, slot) {
+                                    Ok(upload_data) => {
                                         num_blocks_read += 1;
-                                        sender.send((slot, Some(confirmed_block_with_entries)))
+                                        sender.send((slot, Some(upload_data)))
                                     }
                                     Err(err) => {
                                         warn!(
@@ -222,7 +248,7 @@ pub async fn upload_confirmed_blocks(
             Some(confirmed_block) => {
                 let bt = bigtable.clone();
                 Some(tokio::spawn(async move {
-                    bt.upload_confirmed_block_with_entries(slot, confirmed_block)
+                    bt.upload_confirmed_block_with_split_components(slot, confirmed_block)
                         .await
                 }))
             }

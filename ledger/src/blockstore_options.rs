@@ -134,3 +134,20 @@ impl BlockstoreCompressionType {
         }
     }
 }
+
+/// Control how `BlockstoreCleanupService` will decide when to perform cleanup
+#[derive(Clone, Copy, Debug)]
+pub enum BlockstoreCleanupStrategy {
+    /// No cleanup strategy
+    ///
+    /// The `Blockstore` will be allowed to grow without bound in size
+    None,
+    /// Count the number of data shreds in the `Blockstore`
+    ///
+    /// Data is purged when the specified capacity is reached/exceeded
+    CountDataShreds(u64),
+    /// Count the number of data and coding shreds in the `Blockstore`
+    ///
+    /// Data is purged when the specified capacity is reached/exceeded
+    CountDataAndCodingShreds(u64),
+}

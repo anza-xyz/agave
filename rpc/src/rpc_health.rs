@@ -1,7 +1,9 @@
 use {
     crate::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
+    agave_votor_messages::migration::MigrationStatus,
     solana_clock::Slot,
     solana_ledger::blockstore::Blockstore,
+    solana_runtime::validated_block_finalization::ValidatedBlockFinalizationCert,
     std::sync::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
@@ -18,6 +20,8 @@ pub enum RpcHealthStatus {
 pub struct RpcHealth {
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     blockstore: Arc<Blockstore>,
+    highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+    migration_status: Arc<MigrationStatus>,
     health_check_slot_distance: u64,
     override_health_check: Arc<AtomicBool>,
     #[cfg(test)]
@@ -28,17 +32,29 @@ impl RpcHealth {
     pub fn new(
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         blockstore: Arc<Blockstore>,
+        highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+        migration_status: Arc<MigrationStatus>,
         health_check_slot_distance: u64,
         override_health_check: Arc<AtomicBool>,
     ) -> Self {
         Self {
             optimistically_confirmed_bank,
             blockstore,
+            highest_finalized,
+            migration_status,
             health_check_slot_distance,
             override_health_check,
             #[cfg(test)]
             stub_health_status: std::sync::RwLock::new(None),
         }
+    }
+
+    fn highest_finalized_slot(&self) -> Option<Slot> {
+        self.highest_finalized
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|cert| cert.block().slot)
     }
 
     pub fn check(&self) -> RpcHealthStatus {
@@ -53,7 +69,7 @@ impl RpcHealth {
             return RpcHealthStatus::Ok;
         }
 
-        // A node can observe votes by both replaying blocks and observing gossip.
+        // Before Alpenglow, a node can observe votes by both replaying blocks and observing gossip.
         //
         // ClusterInfoVoteListener receives votes from both of these sources and then records
         // optimistically confirmed slots in the Blockstore via OptimisticConfirmationVerifier.
@@ -75,32 +91,43 @@ impl RpcHealth {
             .bank
             .slot();
 
-        let mut optimistic_slot_infos = match self.blockstore.get_latest_optimistic_slots(1) {
-            Ok(infos) => infos,
-            Err(err) => {
-                warn!("health check: blockstore error: {err}");
+        // Under Alpenglow, Votor may observe a finalization certificate before this node has
+        // replayed and rooted the corresponding block. Before Alpenglow, use the latest optimistic
+        // slot observed through gossip.
+        let cluster_latest_slot = if self.migration_status.is_alpenglow_enabled() {
+            let Some(slot) = self.highest_finalized_slot() else {
+                warn!("health check: Votor has not observed a finalized slot");
                 return RpcHealthStatus::Unknown;
-            }
-        };
-        let Some((cluster_latest_optimistically_confirmed_slot, _, _)) =
-            optimistic_slot_infos.pop()
-        else {
-            warn!("health check: blockstore does not contain any optimistically confirmed slots");
-            return RpcHealthStatus::Unknown;
+            };
+            slot
+        } else {
+            let mut optimistic_slot_infos = match self.blockstore.get_latest_optimistic_slots(1) {
+                Ok(infos) => infos,
+                Err(err) => {
+                    warn!("health check: blockstore error: {err}");
+                    return RpcHealthStatus::Unknown;
+                }
+            };
+            let Some((slot, _, _)) = optimistic_slot_infos.pop() else {
+                warn!(
+                    "health check: blockstore does not contain any optimistically confirmed slots"
+                );
+                return RpcHealthStatus::Unknown;
+            };
+            slot
         };
 
         if my_latest_optimistically_confirmed_slot
-            >= cluster_latest_optimistically_confirmed_slot
-                .saturating_sub(self.health_check_slot_distance)
+            >= cluster_latest_slot.saturating_sub(self.health_check_slot_distance)
         {
             RpcHealthStatus::Ok
         } else {
-            let num_slots = cluster_latest_optimistically_confirmed_slot
-                .saturating_sub(my_latest_optimistically_confirmed_slot);
+            let num_slots =
+                cluster_latest_slot.saturating_sub(my_latest_optimistically_confirmed_slot);
             warn!(
                 "health check: behind by {num_slots} slots: \
                  me={my_latest_optimistically_confirmed_slot}, latest \
-                 cluster={cluster_latest_optimistically_confirmed_slot}",
+                 cluster={cluster_latest_slot}",
             );
             RpcHealthStatus::Behind { num_slots }
         }
@@ -114,6 +141,8 @@ impl RpcHealth {
         Arc::new(Self::new(
             optimistically_confirmed_bank,
             blockstore,
+            Arc::default(),
+            Arc::default(),
             42,
             Arc::new(AtomicBool::new(false)),
         ))
@@ -129,6 +158,7 @@ impl RpcHealth {
 pub mod tests {
     use {
         super::*,
+        agave_votor_messages::{certificate::FastFinalizeCert, consensus_message::Block},
         solana_clock::UnixTimestamp,
         solana_hash::Hash,
         solana_ledger::{
@@ -150,6 +180,8 @@ pub mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>> = Arc::default();
+        let migration_status = Arc::new(MigrationStatus::default());
         let bank0 = bank_forks.read().unwrap().root_bank();
         assert!(bank0.slot() == 0);
 
@@ -158,6 +190,8 @@ pub mod tests {
         let health = RpcHealth::new(
             optimistically_confirmed_bank.clone(),
             blockstore.clone(),
+            highest_finalized.clone(),
+            migration_status.clone(),
             health_check_slot_distance,
             override_health_check.clone(),
         );
@@ -180,7 +214,11 @@ pub mod tests {
         assert_eq!(health.check(), RpcHealthStatus::Behind { num_slots: 15 });
 
         // Simulate this node observing slot 4 as optimistically confirmed - status still behind
-        let bank4 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 4));
+        let bank4 = Arc::new(Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeader::default(),
+            4,
+        ));
         optimistically_confirmed_bank.write().unwrap().bank = bank4.clone();
         assert_eq!(health.check(), RpcHealthStatus::Behind { num_slots: 11 });
 
@@ -200,6 +238,34 @@ pub mod tests {
         // OptimisticallyConfirmedBank. Either way, not a problem and status is ok.
         let bank16 = Arc::new(Bank::new_from_parent(bank15, SlotLeader::default(), 16));
         optimistically_confirmed_bank.write().unwrap().bank = bank16.clone();
+        assert_eq!(health.check(), RpcHealthStatus::Ok);
+
+        // Once Alpenglow is enabled, stale optimistic slots must not be used as a fallback.
+        migration_status.enable_alpenglow_for_tests();
+        assert_eq!(health.check(), RpcHealthStatus::Unknown);
+
+        // Votor's highest finalized slot takes precedence over the optimistic Blockstore slot.
+        let mut signature = migration_status
+            .genesis_certificate()
+            .unwrap()
+            .signature
+            .clone();
+        signature.bitmap = vec![0, 0, 0];
+        *highest_finalized.write().unwrap() =
+            Some(ValidatedBlockFinalizationCert::from_validated_fast(
+                FastFinalizeCert {
+                    block: Block {
+                        slot: 30,
+                        block_id: Hash::default(),
+                    },
+                    signature,
+                },
+                &bank0,
+            ));
+        assert_eq!(health.check(), RpcHealthStatus::Behind { num_slots: 14 });
+
+        let bank20 = Arc::new(Bank::new_from_parent(bank16, SlotLeader::default(), 20));
+        optimistically_confirmed_bank.write().unwrap().bank = bank20;
         assert_eq!(health.check(), RpcHealthStatus::Ok);
     }
 }

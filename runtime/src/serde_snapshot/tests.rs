@@ -4,14 +4,13 @@ mod serde_snapshot_tests {
         crate::{
             bank::BankHashStats,
             serde_snapshot::{
-                SerializableAccountsDb, SnapshotAccountsDbFields, deserialize_accounts_db_fields,
-                reconstruct_accountsdb_from_fields, remap_append_vec_file,
+                AccountsDbFields, SerializableAccountsDb, SnapshotAccountsDbFields,
+                deserialize_wincode_from, reconstruct_accountsdb_from_fields,
+                remap_append_vec_file, serialize_into,
             },
             snapshot_utils::StorageAndNextAccountsFileId,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
-        bincode::{Error, serialize_into},
-        log::info,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
@@ -19,7 +18,7 @@ mod serde_snapshot_tests {
             account_storage::AccountStorageMap,
             account_storage_entry::AccountStorageEntry,
             account_storage_reader::{
-                AccountStorageReader, open_storage_files, storage_file_buf_reader,
+                AccountStorageReader, TombstonesFilter, open_storage_files, storage_file_buf_reader,
             },
             accounts::Accounts,
             accounts_db::{
@@ -55,17 +54,17 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> Result<AccountsDb, Error>
+    ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
         // read and deserialise the accounts database directly from the stream
-        let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
+        let accounts_db_fields: AccountsDbFields = deserialize_wincode_from(&mut *stream)?;
         let snapshot_accounts_db_fields = SnapshotAccountsDbFields {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,
         };
-        reconstruct_accountsdb_from_fields(
+        let (accounts_db, _) = reconstruct_accountsdb_from_fields(
             snapshot_accounts_db_fields,
             account_paths,
             storage_and_next_append_vec_id,
@@ -74,8 +73,8 @@ mod serde_snapshot_tests {
             accounts_db_config,
             None,
             Arc::default(),
-        )
-        .map(|(accounts_db, _)| accounts_db)
+        )?;
+        Ok(accounts_db)
     }
 
     fn accountsdb_from_stream<R>(
@@ -83,7 +82,7 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> Result<AccountsDb, Error>
+    ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
@@ -99,7 +98,7 @@ mod serde_snapshot_tests {
         stream: &mut W,
         slot: Slot,
         account_storage_entries: &[Arc<AccountStorageEntry>],
-    ) -> Result<(), Error>
+    ) -> wincode::WriteResult<()>
     where
         W: Write,
     {
@@ -128,8 +127,13 @@ mod serde_snapshot_tests {
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
             buf_reader.set_file(file.as_ref(), storage_entry.accounts.len() as u64)?;
-            let mut reader =
-                AccountStorageReader::new(storage_entry, None, &mut buf_reader).unwrap();
+            let mut reader = AccountStorageReader::new(
+                storage_entry,
+                None,
+                TombstonesFilter::Include,
+                &mut buf_reader,
+            )
+            .unwrap();
             let mut writer = File::create(&output_path)?;
             io::copy(&mut reader, &mut writer)?;
 
@@ -204,7 +208,8 @@ mod serde_snapshot_tests {
     fn test_accounts_serialize() {
         agave_logger::setup();
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
-        let accounts_db = AccountsDb::new_for_tests(paths);
+        let accounts_db =
+            AccountsDb::new_for_tests_with_config(paths, ACCOUNTS_DB_CONFIG_FOR_TESTING);
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let slot = 0;
@@ -266,7 +271,7 @@ mod serde_snapshot_tests {
         agave_logger::setup();
         let unrooted_slot = 9;
         let unrooted_bank_id = 9;
-        let db = AccountsDb::new_single_for_tests();
+        let db = AccountsDb::default_for_tests();
         let key = solana_pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &key);
         db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
@@ -298,7 +303,7 @@ mod serde_snapshot_tests {
     fn test_accounts_db_serialize1() {
         for pass in 0..2 {
             agave_logger::setup();
-            let accounts = AccountsDb::new_single_for_tests();
+            let accounts = AccountsDb::default_for_tests();
             let mut pubkeys: Vec<Pubkey> = vec![];
 
             // Create 100 accounts in slot 0
@@ -413,11 +418,11 @@ mod serde_snapshot_tests {
         let account2 = AccountSharedData::new(some_lamport + 1, no_data, &owner);
         let pubkey2 = solana_pubkey::new_rand();
 
-        let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
         let mut current_slot = 1;
         accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
-        accounts.add_root(current_slot);
+        accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
         accounts.store_for_tests((current_slot, [(&pubkey, &zero_lamport_account)].as_slice()));
@@ -425,7 +430,7 @@ mod serde_snapshot_tests {
 
         accounts.add_root_and_flush_write_cache(current_slot);
 
-        accounts.assert_load_account(current_slot, pubkey, zero_lamport);
+        accounts.assert_not_load_account(current_slot, pubkey);
 
         accounts.print_accounts_stats("accounts");
 
@@ -466,7 +471,7 @@ mod serde_snapshot_tests {
         let dummy_account = AccountSharedData::new(dummy_lamport, no_data, &owner);
         let dummy_pubkey = Pubkey::default();
 
-        let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
         let mut current_slot = 1;
         accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
@@ -498,10 +503,13 @@ mod serde_snapshot_tests {
 
         accounts.print_accounts_stats("post_f");
 
+        // The live accounts survive the chained zero-lamport purges and snapshot round-trip.
         accounts.assert_load_account(current_slot, pubkey, some_lamport);
-        accounts.assert_load_account(current_slot, purged_pubkey1, 0);
-        accounts.assert_load_account(current_slot, purged_pubkey2, 0);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
+        // Both purged accounts were converted to tombstones at flush; with no full snapshot
+        // taken by then, their tombstone-only storages were purged and neither is in the index.
+        accounts.assert_not_load_account(current_slot, purged_pubkey1);
+        accounts.assert_not_load_account(current_slot, purged_pubkey2);
 
         let calculated_capitalization =
             accounts.calculate_capitalization_at_startup_from_index(&Ancestors::default());
@@ -566,7 +574,7 @@ mod serde_snapshot_tests {
         let purged_pubkey2 = solana_pubkey::new_rand();
 
         let mut current_slot = 0;
-        let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
         // create intermediate updates to purged_pubkey1 so that
         // generate_index must add slots as root last at once
@@ -614,8 +622,10 @@ mod serde_snapshot_tests {
         accounts.print_count_and_status("after purge zero");
 
         accounts.assert_load_account(current_slot, pubkey, old_lamport);
-        accounts.assert_load_account(current_slot, purged_pubkey1, 0);
-        accounts.assert_load_account(current_slot, purged_pubkey2, 0);
+        // Both purged accounts were converted to tombstones at flush; with no full snapshot
+        // taken by then, their tombstone-only storages were purged and neither is in the index.
+        accounts.assert_not_load_account(current_slot, purged_pubkey1);
+        accounts.assert_not_load_account(current_slot, purged_pubkey2);
     }
 
     #[test]
@@ -638,7 +648,7 @@ mod serde_snapshot_tests {
         let dummy_pubkey = solana_pubkey::new_rand();
 
         let mut current_slot = 0;
-        let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
         accounts.set_latest_full_snapshot_slot(0);
 
@@ -674,8 +684,8 @@ mod serde_snapshot_tests {
         accounts.store_for_tests((current_slot, [(&pubkey1, &zero_lamport_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
-        // Ref count is 1 as the older versions were marked obsolete
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        // Ref count is 0 as the zero lamport account was converted to a tombstone
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 0);
         accounts.add_root(current_slot);
 
         // E: Avoid missing bank hash error
@@ -683,7 +693,7 @@ mod serde_snapshot_tests {
         accounts.store_for_tests((current_slot, [(&dummy_pubkey, &dummy_account)].as_slice()));
         accounts.add_root(current_slot);
 
-        accounts.assert_load_account(current_slot, pubkey1, zero_lamport);
+        accounts.assert_not_load_account(current_slot, pubkey1);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
 
@@ -693,38 +703,24 @@ mod serde_snapshot_tests {
         // So, prevent that from happening by introducing refcount
         ((current_slot - 1)..=current_slot).for_each(|slot| accounts.flush_root_write_cache(slot));
         accounts.clean_accounts_for_tests();
+
+        // Reconstruct the database from the snapshot to simulate a restore
         let accounts = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
 
-        // Set snapshot to zero to avoid cleaning zero-lamport pubkey1
-        accounts.set_latest_full_snapshot_slot(0);
-        accounts.clean_accounts_for_tests();
-
-        info!("pubkey: {pubkey1}");
-        accounts.print_accounts_stats("pre_clean");
+        // At this point pubkey 1 has been restored as a zero lamport account
         accounts.assert_load_account(current_slot, pubkey1, zero_lamport);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
 
-        // F: Finally, make Step A cleanable
-        current_slot += 1;
-        accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
-        accounts.add_root(current_slot);
-
-        // Do clean
-        accounts.flush_root_write_cache(current_slot);
-
-        // Make zero-lamport pubkey1 cleanable by setting the latest snapshot slot
-        accounts.set_latest_full_snapshot_slot(current_slot);
+        // Regardless of the snapshot slot the zero-lamport pubkey1 is turned into a tombstone
+        // by clean
+        accounts.set_latest_full_snapshot_slot(0);
         accounts.clean_accounts_for_tests();
 
-        // 2nd clean needed to clean-up pubkey1
-        accounts.clean_accounts_for_tests();
-
-        // Ensure pubkey2 is cleaned from the index finally
         accounts.assert_not_load_account(current_slot, pubkey1);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
@@ -735,7 +731,7 @@ mod serde_snapshot_tests {
         agave_logger::setup();
 
         for startup in &[false, true] {
-            let accounts = AccountsDb::new_single_for_tests();
+            let accounts = AccountsDb::default_for_tests();
 
             let pubkey_count = 100;
             let pubkeys: Vec<_> = (0..pubkey_count)

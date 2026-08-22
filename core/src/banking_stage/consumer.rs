@@ -17,7 +17,9 @@ use {
         },
         transaction_batch::TransactionBatch,
     },
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::transaction_with_meta::{
+        StaticMessageWithMeta, TransactionWithMeta,
+    },
     solana_svm::{
         account_loader::validate_fee_payer,
         transaction_error_metrics::TransactionErrorMetrics,
@@ -154,7 +156,7 @@ impl Consumer {
             bank,
             txs,
             check_results,
-            ExecutionFlags {
+            &ExecutionFlags {
                 drop_on_failure: false,
                 all_or_nothing: false,
             },
@@ -173,7 +175,7 @@ impl Consumer {
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
         max_ages: &[MaxAge],
-        flags: ExecutionFlags,
+        flags: &ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
         // Need to filter out transactions since they were sanitized earlier.
         // This means that the transaction may cross and epoch boundary (not allowed),
@@ -193,7 +195,7 @@ impl Consumer {
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
-        flags: ExecutionFlags,
+        flags: &ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
@@ -258,7 +260,7 @@ impl Consumer {
         &self,
         bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
-        flags: ExecutionFlags,
+        flags: &ExecutionFlags,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
@@ -324,7 +326,6 @@ impl Consumer {
                 &mut error_counters,
                 TransactionProcessingConfig {
                     account_overrides: None,
-                    check_program_deployment_slot: bank.check_program_deployment_slot(),
                     log_messages_bytes_limit: self.log_messages_bytes_limit,
                     limit_to_load_programs: true,
                     recording_config: ExecutionRecordingConfig::new_single_setting(
@@ -475,7 +476,7 @@ impl Consumer {
 
     pub fn check_fee_payer_unlocked(
         bank: &Bank,
-        transaction: &impl TransactionWithMeta,
+        transaction: &impl StaticMessageWithMeta,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = transaction.fee_payer();
@@ -486,10 +487,8 @@ impl Consumer {
             transaction_configuration.priority_fee_lamports,
             bank.fee_features(),
         );
-        let (mut fee_payer_account, _slot) = bank
-            .rc
-            .accounts
-            .load_with_fixed_root(&bank.ancestors, fee_payer)
+        let mut fee_payer_account = bank
+            .get_account_with_fixed_root(fee_payer)
             .ok_or(TransactionError::AccountNotFound)?;
 
         validate_fee_payer(
@@ -512,7 +511,7 @@ mod tests {
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::bounded,
-        solana_account::{AccountSharedData, state_traits::StateMut},
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
@@ -647,7 +646,7 @@ mod tests {
         let data = address_lookup_table.serialize_for_tests().unwrap();
         let mut account =
             AccountSharedData::new(1, data.len(), &address_lookup_table::program::id());
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_address, &account);
 
         account
@@ -695,9 +694,7 @@ mod tests {
 
         let record = record_receiver.drain().next().unwrap();
         assert_eq!(record.bank_id, bank.bank_id());
-        assert_eq!(record.transaction_batches.len(), 1);
-        let transaction_batch = record.transaction_batches[0].clone();
-        assert_eq!(transaction_batch.len(), 1);
+        assert_eq!(record.transactions.len(), 1);
 
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
             &mint_keypair,
@@ -972,9 +969,8 @@ mod tests {
                 };
 
             let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
-            let usage_cost = cost.usage_cost_details_mut();
-            usage_cost.programs_execution_cost = actual_programs_execution_cost;
-            usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
+            cost.programs_execution_cost = actual_programs_execution_cost;
+            cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
 
             block_cost + cost.sum()
         };
@@ -1429,7 +1425,6 @@ mod tests {
             Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),
-            bank.feature_set.snapshot().limit_instruction_accounts,
         )
         .unwrap();
         let batch_transactions_inner = [&sanitized_tx]

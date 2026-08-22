@@ -1,96 +1,115 @@
 //! Solana runtime conformance harnesses.
 
 #[cfg(feature = "conformance")]
+pub mod block;
+#[cfg(feature = "conformance")]
 pub mod cost;
+pub mod txn;
 
 #[cfg(feature = "conformance")]
 use {
-    protosol::protos::TransactionMessage as ProtoTransactionMessage,
-    solana_hash::Hash,
-    solana_message::{
-        MessageHeader, VersionedMessage,
-        compiled_instruction::CompiledInstruction,
-        legacy,
-        v0::{self, MessageAddressTableLookup},
+    protosol::protos::{
+        AcctState, BlockhashQueueEntry as ProtoBlockhashQueueEntry,
+        FeeRateGovernor as ProtoFeeRateGovernor,
     },
+    solana_account::AccountSharedData,
+    solana_accounts_db::blockhash_queue::BlockhashQueue,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
+    solana_svm::conformance::account_state::account_from_proto,
+};
+use {
+    solana_accounts_db::{
+        accounts::Accounts,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
+    },
+    std::{num::NonZeroUsize, sync::Arc},
 };
 
+/// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
+/// accounts (treated as nonexistent).
 #[cfg(feature = "conformance")]
-pub(crate) fn versioned_message_from_proto(value: &ProtoTransactionMessage) -> VersionedMessage {
-    let header = value
-        .header
-        .map(|header| MessageHeader {
-            // A valid message has at least one signature.
-            // Truncate to the u8 header field *before* clamping to >= 1 (matching
-            // protosol): a u32 that is a nonzero multiple of 256 truncates to 0, and
-            // must still clamp up to 1 rather than staying 0 (no fee payer).
-            num_required_signatures: (header.num_required_signatures as u8).max(1),
-            num_readonly_signed_accounts: header.num_readonly_signed_accounts as u8,
-            num_readonly_unsigned_accounts: header.num_readonly_unsigned_accounts as u8,
-        })
-        .unwrap_or(MessageHeader {
-            num_required_signatures: 1,
-            num_readonly_signed_accounts: 0,
-            num_readonly_unsigned_accounts: 0,
-        });
-    let account_keys = value
-        .account_keys
+pub(crate) fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
+    accounts
         .iter()
-        .filter_map(|key| Pubkey::try_from(key.as_slice()).ok())
-        .collect::<Vec<_>>();
-    let recent_blockhash = <[u8; 32]>::try_from(value.recent_blockhash.as_slice())
-        .map(Hash::new_from_array)
-        .unwrap_or_default();
-    let instructions = value
-        .instructions
-        .iter()
-        .map(|instruction| CompiledInstruction {
-            program_id_index: instruction.program_id_index as u8,
-            accounts: instruction
-                .accounts
-                .iter()
-                .map(|index| *index as u8)
-                .collect(),
-            data: instruction.data.clone(),
+        .filter(|account| account.lamports > 0)
+        .map(|account| {
+            let (pubkey, account) = account_from_proto(account.clone());
+            (pubkey, account.into())
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    if value.is_legacy {
-        VersionedMessage::Legacy(legacy::Message {
-            header,
-            account_keys,
-            recent_blockhash,
-            instructions,
-        })
-    } else {
-        let address_table_lookups = value
-            .address_table_lookups
-            .iter()
-            .filter_map(|lookup| {
-                Pubkey::try_from(lookup.account_key.as_slice())
-                    .ok()
-                    .map(|account_key| MessageAddressTableLookup {
-                        account_key,
-                        writable_indexes: lookup
-                            .writable_indexes
-                            .iter()
-                            .map(|index| *index as u8)
-                            .collect(),
-                        readonly_indexes: lookup
-                            .readonly_indexes
-                            .iter()
-                            .map(|index| *index as u8)
-                            .collect(),
-                    })
-            })
-            .collect::<Vec<_>>();
-        VersionedMessage::V0(v0::Message {
-            header,
-            account_keys,
-            recent_blockhash,
-            instructions,
-            address_table_lookups,
-        })
+#[cfg(feature = "conformance")]
+pub(crate) fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> BlockhashQueue {
+    let mut blockhash_queue = BlockhashQueue::default();
+    for entry in entries {
+        let blockhash =
+            Hash::new_from_array(<[u8; 32]>::try_from(entry.blockhash.as_slice()).unwrap());
+        blockhash_queue.register_hash(&blockhash, entry.lamports_per_signature);
+    }
+    blockhash_queue
+}
+
+#[cfg(feature = "conformance")]
+pub(crate) fn fee_rate_governor_from_proto(
+    value: &ProtoFeeRateGovernor,
+    lamports_per_signature: u64,
+) -> FeeRateGovernor {
+    FeeRateGovernor {
+        lamports_per_signature,
+        target_lamports_per_signature: value.target_lamports_per_signature,
+        target_signatures_per_slot: value.target_signatures_per_slot,
+        min_lamports_per_signature: value.min_lamports_per_signature,
+        max_lamports_per_signature: value.max_lamports_per_signature,
+        burn_percent: value.burn_percent as u8,
+    }
+}
+
+pub(crate) fn new_accounts_for_tests_single_threaded() -> Accounts {
+    Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        new_accounts_db_config_for_tests_single_threaded(),
+    )))
+}
+
+pub(crate) fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
+    let single_thread = NonZeroUsize::new(1).unwrap();
+    AccountsDbConfig {
+        num_background_threads: Some(single_thread),
+        num_foreground_threads: Some(single_thread),
+        read_cache_num_shards: Some(2),
+        skip_initial_hash_calc: true,
+        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_accounts_db::accounts_index::IndexLimit};
+
+    #[test]
+    fn test_new_accounts_for_tests_single_threaded() {
+        let accounts = new_accounts_for_tests_single_threaded();
+        let accounts_db = &accounts.accounts_db;
+        assert!(accounts_db.skip_initial_hash_calc);
+        assert_eq!(accounts_db.thread_pool_foreground.current_num_threads(), 1);
+        assert_eq!(accounts_db.thread_pool_background.current_num_threads(), 1);
+    }
+
+    #[test]
+    fn test_new_accounts_db_config_for_tests_single_threaded_config() {
+        let one = NonZeroUsize::new(1).unwrap();
+        let config = new_accounts_db_config_for_tests_single_threaded();
+        let index = config.index.unwrap();
+        assert_eq!(index.bins, Some(2));
+        assert_eq!(index.num_flush_threads, Some(one));
+        assert!(matches!(index.index_limit, IndexLimit::InMemOnly));
+        assert!(config.skip_initial_hash_calc);
+        assert!(!config.verify_index);
+        assert_eq!(config.read_cache_num_shards, Some(2));
+        assert_eq!(config.num_background_threads, Some(one));
+        assert_eq!(config.num_foreground_threads, Some(one));
     }
 }

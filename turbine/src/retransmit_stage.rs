@@ -16,7 +16,6 @@ use {
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ShredFlags, ShredId, ShredType},
@@ -78,7 +77,7 @@ struct RetransmitShredOutput {
     // Number of nodes the shred was retransmitted to.
     num_nodes: usize,
     // Addresses the shred was sent to if there was a cache miss.
-    addrs: Option<Box<[SocketAddr]>>,
+    addrs: Option<Arc<[SocketAddr]>>,
 }
 
 #[derive(Default)]
@@ -96,7 +95,7 @@ pub(crate) struct RetransmitSlotStats {
     num_shreds_sent: [usize; MAX_NUM_TURBINE_HOPS],
     // Root distance and socket-addresses the shreds were sent to if there was
     // a cache miss.
-    pub(crate) addrs: Vec<(ShredId, /*root_distance:*/ u8, Box<[SocketAddr]>)>,
+    pub(crate) addrs: Vec<(ShredId, /*root_distance:*/ u8, Arc<[SocketAddr]>)>,
 }
 
 struct RetransmitStats {
@@ -524,7 +523,8 @@ fn retransmit_shred(
         RetransmitSocket::Xdp(sender) => {
             let mut sent = num_addrs;
             if num_addrs > 0
-                && let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred.bytes)
+                && let Err(e) =
+                    sender.try_send(key.index() as usize, Arc::clone(&addrs), shred.bytes)
             {
                 log::warn!("xdp channel full: {e:?}");
                 stats
@@ -536,7 +536,7 @@ fn retransmit_shred(
         }
         RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
             let socket = socket.get_socket();
-            match multi_target_send(socket, shred, &addrs) {
+            match multi_target_send(socket, shred, addrs.as_ref()) {
                 Ok(()) => num_addrs,
                 Err(SendPktsError::IoError(ioerr, num_failed)) => {
                     error!(
@@ -562,7 +562,7 @@ fn retransmit_shred(
         root_distance,
         num_nodes,
         addrs: match addrs {
-            Cow::Owned(addrs) => Some(addrs.into_boxed_slice()),
+            Cow::Owned(addrs) => Some(addrs),
             Cow::Borrowed(_) => None,
         },
     })
@@ -574,7 +574,7 @@ fn get_retransmit_addrs<'a>(
     addr_cache: &'a AddrCache,
     socket_addr_space: &SocketAddrSpace,
     stats: &RetransmitStats,
-) -> Option<(/*root_distance:*/ u8, Cow<'a, [SocketAddr]>)> {
+) -> Option<(/*root_distance:*/ u8, Cow<'a, Arc<[SocketAddr]>>)> {
     if let Some((root_distance, addrs)) = addr_cache.get(shred) {
         stats.addr_cache_hit.fetch_add(1, Ordering::Relaxed);
         return Some((root_distance, Cow::Borrowed(addrs)));
@@ -589,7 +589,7 @@ fn get_retransmit_addrs<'a>(
         })
         .ok()?;
     stats.addr_cache_miss.fetch_add(1, Ordering::Relaxed);
-    Some((root_distance, Cow::Owned(addrs)))
+    Some((root_distance, Cow::Owned(Arc::from(addrs))))
 }
 
 // Speculatively precomputes turbine tree and caches retranmsit addresses.
@@ -632,7 +632,7 @@ fn cache_retransmit_addrs(
         let (root_distance, addrs) = cluster_nodes
             .get_retransmit_addrs(slot_leader, &shred, DATA_PLANE_FANOUT, socket_addr_space)
             .ok()?;
-        Some((shred, (root_distance, addrs.into_boxed_slice())))
+        Some((shred, (root_distance, Arc::from(addrs))))
     };
     let mut out = false;
     if shreds.len() < PAR_ITER_MIN_NUM_SHREDS {
@@ -922,9 +922,7 @@ fn notify_subscribers(
             .notify_first_shred_received(slot);
     }
 
-    if notifiers.migration_status.should_send_votor_event(slot)
-        && slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
-    {
+    if notifiers.migration_status.should_send_first_shred(slot) {
         match notifiers
             .votor_event_sender
             .try_send(VotorEvent::FirstShred(slot))
@@ -954,6 +952,7 @@ mod tests {
         solana_entry::entry::create_ticks,
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     };
 
@@ -1101,5 +1100,48 @@ mod tests {
            First time seeing shred Y w/ changed header (FEC Set index 3)=>Dup because common \
              header is unique but shred ID seen twice already"
         );
+    }
+
+    #[test]
+    fn test_notify_subscribers_sends_first_shred_after_genesis() {
+        let (votor_event_sender, votor_event_receiver) = crossbeam_channel::bounded(1);
+        let migration_status = Arc::new(MigrationStatus::post_migration_status());
+        let genesis_slot = migration_status.genesis_block().unwrap().slot;
+        let notifiers = RetransmitNotifiers {
+            rpc_subscriptions: None,
+            slot_status_notifier: None,
+            migration_status,
+            votor_event_sender,
+        };
+        let mut pending_first_shred_event = None;
+
+        let slot = genesis_slot.checked_add(1).unwrap();
+        assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
+        notify_subscribers(
+            slot,
+            /*timestamp:*/ 0,
+            &notifiers,
+            &mut pending_first_shred_event,
+        );
+
+        assert!(matches!(
+            votor_event_receiver.try_recv(),
+            Ok(VotorEvent::FirstShred(received_slot)) if received_slot == slot
+        ));
+        assert!(pending_first_shred_event.is_none());
+
+        // Later unaligned slots do not need a FirstShred event.
+        let slot = slot.checked_add(1).unwrap();
+        assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
+        notify_subscribers(
+            slot,
+            /*timestamp:*/ 0,
+            &notifiers,
+            &mut pending_first_shred_event,
+        );
+        assert!(matches!(
+            votor_event_receiver.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
     }
 }

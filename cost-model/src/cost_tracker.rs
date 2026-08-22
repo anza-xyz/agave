@@ -1,8 +1,6 @@
 //! `cost_tracker` keeps tracking transaction cost per chained accounts as well as for entire block
-//! The main functions are:
-//! - would_fit(&tx_cost), immutable function to test if tx with tx_cost would fit into current block
-//! - add_transaction_cost(&tx_cost), mutable function to accumulate tx_cost to tracker.
-//!
+//! The main function is:
+//! - try_add, checks the configured limits and records the transaction's cost when it fits.
 use {
     crate::{
         block_cost_limits::*, cost_tracker_post_analysis::CostTrackerPostAnalysis,
@@ -13,7 +11,7 @@ use {
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction_error::TransactionError,
     std::{
-        collections::HashMap,
+        collections::{HashMap, hash_map::Entry},
         num::Saturating,
         sync::{
             Arc,
@@ -181,12 +179,76 @@ impl CostTracker {
         self.in_flight_transaction_count -= in_flight_transaction_count
     }
 
+    /// Checks the block and account limits and, if the transaction fits,
+    /// adds its cost to the tracker.
+    ///
+    /// A failed call leaves the tracker equivalent to the pre-call state.
+    /// Account costs applied before the failing account are rolled back,
+    /// and the block-level state (including the lock free shared `block_cost`)
+    /// is only published after every check has passed.
     pub fn try_add(
         &mut self,
         tx_cost: &TransactionCost<impl TransactionWithMeta>,
     ) -> Result<UpdatedCosts, CostTrackerError> {
-        self.would_fit(tx_cost)?;
-        let updated_costliest_account_cost = self.add_transaction_cost(tx_cost);
+        let cost = tx_cost.sum();
+
+        if self.block_cost().saturating_add(cost) > self.limits.block_cost {
+            // check against the total package cost
+            return Err(CostTrackerError::WouldExceedBlockMaxLimit);
+        }
+
+        // check if the transaction itself is more costly than the account_cost_limit
+        if cost > self.limits.account_cost {
+            return Err(CostTrackerError::WouldExceedAccountMaxLimit);
+        }
+
+        let allocated_accounts_data_size =
+            self.allocated_accounts_data_size + Saturating(tx_cost.allocated_accounts_data_size());
+
+        if allocated_accounts_data_size.0 > self.limits.allocated_data_size {
+            return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
+        }
+
+        // Check each account against account_cost_limit and apply the cost in
+        // the same lookup. On failure, undo the applied prefix.
+        let mut updated_costliest_account_cost = 0;
+        for (index, account_key) in tx_cost.writable_accounts().enumerate() {
+            let new_account_cost = match self.cost_by_writable_accounts.entry(*account_key) {
+                Entry::Occupied(mut entry) => {
+                    let new_account_cost = entry.get().saturating_add(cost);
+                    if new_account_cost > self.limits.account_cost {
+                        None
+                    } else {
+                        *entry.get_mut() = new_account_cost;
+                        Some(new_account_cost)
+                    }
+                }
+                Entry::Vacant(entry) => {
+                    // `cost <= limits.account_cost` was checked above, so an
+                    // account without chained cost always fits
+                    entry.insert(cost);
+                    Some(cost)
+                }
+            };
+            let Some(new_account_cost) = new_account_cost else {
+                // the first `index` accounts were applied before this failure
+                self.roll_back_applied_costs(tx_cost, cost, index);
+                return Err(CostTrackerError::WouldExceedAccountMaxLimit);
+            };
+            updated_costliest_account_cost = updated_costliest_account_cost.max(new_account_cost);
+        }
+
+        // every check passed: publish the block-level state
+        self.allocated_accounts_data_size = allocated_accounts_data_size;
+        self.transaction_count += 1;
+        self.transaction_signature_count += tx_cost.num_transaction_signatures();
+        self.secp256k1_instruction_signature_count +=
+            tx_cost.num_secp256k1_instruction_signatures();
+        self.ed25519_instruction_signature_count += tx_cost.num_ed25519_instruction_signatures();
+        self.secp256r1_instruction_signature_count +=
+            tx_cost.num_secp256r1_instruction_signatures();
+        self.block_cost.fetch_add(cost);
+
         Ok(UpdatedCosts {
             updated_block_cost: self.block_cost(),
             updated_costliest_account_cost,
@@ -217,6 +279,27 @@ impl CostTracker {
                     estimated_tx_cost,
                     estimated_load_and_execution_units - actual_load_and_execution_units,
                 );
+            }
+        }
+    }
+
+    /// Undoes the first `num_applied` per account cost applications of a
+    /// partially applied transaction by subtracting the cost each one added.
+    /// Entries left with zero cost are removed.
+    fn roll_back_applied_costs(
+        &mut self,
+        tx_cost: &TransactionCost<impl TransactionWithMeta>,
+        cost: u64,
+        num_applied: usize,
+    ) {
+        for account_key in tx_cost.writable_accounts().take(num_applied) {
+            if let Entry::Occupied(mut entry) = self.cost_by_writable_accounts.entry(*account_key) {
+                let new_account_cost = entry.get().saturating_sub(cost);
+                if new_account_cost == 0 {
+                    entry.remove();
+                } else {
+                    *entry.get_mut() = new_account_cost;
+                }
             }
         }
     }
@@ -319,59 +402,6 @@ impl CostTracker {
             .count()
     }
 
-    fn would_fit(
-        &self,
-        tx_cost: &TransactionCost<impl TransactionWithMeta>,
-    ) -> Result<(), CostTrackerError> {
-        let cost: u64 = tx_cost.sum();
-
-        if self.block_cost().saturating_add(cost) > self.limits.block_cost {
-            // check against the total package cost
-            return Err(CostTrackerError::WouldExceedBlockMaxLimit);
-        }
-
-        // check if the transaction itself is more costly than the account_cost_limit
-        if cost > self.limits.account_cost {
-            return Err(CostTrackerError::WouldExceedAccountMaxLimit);
-        }
-
-        let allocated_accounts_data_size =
-            self.allocated_accounts_data_size + Saturating(tx_cost.allocated_accounts_data_size());
-
-        if allocated_accounts_data_size.0 > self.limits.allocated_data_size {
-            return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
-        }
-
-        // check each account against account_cost_limit,
-        for account_key in tx_cost.writable_accounts() {
-            match self.cost_by_writable_accounts.get(account_key) {
-                Some(chained_cost) => {
-                    if chained_cost.saturating_add(cost) > self.limits.account_cost {
-                        return Err(CostTrackerError::WouldExceedAccountMaxLimit);
-                    } else {
-                        continue;
-                    }
-                }
-                None => continue,
-            }
-        }
-
-        Ok(())
-    }
-
-    // Returns the highest account cost for all write-lock accounts `TransactionCost` updated
-    fn add_transaction_cost(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) -> u64 {
-        self.allocated_accounts_data_size += tx_cost.allocated_accounts_data_size();
-        self.transaction_count += 1;
-        self.transaction_signature_count += tx_cost.num_transaction_signatures();
-        self.secp256k1_instruction_signature_count +=
-            tx_cost.num_secp256k1_instruction_signatures();
-        self.ed25519_instruction_signature_count += tx_cost.num_ed25519_instruction_signatures();
-        self.secp256r1_instruction_signature_count +=
-            tx_cost.num_secp256r1_instruction_signatures();
-        self.add_transaction_execution_cost(tx_cost, tx_cost.sum())
-    }
-
     fn remove_transaction_cost(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
         let cost = tx_cost.sum();
         self.sub_transaction_execution_cost(tx_cost, cost);
@@ -385,25 +415,20 @@ impl CostTracker {
             tx_cost.num_secp256r1_instruction_signatures();
     }
 
-    /// Apply additional actual execution units to cost_tracker
-    /// Return the costliest account cost that were updated by `TransactionCost`
+    /// Apply additional actual execution units to cost_tracker.
     fn add_transaction_execution_cost(
         &mut self,
         tx_cost: &TransactionCost<impl TransactionWithMeta>,
         adjustment: u64,
-    ) -> u64 {
-        let mut costliest_account_cost = 0;
+    ) {
         for account_key in tx_cost.writable_accounts() {
             let account_cost = self
                 .cost_by_writable_accounts
                 .entry(*account_key)
                 .or_insert(0);
             *account_cost = account_cost.saturating_add(adjustment);
-            costliest_account_cost = costliest_account_cost.max(*account_cost);
         }
         self.block_cost.fetch_add(adjustment);
-
-        costliest_account_cost
     }
 
     /// Subtract extra execution units from cost_tracker
@@ -502,11 +527,11 @@ mod tests {
         }
     }
 
-    fn simple_usage_cost_details(
+    fn simple_transaction_cost(
         transaction: &WritableKeysTransaction,
         programs_execution_cost: u64,
-    ) -> UsageCostDetails<'_, WritableKeysTransaction> {
-        UsageCostDetails {
+    ) -> TransactionCost<'_, WritableKeysTransaction> {
+        TransactionCost {
             transaction,
             signature_cost: 0,
             write_lock_cost: 0,
@@ -517,20 +542,10 @@ mod tests {
         }
     }
 
-    fn simple_transaction_cost(
-        transaction: &WritableKeysTransaction,
-        programs_execution_cost: u64,
-    ) -> TransactionCost<'_, WritableKeysTransaction> {
-        TransactionCost::new(simple_usage_cost_details(
-            transaction,
-            programs_execution_cost,
-        ))
-    }
-
     fn simple_vote_transaction_cost(
         transaction: &WritableKeysTransaction,
     ) -> TransactionCost<'_, WritableKeysTransaction> {
-        TransactionCost::new(UsageCostDetails {
+        TransactionCost {
             transaction,
             signature_cost: 1,
             write_lock_cost: 2,
@@ -538,7 +553,7 @@ mod tests {
             programs_execution_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
             loaded_accounts_data_size_cost: 8,
             allocated_accounts_data_size: 0,
-        })
+        }
     }
 
     #[test]
@@ -559,8 +574,7 @@ mod tests {
 
         // build testee to have capacity for one simple transaction
         let mut testee = CostTracker::new(cost, cost);
-        assert!(testee.would_fit(&tx_cost).is_ok());
-        testee.add_transaction_cost(&tx_cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
         assert_eq!(cost, testee.block_cost());
         let (_costliest_account, costliest_account_cost) = testee.find_costliest_account();
         assert_eq!(cost, costliest_account_cost);
@@ -575,8 +589,7 @@ mod tests {
 
         // build testee to have capacity for one simple transaction
         let mut testee = CostTracker::new(cost, cost);
-        assert!(testee.would_fit(&tx_cost).is_ok());
-        testee.add_transaction_cost(&tx_cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
         assert_eq!(cost, testee.block_cost());
         let (_costliest_account, costliest_account_cost) = testee.find_costliest_account();
         assert_eq!(cost, costliest_account_cost);
@@ -587,16 +600,13 @@ mod tests {
         let mint_keypair = test_setup();
         let tx = build_simple_transaction(&mint_keypair);
         let mut tx_cost = simple_transaction_cost(&tx, 5);
-        tx_cost
-            .usage_cost_details_mut()
-            .allocated_accounts_data_size = 1;
+        tx_cost.allocated_accounts_data_size = 1;
         let cost = tx_cost.sum();
 
         // build testee to have capacity for one simple transaction
         let mut testee = CostTracker::new(cost, cost);
-        assert!(testee.would_fit(&tx_cost).is_ok());
         let old = testee.allocated_accounts_data_size;
-        testee.add_transaction_cost(&tx_cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
         assert_eq!(old.0 + 1, testee.allocated_accounts_data_size.0);
     }
 
@@ -614,12 +624,10 @@ mod tests {
         // build testee to have capacity for two simple transactions, with same accounts
         let mut testee = CostTracker::new(cost1 + cost2, cost1 + cost2);
         {
-            assert!(testee.would_fit(&tx_cost1).is_ok());
-            testee.add_transaction_cost(&tx_cost1);
+            assert!(testee.try_add(&tx_cost1).is_ok());
         }
         {
-            assert!(testee.would_fit(&tx_cost2).is_ok());
-            testee.add_transaction_cost(&tx_cost2);
+            assert!(testee.try_add(&tx_cost2).is_ok());
         }
         assert_eq!(cost1 + cost2, testee.block_cost());
         assert_eq!(1, testee.cost_by_writable_accounts.len());
@@ -643,12 +651,10 @@ mod tests {
         // build testee to have capacity for two simple transactions, with same accounts
         let mut testee = CostTracker::new(cmp::max(cost1, cost2), cost1 + cost2);
         {
-            assert!(testee.would_fit(&tx_cost1).is_ok());
-            testee.add_transaction_cost(&tx_cost1);
+            assert!(testee.try_add(&tx_cost1).is_ok());
         }
         {
-            assert!(testee.would_fit(&tx_cost2).is_ok());
-            testee.add_transaction_cost(&tx_cost2);
+            assert!(testee.try_add(&tx_cost2).is_ok());
         }
         assert_eq!(cost1 + cost2, testee.block_cost());
         assert_eq!(2, testee.cost_by_writable_accounts.len());
@@ -671,12 +677,11 @@ mod tests {
         let mut testee = CostTracker::new(cmp::min(cost1, cost2), cost1 + cost2);
         // should have room for first transaction
         {
-            assert!(testee.would_fit(&tx_cost1).is_ok());
-            testee.add_transaction_cost(&tx_cost1);
+            assert!(testee.try_add(&tx_cost1).is_ok());
         }
         // but no more sapce on the same chain (same signer account)
         {
-            assert!(testee.would_fit(&tx_cost2).is_err());
+            assert!(testee.try_add(&tx_cost2).is_err());
         }
     }
 
@@ -696,12 +701,11 @@ mod tests {
         let mut testee = CostTracker::new(cmp::max(cost1, cost2), cost1 + cost2 - 1);
         // should have room for first transaction
         {
-            assert!(testee.would_fit(&tx_cost1).is_ok());
-            testee.add_transaction_cost(&tx_cost1);
+            assert!(testee.try_add(&tx_cost1).is_ok());
         }
         // but no more room for package as whole
         {
-            assert!(testee.would_fit(&tx_cost2).is_err());
+            assert!(testee.try_add(&tx_cost2).is_err());
         }
     }
 
@@ -721,10 +725,9 @@ mod tests {
         let mut testee = CostTracker::new(cmp::max(cost1, cost2), cost1 + cost2);
         // should have room for first vote
         {
-            assert!(testee.would_fit(&tx_cost1).is_ok());
-            testee.add_transaction_cost(&tx_cost1);
+            assert!(testee.try_add(&tx_cost1).is_ok());
         }
-        assert!(testee.would_fit(&tx_cost2).is_ok());
+        assert!(testee.try_add(&tx_cost2).is_ok());
     }
 
     #[test]
@@ -736,23 +739,19 @@ mod tests {
         let mut tx_cost1 = simple_transaction_cost(&tx1, 5);
         let tx2 = build_simple_transaction(&second_account);
         let mut tx_cost2 = simple_transaction_cost(&tx2, 5);
-        tx_cost1
-            .usage_cost_details_mut()
-            .allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA;
-        tx_cost2
-            .usage_cost_details_mut()
-            .allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA + 1;
+        tx_cost1.allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA;
+        tx_cost2.allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA + 1;
         let cost1 = tx_cost1.sum();
         let cost2 = tx_cost2.sum();
 
         // build testee that passes
-        let testee = CostTracker::new(cmp::max(cost1, cost2), cost1 + cost2 - 1);
-        assert!(testee.would_fit(&tx_cost1).is_ok());
+        let mut testee = CostTracker::new(cmp::max(cost1, cost2), cost1 + cost2);
+        assert!(testee.try_add(&tx_cost1).is_ok());
         // data is too big
-        assert_eq!(
-            testee.would_fit(&tx_cost2),
+        assert!(matches!(
+            testee.try_add(&tx_cost2),
             Err(CostTrackerError::WouldExceedAccountDataBlockLimit),
-        );
+        ));
     }
 
     #[test]
@@ -761,23 +760,21 @@ mod tests {
         let mint_keypair = test_setup();
         let tx = build_simple_transaction(&mint_keypair);
         let mut tx_cost = simple_transaction_cost(&tx, 5);
-        tx_cost
-            .usage_cost_details_mut()
-            .allocated_accounts_data_size = 2;
+        tx_cost.allocated_accounts_data_size = 2;
 
         // Transaction fits with default limit.
         let mut testee = CostTracker::new(u64::MAX, u64::MAX);
-        assert_eq!(testee.would_fit(&tx_cost), Ok(()),);
+        assert!(testee.try_add(&tx_cost).is_ok());
 
         // Transaction does not fit with 1B limit.
         testee.set_limits(CostTrackerLimits {
             allocated_data_size: 1,
             ..testee.get_limits()
         });
-        assert_eq!(
-            testee.would_fit(&tx_cost),
+        assert!(matches!(
+            testee.try_add(&tx_cost),
             Err(CostTrackerError::WouldExceedAccountDataBlockLimit),
-        );
+        ));
     }
 
     #[test]
@@ -868,7 +865,138 @@ mod tests {
             assert_eq!(3, testee.cost_by_writable_accounts.len());
             assert_eq!(cost * 2, costliest_account_cost);
             assert_eq!(acct2, costliest_account);
+            // the pre-existing acct1 entry was decremented back, not removed
+            assert_eq!(Some(&cost), testee.cost_by_writable_accounts.get(&acct1));
         }
+
+        // case 4: add tx writes to [acct4 (unseen), acct2], acct2 exceeds limit;
+        // the entry freshly inserted for acct4 must be removed by the rollback,
+        // leaving the tracker exactly as after case 2
+        {
+            let acct4 = Pubkey::new_unique();
+            let transaction = WritableKeysTransaction::new(vec![acct4, acct2]);
+            let tx_cost = simple_transaction_cost(&transaction, cost);
+            assert!(matches!(
+                testee.try_add(&tx_cost),
+                Err(CostTrackerError::WouldExceedAccountMaxLimit)
+            ));
+            let (costliest_account, costliest_account_cost) = testee.find_costliest_account();
+            assert_eq!(cost * 2, testee.block_cost());
+            assert_eq!(3, testee.cost_by_writable_accounts.len());
+            assert!(!testee.cost_by_writable_accounts.contains_key(&acct4));
+            assert_eq!(cost * 2, costliest_account_cost);
+            assert_eq!(acct2, costliest_account);
+        }
+    }
+
+    #[test]
+    fn test_try_add_rollback_many_accounts() {
+        let cost = 100;
+        let hot_account = Pubkey::new_unique();
+        let mut testee = CostTracker::new(cost * 2, cost * 1000);
+
+        // drive hot_account to the limit so the next charge fails
+        let transaction = WritableKeysTransaction::new(vec![hot_account]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
+        assert!(testee.try_add(&tx_cost).is_ok());
+        let block_cost_before = testee.block_cost();
+
+        // 100 fresh accounts followed by hot_account, all 100 fresh entries
+        // are inserted before the failure at index 100
+        let mut keys: Vec<Pubkey> = (0..100).map(|_| Pubkey::new_unique()).collect();
+        keys.push(hot_account);
+        let transaction = WritableKeysTransaction::new(keys);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(matches!(
+            testee.try_add(&tx_cost),
+            Err(CostTrackerError::WouldExceedAccountMaxLimit)
+        ));
+
+        assert_eq!(1, testee.cost_by_writable_accounts.len());
+        assert_eq!(
+            Some(&(cost * 2)),
+            testee.cost_by_writable_accounts.get(&hot_account)
+        );
+        assert_eq!(block_cost_before, testee.block_cost());
+    }
+
+    // Duplicate writable keys net out.
+    // Each occurrence's undo subtracts what it added, and the entry is removed when it reaches zero
+    #[test]
+    fn test_try_add_rollback_with_duplicate_keys() {
+        let cost = 100;
+        let dup = Pubkey::new_unique();
+        let hot_account = Pubkey::new_unique();
+        let mut testee = CostTracker::new(cost * 4, cost * 1000);
+
+        // drive hot_account to the limit so any further charge fails
+        let transaction = WritableKeysTransaction::new(vec![hot_account]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        for _ in 0..4 {
+            assert!(testee.try_add(&tx_cost).is_ok());
+        }
+        let block_cost_before = testee.block_cost();
+
+        // fresh dup - each undo subtracts what that occurrence added; the entry reaches zero on the second undo and is removed
+        let transaction = WritableKeysTransaction::new(vec![dup, dup, hot_account]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(matches!(
+            testee.try_add(&tx_cost),
+            Err(CostTrackerError::WouldExceedAccountMaxLimit)
+        ));
+        assert!(!testee.cost_by_writable_accounts.contains_key(&dup));
+        assert_eq!(block_cost_before, testee.block_cost());
+
+        // pre-existing dup
+        let transaction = WritableKeysTransaction::new(vec![dup]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
+        let block_cost_before = testee.block_cost();
+
+        let transaction = WritableKeysTransaction::new(vec![dup, dup, hot_account]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(matches!(
+            testee.try_add(&tx_cost),
+            Err(CostTrackerError::WouldExceedAccountMaxLimit)
+        ));
+        assert_eq!(Some(&cost), testee.cost_by_writable_accounts.get(&dup));
+        assert_eq!(block_cost_before, testee.block_cost());
+    }
+
+    #[test]
+    fn test_try_add_rollback_removes_zeroed_entries() {
+        let cost = 100;
+        let zeroed = Pubkey::new_unique();
+        let hot_account = Pubkey::new_unique();
+        let mut testee = CostTracker::new(cost * 2, cost * 1000);
+
+        // leave `zeroed` in the map with zero cost
+        let transaction = WritableKeysTransaction::new(vec![zeroed]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
+        testee.remove(&tx_cost);
+        assert_eq!(Some(&0), testee.cost_by_writable_accounts.get(&zeroed));
+
+        // drive hot_account to the limit so the next charge fails
+        let transaction = WritableKeysTransaction::new(vec![hot_account]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
+        assert!(testee.try_add(&tx_cost).is_ok());
+        let block_cost_before = testee.block_cost();
+
+        let transaction = WritableKeysTransaction::new(vec![zeroed, hot_account]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(matches!(
+            testee.try_add(&tx_cost),
+            Err(CostTrackerError::WouldExceedAccountMaxLimit)
+        ));
+        assert!(!testee.cost_by_writable_accounts.contains_key(&zeroed));
+        assert_eq!(
+            Some(&(cost * 2)),
+            testee.cost_by_writable_accounts.get(&hot_account)
+        );
+        assert_eq!(block_cost_before, testee.block_cost());
     }
 
     #[test]
@@ -895,21 +1023,6 @@ mod tests {
                 assert_eq!(expected_block_cost, *units);
             });
 
-        // adjust up
-        {
-            let adjustment = 50u64;
-            testee.add_transaction_execution_cost(&tx_cost, adjustment);
-            expected_block_cost += 50;
-            assert_eq!(expected_block_cost, testee.block_cost());
-            assert_eq!(expected_tx_count, testee.transaction_count());
-            testee
-                .cost_by_writable_accounts
-                .iter()
-                .for_each(|(_key, units)| {
-                    assert_eq!(expected_block_cost, *units);
-                });
-        }
-
         // adjust down
         {
             let adjustment = 50u64;
@@ -927,79 +1040,13 @@ mod tests {
     }
 
     #[test]
-    fn test_update_execution_cost() {
-        let estimated_programs_execution_cost = 100;
-        let estimated_loaded_accounts_data_size_cost = 200;
-        let number_writeble_accounts = 3;
-        let transaction = WritableKeysTransaction::new(
-            std::iter::repeat_with(Pubkey::new_unique)
-                .take(number_writeble_accounts)
-                .collect(),
-        );
-
-        let mut usage_cost =
-            simple_usage_cost_details(&transaction, estimated_programs_execution_cost);
-        usage_cost.loaded_accounts_data_size_cost = estimated_loaded_accounts_data_size_cost;
-        let tx_cost = TransactionCost::new(usage_cost);
-        // confirm tx_cost is only made up by programs_execution_cost and
-        // loaded_accounts_data_size_cost
-        let estimated_tx_cost = tx_cost.sum();
-        assert_eq!(
-            estimated_tx_cost,
-            estimated_programs_execution_cost + estimated_loaded_accounts_data_size_cost
-        );
-
-        let test_update_cost_tracker =
-            |execution_cost_adjust: i64, loaded_accounts_data_size_cost_adjust: i64| {
-                let mut cost_tracker = CostTracker::default();
-                assert!(cost_tracker.try_add(&tx_cost).is_ok());
-
-                let actual_programs_execution_cost =
-                    (estimated_programs_execution_cost as i64 + execution_cost_adjust) as u64;
-                let actual_loaded_accounts_data_size_cost =
-                    (estimated_loaded_accounts_data_size_cost as i64
-                        + loaded_accounts_data_size_cost_adjust) as u64;
-                let expected_cost = (estimated_tx_cost as i64
-                    + execution_cost_adjust
-                    + loaded_accounts_data_size_cost_adjust)
-                    as u64;
-
-                cost_tracker.update_execution_cost(
-                    &tx_cost,
-                    actual_programs_execution_cost,
-                    actual_loaded_accounts_data_size_cost,
-                );
-
-                assert_eq!(expected_cost, cost_tracker.block_cost());
-                assert_eq!(
-                    number_writeble_accounts,
-                    cost_tracker.cost_by_writable_accounts.len()
-                );
-                for writable_account_cost in cost_tracker.cost_by_writable_accounts.values() {
-                    assert_eq!(expected_cost, *writable_account_cost);
-                }
-                assert_eq!(1, cost_tracker.transaction_count.0);
-            };
-
-        test_update_cost_tracker(0, 0);
-        test_update_cost_tracker(0, 9);
-        test_update_cost_tracker(0, -9);
-        test_update_cost_tracker(9, 0);
-        test_update_cost_tracker(9, 9);
-        test_update_cost_tracker(9, -9);
-        test_update_cost_tracker(-9, 0);
-        test_update_cost_tracker(-9, 9);
-        test_update_cost_tracker(-9, -9);
-    }
-
-    #[test]
     fn test_remove_transaction_cost() {
         let mut cost_tracker = CostTracker::default();
 
         let cost = 100u64;
         let transaction = WritableKeysTransaction::new(vec![Pubkey::new_unique()]);
         let tx_cost = simple_transaction_cost(&transaction, cost);
-        cost_tracker.add_transaction_cost(&tx_cost);
+        cost_tracker.try_add(&tx_cost).unwrap();
         // assert cost_tracker is reverted to default
         assert_eq!(1, cost_tracker.transaction_count.0);
         assert_eq!(1, cost_tracker.number_of_accounts());
@@ -1020,7 +1067,7 @@ mod tests {
         let cost = 100u64;
         let transaction = WritableKeysTransaction::new(vec![Pubkey::new_unique()]);
         let tx_cost = simple_transaction_cost(&transaction, cost);
-        cost_tracker.add_transaction_cost(&tx_cost);
+        cost_tracker.try_add(&tx_cost).unwrap();
         let cost_by_writable_accounts = cost_tracker.get_cost_by_writable_accounts();
         assert_eq!(1, cost_by_writable_accounts.len());
         assert_eq!(cost, *cost_by_writable_accounts.values().next().unwrap());

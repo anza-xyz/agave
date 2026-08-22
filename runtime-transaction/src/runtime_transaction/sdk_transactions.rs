@@ -5,7 +5,7 @@ use {
         transaction_meta::{
             CachedTransactionMeta, TransactionMeta, VersionedTransactionConfiguration,
         },
-        transaction_with_meta::TransactionWithMeta,
+        transaction_with_meta::{StaticTransactionWithMeta, TransactionWithMeta},
     },
     solana_message::{AddressLoader, TransactionSignatureDetails},
     solana_pubkey::Pubkey,
@@ -81,7 +81,6 @@ impl RuntimeTransaction<SanitizedTransaction> {
         is_simple_vote_tx: Option<bool>,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
-        enable_instruction_accounts_limit: bool,
     ) -> Result<Self> {
         if tx.message.instructions().len()
             > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
@@ -89,11 +88,9 @@ impl RuntimeTransaction<SanitizedTransaction> {
             return Err(solana_transaction_error::TransactionError::SanitizeFailure);
         }
 
-        if enable_instruction_accounts_limit {
-            for instr in tx.message.instructions() {
-                if instr.accounts.len() > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION {
-                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
-                }
+        for instr in tx.message.instructions() {
+            if instr.accounts.len() > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION {
+                return Err(solana_transaction_error::TransactionError::SanitizeFailure);
             }
         }
 
@@ -137,12 +134,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
     }
 }
 
-impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
-    #[inline]
-    fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
-        Cow::Borrowed(self)
-    }
-
+impl StaticTransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     #[inline]
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         self.transaction.to_versioned_transaction()
@@ -154,18 +146,23 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     }
 }
 
+impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
+    #[inline]
+    fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
+        Cow::Borrowed(self)
+    }
+}
+
 #[cfg(feature = "dev-context-only-utils")]
 impl RuntimeTransaction<SanitizedTransaction> {
     pub fn from_transaction_for_tests(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
-        let enable_instruction_accounts_limit = true;
         Self::try_create(
             versioned_transaction,
             MessageHash::Compute,
             None,
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
-            enable_instruction_accounts_limit,
         )
         .expect("failed to create RuntimeTransaction from Transaction")
     }
@@ -426,7 +423,6 @@ mod tests {
             None,
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
-            true,
         );
         assert!(result.is_ok());
 
@@ -448,7 +444,6 @@ mod tests {
             None,
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
-            true,
         );
         assert_eq!(
             result.err(),

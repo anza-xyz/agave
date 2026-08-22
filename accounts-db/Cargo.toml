@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -27,14 +28,14 @@ dev-context-only-utils = [
     "dep:solana-signer",
     "dep:solana-stake-interface",
     "dep:solana-vote-program",
-    "solana-account/dev-context-only-utils",
+    "solana-account/wincode",
     "solana-transaction/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dev-context-only-utils",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-fee-calculator/frozen-abi",
+    "solana-nonce/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
 
@@ -62,27 +63,31 @@ solana-address-lookup-table-interface = { workspace = true, features = [
 solana-bucket-map = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-fee-calculator = { workspace = true, features = ["wincode"] }
+solana-fee-calculator = { workspace = true, features = ["serde", "wincode"] }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = { workspace = true, features = ["serde", "wincode"] }
+solana-hash = { workspace = true, features = ["serde", "wincode", "rand"] }
 solana-keypair = { workspace = true, optional = true }
 solana-lattice-hash = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-nohash-hasher = { workspace = true }
+solana-nonce = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, optional = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
-solana-stake-interface = { workspace = true, optional = true, features = ["serde"] }
+solana-stake-interface = { workspace = true, optional = true, features = [
+    "serde",
+    "wincode",
+] }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
@@ -105,7 +110,6 @@ criterion = { workspace = true }
 memoffset = { workspace = true }
 rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
-# See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
 solana-sdk-ids = { workspace = true }

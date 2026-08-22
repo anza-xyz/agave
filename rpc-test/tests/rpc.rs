@@ -1,7 +1,6 @@
 use {
-    async_trait::async_trait,
     bincode::serialize,
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     futures_util::StreamExt,
     log::*,
     reqwest::{self, header::CONTENT_TYPE},
@@ -25,12 +24,15 @@ use {
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
-    solana_tpu_client_next::{client_builder::ClientBuilder, leader_updater::LeaderUpdater},
+    solana_tpu_client_next::{
+        client_builder::ClientBuilder, leader_updater::create_pinned_leader_updater,
+        node_address_service::LeaderTpuCacheServiceConfig,
+        websocket_node_address_service::WebsocketNodeAddressService,
+    },
     solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
     std::{
         collections::HashSet,
-        net::SocketAddr,
         sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
@@ -38,7 +40,8 @@ use {
         thread::sleep,
         time::{Duration, Instant},
     },
-    tokio::runtime::Runtime,
+    tokio::runtime::{Builder, Runtime},
+    tokio_util::sync::CancellationToken,
 };
 
 macro_rules! json_req {
@@ -223,7 +226,7 @@ fn test_rpc_slot_updates() {
         TestValidator::start_with_config(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
 
     // Track when slot updates are ready
-    let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
+    let (update_sender, update_receiver) = bounded::<SlotUpdate>(1024);
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
     let rpc_pubsub_url = test_validator.rpc_pubsub_url();
@@ -283,20 +286,6 @@ fn test_rpc_slot_updates() {
     }
 }
 
-/// LeaderUpdater for testing - returns a fixed TPU address
-struct TestLeaderUpdater {
-    address: SocketAddr,
-}
-
-#[async_trait]
-impl LeaderUpdater for TestLeaderUpdater {
-    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
-        vec![self.address]
-    }
-
-    async fn stop(&mut self) {}
-}
-
 #[test]
 fn test_rpc_subscriptions() {
     agave_logger::setup();
@@ -328,10 +317,10 @@ fn test_rpc_subscriptions() {
         .collect();
 
     // Track account notifications are received
-    let (account_sender, account_receiver) = unbounded::<(Pubkey, RpcResponse<UiAccount>)>();
+    let (account_sender, account_receiver) = bounded::<(Pubkey, RpcResponse<UiAccount>)>(1024);
     // Track when status notifications are received
     let (status_sender, status_receiver) =
-        unbounded::<(Signature, RpcResponse<RpcSignatureResult>)>();
+        bounded::<(Signature, RpcResponse<RpcSignatureResult>)>(1024);
 
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
@@ -438,9 +427,7 @@ fn test_rpc_subscriptions() {
     let bind_socket = sockets::bind_to_localhost_unique().unwrap();
     let tpu_address = *test_validator.tpu_quic();
 
-    let leader_updater = Box::new(TestLeaderUpdater {
-        address: tpu_address,
-    });
+    let leader_updater = create_pinned_leader_updater(tpu_address);
 
     let (transaction_sender, _client) = rt.block_on(async {
         ClientBuilder::new(leader_updater)
@@ -452,13 +439,10 @@ fn test_rpc_subscriptions() {
 
     // Send all transactions
     rt.block_on(async {
-        let wire_txs: Vec<_> = transactions
-            .iter()
-            .map(|tx| bincode::serialize(tx).unwrap())
-            .collect();
-        let _ = transaction_sender
-            .send_transactions_in_batch(wire_txs)
-            .await;
+        for tx in transactions.iter() {
+            let wire_tx = bincode::serialize(&tx).unwrap();
+            let _ = transaction_sender.send_transaction(wire_tx).await;
+        }
     });
 
     // Track mint balance to know when transactions have completed
@@ -537,9 +521,7 @@ fn test_run_tpu_send_transaction() {
     let bind_socket = sockets::bind_to_localhost_unique().unwrap();
     let tpu_address = *test_validator.tpu_quic();
 
-    let leader_updater = Box::new(TestLeaderUpdater {
-        address: tpu_address,
-    });
+    let leader_updater = create_pinned_leader_updater(tpu_address);
 
     let (transaction_sender, _client) = rt.block_on(async {
         ClientBuilder::new(leader_updater)
@@ -551,9 +533,7 @@ fn test_run_tpu_send_transaction() {
 
     let tx_bytes = bincode::serialize(&tx).unwrap();
     rt.block_on(async {
-        let _ = transaction_sender
-            .send_transactions_in_batch(vec![tx_bytes])
-            .await;
+        let _ = transaction_sender.send_transaction(tx_bytes).await;
     });
 
     let timeout = Duration::from_secs(5);
@@ -566,6 +546,49 @@ fn test_run_tpu_send_transaction() {
             return;
         }
     }
+}
+
+#[test]
+fn test_node_address_service_slot_updates() {
+    agave_logger::setup();
+
+    let test_validator =
+        TestValidator::start_with_config(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
+
+    let rt = Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(2)
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let rpc_client = Arc::new(test_validator.get_async_rpc_client());
+        let cancel = CancellationToken::new();
+        let (provider, service) = WebsocketNodeAddressService::run(
+            rpc_client,
+            test_validator.rpc_pubsub_url(),
+            LeaderTpuCacheServiceConfig::default(),
+            cancel.clone(),
+        )
+        .await
+        .expect("WebsocketNodeAddressService should start");
+
+        let start_slot = provider.estimated_current_slot();
+        let timeout = Duration::from_secs(5);
+        let now = Instant::now();
+        loop {
+            assert!(
+                now.elapsed() < timeout,
+                "estimated slot did not advance within {timeout:?}"
+            );
+            if provider.estimated_current_slot() != start_slot {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(solana_clock::DEFAULT_MS_PER_SLOT)).await;
+        }
+
+        cancel.cancel();
+        service.shutdown().await.expect("clean shutdown");
+    });
 }
 
 #[test]

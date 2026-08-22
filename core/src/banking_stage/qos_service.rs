@@ -67,10 +67,9 @@ impl QosService {
                 pre_result.map(|()| {
                     let mut reserving_cost = CostModel::calculate_cost(tx, feature_set);
 
-                    let usage_cost_details = reserving_cost.usage_cost_details_mut();
                     // To maintain cost tracking consistency, reserve at least one page for
                     // loading the fee payer account in fee-only fallback scenarios.
-                    usage_cost_details.loaded_accounts_data_size_cost = usage_cost_details
+                    reserving_cost.loaded_accounts_data_size_cost = reserving_cost
                         .loaded_accounts_data_size_cost
                         .max(CostModel::calculate_pages_cost(1));
 
@@ -564,10 +563,8 @@ mod tests {
             .expect("one tx cost")
             .expect("tx cost should be computed");
 
-        let usage_cost_details = tx_cost.usage_cost_details();
-
         assert_eq!(
-            usage_cost_details.loaded_accounts_data_size_cost,
+            tx_cost.loaded_accounts_data_size_cost,
             CostModel::calculate_pages_cost(1),
         );
     }

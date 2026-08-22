@@ -72,12 +72,14 @@ impl LeaderScheduleCache {
         let new_max_epoch = self
             .epoch_schedule
             .get_leader_schedule_epoch(root_bank.slot());
-        let old_max_epoch = self.max_epoch.swap(new_max_epoch, Ordering::AcqRel);
+        let old_max_epoch = self.max_epoch.load(Ordering::Acquire);
         assert!(new_max_epoch >= old_max_epoch);
 
-        // Calculate the epoch as soon as it's rooted
         if new_max_epoch > old_max_epoch {
+            // Install the rooted schedule before publishing the epoch to readers.
             self.compute_leader_schedule(new_max_epoch, root_bank);
+            let old_max_epoch = self.max_epoch.swap(new_max_epoch, Ordering::AcqRel);
+            assert!(new_max_epoch >= old_max_epoch);
         }
     }
 

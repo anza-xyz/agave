@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -17,13 +18,15 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
+    "agave-banking-stage-ingress-types/dev-context-only-utils",
+    "agave-bls-sigverify/dev-context-only-utils",
+    "agave-votor/dev-context-only-utils",
     "solana-entry/dev-context-only-utils",
     "solana-ledger/dev-context-only-utils",
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
     "solana-streamer/dev-context-only-utils",
     "solana-tpu-client-next/dev-context-only-utils",
-    "agave-votor/dev-context-only-utils",
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -58,13 +61,13 @@ agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
 agave-xdp = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
-async-trait = { workspace = true }
 bincode = { workspace = true }
 bitvec = { workspace = true }
 bytes = { workspace = true }
@@ -93,7 +96,7 @@ shaq = { workspace = true }
 signal-hook = { workspace = true }
 slab = { workspace = true }
 smallvec = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bincode = { workspace = true }
@@ -130,7 +133,7 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
-solana-nonce = { workspace = true }
+solana-nonce = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
@@ -190,18 +193,16 @@ sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
-agave-scheduler-bindings = { path = "../scheduler-bindings", features = ["agave-unstable-api"] }
 bencher = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
 serial_test = { workspace = true }
-solana-account = { workspace = true, features = ["dev-context-only-utils"] }
+solana-account = { workspace = true, features = ["bincode", "wincode"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api", "svm-internal"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
-# See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-cost-model = { path = "../cost-model", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }

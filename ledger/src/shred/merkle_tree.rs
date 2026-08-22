@@ -19,6 +19,12 @@ pub(crate) const MERKLE_HASH_PREFIX_NODE: &[u8] = b"\x01SOLANA_MERKLE_SHREDS_NOD
 
 pub type MerkleProofEntry = [u8; 20];
 
+/// Borrows the prefix of a hash represented by a Merkle proof entry.
+#[inline]
+pub fn hash_as_merkle_proof_entry(hash: &Hash) -> &MerkleProofEntry {
+    <&MerkleProofEntry>::try_from(&hash.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY]).unwrap()
+}
+
 /// A struct to track a given Merkle tree.
 pub struct MerkleTree {
     /// List of all the nodes in the tree.
@@ -91,9 +97,7 @@ impl MerkleTree {
                 offset += size;
                 size = (size + 1) >> 1;
                 index >>= 1;
-                let entry = &node.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY];
-                let entry = <&MerkleProofEntry>::try_from(entry).unwrap();
-                Some(Ok(entry))
+                Some(Ok(hash_as_merkle_proof_entry(node)))
             } else if offset + 1 == self.nodes.len() {
                 None
             } else {
@@ -110,8 +114,9 @@ fn join_nodes<S: AsRef<[u8]>, T: AsRef<[u8]>>(node: S, other: T) -> Hash {
     hashv(&[MERKLE_HASH_PREFIX_NODE, node, other])
 }
 
-// Recovers root of the merkle tree from a leaf node
-// at the given index and the respective proof.
+// Recovers the root of the Merkle tree from a full leaf hash at the given index
+// and the respective proof. The full hash is required for a single-leaf tree,
+// where the proof is empty and the leaf itself is the root.
 pub fn get_merkle_root<'a, I>(index: usize, node: Hash, proof: I) -> Result<Hash, Error>
 where
     I: IntoIterator<Item = &'a MerkleProofEntry>,
@@ -131,20 +136,25 @@ where
         .ok_or(Error::InvalidMerkleProof)
 }
 
-/// Given a flattened merkle `proof` for `node` at `index`,
-/// verify the proof against merkle root `root`
+/// Given a non-empty flattened Merkle `proof` for `node` at `index`,
+/// verifies the proof against `expected_root`.
 pub fn verify_merkle_proof(
-    node: Hash,
+    node: &MerkleProofEntry,
     index: usize,
     proof: &[u8],
     expected_root: Hash,
 ) -> Result<(), Error> {
-    let proof = proof
-        .chunks(SIZE_OF_MERKLE_PROOF_ENTRY)
-        .map(<&MerkleProofEntry>::try_from)
-        .map(|entry| entry.map_err(|_| Error::InvalidMerkleProof))
-        .collect::<Result<Vec<_>, Error>>()?;
-    let merkle_root = get_merkle_root(index, node, proof)?;
+    let (proof, remainder) = proof.as_chunks::<SIZE_OF_MERKLE_PROOF_ENTRY>();
+    if !remainder.is_empty() {
+        return Err(Error::InvalidMerkleProof);
+    }
+    let (other, proof) = proof.split_first().ok_or(Error::InvalidMerkleProof)?;
+    let parent = if index.is_multiple_of(2) {
+        join_nodes(node, other)
+    } else {
+        join_nodes(other, node)
+    };
+    let merkle_root = get_merkle_root(index >> 1, parent, proof)?;
 
     (merkle_root == expected_root)
         .then_some(())
@@ -180,9 +190,41 @@ mod tests {
         let mut rng = rand::rng();
         let bytes: [u8; 32] = rng.random();
         let hash = Hash::from(bytes);
-        let entry = &hash.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY];
-        let entry = MerkleProofEntry::try_from(entry).unwrap();
+        let entry = hash_as_merkle_proof_entry(&hash);
         assert_eq!(entry, &bytes[..SIZE_OF_MERKLE_PROOF_ENTRY]);
+    }
+
+    #[test]
+    fn test_verify_merkle_proof() {
+        let nodes = [Hash::new_unique(), Hash::new_unique()];
+        let tree = MerkleTree::try_new(nodes.iter().copied().map(Ok)).unwrap();
+        let expected_root = *tree.root();
+        for (index, node) in nodes.iter().enumerate() {
+            let proof: Vec<u8> = tree
+                .make_merkle_proof(index, nodes.len())
+                .flat_map(|entry| entry.unwrap().iter().copied())
+                .collect();
+            verify_merkle_proof(
+                hash_as_merkle_proof_entry(node),
+                index,
+                &proof,
+                expected_root,
+            )
+            .unwrap();
+            assert_matches!(
+                verify_merkle_proof(
+                    hash_as_merkle_proof_entry(node),
+                    index,
+                    &proof[..proof.len() - 1],
+                    expected_root,
+                ),
+                Err(Error::InvalidMerkleProof)
+            );
+        }
+        assert_matches!(
+            verify_merkle_proof(hash_as_merkle_proof_entry(&nodes[0]), 0, &[], expected_root,),
+            Err(Error::InvalidMerkleProof)
+        );
     }
 
     #[test]

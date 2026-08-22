@@ -39,7 +39,7 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
@@ -51,17 +51,15 @@ jobs:
           cargo install toml-cli --locked
 
           # install xtask
-          cargo install \
-            --git https://github.com/anza-xyz/xtask \
-            --rev 930e3baec27a17cb4491b5585515b33f94dbd039 \
-            --bin xtask
+          cargo install anza-xtask@0.2.1 --locked
 
       - name: Process
         id: process
         env:
           BASE_REF: ${{ github.ref }}
+          BUMP_LEVEL: ${{ inputs.level }}
         run: |
-          xtask bump-version ${{ inputs.level }}
+          cargo anza-xtask bump-version "$BUMP_LEVEL"
 
           new_version="$(toml get --raw Cargo.toml workspace.package.version)"
 

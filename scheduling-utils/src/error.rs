@@ -3,15 +3,21 @@ use {
     solana_transaction_error::TransactionError,
 };
 
-/// Translate
-pub fn transaction_result_to_not_included_reason(result: &Result<(), TransactionError>) -> u8 {
+/// Translate a transaction result into an external scheduler response reason.
+pub fn transaction_result_to_not_included_reason(
+    result: &Result<(), TransactionError>,
+    all_or_nothing: bool,
+) -> u8 {
     match result {
         Ok(()) => not_included_reasons::NONE,
-        Err(err) => transaction_error_to_not_included_reason(err),
+        Err(err) => transaction_error_to_not_included_reason(err, all_or_nothing),
     }
 }
 
-pub fn transaction_error_to_not_included_reason(error: &TransactionError) -> u8 {
+pub fn transaction_error_to_not_included_reason(
+    error: &TransactionError,
+    all_or_nothing: bool,
+) -> u8 {
     match error {
         TransactionError::AccountInUse => not_included_reasons::ACCOUNT_IN_USE,
         TransactionError::AccountLoadedTwice => not_included_reasons::ACCOUNT_LOADED_TWICE,
@@ -89,6 +95,29 @@ pub fn transaction_error_to_not_included_reason(error: &TransactionError) -> u8 
         }
 
         // SPECIAL CASE - CommitCancelled is an internal error reused to avoid breaking sdk
-        TransactionError::CommitCancelled => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+        TransactionError::CommitCancelled => {
+            if all_or_nothing {
+                not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
+            } else {
+                not_included_reasons::PARTIAL_BATCH_CANCELLED
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, agave_scheduler_bindings::worker_message_types::not_included_reasons};
+
+    #[test]
+    fn test_commit_cancelled_maps_by_batch_mode() {
+        assert_eq!(
+            transaction_error_to_not_included_reason(&TransactionError::CommitCancelled, true),
+            not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
+        );
+        assert_eq!(
+            transaction_error_to_not_included_reason(&TransactionError::CommitCancelled, false),
+            not_included_reasons::PARTIAL_BATCH_CANCELLED
+        );
     }
 }

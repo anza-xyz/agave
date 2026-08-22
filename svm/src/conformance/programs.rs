@@ -81,8 +81,23 @@ fn create_keyed_account_for_builtin_program(program_id: &Pubkey, name: &str) -> 
     (*program_id, account)
 }
 
+pub fn keyed_account_for_builtin_pubkey(program_id: &Pubkey) -> Option<(Pubkey, Account)> {
+    SVM_BUILTINS
+        .iter()
+        .find(|builtin| builtin.program_id == *program_id)
+        .map(|builtin| create_keyed_account_for_builtin_program(&builtin.program_id, builtin.name))
+}
+
 pub fn keyed_account_for_system_program() -> (Pubkey, Account) {
     create_keyed_account_for_builtin_program(&SVM_BUILTINS[0].program_id, SVM_BUILTINS[0].name)
+}
+
+pub fn keyed_account_for_bpf_loader_program() -> (Pubkey, Account) {
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[2].program_id, SVM_BUILTINS[2].name)
+}
+
+pub fn keyed_account_for_bpf_loader_upgradeable_program() -> (Pubkey, Account) {
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[3].program_id, SVM_BUILTINS[3].name)
 }
 
 pub fn keyed_account_for_compute_budget_program() -> (Pubkey, Account) {
@@ -96,11 +111,7 @@ pub fn new_program_cache_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     for builtin in SVM_BUILTINS {
         cache.replenish(
             builtin.program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(
-                0u64,
-                builtin.name.len(),
-                builtin.register_fn,
-            )),
+            Arc::new(ProgramCacheEntry::new_builtin(builtin.register_fn)),
         );
     }
 
@@ -124,13 +135,11 @@ pub fn add_program_to_program_cache(
     )
     .unwrap();
 
-    let entry = ProgramCacheEntry::new(
+    let entry = ProgramCacheEntry::load(
         loader_key,
         program_runtime_environment,
         0, // deployment_slot
-        0, // effective_slot
         elf,
-        elf.len(),
         #[cfg(feature = "metrics")]
         &mut LoadProgramMetrics::default(),
     )

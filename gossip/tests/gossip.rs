@@ -317,7 +317,6 @@ pub fn cluster_info_scale() {
     let slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
     let epoch_specs: Box<dyn EpochSpecs> = Box::new(TestEpochSpecs {
         slots_in_epoch,
-        epoch_duration: Duration::from_millis(slots_in_epoch * 400),
         staked_nodes: root_bank.current_epoch_staked_nodes(),
     });
 

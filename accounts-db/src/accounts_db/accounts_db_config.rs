@@ -1,6 +1,7 @@
 use {
     super::{AccountShrinkThreshold, DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION},
     crate::{
+        accounts_file::AccountsFileProvider,
         accounts_index::{
             ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
             AccountSecondaryIndexes, AccountsIndexConfig, ScanFilter,
@@ -34,13 +35,14 @@ pub struct AccountsDbConfig {
     pub ancient_storage_ideal_size: Option<u64>,
     pub max_ancient_storages: Option<usize>,
     pub skip_initial_hash_calc: bool,
-    pub exhaustively_verify_refcounts: bool,
+    pub verify_index: bool,
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub scan_filter_for_shrinking: ScanFilter,
     /// Number of threads for background operations (`thread_pool_background')
     pub num_background_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool_foreground`)
     pub num_foreground_threads: Option<NonZeroUsize>,
+    pub accounts_file_provider: AccountsFileProvider,
 }
 
 pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
@@ -56,11 +58,12 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     ancient_storage_ideal_size: None,
     max_ancient_storages: None,
     skip_initial_hash_calc: false,
-    exhaustively_verify_refcounts: false,
+    verify_index: false,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
     num_background_threads: None,
     num_foreground_threads: None,
+    accounts_file_provider: AccountsFileProvider::AppendVec,
 };
 
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
@@ -76,9 +79,10 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     ancient_storage_ideal_size: None,
     max_ancient_storages: None,
     skip_initial_hash_calc: false,
-    exhaustively_verify_refcounts: false,
+    verify_index: false,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     num_background_threads: None,
     num_foreground_threads: None,
+    accounts_file_provider: AccountsFileProvider::AppendVec,
 };

@@ -79,7 +79,6 @@ pub struct BankForks {
     root: Slot,
     working_slot: Slot,
     sharable_banks: SharableBanks,
-    highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
 
     /// The status tracker for the Alpenglow migration. Initialized via either
@@ -136,7 +135,6 @@ impl BankForks {
             },
             banks,
             descendants,
-            highest_slot_at_startup: 0,
             scheduler_pool: None,
             migration_status,
         }));
@@ -194,20 +192,26 @@ impl BankForks {
     /// For use when we want to remove `slots` from `BankForks`. It's not safe to remove
     /// a bank if it's descendant(s) are still in BankForks.
     ///
-    /// Returns the supplied slots and any descendants that are still present in bank forks
-    pub fn slots_to_clear(&self, slots: impl IntoIterator<Item = Slot>) -> BTreeSet<Slot> {
+    /// Returns the supplied unrooted slots and all descendants that are still present in bank
+    /// forks as `slots_to_purge`, plus the subset that still has a bank as `banks_to_clear`.
+    pub fn slots_to_clear(
+        &self,
+        slots: impl IntoIterator<Item = Slot>,
+    ) -> (BTreeSet<Slot>, Vec<BankWithScheduler>) {
         let root = self.root();
-        let mut slots_to_clear = BTreeSet::new();
+        let mut slots_to_purge = BTreeSet::new();
+        let mut bank_slots_to_clear = BTreeSet::new();
 
-        for slot in slots.into_iter() {
+        for slot in slots {
             if slot <= root {
                 continue;
             }
+            slots_to_purge.insert(slot);
             if self.banks.contains_key(&slot) {
-                slots_to_clear.insert(slot);
+                bank_slots_to_clear.insert(slot);
             }
             if let Some(slot_descendants) = self.descendants.get(&slot) {
-                slots_to_clear.extend(
+                bank_slots_to_clear.extend(
                     slot_descendants
                         .iter()
                         .copied()
@@ -216,7 +220,15 @@ impl BankForks {
             }
         }
 
-        slots_to_clear
+        slots_to_purge.extend(&bank_slots_to_clear);
+        let banks_to_clear = bank_slots_to_clear
+            .into_iter()
+            .map(|slot| {
+                self.get_with_scheduler(slot)
+                    .expect("bank slot was present while collecting slots to clear")
+            })
+            .collect();
+        (slots_to_purge, banks_to_clear)
     }
 
     pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
@@ -289,12 +301,8 @@ impl BankForks {
     pub fn insert_with_scheduling_mode(
         &mut self,
         mode: SchedulingMode,
-        mut bank: Bank,
+        bank: Bank,
     ) -> BankWithScheduler {
-        if self.root < self.highest_slot_at_startup {
-            bank.set_check_program_deployment_slot(true);
-        }
-
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
             Self::install_scheduler_into_bank(scheduler_pool, mode, bank)
@@ -334,11 +342,6 @@ impl BankForks {
             scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
         }
         bank_with_scheduler
-    }
-
-    pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
-        self.highest_slot_at_startup = std::cmp::max(self.highest_slot_at_startup, bank.slot());
-        self.insert(bank)
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<BankWithScheduler> {
@@ -553,6 +556,7 @@ impl BankForks {
         let set_root_start = Instant::now();
         let (removed_banks, set_root_metrics) =
             self.do_set_root_return_metrics(root, snapshot_controller, highest_super_majority_root);
+
         datapoint_info!(
             "bank-forks_set_root",
             (
@@ -768,6 +772,7 @@ mod tests {
         super::*,
         crate::{
             bank::test_utils::update_vote_account_timestamp,
+            block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
@@ -777,6 +782,7 @@ mod tests {
             },
         },
         agave_feature_set::FeatureSet,
+        agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
@@ -795,7 +801,6 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
-        solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
@@ -827,7 +832,7 @@ mod tests {
 
         fn schedule_execution(
             &self,
-            _transaction: RuntimeTransaction<SanitizedTransaction>,
+            _transaction: RuntimeTransaction<ResolvedTransactionView<bytes::Bytes>>,
             _task_id: OrderedTaskId,
         ) -> ScheduleResult {
             Ok(())
@@ -1000,6 +1005,7 @@ mod tests {
             genesis_config
                 .accounts
                 .insert(*GENESIS_CERTIFICATE_ACCOUNT, cert_account);
+            EpochInflationAccountState::insert_into_genesis_config(&mut genesis_config);
         }
 
         let mut feature_set = FeatureSet::default();
@@ -1059,6 +1065,15 @@ mod tests {
         assert_eq!(
             root_bank.get_alpenglow_genesis_certificate().unwrap(),
             genesis_cert.clone()
+        );
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_alpenglow_enabled());
+        assert!(!migration_status.is_full_alpenglow_epoch());
+
+        let root_bank = make_root_bank_for_migration_status_test(
+            ff_activation_slot + MIGRATION_SLOT_OFFSET,
+            Some(ff_activation_slot),
+            Some(genesis_cert.clone()),
         );
         let migration_status = BankForks::initialize_migration_status(&root_bank);
         assert!(migration_status.is_alpenglow_enabled());
@@ -1159,17 +1174,43 @@ mod tests {
             &[(0, 1), (1, 2), (1, 3), (2, 4), (0, 5)],
         );
 
+        let slots = |slots: &[Slot]| {
+            let (slots_to_purge, banks_to_clear) = bank_forks
+                .read()
+                .unwrap()
+                .slots_to_clear(slots.iter().copied());
+            let bank_slots_to_clear = banks_to_clear
+                .iter()
+                .map(|bank| bank.slot())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(banks_to_clear.len(), bank_slots_to_clear.len());
+            (slots_to_purge, bank_slots_to_clear)
+        };
         assert_eq!(
-            bank_forks.read().unwrap().slots_to_clear([2]),
-            [2, 4].into_iter().collect()
+            slots(&[2]),
+            ([2, 4].into_iter().collect(), [2, 4].into_iter().collect())
         );
         assert_eq!(
-            bank_forks.read().unwrap().slots_to_clear([1]),
-            [1, 2, 3, 4].into_iter().collect(),
+            slots(&[1]),
+            (
+                [1, 2, 3, 4].into_iter().collect(),
+                [1, 2, 3, 4].into_iter().collect(),
+            )
         );
         assert_eq!(
-            bank_forks.read().unwrap().slots_to_clear([0]),
-            BTreeSet::<Slot>::new()
+            slots(&[0]),
+            (BTreeSet::<Slot>::new(), BTreeSet::<Slot>::new())
+        );
+        assert_eq!(
+            slots(&[6]),
+            ([6].into_iter().collect(), BTreeSet::<Slot>::new())
+        );
+        assert_eq!(
+            slots(&[1, 2, 2, 3]),
+            (
+                [1, 2, 3, 4].into_iter().collect(),
+                [1, 2, 3, 4].into_iter().collect(),
+            )
         );
     }
 

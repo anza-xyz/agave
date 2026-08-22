@@ -542,6 +542,10 @@ where
         })
     }
 
+    #[deprecated(
+        since = "4.3.0",
+        note = "prefer solana_client::send_and_confirm_transactions_in_parallel_v3"
+    )]
     #[cfg(feature = "spinner")]
     pub async fn send_and_confirm_messages_with_spinner<T: Signers + ?Sized>(
         &self,

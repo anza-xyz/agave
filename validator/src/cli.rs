@@ -24,6 +24,7 @@ use {
     solana_clock::Slot,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
+    solana_gossip::cluster_info::DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
     solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_send_transaction_service::send_transaction_service::{self},
@@ -226,13 +227,17 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "xdp-zero-copy",
     );
     add_arg!(
-        // deprecated in v4.0.0
-        Arg::with_name("tpu_connection_pool_size")
-            .long("tpu-connection-pool-size")
+        // deprecated in v4.3.0
+        Arg::with_name("limit_ledger_size")
+            .long("limit-ledger-size")
+            .value_name("SHRED_COUNT")
             .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .help("Controls the TPU connection pool size per remote address"),
-         usage_warning:"This parameter is misleading, avoid setting it",
+            .min_values(0)
+            .max_values(1)
+            /* .default_value() intentionally not used here! */
+            .conflicts_with("limit_blockstore_size")
+            .help("Keep this amount of shreds in root slots."),
+        replaced_by: "limit-blockstore-size",
     );
     res
 }
@@ -310,6 +315,7 @@ pub struct DefaultArgs {
     pub tpu_max_streams_per_ms: String,
 
     pub num_quic_endpoints: String,
+    pub num_votor_endpoints: String,
     pub vote_use_quic: String,
 
     pub banking_trace_dir_byte_limit: String,
@@ -363,6 +369,7 @@ impl DefaultArgs {
             tpu_max_fwd_unstaked_connections: 0.to_string(),
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
+            num_votor_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS.to_string(),
             banking_trace_dir_byte_limit: 0.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
@@ -804,12 +811,27 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 ),
         )
         .arg(
+            // deprecated in v4.3.0
             Arg::with_name("limit_ledger_size")
                 .long("limit-ledger-size")
                 .value_name("SHRED_COUNT")
                 .takes_value(true)
-                .default_value(default_args.limit_ledger_size.as_str())
+                .min_values(0)
+                .max_values(1)
+                .conflicts_with("limit_blockstore_size")
                 .help("Keep this amount of shreds in root slots."),
+        )
+        .arg(
+            Arg::with_name("limit_blockstore_size")
+                .long("limit-blockstore-size")
+                .value_name("SHRED_COUNT")
+                .takes_value(true)
+                .default_value(default_args.limit_blockstore_size.as_str())
+                .help(
+                    "Limit the number of total shreds that the Blockstore retains. Once the \
+                     Blockstore reaches this capacity, shreds will be purged in a FIFO (oldest \
+                     slots first) manner.",
+                ),
         )
         .arg(
             Arg::with_name("faucet_sol")
@@ -867,10 +889,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
             Arg::with_name("alpenglow")
                 .long("alpenglow")
                 .takes_value(false)
-                .help(
-                    "Activate Alpenglow at genesis. The validator_admission_ticket feature must \
-                     remain active",
-                ),
+                .help("Activate Alpenglow at genesis"),
         )
         .arg(
             Arg::with_name("deactivate_feature")
@@ -924,7 +943,7 @@ pub struct DefaultTestArgs {
     pub rpc_port: String,
     pub faucet_port: String,
     pub dynamic_port_range: String,
-    pub limit_ledger_size: String,
+    pub limit_blockstore_size: String,
     pub faucet_sol: String,
     pub faucet_time_slice_secs: String,
 }
@@ -935,11 +954,9 @@ impl DefaultTestArgs {
             rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
-            /* 10,000 was derived empirically by watching the size
-             * of the rocksdb/ directory self-limit itself to the
-             * 40MB-150MB range when running `solana-test-validator`
-             */
-            limit_ledger_size: 10_000.to_string(),
+            // See comments in ledger/src/blockstore/cleanup_service.rs for more
+            // details, but 800k shreds is approximately 1 GB of space
+            limit_blockstore_size: 800_000.to_string(),
             faucet_sol: (1_000_000.).to_string(),
             faucet_time_slice_secs: (faucet::TIME_SLICE).to_string(),
         }

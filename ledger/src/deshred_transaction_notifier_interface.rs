@@ -1,5 +1,6 @@
 use {
-    solana_clock::Slot, solana_message::v0::LoadedAddresses, solana_signature::Signature,
+    crate::blockstore_meta::UpdateParentInfo, solana_clock::Slot,
+    solana_message::v0::LoadedAddresses, solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction, std::sync::Arc,
 };
 
@@ -23,6 +24,9 @@ pub trait DeshredTransactionNotifier {
 
     /// Whether any plugin has opted in to ALT resolution for deshred transactions.
     fn alt_resolution_enabled(&self) -> bool;
+
+    /// Notify that an UpdateParent marker replaced earlier same-slot data.
+    fn notify_deshred_update_parent(&self, _update_parent: &UpdateParentInfo) {}
 }
 
 pub type DeshredTransactionNotifierArc = Arc<dyn DeshredTransactionNotifier + Sync + Send>;

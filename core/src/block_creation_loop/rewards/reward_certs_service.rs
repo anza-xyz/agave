@@ -5,10 +5,9 @@ use {
         },
         tvu::MAX_ALPENGLOW_PACKET_NUM,
     },
-    agave_votor_messages::reward_certificate::AddVoteMessage,
+    agave_bls_sigverify::rewards::RewardInput,
     crossbeam_channel::{Receiver, Sender, bounded, select_biased},
     solana_gossip::cluster_info::ClusterInfo,
-    solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_runtime::bank_forks::SharableBanks,
     std::{
         sync::{
@@ -27,17 +26,17 @@ pub(crate) struct RewardCertsService {
 impl RewardCertsService {
     pub(crate) fn new(
         cluster_info: Arc<ClusterInfo>,
-        leader_schedule: Arc<LeaderScheduleCache>,
         sharable_banks: SharableBanks,
         exit: Arc<AtomicBool>,
-    ) -> (Self, CertsRequestor, Sender<AddVoteMessage>) {
-        let (votes_sender, votes_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
+    ) -> (Self, CertsRequestor, Sender<RewardInput>) {
+        let (reward_aggregates_sender, reward_aggregates_receiver) =
+            bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (certs_requestor, req_receiver) = CertsRequestor::new();
-        let builder = CertsBuilder::new(cluster_info.clone(), leader_schedule);
+        let builder = CertsBuilder::new(cluster_info.clone());
         let ctx = Context::new(
             exit,
             cluster_info,
-            votes_receiver,
+            reward_aggregates_receiver,
             req_receiver,
             sharable_banks,
             builder,
@@ -48,7 +47,7 @@ impl RewardCertsService {
                 ctx.run();
             })
             .unwrap();
-        (Self { handler }, certs_requestor, votes_sender)
+        (Self { handler }, certs_requestor, reward_aggregates_sender)
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
@@ -59,7 +58,7 @@ impl RewardCertsService {
 struct Context {
     exit: Arc<AtomicBool>,
     cluster_info: Arc<ClusterInfo>,
-    votes_receiver: Receiver<AddVoteMessage>,
+    aggregates_receiver: Receiver<RewardInput>,
     req_receiver: Receiver<RewardRequest>,
     sharable_banks: SharableBanks,
     builder: CertsBuilder,
@@ -69,7 +68,7 @@ impl Context {
     fn new(
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
-        votes_receiver: Receiver<AddVoteMessage>,
+        aggregates_receiver: Receiver<RewardInput>,
         req_receiver: Receiver<RewardRequest>,
         sharable_banks: SharableBanks,
         builder: CertsBuilder,
@@ -77,7 +76,7 @@ impl Context {
         Self {
             exit,
             cluster_info,
-            votes_receiver,
+            aggregates_receiver,
             req_receiver,
             sharable_banks,
             builder,
@@ -94,16 +93,14 @@ impl Context {
                         break;
                     }
                 }
-                recv(self.votes_receiver) -> msg => {
+                recv(self.aggregates_receiver) -> msg => {
                     match msg {
-                        Ok(msg) => {
+                        Ok(reward_input) => {
                             let bank = self.sharable_banks.root();
-                            for vote in msg.votes {
-                                self.builder.add_vote(&bank, &vote);
-                            }
+                            self.builder.handle_input(&bank, reward_input);
                         }
                         Err(_) => {
-                            error!("{my_pubkey}: votes receiver channel is disconnected; exiting.");
+                            error!("{my_pubkey}: aggregates receiver channel is disconnected; exiting.");
                             break;
                         }
                     }

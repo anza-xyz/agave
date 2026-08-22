@@ -14,7 +14,7 @@ use {
     solana_syscalls::SyscallError,
 };
 
-pub(crate) fn elf_error_code(error: &ElfError) -> u32 {
+pub fn elf_error_code(error: &ElfError) -> u32 {
     (error.discriminant() as u32).saturating_add(1)
 }
 
@@ -26,13 +26,13 @@ fn syscall_error_code(error: &SyscallError) -> i64 {
     (error.discriminant() as i64).saturating_add(1)
 }
 
-pub(crate) fn instruction_error_code(error: &InstructionError) -> i32 {
+pub fn serialized_error_code<T: serde::Serialize>(error: &T) -> u32 {
     let serialized = bincode::serialize(error).unwrap();
-    i32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
+    u32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
 }
 
 /// A VM `program_result` mapped into the fields a conformance fixture compares.
-pub(crate) struct UnpackedResult {
+pub struct UnpackedResult {
     /// Error number, or `0` on success.
     pub error: i64,
     /// Which error taxonomy `error` belongs to (`ERR_KIND_*`).
@@ -70,7 +70,7 @@ impl UnpackedResult {
         match &ebpf_err {
             EbpfError::SyscallError(boxed) => {
                 if let Some(e) = boxed.downcast_ref::<InstructionError>() {
-                    Self::err(instruction_error_code(e) as i64, Self::ERR_KIND_INSTRUCTION)
+                    Self::err(serialized_error_code(e) as i64, Self::ERR_KIND_INSTRUCTION)
                 } else if let Some(e) = boxed.downcast_ref::<SyscallError>() {
                     Self::err(syscall_error_code(e), Self::ERR_KIND_SYSCALL)
                 } else if let Some(e) = boxed.downcast_ref::<MemoryTranslationError>() {
@@ -97,7 +97,7 @@ impl UnpackedResult {
 }
 
 /// Map a VM `program_result` to its [`UnpackedResult`].
-pub(crate) fn unpack_stable_result(program_result: StableResult<u64, EbpfError>) -> UnpackedResult {
+pub fn unpack_stable_result(program_result: StableResult<u64, EbpfError>) -> UnpackedResult {
     match program_result {
         StableResult::Ok(r0) => UnpackedResult::ok(r0),
         StableResult::Err(ebpf_err) => UnpackedResult::from_ebpf_err(ebpf_err),

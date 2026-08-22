@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -22,8 +23,10 @@ name = "solana_rpc"
 agave-unstable-api = []
 dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
+    "dep:solana-unified-scheduler-pool",
     "solana-ledger/dev-context-only-utils",
     "solana-rpc/dev-context-only-utils",
+    "solana-unified-scheduler-pool/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -47,11 +50,10 @@ regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 soketto = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-cli-output = { workspace = true }
-solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-entry = { workspace = true }
@@ -68,6 +70,7 @@ solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
@@ -91,6 +94,7 @@ solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true, optional = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
@@ -107,16 +111,18 @@ wincode = { workspace = true }
 [dev-dependencies]
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-address-lookup-table-interface = { workspace = true }
+solana-bls-signatures = { workspace = true }
+solana-client = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
-solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
-solana-nonce = { workspace = true }
-solana-nonce-account = { workspace = true }
+solana-nonce = { workspace = true, features = ["wincode"] }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-program-option = { workspace = true }
 solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api"] }
 solana-rent = { workspace = true }
@@ -128,8 +134,7 @@ solana-send-transaction-service = { path = "../send-transaction-service", featur
 solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { path = "../svm-log-collector", features = ["agave-unstable-api"] }
-solana-vote-interface = { workspace = true }
-spl-pod = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["wincode"] }
 symlink = { workspace = true }
 test-case = { workspace = true }
 

@@ -1,11 +1,11 @@
 use {
     super::Bank,
-    crate::inflation_rewards::points::PointValue,
-    log::info,
-    solana_account::{
-        ReadableAccount, WritableAccount, create_account_shared_data_with_fields as create_account,
-        from_account,
+    crate::{
+        inflation_rewards::points::PointValue,
+        sysvar_account::{create_account, from_account},
     },
+    log::info,
+    solana_account::{ReadableAccount, WritableAccount},
     solana_clock::INITIAL_RENT_EPOCH,
     solana_sysvar::{self as sysvar, epoch_rewards::EpochRewards},
 };

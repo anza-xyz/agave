@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -28,7 +29,6 @@ anyhow = { workspace = true, optional = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 cfg-if = { workspace = true }
-crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["raw-api"] }
 hxdmp = { version = "0.2.1", optional = true }
 itertools = { workspace = true }

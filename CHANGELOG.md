@@ -17,17 +17,60 @@ Release channels have their own copy of this changelog:
 ## 4.3.0-Unreleased
 ### RPC
 #### Breaking
+* Failing to successfully establish a Bigtable connection will now result in a
+  fatal error when running with either `--enable-rpc-bigtable-ledger-storage` or
+  `--enable-bigtable-ledger-upload`. Previously, the error would be logged and
+  the process would continue without a Bigtable connection.
 #### Changes
 * `getLeaderSchedule` now accepts a `keyByVoteAccount` config option to key the returned
   schedule by vote account instead of validator identity. The `identity` filter continues
   to match on validator identity in both modes.
 ### Validator
 #### Breaking
+* Loading a snapshot that contains an invalid vote account is now a hard error. Previously such
+  accounts were silently dropped for compatibility with snapshots created before v2.1.0.
 * Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
+* Previously deprecated `--tpu-connection-pool-size` has been removed. The connection pool size is fixed at the previous default of 1.
+* scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
 #### Deprecations
 * `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
   default). The flag is still accepted for backward compatibility.
+* `--limit-ledger-size` is now deprecated in favor of `--limit-blockstore-size`. The argument is
+still accepted for backwards compatibility but slated for full removal in the future.
+  * `--limit-blockstore-size` uses a more precise counting mechanism than `--limit-ledger-size`.
+  * If using a non-default value with `--limit-ledger-size`, a good starting point is to double
+  that value for `--limit-blockstore-size`.
+  * `--limit-blockstore-size` may occupy more disk footprint at steady state with current cluster
+  activity; however, disk usage should be more stable during abnormal cluster activity.
 #### Changes
+* Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
+  store transaction signature keys in the status cache. Message hashes remain cached for duplicate
+  transaction detection.
+* External scheduler execution responses now report `PARTIAL_BATCH_CANCELLED` for
+  `CommitCancelled` errors in non-all-or-nothing batches. All-or-nothing batches continue to use
+  `ALL_OR_NOTHING_BATCH_FAILURE`.
+* Using the deprecated value `minimal` for `--accounts-index-limit` now defaults to 25GB.
+* Unstaked nodes can now receive consensus messages via votor from any staked node.
+  Specify `--votor-peer-overrides <VALIDATOR IDENTITY>...` to additionally send votor
+  messages to identities outside the staked set.
+### Geyser
+#### Deprecations
+* The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
+  `notify_block_metadata` are slated for removal in the next major release.
+#### Changes
+* Added `GeyserPlugin` methods to replace deprecated methods: `update_account_from_snapshot` and
+  `update_account_for_bank` replace `update_account`, `notify_transaction_for_bank` replaces
+  `notify_transaction`, `notify_entry_for_bank` replaces `notify_entry`, and
+  `notify_block_metadata_for_bank` replaces `notify_block_metadata`.
+* Added `update_bank_status` for bank-scoped slot status updates with `bank_id`;
+  `update_slot_status` remains for non-bank slot statuses.
+* Added `GeyserPlugin::notify_block_footer` and
+  `GeyserPlugin::block_footer_notifications_enabled`; plugins can opt in to receive the complete
+  versioned Alpenglow block footer, slot, and bank ID in entry order independently of entry
+  notifications.
+* Added `GeyserPlugin::notify_entry_update_parent` and
+  `GeyserPlugin::notify_deshred_update_parent` so plugins can discard earlier notifications after
+  an UpdateParent marker.
 ### SDK
 #### Breaking
 * solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
@@ -63,6 +106,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+* The default incremental snapshot interval is now 200 slots.
 ### CLI
 #### Breaking
 #### Changes

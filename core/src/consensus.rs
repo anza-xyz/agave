@@ -544,7 +544,7 @@ impl Tower {
         debug_assert!(total_stake > 0);
         let parent_is_super_oc = bank_slot == parent_slot + 1
             && Fraction::new(super_oc_stake, NonZeroU64::new(total_stake).unwrap())
-                > GENESIS_VOTE_THRESHOLD;
+                >= GENESIS_VOTE_THRESHOLD;
 
         // TODO: populate_ancestor_voted_stakes only adds zeros. Comment why
         // that is necessary (if so).
@@ -1735,7 +1735,6 @@ impl TowerError {
 #[derive(Debug)]
 pub enum ExternalRootSource {
     Tower(Slot),
-    VoteHistory(Slot),
     HardFork(Slot),
 }
 
@@ -1743,10 +1742,43 @@ impl ExternalRootSource {
     fn root(&self) -> Slot {
         match self {
             ExternalRootSource::Tower(slot) => *slot,
-            ExternalRootSource::VoteHistory(slot) => *slot,
             ExternalRootSource::HardFork(slot) => *slot,
         }
     }
+}
+
+/// Verifies that the slot ancestry of a vote-history root newer than the last blockstore root
+/// descends from it. This preserves the topology sanity check previously performed as part of
+/// reconciliation; it cannot distinguish competing blocks in the same slot.
+///
+/// Unlike [`reconcile_blockstore_roots_with_external_source`], this does not mark any slots as
+/// rooted. A vote-history root alone does not identify the block for its slot, so it must not be
+/// used to mutate blockstore roots.
+pub(crate) fn verify_blockstore_root_with_vote_history(
+    vote_history_root: Slot,
+    blockstore: &Blockstore,
+    last_blockstore_root: Slot,
+) {
+    if last_blockstore_root >= vote_history_root {
+        return;
+    }
+
+    for current in AncestorIterator::new_inclusive(vote_history_root, blockstore) {
+        match current.cmp(&last_blockstore_root) {
+            Ordering::Greater => continue,
+            Ordering::Equal => return,
+            Ordering::Less => panic!(
+                "last_blockstore_root({last_blockstore_root}) is skipped while traversing \
+                 blockstore (currently at {current}) from vote history root \
+                 ({vote_history_root})!?",
+            ),
+        }
+    }
+
+    warn!(
+        "Couldn't connect vote history root ({vote_history_root}) to blockstore root \
+         ({last_blockstore_root}); blockstore pruned or vote history moved into a new ledger?",
+    );
 }
 
 // Given an untimely crash, tower may have roots that are not reflected in blockstore,
@@ -2358,7 +2390,7 @@ pub mod test {
         // If we now set a root that causes slot 112 to be purged from BankForks, then
         // the switch proof will now fail since that validator's vote can no longer be
         // included in the switching proof
-        vote_simulator.set_root(44);
+        vote_simulator.set_root(&Pubkey::new_unique(), 44);
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
         let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         assert_eq!(
@@ -3190,7 +3222,7 @@ pub mod test {
 
         // prepend tower restart!
         let mut slot_history = SlotHistory::default();
-        vote_simulator.set_root(replayed_root_slot);
+        vote_simulator.set_root(&Pubkey::new_unique(), replayed_root_slot);
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
         let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         for slot in &[0, 1, 2, 43, replayed_root_slot] {
@@ -3414,6 +3446,63 @@ pub mod test {
         )
         .unwrap();
         assert_eq!(blockstore.max_root(), 0);
+    }
+
+    #[test]
+    fn test_verify_blockstore_root_with_vote_history_does_not_mutate_roots() {
+        agave_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let (shreds, _) = make_slot_entries(1, 0, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        let (shreds, _) = make_slot_entries(4, 1, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        assert_eq!(blockstore.max_root(), 0);
+
+        verify_blockstore_root_with_vote_history(0, &blockstore, blockstore.max_root());
+        verify_blockstore_root_with_vote_history(4, &blockstore, blockstore.max_root());
+
+        assert_eq!(blockstore.max_root(), 0);
+        assert!(!blockstore.is_root(1));
+        assert!(!blockstore.is_root(4));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "last_blockstore_root(3) is skipped while traversing blockstore (currently at \
+                    1) from vote history root (4)!?"
+    )]
+    fn test_verify_blockstore_root_with_vote_history_panics_on_divergence() {
+        agave_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let (shreds, _) = make_slot_entries(1, 0, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        let (shreds, _) = make_slot_entries(3, 1, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        let (shreds, _) = make_slot_entries(4, 1, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        blockstore.set_roots(std::iter::once(&3)).unwrap();
+
+        verify_blockstore_root_with_vote_history(4, &blockstore, blockstore.max_root());
+    }
+
+    #[test]
+    fn test_verify_blockstore_root_with_vote_history_missing_root_does_not_mutate() {
+        agave_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let (shreds, _) = make_slot_entries(1, 0, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        assert_eq!(blockstore.max_root(), 0);
+
+        verify_blockstore_root_with_vote_history(4, &blockstore, blockstore.max_root());
+
+        assert_eq!(blockstore.max_root(), 0);
+        assert!(!blockstore.is_root(1));
     }
 
     #[test]

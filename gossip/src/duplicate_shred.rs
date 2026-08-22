@@ -1,7 +1,6 @@
 use {
     crate::crds_data::sanitize_wallclock,
     itertools::Itertools,
-    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_ledger::{
         blockstore::BlockstoreError,
@@ -26,14 +25,14 @@ pub(crate) const MAX_DUPLICATE_SHREDS: DuplicateShredIndex = 512;
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "9zVjcmgLcLv1YDhBwDFYgMMjtpoZjk77YoL3sLBnABTf",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct DuplicateShred {
     pub(crate) from: Pubkey,
     pub(crate) wallclock: u64,
@@ -46,7 +45,6 @@ pub struct DuplicateShred {
     // Serialized DuplicateSlotProof split into chunks.
     num_chunks: u8,
     chunk_index: u8,
-    #[serde(with = "serde_bytes")]
     chunk: Vec<u8>,
 }
 
@@ -389,33 +387,6 @@ pub(crate) mod tests {
     };
 
     #[test]
-    fn test_wincode_compatibility_duplicate_shred() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let chunk_len = rng.random_range(0..64usize);
-            let dup = DuplicateShred {
-                from: Pubkey::new_unique(),
-                wallclock: rng.random(),
-                slot: rng.random(),
-                _unused: rng.random(),
-                _unused_shred_type: rng.random(),
-                num_chunks: rng.random(),
-                chunk_index: rng.random(),
-                chunk: (0..chunk_len).map(|_| rng.random::<u8>()).collect(),
-            };
-
-            let bincode_bytes = bincode::serialize(&dup).unwrap();
-            let wincode_decoded: DuplicateShred = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(dup, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&dup).unwrap();
-            assert_eq!(wincode_bytes, bincode_bytes);
-            let bincode_decoded: DuplicateShred = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(dup, bincode_decoded);
-        }
-    }
-
-    #[test]
     fn test_duplicate_shred_header_size() {
         let dup = DuplicateShred {
             from: Pubkey::new_unique(),
@@ -428,10 +399,8 @@ pub(crate) mod tests {
             _unused: 0,
         };
         let dup_bytes = wincode::serialize(&dup).unwrap();
-        assert_eq!(dup_bytes, bincode::serialize(&dup).unwrap());
         assert_eq!(dup_bytes.len(), DUPLICATE_SHRED_HEADER_SIZE);
         let dup_size = wincode::serialized_size(&dup).unwrap();
-        assert_eq!(dup_size, bincode::serialized_size(&dup).unwrap());
         assert_eq!(dup_size, DUPLICATE_SHRED_HEADER_SIZE as u64);
     }
 

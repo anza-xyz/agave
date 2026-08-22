@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,7 +20,6 @@ agave-unstable-api = []
 dev-context-only-utils = ["solana-net-utils"]
 
 [dependencies]
-async-trait = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -40,7 +40,7 @@ tokio-util = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-fee-calculator = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }

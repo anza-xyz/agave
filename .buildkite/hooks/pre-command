@@ -9,7 +9,14 @@ export PS4="++"
 #
 # Restore target/ from the previous CI build on this machine
 #
-eval "$(ci/channel-info.sh)"
+channel_info="$(cargo xtask channel-info --json)"
+EDGE_CHANNEL="$(jq -r '.EDGE_CHANNEL' <<<"$channel_info")"
+BETA_CHANNEL="$(jq -r '.BETA_CHANNEL' <<<"$channel_info")"
+BETA_CHANNEL_LATEST_TAG="$(jq -r '.BETA_CHANNEL_LATEST_TAG' <<<"$channel_info")"
+STABLE_CHANNEL="$(jq -r '.STABLE_CHANNEL' <<<"$channel_info")"
+STABLE_CHANNEL_LATEST_TAG="$(jq -r '.STABLE_CHANNEL_LATEST_TAG' <<<"$channel_info")"
+CHANNEL="$(jq -r '.CHANNEL' <<<"$channel_info")"
+CHANNEL_LATEST_TAG="$(jq -r '.CHANNEL_LATEST_TAG' <<<"$channel_info")"
 export EDGE_CHANNEL
 export BETA_CHANNEL
 export BETA_CHANNEL_LATEST_TAG

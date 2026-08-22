@@ -12,7 +12,7 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    std::collections::HashSet,
+    std::{borrow::Cow, collections::HashSet},
 };
 
 pub const MINIMUM_DUPLICATE_SLOT: Slot = 20;
@@ -88,10 +88,12 @@ impl BroadcastDuplicatesRun {
 }
 
 impl BroadcastRun for BroadcastDuplicatesRun {
-    fn run(
+    fn run<'db>(
         &mut self,
         keypair: &Keypair,
-        blockstore: &Blockstore,
+        blockstore: &'db Blockstore,
+        _pinnable_slice: &mut DBPinnableSlice<'db>,
+        _write_batch: &mut WriteBatch,
         receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
@@ -442,10 +444,21 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         batch_send(sock, packets).map_err(|SendPktsError::IoError(err, _)| Error::Io(err))
     }
 
-    fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()> {
+    fn record<'db>(
+        &mut self,
+        receiver: &RecordReceiver,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
+    ) -> Result<()> {
         let (all_shreds, _) = receiver.recv()?;
         blockstore
-            .insert_shreds(all_shreds.to_vec(), true)
+            .insert_cow_shreds(
+                all_shreds.iter().map(Cow::Borrowed),
+                true,
+                pinnable_slice,
+                write_batch,
+            )
             .expect("Failed to insert shreds in blockstore");
         Ok(())
     }

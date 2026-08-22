@@ -1,6 +1,8 @@
 //! The `rpc` module implements the Solana RPC interface.
 #[cfg(feature = "dev-context-only-utils")]
-use solana_runtime::installed_scheduler_pool::BankWithScheduler;
+use solana_runtime::installed_scheduler_pool::{
+    BankWithScheduler, InstalledSchedulerPool, SchedulingContext,
+};
 use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
@@ -28,7 +30,6 @@ use {
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey},
         accounts_scan::ScanResult,
     },
-    solana_client::connection_cache::Protocol,
     solana_clock::{Slot, UnixTimestamp},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_entry::entry::Entry,
@@ -46,6 +47,7 @@ use {
     },
     solana_message::{AddressLoader, SanitizedMessage},
     solana_metrics::inc_new_counter_info,
+    solana_net_utils::Protocol,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_pack::Pack,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
@@ -55,8 +57,9 @@ use {
         filter::{Memcmp, RpcFilterType},
         request::{
             DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_GET_CONFIRMED_BLOCKS_RANGE,
-            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT, MAX_GET_PROGRAM_ACCOUNT_FILTERS,
-            MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
+            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT, MAX_GET_INFLATION_REWARD_ADDRESSES,
+            MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
+            MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
             MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY, NUM_LARGEST_ACCOUNTS,
             TokenAccountsFilter,
         },
@@ -478,12 +481,13 @@ impl JsonRpcRequestProcessor {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
             bank_forks.clone(),
             transaction_receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,
@@ -496,6 +500,7 @@ impl JsonRpcRequestProcessor {
         let slot = bank.slot();
         let optimistically_confirmed_bank =
             Arc::new(RwLock::new(OptimisticallyConfirmedBank { bank }));
+        let migration_status = bank_forks.read().unwrap().migration_status();
         Self {
             config,
             snapshot_config: None,
@@ -510,6 +515,8 @@ impl JsonRpcRequestProcessor {
             health: Arc::new(RpcHealth::new(
                 Arc::clone(&optimistically_confirmed_bank),
                 blockstore,
+                Arc::default(),
+                migration_status,
                 0,
                 exit,
             )),
@@ -1060,6 +1067,7 @@ impl JsonRpcRequestProcessor {
         largest_accounts_cache.set_largest_accounts(filter, slot, accounts)
     }
 
+    #[allow(clippy::result_large_err)]
     async fn get_largest_accounts(
         &self,
         config: Option<RpcLargestAccountsConfig>,
@@ -1114,6 +1122,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     async fn get_supply(
         &self,
         config: Option<RpcSupplyConfig>,
@@ -2304,6 +2313,7 @@ impl JsonRpcRequestProcessor {
     }
 
     /// Get an iterator of spl-token accounts by owner address
+    #[allow(clippy::result_large_err)]
     async fn get_filtered_spl_token_accounts_by_owner(
         &self,
         bank: Arc<Bank>,
@@ -2353,6 +2363,7 @@ impl JsonRpcRequestProcessor {
     }
 
     /// Get an iterator of spl-token accounts by mint address
+    #[allow(clippy::result_large_err)]
     async fn get_filtered_spl_token_accounts_by_mint(
         &self,
         bank: Arc<Bank>,
@@ -3904,10 +3915,6 @@ pub mod rpc_full {
                 unsanitized_tx,
                 preflight_bank,
                 preflight_bank.get_reserved_account_keys(),
-                preflight_bank
-                    .feature_set
-                    .snapshot()
-                    .limit_instruction_accounts,
             )?;
             let blockhash = *transaction.message().recent_blockhash();
             let message_hash = *transaction.message_hash();
@@ -4065,12 +4072,8 @@ pub mod rpc_full {
                 });
             }
 
-            let transaction = sanitize_transaction(
-                unsanitized_tx,
-                bank,
-                bank.get_reserved_account_keys(),
-                bank.feature_set.snapshot().limit_instruction_accounts,
-            )?;
+            let transaction =
+                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
 
             let verification_error = if sig_verify {
                 transaction.verify().err()
@@ -4292,6 +4295,11 @@ pub mod rpc_full {
                 "get_inflation_reward rpc request received: {:?}",
                 address_strs.len()
             );
+            if address_strs.len() > MAX_GET_INFLATION_REWARD_ADDRESSES {
+                return Box::pin(future::err(Error::invalid_params(format!(
+                    "Too many inputs provided; max {MAX_GET_INFLATION_REWARD_ADDRESSES}"
+                ))));
+            }
 
             let mut addresses: Vec<Pubkey> = vec![];
             for address_str in address_strs {
@@ -4483,7 +4491,6 @@ fn sanitize_transaction(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
     reserved_account_keys: &HashSet<Pubkey>,
-    enable_instruction_accounts_limit: bool,
 ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
     RuntimeTransaction::try_create(
         transaction,
@@ -4491,7 +4498,6 @@ fn sanitize_transaction(
         None,
         address_loader,
         reserved_account_keys,
-        enable_instruction_accounts_limit,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }
@@ -4553,7 +4559,6 @@ pub fn populate_blockstore_for_tests(
     blockstore.set_roots(std::iter::once(&slot)).unwrap();
 
     let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
-    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let tss_exit = Arc::new(AtomicBool::new(false));
     let transaction_status_service =
         crate::transaction_status_service::TransactionStatusService::new(
@@ -4567,20 +4572,27 @@ pub fn populate_blockstore_for_tests(
             tss_exit.clone(),
         );
 
+    let transaction_status_sender =
+        solana_runtime::transaction_execution::TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+    let pool = solana_unified_scheduler_pool::DefaultSchedulerPool::new_for_verification(
+        None,
+        None,
+        Some(transaction_status_sender),
+        None,
+        None,
+    );
+
+    let context = SchedulingContext::new(bank.clone());
+    let scheduler = pool.take_scheduler(context).unwrap();
+    let bank = BankWithScheduler::new(bank, Some(scheduler));
+
     // Check that process_entries successfully writes can_commit transactions statuses, and
     // that they are matched properly by get_rooted_block
     assert_eq!(
-        solana_ledger::blockstore_processor::process_entries_for_tests(
-            &BankWithScheduler::new_without_scheduler(bank),
-            entries,
-            Some(
-                &solana_runtime::transaction_execution::TransactionStatusSender {
-                    sender: transaction_status_sender,
-                    dependency_tracker: None,
-                },
-            ),
-            Some(&replay_vote_sender),
-        ),
+        solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries),
         Ok(())
     );
 
@@ -4604,7 +4616,7 @@ pub mod tests {
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{Account, state_traits::StateMut},
+        solana_account::{Account, state_traits::StateMutWincode as _},
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -4806,7 +4818,7 @@ pub mod tests {
             solana_pubkey::pubkey!("TestProgram11111111111111111111111111111111");
 
         fn cache_entry() -> ProgramCacheEntry {
-            ProgramCacheEntry::new_builtin(0, Self::NAME.len(), Self::register)
+            ProgramCacheEntry::new_builtin(Self::register)
         }
 
         fn instruction(
@@ -5240,6 +5252,45 @@ pub mod tests {
     }
 
     #[test]
+    fn test_rpc_get_ag_genesis_cert() {
+        use {
+            agave_votor_messages::{
+                certificate::{CertSignature, GenesisCert},
+                consensus_message::Block,
+            },
+            solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        };
+
+        let rpc = RpcHandler::start();
+        // Seed the bank with a genesis certificate for the RPC to return.
+        rpc.working_bank()
+            .set_alpenglow_genesis_certificate(&GenesisCert {
+                block: Block {
+                    slot: 0,
+                    block_id: Hash::default(),
+                },
+                signature: CertSignature {
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    bitmap: vec![1, 2, 3],
+                },
+            });
+
+        let request = create_test_request("getAgGenesisCert", None);
+        let result: Value = parse_success_result(rpc.handle_request_sync(request));
+        let expected = json!({
+            "block": {
+                "slot": 0,
+                "blockId": vec![0u8; 32],
+            },
+            "signature": {
+                "signature": vec![0u8; BLS_SIGNATURE_AFFINE_SIZE],
+                "bitmap": [1, 2, 3],
+            },
+        });
+        assert_eq!(result, expected);
+    }
+
+    #[test]
     fn test_rpc_get_cluster_nodes() {
         let rpc = RpcHandler::start();
         let version = solana_version::Version::default();
@@ -5256,8 +5307,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:8010",
             "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
-            "rpc": format!("127.0.0.1:8899"),
-            "pubsub": format!("127.0.0.1:8900"),
+            "rpc": "127.0.0.1:8899",
+            "pubsub": "127.0.0.1:8900",
             "version": format!("{version}"),
             "featureSet": version.feature_set(),
             "clientId": "Agave",
@@ -5272,8 +5323,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:1245",
             "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
-            "rpc": format!("127.0.0.1:8899"),
-            "pubsub": format!("127.0.0.1:8900"),
+            "rpc": "127.0.0.1:8899",
+            "pubsub": "127.0.0.1:8900",
             "version": format!("{version}"),
             "featureSet": version.feature_set(),
             "clientId": "Agave",
@@ -5655,6 +5706,26 @@ pub mod tests {
         let expected = (
             ErrorCode::InvalidParams.code(),
             String::from("Invalid slot range: leader schedule for epoch 2 is unavailable"),
+        );
+        assert_eq!(response, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_inflation_reward_too_many_addresses() {
+        let rpc = RpcHandler::start();
+
+        // A request with more than the allowed number of addresses must be
+        // rejected by the count check before any address parsing or lookup.
+        let addresses: Vec<String> = (0..=MAX_GET_INFLATION_REWARD_ADDRESSES)
+            .map(|_| Pubkey::new_unique().to_string())
+            .collect();
+        assert_eq!(addresses.len(), MAX_GET_INFLATION_REWARD_ADDRESSES + 1);
+
+        let request = create_test_request("getInflationReward", Some(json!([addresses])));
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            ErrorCode::InvalidParams.code(),
+            format!("Too many inputs provided; max {MAX_GET_INFLATION_REWARD_ADDRESSES}"),
         );
         assert_eq!(response, expected);
     }
@@ -7019,11 +7090,12 @@ pub mod tests {
             runtime.clone(),
         );
 
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
             bank_forks.clone(),
             receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,
@@ -7311,7 +7383,8 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,
@@ -7335,7 +7408,7 @@ pub mod tests {
         SendTransactionService::new(
             bank_forks,
             receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,
@@ -9413,7 +9486,6 @@ pub mod tests {
                 unsanitary_versioned_tx,
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
-                true,
             )
             .unwrap_err(),
             expect58
@@ -9439,7 +9511,6 @@ pub mod tests {
                 versioned_tx,
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
-                true,
             )
             .unwrap_err(),
             Error::invalid_params(

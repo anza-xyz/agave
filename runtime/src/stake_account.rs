@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     solana_stake_interface::{

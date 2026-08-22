@@ -487,7 +487,8 @@ impl SimulatorLoop {
                     info!("new leader bank slot: {new_slot}");
                 }
                 let new_bank =
-                    Bank::new_from_parent(bank.clone_without_scheduler(), new_leader, new_slot);
+                    Bank::new_from_parent(bank.clone_without_scheduler(), new_leader, new_slot)
+                        .mark_leader_bank();
                 if *bank.leader_id() == self.simulated_leader {
                     logger.log_frozen_bank_cost(&bank, bank_created.elapsed());
                 }
@@ -716,9 +717,8 @@ impl BankingSimulator {
             .last()
         {
             info!("purging slots {}, {}", self.first_simulated_slot, end_slot);
-            blockstore.purge_from_next_slots(self.first_simulated_slot, end_slot);
             blockstore
-                .purge_slots(self.first_simulated_slot, end_slot, PurgeType::Exact)
+                .purge_slots_cleanup_chaining(self.first_simulated_slot, end_slot, PurgeType::Exact)
                 .unwrap();
             info!("done: purging");
         } else {
@@ -823,6 +823,7 @@ impl BankingSimulator {
             replay_vote_sender,
             None,
             bank_forks.clone(),
+            agave_votor::slot_clock::SharedAlpenglowSlotClock::default(),
             None,
             Arc::default(),
             Arc::new(SchedulerPriorityFloor::default()),
@@ -838,12 +839,7 @@ impl BankingSimulator {
         let timed_batches_to_send = packet_batches_by_time.split_off(&base_event_time);
         let batch_and_tx_counts = timed_batches_to_send
             .values()
-            .map(|(_label, batches)| {
-                (
-                    batches.len(),
-                    batches.iter().map(|batch| batch.len()).sum::<usize>(),
-                )
-            })
+            .map(|(_label, batch)| (1, batch.len()))
             .collect::<Vec<_>>();
         // Convert to a large plain old Vec and drain on it, finally dropping it outside
         // the simulation loop to avoid jitter due to interleaved deallocs of BTreeMap.

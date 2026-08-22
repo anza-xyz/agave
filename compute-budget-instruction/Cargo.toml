@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -29,7 +30,6 @@ solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true, features = ["borsh"] }
 solana-instruction = { workspace = true }
-solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-transaction = { workspace = true }
@@ -46,7 +46,6 @@ solana-keypair = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
-solana-stake-interface = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
 

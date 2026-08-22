@@ -191,7 +191,7 @@ impl AccountStorage {
             "shrink is in progress! slots: {:?}",
             self.shrink_in_progress_map.read().unwrap().keys(),
         );
-        assert!(self.map.insert(store.slot, store).is_none());
+        assert!(self.map.insert(store.slot(), store).is_none());
     }
 
     /// called when shrinking begins on a slot and append vec.
@@ -362,7 +362,7 @@ impl<'a> AccountStoragesOrderer<'a> {
     ) -> Self {
         let len_range = 0..storages.len();
         let mut indices: Vec<_> = len_range.clone().collect();
-        indices.sort_unstable_by_key(|i| storages[*i].capacity());
+        indices.sort_unstable_by_key(|i| storages[*i].written_bytes());
         indices.iter_mut().for_each(|i| {
             *i = select_from_range_with_start_end_rates(len_range.clone(), *i, small_to_large_ratio)
         });
@@ -547,31 +547,35 @@ mod tests {
 
         // add a map store
         let common_store_path = TempDir::new().unwrap();
-        let store_file_size = 4000;
-        let store_file_size2 = store_file_size * 2;
+        let alive_bytes: usize = 4000;
+        let alive_bytes2: usize = alive_bytes * 2;
         // 2 append vecs with same id, but different sizes
         let entry = Arc::new(AccountStorageEntry::new(
             common_store_path.path(),
             slot,
             id,
-            store_file_size,
+            alive_bytes as u64,
             AccountsFileProvider::AppendVec,
         ));
+        entry.num_alive_bytes.store(alive_bytes, Ordering::Release);
         let entry2 = Arc::new(AccountStorageEntry::new(
             common_store_path.path(),
             slot,
             id,
-            store_file_size2,
+            alive_bytes2 as u64,
             AccountsFileProvider::AppendVec,
         ));
+        entry2
+            .num_alive_bytes
+            .store(alive_bytes2, Ordering::Release);
         storage.map.insert(slot, entry);
 
         // look in map
         assert_eq!(
-            store_file_size,
+            alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -584,10 +588,10 @@ mod tests {
 
         // look in map
         assert_eq!(
-            store_file_size,
+            alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -596,10 +600,10 @@ mod tests {
 
         // look in shrink_in_progress_map
         assert_eq!(
-            store_file_size2,
+            alive_bytes2,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
     }

@@ -84,11 +84,11 @@ impl AccountsFile {
         }
     }
 
-    /// Return the total number of bytes of the zero lamport single ref accounts in the storage.
+    /// Return the total number of bytes of the zero lamport accounts in the storage.
     /// Those bytes are "dead" and can be shrunk away.
-    pub(crate) fn dead_bytes_due_to_zero_lamport_single_ref(&self, count: usize) -> usize {
+    pub(crate) fn dead_bytes_due_to_zero_lamport_accounts(&self, count: usize) -> usize {
         match self {
-            Self::AppendVec(av) => av.dead_bytes_due_to_zero_lamport_single_ref(count),
+            Self::AppendVec(av) => av.dead_bytes_due_to_zero_lamport_accounts(count),
         }
     }
 
@@ -110,13 +110,6 @@ impl AccountsFile {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::AppendVec(av) => av.is_empty(),
-        }
-    }
-
-    /// Returns the total number of bytes, *not accounts*, the AccountsFile can hold
-    pub fn capacity(&self) -> u64 {
-        match self {
-            Self::AppendVec(av) => av.capacity(),
         }
     }
 

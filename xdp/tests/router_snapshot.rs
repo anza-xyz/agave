@@ -11,7 +11,7 @@ use {
 #[ignore = "requires root and network namespace privileges"]
 fn router_snapshot_resolves_gre_routes_from_netlink() {
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
 
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
     common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
@@ -35,7 +35,7 @@ fn router_snapshot_resolves_gre_routes_from_netlink() {
 
         let gre_route = next_hop.gre.as_ref().expect("route should use GRE");
         assert_eq!(gre_route.if_index, gre.if_index);
-        assert_eq!(gre_route.mac_addr, links.right_mac);
+        assert_eq!(gre_route.underlay_mac_addr, Some(links.right_mac));
         assert_eq!(gre_route.tunnel_info.local, IpAddr::V4(gre.local_ip));
         assert_eq!(gre_route.tunnel_info.remote, IpAddr::V4(gre.remote_ip));
         assert_eq!(gre_route.tunnel_info.ttl, 64);

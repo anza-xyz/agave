@@ -307,57 +307,50 @@ impl OptimisticallyConfirmedBankTracker {
             BankNotification::OptimisticallyConfirmed(slot, hash) => {
                 let bank = bank_forks.read().unwrap().get(slot);
                 if let Some(bank) = bank {
-                    if !bank.is_frozen() {
-                        if slot > *highest_confirmed_slot {
-                            Self::notify_or_defer_confirmed_banks(
-                                subscriptions,
-                                bank_forks,
-                                bank,
-                                *highest_confirmed_slot,
-                                Some((slot, hash)),
-                                last_notified_confirmed_slot,
-                                pending_optimistically_confirmed_banks,
-                                slot_notification_subscribers,
-                                prioritization_fee_cache,
-                            );
-                            *highest_confirmed_slot = slot;
-                        } else if slot > bank_forks.read().unwrap().root() {
-                            pending_optimistically_confirmed_banks.insert((slot, hash));
-                            debug!("defer notifying optimistic confirmation for slot {slot}");
+                    if bank.is_frozen() {
+                        if bank.hash() != hash {
+                            if slot > bank_forks.read().unwrap().root() {
+                                pending_optimistically_confirmed_banks.insert((slot, hash));
+                                debug!(
+                                    "defer notifying optimistic confirmation for slot {slot}: \
+                                     local bank hash {} does not match optimistic confirmation \
+                                     hash {hash}",
+                                    bank.hash()
+                                );
+                            }
+                        } else {
+                            let mut w_optimistically_confirmed_bank =
+                                optimistically_confirmed_bank.write().unwrap();
+
+                            if bank.slot() > w_optimistically_confirmed_bank.bank.slot() {
+                                w_optimistically_confirmed_bank.bank = bank.clone();
+                            }
+
+                            if slot > *highest_confirmed_slot {
+                                Self::notify_or_defer_confirmed_banks(
+                                    subscriptions,
+                                    bank_forks,
+                                    bank,
+                                    *highest_confirmed_slot,
+                                    None,
+                                    last_notified_confirmed_slot,
+                                    pending_optimistically_confirmed_banks,
+                                    slot_notification_subscribers,
+                                    prioritization_fee_cache,
+                                );
+
+                                *highest_confirmed_slot = slot;
+                            }
+                            drop(w_optimistically_confirmed_bank);
                         }
-                    } else if bank.hash() != hash {
-                        if slot > bank_forks.read().unwrap().root() {
-                            pending_optimistically_confirmed_banks.insert((slot, hash));
-                            debug!(
-                                "defer notifying optimistic confirmation for slot {slot}: local \
-                                 bank hash {} does not match optimistic confirmation hash {hash}",
-                                bank.hash()
-                            );
-                        }
+                    } else if slot > bank_forks.read().unwrap().root() {
+                        pending_optimistically_confirmed_banks.insert((slot, hash));
+                        debug!("defer notifying optimistic confirmation for slot {slot}");
                     } else {
-                        let mut w_optimistically_confirmed_bank =
-                            optimistically_confirmed_bank.write().unwrap();
-
-                        if bank.slot() > w_optimistically_confirmed_bank.bank.slot() {
-                            w_optimistically_confirmed_bank.bank = bank.clone();
-                        }
-
-                        if slot > *highest_confirmed_slot {
-                            Self::notify_or_defer_confirmed_banks(
-                                subscriptions,
-                                bank_forks,
-                                bank,
-                                *highest_confirmed_slot,
-                                None,
-                                last_notified_confirmed_slot,
-                                pending_optimistically_confirmed_banks,
-                                slot_notification_subscribers,
-                                prioritization_fee_cache,
-                            );
-
-                            *highest_confirmed_slot = slot;
-                        }
-                        drop(w_optimistically_confirmed_bank);
+                        inc_new_counter_info!(
+                            "dropped-already-rooted-optimistic-bank-notification",
+                            1
+                        );
                     }
                 } else if slot > bank_forks.read().unwrap().root() {
                     pending_optimistically_confirmed_banks.insert((slot, hash));
@@ -592,7 +585,7 @@ mod tests {
         assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 2);
         assert_eq!(pending_optimistically_confirmed_banks.len(), 1);
         assert!(pending_optimistically_confirmed_banks.contains(&(3, bank3_pending_hash)));
-        assert_eq!(highest_confirmed_slot, 3);
+        assert_eq!(highest_confirmed_slot, 2);
 
         // Test bank will only be cached when frozen
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
@@ -644,7 +637,7 @@ mod tests {
         assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 3);
         assert_eq!(pending_optimistically_confirmed_banks.len(), 1);
         assert!(pending_optimistically_confirmed_banks.contains(&(4, bank4_hash)));
-        assert_eq!(highest_confirmed_slot, 4);
+        assert_eq!(highest_confirmed_slot, 3);
 
         let bank4 = bank_forks.read().unwrap().get(4).unwrap();
         let bank5 = Bank::new_from_parent(bank4, SlotLeader::default(), 5);
@@ -677,7 +670,7 @@ mod tests {
         assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 5);
         assert_eq!(pending_optimistically_confirmed_banks.len(), 0);
         assert!(!pending_optimistically_confirmed_banks.contains(&(4, bank4_hash)));
-        assert_eq!(highest_confirmed_slot, 4);
+        assert_eq!(highest_confirmed_slot, 3);
         // The newest_root_slot is updated via NewRootedChain only
         assert_eq!(newest_root_slot, 0);
 
@@ -732,7 +725,7 @@ mod tests {
         assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 5);
         assert_eq!(pending_optimistically_confirmed_banks.len(), 0);
         assert!(!pending_optimistically_confirmed_banks.contains(&(6, bank6_hash)));
-        assert_eq!(highest_confirmed_slot, 4);
+        assert_eq!(highest_confirmed_slot, 3);
         assert_eq!(newest_root_slot, 5);
 
         let bank7 = bank_forks.read().unwrap().get(7).unwrap();
@@ -757,7 +750,7 @@ mod tests {
         assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 7);
         assert_eq!(pending_optimistically_confirmed_banks.len(), 0);
         assert!(!pending_optimistically_confirmed_banks.contains(&(6, bank6_hash)));
-        assert_eq!(highest_confirmed_slot, 4);
+        assert_eq!(highest_confirmed_slot, 3);
         assert_eq!(newest_root_slot, 5);
 
         OptimisticallyConfirmedBankTracker::process_notification(
@@ -844,8 +837,7 @@ mod tests {
             );
 
             assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 0);
-            // highest_confirmed_slot is updated even when we have not received the frozen event
-            assert_eq!(highest_confirmed_slot, 1);
+            assert_eq!(highest_confirmed_slot, 0);
             assert_eq!(pending_optimistically_confirmed_banks.len(), 1);
             assert!(pending_optimistically_confirmed_banks.contains(&(1, bank1_pending_hash)));
 
