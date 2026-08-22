@@ -61,6 +61,7 @@ pub struct RpcRequestAirdropConfig {
 #[serde(rename_all = "camelCase")]
 pub struct RpcLeaderScheduleConfig {
     pub identity: Option<String>, // validator identity, as a base-58 encoded string
+    pub key_by_vote_account: Option<bool>, // key the schedule by vote account instead of identity
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
 }
