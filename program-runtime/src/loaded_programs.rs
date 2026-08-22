@@ -613,11 +613,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             } => {
                 search_for.retain(|program_to_load| {
                     if let Some(second_level) = entries.get(program_to_load.program_id) {
-                        let mut filter_by_deployment_slot = None;
                         for entry in second_level.iter().rev() {
-                            let required_deployment_slot =
-                                filter_by_deployment_slot.unwrap_or(entry.deployment_slot);
-                            if required_deployment_slot != entry.deployment_slot
+                            // The entry must have been deployed in the slot reported by
+                            // the caller's own program account, and by the same loader.
+                            if program_to_load.deployed_on_or_after_slot != entry.deployment_slot
                                 || program_to_load.loader != entry.account_owner
                             {
                                 continue;
@@ -639,22 +638,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                         entry,
                                         program_runtime_environment_for_execution,
                                     ) {
-                                        // We found an entry that would work, had its environment matched
-                                        // the one we're planning to use for this slot.
-                                        //
-                                        // At this point we know that whatever the "current version" of
-                                        // program is, it must have had a deployment slot equal to the
-                                        // program we're looking at in this iteration. We just have to find
-                                        // one with the correct environment and can skip entries for any
-                                        // other deployment slot while searching further.
-                                        filter_by_deployment_slot = filter_by_deployment_slot
-                                            .or(Some(entry.deployment_slot));
+                                        // We found an entry that would work, had its environment
+                                        // matched the one we're planning to use for this slot. A
+                                        // sibling compiled against that environment may follow.
                                         continue;
-                                    }
-                                    if entry.deployment_slot
-                                        < program_to_load.deployed_on_or_after_slot
-                                    {
-                                        break;
                                     }
                                     if let ProgramCacheEntryType::Unloaded(_environment) =
                                         &entry.program
@@ -1891,7 +1878,7 @@ pub(crate) mod tests {
                     .map(|(_program_id, entry)| ProgramToLoad {
                         program_id: key,
                         loader: entry.account_owner,
-                        deployed_on_or_after_slot: 0,
+                        deployed_on_or_after_slot: entry.deployment_slot,
                         last_modification_slot: entry.deployment_slot,
                     })
             })
@@ -2151,15 +2138,17 @@ pub(crate) mod tests {
         assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 11, 12));
 
-        // Test the same fork, but request the program modified at a later slot than what's in the cache.
+        // Now try extractions that previously worked under the "deployed on
+        // or after" criteria, but won't work with exact matching.
         let mut missing = get_entries_to_load(&cache, 12, keys);
-        missing.get_mut(0).unwrap().deployed_on_or_after_slot = 5;
+        // Program 2's newest entry is at slot 11. Asking for 5 doesn't extract
+        // the latest (11) anymore. You get 5.
         missing.get_mut(1).unwrap().deployed_on_or_after_slot = 5;
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
-        assert!(match_missing(&missing, &program1, true));
-        assert!(match_slot(&extracted, &program2, 11, 12));
+        assert!(match_slot(&extracted, &program1, 0, 12));
+        assert!(match_slot(&extracted, &program2, 5, 12));
     }
 
     #[test]
