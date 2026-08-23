@@ -57,9 +57,12 @@ impl CertsBuilder {
             Ok(RewardRequest {
                 bank_slot,
                 reply_sender,
+                request_sent,
             }) => {
+                let result = self.build_certs(bank_slot);
                 let resp = RewardResponse {
-                    result: self.build_certs(bank_slot),
+                    result,
+                    processing_duration: request_sent.elapsed(),
                 };
                 let _ = reply_sender.send(resp).inspect_err(|_| {
                     info!(

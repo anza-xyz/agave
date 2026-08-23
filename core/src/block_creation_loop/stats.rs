@@ -104,7 +104,7 @@ impl LoopMetrics {
 }
 
 // Metrics on slots that we attempt to start a leader block for
-pub(super) struct SlotMetrics {
+pub(crate) struct SlotMetrics {
     slot: Slot,
     pub(super) attempt_start_leader_count: u64,
     /// Indicates we have attempted fast leader handover
@@ -115,6 +115,8 @@ pub(super) struct SlotMetrics {
 
     pub(super) slot_delay_us: u64,
     pub(super) replay_is_behind_us: u64,
+    pub(super) reward_certs_skipped: u64,
+    pub(super) reward_certs_production_us: u64,
 }
 
 impl SlotMetrics {
@@ -127,6 +129,8 @@ impl SlotMetrics {
             already_have_bank_count: 0,
             slot_delay_us: 0,
             replay_is_behind_us: 0,
+            reward_certs_skipped: 0,
+            reward_certs_production_us: 0,
         }
     }
 
@@ -139,6 +143,8 @@ impl SlotMetrics {
             already_have_bank_count,
             slot_delay_us,
             replay_is_behind_us,
+            reward_certs_skipped,
+            reward_certs_production_us,
         } = self;
         datapoint_info!(
             "slot-metrics",
@@ -149,6 +155,12 @@ impl SlotMetrics {
             ("already_have_bank_count", already_have_bank_count, i64),
             ("slot_delay_us", slot_delay_us, i64),
             ("replay_is_behind_us", replay_is_behind_us, i64),
+            ("reward_certs_skipped", reward_certs_skipped, i64),
+            (
+                "reward_certs_production_us",
+                reward_certs_production_us,
+                i64
+            ),
         );
     }
 }

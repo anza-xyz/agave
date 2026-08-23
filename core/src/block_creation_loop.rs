@@ -695,7 +695,7 @@ fn record_and_complete_block(
             .saturating_add(NUM_SLOTS_FOR_REWARD)
     {
         ctx.reward_certs_requestor
-            .request_reward_certs(ctx.my_pubkey, bank_slot)
+            .request_reward_certs(slot_metrics, ctx.my_pubkey, bank_slot)
             .map_err(|()| PohRecorderError::ChannelDisconnected)?
     } else {
         None
@@ -810,11 +810,6 @@ fn record_and_complete_block(
         bank.slot()
     );
 
-    let reward_certs = ctx
-        .reward_certs_requestor
-        .recv_reward_certs(ctx.my_pubkey, reward_cert_request)
-        .map_err(|()| PohRecorderError::ChannelDisconnected)?;
-
     // Root advancement can retire and purge this Bank concurrently with block completion. Hold
     // execution token through remaining mutations.
     let Some(_completion_guard) = bank.try_enter_transaction_execution() else {
@@ -829,6 +824,10 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
+        let reward_certs = ctx
+            .reward_certs_requestor
+            .recv_reward_certs(slot_metrics, ctx.my_pubkey, reward_cert_request)
+            .map_err(|()| PohRecorderError::ChannelDisconnected)?;
         let RewardRespSucc {
             skip,
             notar,

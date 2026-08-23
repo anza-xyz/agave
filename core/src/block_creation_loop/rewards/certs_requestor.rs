@@ -1,10 +1,12 @@
 use {
-    crate::block_creation_loop::rewards::msg_types::{
-        RewardRequest, RewardRequestToken, RewardRespSucc,
+    crate::block_creation_loop::{
+        SlotMetrics,
+        rewards::msg_types::{RewardRequest, RewardRequestToken, RewardRespSucc},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
+    std::time::Instant,
 };
 
 /// Struct to handle requests to build rewards certs and receive the produced certs.
@@ -37,6 +39,7 @@ impl CertsRequestor {
     /// - `Err(())` if the channel to the rewards container is disconnected.
     pub(crate) fn request_reward_certs(
         &mut self,
+        stats: &mut SlotMetrics,
         my_pubkey: Pubkey,
         bank_slot: Slot,
     ) -> Result<Option<RewardRequestToken>, ()> {
@@ -44,6 +47,7 @@ impl CertsRequestor {
         let request = RewardRequest {
             bank_slot,
             reply_sender,
+            request_sent: Instant::now(),
         };
         match self.req_sender.try_send(request) {
             Ok(()) => Ok(Some(RewardRequestToken { reply_receiver })),
@@ -52,6 +56,7 @@ impl CertsRequestor {
                     "{my_pubkey} sending request to build reward cert for bank_slot={bank_slot} \
                      failed, channel is full"
                 );
+                stats.reward_certs_skipped += 1;
                 Ok(None)
             }
             Err(TrySendError::Disconnected(_)) => Err(()),
@@ -65,6 +70,7 @@ impl CertsRequestor {
     /// reward certs than wait for it.
     pub(crate) fn recv_reward_certs(
         &mut self,
+        stats: &mut SlotMetrics,
         my_pubkey: Pubkey,
         request: Option<RewardRequestToken>,
     ) -> Result<RewardRespSucc, ()> {
@@ -75,16 +81,22 @@ impl CertsRequestor {
                 match msg {
                     Err(TryRecvError::Empty) => {
                         warn!("{my_pubkey} trying to receive cert failed, channel is empty");
+                        stats.reward_certs_skipped += 1;
                         Ok(RewardRespSucc::default())
                     }
                     Err(TryRecvError::Disconnected) => Err(()),
-                    Ok(resp) => match resp.result {
-                        Ok(res) => Ok(res),
-                        Err(err) => {
-                            error!("{my_pubkey} building reward cert failed with {err:?}");
-                            Ok(RewardRespSucc::default())
+                    Ok(resp) => {
+                        if let Ok(d) = u64::try_from(resp.processing_duration.as_micros()) {
+                            stats.reward_certs_production_us = d;
                         }
-                    },
+                        match resp.result {
+                            Ok(res) => Ok(res),
+                            Err(err) => {
+                                error!("{my_pubkey} building reward cert failed with {err:?}");
+                                Ok(RewardRespSucc::default())
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -98,31 +110,44 @@ mod tests {
 
     #[test]
     fn test_does_not_block() {
+        let mut slot_metrics = SlotMetrics::new(1, true);
         let my_pubkey = Pubkey::default();
         let (mut handler, _receiver) = CertsRequestor::new();
-        handler.request_reward_certs(my_pubkey, 1).unwrap().unwrap();
+        handler
+            .request_reward_certs(&mut slot_metrics, my_pubkey, 1)
+            .unwrap()
+            .unwrap();
 
-        let resp = handler.recv_reward_certs(my_pubkey, None).unwrap();
+        let resp = handler
+            .recv_reward_certs(&mut slot_metrics, my_pubkey, None)
+            .unwrap();
         assert_eq!(resp, RewardRespSucc::default());
 
         {
             let (_reply_sender, reply_receiver) = bounded(0);
             let request = RewardRequestToken { reply_receiver };
-            let resp = handler.recv_reward_certs(my_pubkey, Some(request)).unwrap();
+            let resp = handler
+                .recv_reward_certs(&mut slot_metrics, my_pubkey, Some(request))
+                .unwrap();
             assert_eq!(resp, RewardRespSucc::default());
         }
     }
 
     #[test]
     fn test_basic_functionality() {
+        let mut slot_metrics = SlotMetrics::new(1, true);
         let my_pubkey = Pubkey::default();
         let (mut handler, receiver) = CertsRequestor::new();
-        let request = handler.request_reward_certs(my_pubkey, 1).unwrap().unwrap();
+        let request = handler
+            .request_reward_certs(&mut slot_metrics, my_pubkey, 1)
+            .unwrap()
+            .unwrap();
         let validators = vec![Pubkey::new_unique(); 10];
 
         let RewardRequest {
             bank_slot: _,
             reply_sender,
+            request_sent,
         } = receiver.recv().unwrap();
         reply_sender
             .send(RewardResponse {
@@ -131,9 +156,12 @@ mod tests {
                     notar: None,
                     validators: validators.clone(),
                 }),
+                processing_duration: request_sent.elapsed(),
             })
             .unwrap();
-        let resp = handler.recv_reward_certs(my_pubkey, Some(request)).unwrap();
+        let resp = handler
+            .recv_reward_certs(&mut slot_metrics, my_pubkey, Some(request))
+            .unwrap();
         assert!(resp.skip.is_none());
         assert!(resp.notar.is_none());
         assert_eq!(resp.validators, validators);
