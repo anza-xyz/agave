@@ -15,7 +15,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 const NUM_HASHES: u64 = 400;
 const NUM_ENTRIES: usize = 800;
 
-fn bench_poh_verify_ticks(b: &mut Bencher) {
+fn bench_poh_verify_ticks(bencher: &mut Bencher) {
     agave_logger::setup();
     let thread_pool = entry::thread_pool_for_benches();
 
@@ -28,12 +28,12 @@ fn bench_poh_verify_ticks(b: &mut Bencher) {
         ticks.push(next_entry_mut(&mut cur_hash, NUM_HASHES, vec![]));
     }
 
-    b.iter(|| {
+    bencher.iter(|| {
         assert!(ticks.verify(&start_hash, &thread_pool).status());
     })
 }
 
-fn bench_poh_verify_transaction_entries(b: &mut Bencher) {
+fn bench_poh_verify_transaction_entries(bencher: &mut Bencher) {
     let thread_pool = entry::thread_pool_for_benches();
 
     let zero = Hash::default();
@@ -49,7 +49,7 @@ fn bench_poh_verify_transaction_entries(b: &mut Bencher) {
         ticks.push(next_entry_mut(&mut cur_hash, NUM_HASHES, vec![tx]));
     }
 
-    b.iter(|| {
+    bencher.iter(|| {
         assert!(ticks.verify(&start_hash, &thread_pool).status());
     })
 }

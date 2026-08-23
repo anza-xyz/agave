@@ -32,17 +32,17 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 const NUM_HASHES: u64 = 30_000; // Should require ~10ms on a 2017 MacBook Pro
 
 // No locking.  Fastest.
-fn bench_poh_hash(b: &mut Bencher) {
+fn bench_poh_hash(bencher: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
-    b.iter(|| {
+    bencher.iter(|| {
         poh.hash(NUM_HASHES);
     })
 }
 
 // Lock on each iteration.  Slowest.
-fn bench_arc_mutex_poh_hash(b: &mut Bencher) {
+fn bench_arc_mutex_poh_hash(bencher: &mut Bencher) {
     let poh = Arc::new(Mutex::new(Poh::new(Hash::default(), None)));
-    b.iter(|| {
+    bencher.iter(|| {
         for _ in 0..NUM_HASHES {
             poh.lock().unwrap().hash(1);
         }
@@ -51,12 +51,12 @@ fn bench_arc_mutex_poh_hash(b: &mut Bencher) {
 
 // Acquire lock every NUM_HASHES_PER_BATCH iterations.
 // Speed should be close to bench_poh_hash() if NUM_HASHES_PER_BATCH is set well.
-fn bench_arc_mutex_poh_batched_hash(b: &mut Bencher) {
+fn bench_arc_mutex_poh_batched_hash(bencher: &mut Bencher) {
     let poh = Arc::new(Mutex::new(Poh::new(Hash::default(), Some(NUM_HASHES))));
     //let exit = Arc::new(AtomicBool::new(false));
     let exit = Arc::new(AtomicBool::new(true));
 
-    b.iter(|| {
+    bencher.iter(|| {
         // NOTE: This block attempts to look as close as possible to `PohService::tick_producer()`
         loop {
             if poh.lock().unwrap().hash(DEFAULT_HASHES_PER_BATCH) {
@@ -70,14 +70,14 @@ fn bench_arc_mutex_poh_batched_hash(b: &mut Bencher) {
 }
 
 // Worst case transaction record delay due to batch hashing at NUM_HASHES_PER_BATCH
-fn bench_poh_lock_time_per_batch(b: &mut Bencher) {
+fn bench_poh_lock_time_per_batch(bencher: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
-    b.iter(|| {
+    bencher.iter(|| {
         poh.hash(DEFAULT_HASHES_PER_BATCH);
     })
 }
 
-fn bench_poh_recorder_record(b: &mut Bencher) {
+fn bench_poh_recorder_record(bencher: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
@@ -111,7 +111,7 @@ fn bench_poh_recorder_record(b: &mut Bencher) {
     ];
 
     let txs: Vec<_> = txs.iter().map(|tx| tx.to_versioned_transaction()).collect();
-    b.iter(|| {
+    bencher.iter(|| {
         let _record_result = poh_recorder
             .record(bank.slot(), black_box(h1), black_box(txs.clone()))
             .unwrap();
@@ -119,7 +119,7 @@ fn bench_poh_recorder_record(b: &mut Bencher) {
     poh_recorder.tick();
 }
 
-fn bench_poh_recorder_set_bank(b: &mut Bencher) {
+fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
@@ -138,7 +138,7 @@ fn bench_poh_recorder_set_bank(b: &mut Bencher) {
         &PohConfig::default(),
         Arc::new(AtomicBool::default()),
     );
-    b.iter(|| {
+    bencher.iter(|| {
         poh_recorder.set_bank_for_test(bank.clone());
         poh_recorder.tick();
         poh_recorder.clear_bank_for_test();
