@@ -68,6 +68,9 @@ still accepted for backwards compatibility but slated for full removal in the fu
 * Added `GeyserPlugin::notify_entry_update_parent` and
   `GeyserPlugin::notify_deshred_update_parent` so plugins can discard earlier notifications after
   an UpdateParent marker.
+* The `deshred_geyser_timing` datapoint is now reported once per second instead of once per
+  `CompletedDataSetsService` batch. Its fields are sums over the reporting interval, and the new
+  `batches_count` field reports the number of batches in that interval.
 ### SDK
 #### Breaking
 * solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return

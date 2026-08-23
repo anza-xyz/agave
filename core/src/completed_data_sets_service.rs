@@ -24,6 +24,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_signature::Signature,
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
+    solana_time_utils::AtomicInterval,
     solana_transaction::{
         simple_vote_transaction_checker::is_simple_vote_transaction_impl,
         versioned::VersionedTransaction,
@@ -88,6 +89,8 @@ fn load_transaction_addresses(
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct DeshredBatchStats {
+    total_batch_us: u64,
+    total_batches: u64,
     total_lut_load_us: u64,
     total_notify_us: u64,
     total_transactions: u64,
@@ -95,6 +98,48 @@ struct DeshredBatchStats {
     total_data_sets: u64,
     lut_transactions: u64,
     lut_failures: u64,
+}
+
+impl DeshredBatchStats {
+    fn report(&self) {
+        let avg_notify_us = self
+            .total_notify_us
+            .checked_div(self.total_transactions)
+            .unwrap_or(0);
+        datapoint_info!(
+            "deshred_geyser_timing",
+            ("batch_total_us", self.total_batch_us as i64, i64),
+            ("batches_count", self.total_batches as i64, i64),
+            ("notify_total_us", self.total_notify_us as i64, i64),
+            ("lut_load_total_us", self.total_lut_load_us as i64, i64),
+            ("transactions_count", self.total_transactions as i64, i64),
+            ("lut_transactions_count", self.lut_transactions as i64, i64),
+            ("lut_failures_count", self.lut_failures as i64, i64),
+            ("entries_count", self.total_entries as i64, i64),
+            ("data_sets_count", self.total_data_sets as i64, i64),
+            ("avg_notify_us", avg_notify_us as i64, i64),
+        );
+    }
+}
+
+/// `recv_completed_data_sets` runs thousands of times per second, so the batch stats
+/// accumulate across calls and report on an interval.
+#[derive(Debug, Default)]
+struct IntervalDeshredBatchStats {
+    interval: AtomicInterval,
+    stats: DeshredBatchStats,
+}
+
+impl IntervalDeshredBatchStats {
+    fn maybe_report_and_reset(&mut self, should_report: bool) {
+        const REPORT_INTERVAL_MS: u64 = 1000;
+        if self.interval.should_update(REPORT_INTERVAL_MS) {
+            if should_report {
+                self.stats.report();
+            }
+            self.stats = DeshredBatchStats::default();
+        }
+    }
 }
 
 pub struct CompletedDataSetsService {
@@ -117,6 +162,7 @@ impl CompletedDataSetsService {
             .name("solComplDataSet".to_string())
             .spawn(move || {
                 info!("CompletedDataSetsService has started");
+                let mut interval_stats = IntervalDeshredBatchStats::default();
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
@@ -128,9 +174,11 @@ impl CompletedDataSetsService {
                         &deshred_transaction_notifier,
                         &max_slots,
                         &bank_forks,
+                        &mut interval_stats.stats,
                     ) {
                         break;
                     }
+                    interval_stats.maybe_report_and_reset(deshred_transaction_notifier.is_some());
                 }
                 info!("CompletedDataSetsService has stopped");
             })
@@ -145,6 +193,7 @@ impl CompletedDataSetsService {
         deshred_transaction_notifier: &Option<DeshredTransactionNotifierArc>,
         max_slots: &Arc<MaxSlots>,
         bank_forks: &RwLock<BankForks>,
+        stats: &mut DeshredBatchStats,
     ) -> Result<(), RecvTimeoutError> {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
         let first_completed_data_sets = completed_sets_receiver.recv_timeout(RECV_TIMEOUT)?;
@@ -156,7 +205,6 @@ impl CompletedDataSetsService {
                 bank_forks.read().unwrap().root_bank()
             });
         let mut batch_measure = Measure::start("deshred_geyser_batch");
-        let mut stats = DeshredBatchStats::default();
 
         let slots = std::iter::once(first_completed_data_sets)
             .chain(completed_sets_receiver.try_iter())
@@ -190,7 +238,7 @@ impl CompletedDataSetsService {
                             &entries,
                             deshred_transaction_notifier.as_deref(),
                             root_bank.as_deref(),
-                            &mut stats,
+                            stats,
                         );
 
                         if let Some(rpc_subscriptions) = rpc_subscriptions {
@@ -210,25 +258,8 @@ impl CompletedDataSetsService {
         }
 
         batch_measure.stop();
-
-        if deshred_transaction_notifier.is_some() {
-            let avg_notify_us = stats
-                .total_notify_us
-                .checked_div(stats.total_transactions)
-                .unwrap_or(0);
-            datapoint_info!(
-                "deshred_geyser_timing",
-                ("batch_total_us", batch_measure.as_us() as i64, i64),
-                ("notify_total_us", stats.total_notify_us as i64, i64),
-                ("lut_load_total_us", stats.total_lut_load_us as i64, i64),
-                ("transactions_count", stats.total_transactions as i64, i64),
-                ("lut_transactions_count", stats.lut_transactions as i64, i64),
-                ("lut_failures_count", stats.lut_failures as i64, i64),
-                ("entries_count", stats.total_entries as i64, i64),
-                ("data_sets_count", stats.total_data_sets as i64, i64),
-                ("avg_notify_us", avg_notify_us as i64, i64),
-            );
-        }
+        stats.total_batch_us += batch_measure.as_us();
+        stats.total_batches += 1;
 
         Ok(())
     }
@@ -601,6 +632,7 @@ pub mod test {
             &notifier,
             &max_slots,
             &bank_forks,
+            &mut DeshredBatchStats::default(),
         )
         .unwrap();
 
@@ -627,6 +659,7 @@ pub mod test {
             &notifier,
             &max_slots,
             &bank_forks,
+            &mut DeshredBatchStats::default(),
         )
         .unwrap();
         assert_eq!(test_notifier.notifications.lock().unwrap().len(), 1);
@@ -686,6 +719,7 @@ pub mod test {
             &notifier,
             &max_slots,
             &bank_forks,
+            &mut DeshredBatchStats::default(),
         )
         .unwrap();
 
@@ -749,6 +783,7 @@ pub mod test {
             &notifier,
             &max_slots,
             &bank_forks,
+            &mut DeshredBatchStats::default(),
         )
         .unwrap();
 
