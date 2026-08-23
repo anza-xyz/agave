@@ -323,13 +323,23 @@ pub(crate) fn create_and_send_own_vote_message(
 
     let channel_name = "own_vote_sender";
     let my_pubkey = &context.cluster_info.id();
-    match context.own_vote_sender.try_send(vote_msg.clone()) {
-        Ok(()) => (),
-        Err(TrySendError::Full(_)) => {
-            warn!("{my_pubkey}: evicting channel \"{channel_name}\" was full, dropped old vote");
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            return Err(VoteError::ChannelDisconnected(channel_name));
+    loop {
+        match context.own_vote_sender.try_send(vote_msg.clone()) {
+            Ok(()) => break,
+            Err(TrySendError::Disconnected(_)) => {
+                return Err(VoteError::ChannelDisconnected(channel_name));
+            }
+            // This send raced with another send on a clone of this channel.  Retrying.
+            Err(TrySendError::Full(cur_msg)) if cur_msg == vote_msg => {
+                continue;
+            }
+            // The channel was full so `EvictingSender` dropped the oldest vote.
+            Err(TrySendError::Full(_old_msg)) => {
+                warn!(
+                    "{my_pubkey}: evicting channel \"{channel_name}\" was full, dropped old vote"
+                );
+                break;
+            }
         }
     }
 
