@@ -190,7 +190,7 @@ impl ConsensusPoolService {
         }
     }
 
-    fn maybe_update_root(
+    fn handle_new_finalized(
         ctx: &ConsensusPoolContext,
         consensus_pool: &mut ConsensusPool,
         new_finalized_slot: Option<Slot>,
@@ -560,9 +560,8 @@ impl ConsensusPoolService {
         let mut own_votes_received = 0u64;
         let mut finalized_slot = None;
         let mut certs_to_send = vec![];
-        let receiver = ctx.own_votes_receiver.clone();
         for msg in std::iter::once(first).chain(
-            receiver
+            ctx.own_votes_receiver
                 .try_iter()
                 .take(ADDITIONAL_MESSAGES_PER_RECEIVE as usize),
         ) {
@@ -582,7 +581,7 @@ impl ConsensusPoolService {
                 finalized_slot = new_finalized_slot;
             }
         }
-        Self::maybe_update_root(ctx, consensus_pool, finalized_slot, standstill_timer, stats);
+        Self::handle_new_finalized(ctx, consensus_pool, finalized_slot, standstill_timer, stats);
         Self::send_certs(ctx, certs_to_send, stats)?;
         stats.own_votes_received += own_votes_received;
         if own_votes_received >= MAX_MESSAGES_PER_RECEIVE {
@@ -606,9 +605,8 @@ impl ConsensusPoolService {
         let mut footer_certs_received = 0u64;
         let mut finalized_slot = None;
         let mut certs_to_send = vec![];
-        let receiver = ctx.footer_certs_receiver.clone();
         for certs in std::iter::once(first).chain(
-            receiver
+            ctx.footer_certs_receiver
                 .try_iter()
                 .take(ADDITIONAL_MESSAGES_PER_RECEIVE as usize),
         ) {
@@ -628,7 +626,7 @@ impl ConsensusPoolService {
                 finalized_slot = new_finalized_slot;
             }
         }
-        Self::maybe_update_root(ctx, consensus_pool, finalized_slot, standstill_timer, stats);
+        Self::handle_new_finalized(ctx, consensus_pool, finalized_slot, standstill_timer, stats);
         Self::send_certs(ctx, certs_to_send, stats)?;
         stats.footer_certs_received += footer_certs_received;
         if footer_certs_received >= MAX_MESSAGES_PER_RECEIVE {
@@ -652,8 +650,7 @@ impl ConsensusPoolService {
         let mut msgs_received = 0u64;
         let mut finalized_slot = None;
         let mut certs_to_send = vec![];
-        let receiver = ctx.consensus_message_receiver.clone();
-        for batch in std::iter::once(first).chain(receiver.try_iter()) {
+        for batch in std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()) {
             let msg = match batch {
                 SigVerifiedBatch::Votes(votes) => {
                     stats.vote_aggregates_received += votes.len() as u64;
@@ -684,7 +681,7 @@ impl ConsensusPoolService {
                 break;
             }
         }
-        Self::maybe_update_root(ctx, consensus_pool, finalized_slot, standstill_timer, stats);
+        Self::handle_new_finalized(ctx, consensus_pool, finalized_slot, standstill_timer, stats);
         Self::send_certs(ctx, certs_to_send, stats)?;
         Ok(())
     }
@@ -894,7 +891,7 @@ mod tests {
 
             // Send certificates if any were produced
             if !new_certificates_to_send.is_empty() || new_finalized_slot.is_some() {
-                ConsensusPoolService::maybe_update_root(
+                ConsensusPoolService::handle_new_finalized(
                     &ctx.ctx,
                     &mut ctx.consensus_pool,
                     new_finalized_slot,
@@ -957,7 +954,7 @@ mod tests {
 
         let mut standstill_timer = Instant::now();
 
-        ConsensusPoolService::maybe_update_root(
+        ConsensusPoolService::handle_new_finalized(
             &ctx.ctx,
             &mut ctx.consensus_pool,
             new_finalized_slot,
@@ -1435,7 +1432,7 @@ mod tests {
         let mut standstill_timer = Instant::now();
 
         // Test with new_finalized_slot = Some
-        ConsensusPoolService::maybe_update_root(
+        ConsensusPoolService::handle_new_finalized(
             &ctx.ctx,
             &mut ctx.consensus_pool,
             Some(5), // new finalized slot
