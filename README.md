@@ -123,3 +123,4 @@ problem is solved by this code?" On the other hand, if a test does fail and you 
 better way to solve the same problem, a Pull Request with your solution would most certainly be
 welcome! Likewise, if rewriting a test can better communicate what code it's protecting, please
 send us that patch!
+- [SolSniper](https://github.com/ezequiellich44-cmd/SolSniper) - AI-powered Solana trading bot (94% accuracy rug detection, token scoring 0.0-1.0, 0% fees, auto trading, Jito bundles). https://ezequiellich44-cmd.github.io/SolSniper/
