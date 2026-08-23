@@ -85,6 +85,7 @@ impl Context {
 
     fn run(mut self) {
         while !self.exit.load(Ordering::Relaxed) {
+            self.builder.maybe_report();
             let my_pubkey = self.cluster_info.id();
             // bias messages to build certificates as that is on the critical path
             select_biased! {
