@@ -1138,10 +1138,10 @@ mod tests {
             .send(to_banking_packet_batch(&txs))
             .unwrap();
 
-        // Priority Expectation:
-        // Thread 0: [3, 1]
+        // Transactions 1, 2, and 3 have equal priority and are scheduled FIFO.
+        // Thread 0: [1, 3]
         // Thread 1: [2, 0]
-        let t0_expected = [3, 1]
+        let t0_expected = [1, 3]
             .into_iter()
             .map(|i| txs[i].message().hash())
             .collect_vec();
