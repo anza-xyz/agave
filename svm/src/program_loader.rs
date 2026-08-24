@@ -1097,4 +1097,28 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_loader_v4_get_state() {
+        // Anything shorter than the state itself is rejected.
+        for len in [0, LoaderV4State::program_data_offset().saturating_sub(1)] {
+            assert!(matches!(
+                loader_v4_get_state(&vec![0u8; len]),
+                Err(InstructionError::AccountDataTooSmall)
+            ));
+        }
+
+        // Exactly the state, and the state with program data after it, both
+        // read back the fields which were written.
+        for extra_bytes in [0, 8] {
+            let mut account = loader_v4_account(42, LoaderV4Status::Deployed);
+            let mut data = account.data().to_vec();
+            data.resize(data.len().saturating_add(extra_bytes), 0);
+            account.set_data_from_slice(&data);
+
+            let state = loader_v4_get_state(account.data()).unwrap();
+            assert_eq!(state.slot, 42);
+            assert!(matches!(state.status, LoaderV4Status::Deployed));
+        }
+    }
 }
