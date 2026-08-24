@@ -5,7 +5,7 @@
 use log::*;
 use {
     crate::local_cluster::LocalCluster,
-    agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS,
+    agave_votor::voting_service::votor_rate_limit_pps,
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
@@ -657,7 +657,7 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         client_socket,
         sender,
         peer_list_receiver,
-        VOTOR_RATE_LIMIT_PPS,
+        votor_rate_limit_pps(),
         CancellationToken::new(),
     )
     .expect("alpenglow datagram listener");

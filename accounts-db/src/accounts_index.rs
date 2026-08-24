@@ -478,10 +478,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ///
     /// The `callback` fn takes in 2 arguments:
     ///   - the first an immutable ref of the pubkey,
-    ///   - the second an option of the SlotList and RefCount
+    ///   - the second an option of the SlotList
     pub(crate) fn scan<'a, F, I>(&self, pubkeys: I, mut callback: F, filter: ScanFilter)
     where
-        F: FnMut(&'a Pubkey, Option<(&[SlotListItem<T>], RefCount)>),
+        F: FnMut(&'a Pubkey, Option<&[SlotListItem<T>]>),
         I: Iterator<Item = &'a Pubkey>,
     {
         let mut lock = None;
@@ -497,7 +497,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             let mut internal_callback = |entry: Option<&AccountMapEntry<T>>| {
                 if let Some(locked_entry) = entry {
                     let slot_list = locked_entry.slot_list_read_lock();
-                    callback(pubkey, Some((slot_list.as_ref(), locked_entry.ref_count())));
+                    callback(pubkey, Some(slot_list.as_ref()));
                 } else {
                     callback(pubkey, None);
                 }
