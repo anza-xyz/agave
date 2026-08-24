@@ -210,7 +210,7 @@ impl<Tx> SchedulingCommon<Tx> {
 
         let num_scheduled = ids.len();
         let work = ConsumeWork {
-            slot,
+            target_slot: slot,
             batch_id,
             ids,
             transactions,
@@ -243,7 +243,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
             Ok(FinishedConsumeWork {
                 work:
                     ConsumeWork {
-                        slot: _,
+                        target_slot: _,
                         batch_id,
                         mut ids,
                         mut transactions,
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(work_receivers[1].len(), 0); // not actually sent since no transactions.
 
         let work = work_receivers[0].recv().unwrap();
-        assert_eq!(work.slot, TEST_SLOT);
+        assert_eq!(work.target_slot, TEST_SLOT);
 
         // Multiple batches.
         pop_and_add_transaction(&mut container, &mut common, 0);

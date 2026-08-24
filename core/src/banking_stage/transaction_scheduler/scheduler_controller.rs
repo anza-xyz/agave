@@ -962,7 +962,7 @@ mod tests {
         finished_consume_work_sender
             .send(FinishedConsumeWork {
                 work: ConsumeWork {
-                    slot: 0,
+                    target_slot: 0,
                     batch_id: TransactionBatchId::new(0),
                     ids: vec![],
                     transactions: vec![],
@@ -1024,7 +1024,7 @@ mod tests {
 
         test_receive_then_schedule(&mut scheduler_controller);
         let consume_work = consume_work_receivers[0].try_recv().unwrap();
-        assert_eq!(consume_work.slot, bank.slot());
+        assert_eq!(consume_work.target_slot, bank.slot());
         assert_eq!(consume_work.ids.len(), 2);
         assert_eq!(consume_work.transactions.len(), 2);
         let message_hashes = consume_work
