@@ -8,10 +8,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::create_genesis_config,
-        shred::{
-            ProcessShredsStats, Shred, Shredder,
-            filter::{ShredRecoveryContext, new_dummy_retransmit_sender},
-        },
+        shred::{ProcessShredsStats, Shred, Shredder, filter::ShredRecoveryContext},
     },
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
@@ -23,9 +20,7 @@ use {
 fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let genesis_config = create_genesis_config(1).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     ShredRecoveryContext::new(
-        dummy_retransmit_sender,
         root_bank,
         shreds.first().map(Shred::version).unwrap_or_default(),
     )
