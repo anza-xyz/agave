@@ -198,7 +198,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     Self::update_stat(&self.stats().load_disk_missing_count, 1);
                 }
             }
-            entry_disk.map(|(slot_list, _ref_count)| slot_list)
+            entry_disk
         })
     }
 
@@ -450,7 +450,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     ) -> u64 {
         let mut grow_us = 0u64;
         loop {
-            match disk.try_write(pubkey, (disk_entry, 1)) {
+            match disk.try_write(pubkey, disk_entry) {
                 Ok(_) => break,
                 Err(err) => {
                     let m = Measure::start("flush_grow");
@@ -1597,7 +1597,7 @@ mod tests {
         let slot = 0;
 
         // Simulate an entry on disk
-        let disk_entry: (&[(u64, u64)], u64) = (&[(0u64, 42u64)], 1u64);
+        let disk_entry = &[(0u64, 42u64)];
         accounts_index
             .bucket
             .as_ref()
