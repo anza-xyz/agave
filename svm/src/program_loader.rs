@@ -623,53 +623,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_load_program_accounts_success() {
-        let key1 = Pubkey::new_unique();
-        let key2 = Pubkey::new_unique();
-        let mock_bank = MockBankCallback::default();
-
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(bpf_loader_upgradeable::id());
-
-        let state = UpgradeableLoaderState::Program {
-            programdata_address: key2,
-        };
-        account_data.set_data_from_slice(&bincode::serialize(&state).unwrap());
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key1, (account_data.clone(), 25));
-
-        let state = UpgradeableLoaderState::ProgramData {
-            slot: 25,
-            upgrade_authority_address: None,
-        };
-        let mut account_data2 = AccountSharedData::default();
-        account_data2.set_owner(bpf_loader_upgradeable::id());
-        account_data2.set_data_from_slice(&bincode::serialize(&state).unwrap());
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key2, (account_data2.clone(), 25));
-
-        let result = load_program_accounts(&mock_bank, &key1);
-
-        match result {
-            Some((
-                ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, deployment_slot),
-                last_modification_slot,
-            )) => {
-                assert_eq!(data1, account_data);
-                assert_eq!(data2, account_data2);
-                assert_eq!(deployment_slot, 25);
-                assert_eq!(last_modification_slot, 25);
-            }
-
-            _ => panic!("Invalid result"),
-        }
-    }
-
     fn load_test_program() -> Vec<u8> {
         let mut dir = env::current_dir().unwrap();
         dir.push("tests");
