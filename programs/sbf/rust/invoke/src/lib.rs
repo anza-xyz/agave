@@ -1310,25 +1310,14 @@ fn process_instruction<'a>(
                 usize::from_le_bytes(instruction_data[19..27].try_into().unwrap());
             let invoke_struction = &instruction_data[27..];
 
+            let account = &accounts[ARGUMENT_INDEX];
             let old_data = if clone_data {
-                let prev = accounts[ARGUMENT_INDEX].try_borrow_data().unwrap().as_ptr();
-
-                let data = accounts[ARGUMENT_INDEX].try_borrow_data().unwrap().to_vec();
-
-                let old = accounts[ARGUMENT_INDEX].data.replace(data.leak());
-
-                let post = accounts[ARGUMENT_INDEX].try_borrow_data().unwrap().as_ptr();
-
-                if std::ptr::eq(prev, post) {
-                    panic!("failed to clone the data");
-                }
-
+                let old = account.data.borrow().to_vec();
+                account.data.borrow_mut().copy_from_slice(&old);
                 Some(old)
             } else {
                 None
             };
-
-            let account = &accounts[ARGUMENT_INDEX];
 
             if resize != 0 {
                 account.resize(resize).unwrap();
@@ -1360,10 +1349,11 @@ fn process_instruction<'a>(
             }
 
             if post_write_offset != 0 {
-                if let Some(old) = old_data {
-                    old[post_write_offset] ^= 0xe5;
+                // Ensure we still have access to the the account
+                if let Some(old_data) = old_data {
+                    account.data.borrow_mut()[post_write_offset] =
+                        old_data[post_write_offset] ^ 0xe5;
                 } else {
-                    // Ensure we still have access to the correct account
                     account.data.borrow_mut()[post_write_offset] ^= 0xe5;
                 }
             }
