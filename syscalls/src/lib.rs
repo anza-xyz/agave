@@ -4875,10 +4875,10 @@ mod tests {
         let clock_id = Clock::id().to_bytes();
 
         let mut got_clock_buf_rw = vec![0; solana_clock::SIZE];
-        let got_clock_buf_rw_va = 0x400000000;
+        let got_clock_buf_rw_va = 0x300000100;
 
         let got_clock_buf_ro = [0; solana_clock::SIZE];
-        let got_clock_buf_ro_va = 0x500000000;
+        let got_clock_buf_ro_va = 0x300000200;
 
         let access_violation_err =
             std::mem::discriminant(&EbpfError::AccessViolation(AccessType::Load, 0, 0, ""));
