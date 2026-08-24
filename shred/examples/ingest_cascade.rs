@@ -6,8 +6,8 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_shred::{
-        AdmissionPolicy, AnyReceived, Data, DataShred, Parsed, Received, RepairRx, ShredParsed,
-        ShredView, TurbineRx, Verified, fixtures, parse,
+        AdmissionPolicy, AnyReceived, Blockstore, Data, DataShred, Origin, Parsed, ProvenanceSet,
+        Received, RepairRx, ShredParsed, ShredView, TurbineRx, Verified, fixtures, parse,
         wire_format::{
             SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE,
         },
@@ -96,10 +96,18 @@ fn main() {
     let repair = verified::<RepairRx>(&policy, &leader).forget_source();
     let mut batch: Vec<DataShred<Verified, AnyReceived>> = Vec::with_capacity(2);
     batch.extend([turbine, repair]);
+    // The union across the batch is what erasure recovery would stamp on the shreds it rebuilds,
+    // which is a thing no single-valued provenance could say.
+    let batch_provenance = batch.iter().fold(ProvenanceSet::empty(), |seen, shred| {
+        seen.union(shred.provenance())
+    });
     println!(
-        "\nbatch        {} shreds, provenance={:?}",
+        "\nbatch        {} shreds, per-shred={:?} union={batch_provenance:?}",
         batch.len(),
-        batch[0].provenance(),
+        batch
+            .iter()
+            .map(|shred| shred.provenance())
+            .collect::<Vec<_>>(),
     );
     // `resign` is still reachable for the batch, because `AnyReceived` is in the `Received` group.
     // It refuses this fixture on the variant's missing room, which is a wire bit, not a type.
@@ -108,13 +116,28 @@ fn main() {
         batch[0].clone().resign(&Keypair::new()).map(|_| ()),
     );
 
-    // And the same batch once provenance is dropped altogether: readable, no longer resignable.
+    // Both widenings drop the provenance from the type without touching what the shred records
+    // about itself, so a widened shred can still be counted under the socket it arrived on.
     let read_only = batch[0].clone().forget_provenance();
     println!(
-        "read-only    provenance={:?} slot={} index={}",
+        "read-only    provenance={:?} external={} slot={} index={}",
         read_only.provenance(),
+        read_only.provenance().is_external(),
         read_only.slot(),
         read_only.index(),
+    );
+
+    // Stage 6: the blockstore is the one source with no cascade to walk. Nothing it holds needs
+    // re-checking, so the state is whatever the reading code asks for, materialized in one step.
+    // Here inference takes `Verified` from `resign`, which only exists there.
+    // `Verified` is asked for here, and reached without parsing, admitting or checking a signature.
+    let stored: DataShred<Verified, Blockstore> = DataShred::from_blockstore(fixtures::DATA_SHRED)
+        .expect("the fixture is a well-formed shred");
+    println!(
+        "\nblockstore   provenance={:?} external={} erasure_shard={} bytes",
+        stored.provenance(),
+        stored.provenance().is_external(),
+        stored.erasure_shard().len(),
     );
 
     // What the type system refuses, with the error each line would produce:
@@ -123,8 +146,8 @@ fn main() {
     //     the method `resign` exists for Shred<Data, Verified, SelfProduced>, but its trait bounds
     //     were not satisfied
     //
-    //   DataShred::<Verified, TurbineRx>::assume_verified(bytes);
-    //     no associated function named `assume_verified` found for Shred<Data, Verified, TurbineRx>
+    //   DataShred::<Verified, TurbineRx>::from_blockstore(bytes);
+    //     no associated function named `from_blockstore` found for Shred<Data, Verified, TurbineRx>
     //
     //   parse::<SelfProduced>(bytes);
     //     the trait `Received` is not implemented for `SelfProduced`
@@ -139,7 +162,10 @@ fn main() {
 }
 
 /// Runs the fixture through the cascade again, as if it had arrived by way of `P`.
-fn verified<P: Received>(policy: &AdmissionPolicy, leader: &Pubkey) -> DataShred<Verified, P> {
+fn verified<P: Received + Origin>(
+    policy: &AdmissionPolicy,
+    leader: &Pubkey,
+) -> DataShred<Verified, P> {
     DataShred::<Parsed, P>::parse(fixtures::DATA_SHRED)
         .expect("the fixture is a well-formed data shred")
         .0

@@ -241,6 +241,35 @@ the group, for the paths that only read a shred's fields. Both are one-way retag
 parameter: free at runtime, and with no narrowing counterpart, so widening cannot be used to walk a
 self-produced shred into the resign path.
 
+Widening would be lossy if the type were the only record, so it is not the only record. Origin is
+split in two by what the two halves are for. The type parameter carries the property the rules are
+stated over, and nothing else, because that is the part a compile error has to be able to state. The
+`ProvenanceSet` field carries the detail no rule depends on, as independent bits rather than one
+value, because the facts compose and the combinations are the interesting cases: a shred rebuilt by
+erasure recovery from a batch that was part Turbine and part repair is `TURBINE|REPAIR|RECOVERED`,
+and one built here and read back later is `SELF_MADE|STORED`. Neither is expressible as a single
+origin, and both are what a metrics counter wants. The bits survive widening, so a shred counted
+under the socket it arrived on can still be counted that way after its type stopped saying which
+socket that was.
+
+What stays out of the field is the gate itself. A `resign` that checked a bit would be a runtime
+error path in place of a compile error, and, worse, an `assume_verified(bytes, provenance)` taking
+the bits as an argument would be exactly the one skip-the-signature-check function whose safety
+depends on every caller passing the right value. Which door a shred may come through is decided by
+the type; what a metric may say about it is read from the field.
+
+Only the provenances that name a concrete origin can seed the field, which is what the `Origin`
+sub-trait is for. `AnyReceived` and `Unspecified` are `Provenance` but not `Origin`: a widened marker
+says what a shred is no longer distinguished by, which is not enough to say where it came from, so
+the constructors require `Origin` and the widenings require nothing. Construction and retagging are
+different operations and the bounds now say so.
+
+`Blockstore` is the one origin whose constructor is not pinned to a single state. Everything the
+states stand for was established before the shred was stored and nothing there is ever unwound, so
+replaying the cascade on the way out would pay for a signature check to learn what is already known.
+`from_blockstore` is generic over the state and materializes whichever one the reading code asks
+for, with no intermediate transitions.
+
 ### Why an owned shred plus a borrowed view
 
 A shred must be movable and storable, so it cannot hold references into its own buffer. Copying each

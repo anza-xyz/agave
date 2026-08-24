@@ -40,7 +40,7 @@
 //! ```text
 //! Shred<K, Admissible, P: Received>::verify(leader)   hash and ed25519, here
 //! FecSet::build(..)                        -> SelfProduced   signed here, over these bytes
-//! Shred<K, Verified, Blockstore>::assume_verified(..)  verified before it was ever stored
+//! Shred<K, S, Blockstore>::from_blockstore(..)      verified before it was ever stored
 //! (erasure recovery)                       -> Recovered      inherited from the batch
 //! ```
 //!
@@ -50,11 +50,23 @@
 //! retransmitter-signs what it was sent, and the shreds it produced itself go out with the all-zero
 //! retransmitter signature they were built with.
 //!
-//! Provenance is a type parameter, so shreds that differ in it are different types and cannot
-//! share a collection. Two markers stand for "no longer distinguished":
+//! Blockstore is the one door that is not a single state: nothing there needs re-checking, so
+//! `from_blockstore` materializes whichever state the reading code wants, with no transitions in
+//! between.
+//!
+//! Provenance is a type parameter, so shreds that differ in it are different types and cannot share
+//! a collection. Two markers stand for "no longer distinguished":
 //! [`forget_source`](Shred::forget_source) widens a received shred to [`AnyReceived`], which stays
 //! in the group and so stays resignable, and [`forget_provenance`](Shred::forget_provenance) widens
 //! any shred to [`Unspecified`] for the paths that only read fields. Both are one-way.
+//!
+//! What widening does *not* discard is [`ProvenanceSet`], the shred's own record of its origin. The
+//! type parameter carries only the property the rules are stated over; the set carries the detail
+//! they do not depend on, as independent bits rather than one value, because the facts compose. A
+//! shred rebuilt by erasure recovery from a batch that was part Turbine and part repair is
+//! `TURBINE|REPAIR|RECOVERED`; one built here and read back later is `SELF_MADE|STORED`. Widening a
+//! provenance out of the type leaves both intact, which is why [`provenance`](Shred::provenance)
+//! reads the field and not `P`.
 //!
 //! [`provenance`](crate::provenance) is where the markers and the [`Received`] group live.
 //!
@@ -97,7 +109,7 @@
 //! let shred = shred.verify(&fixtures::leader())?;
 //! assert_eq!(shred.data()?.len(), 963);
 //!
-//! assert_eq!(shred.provenance(), solana_shred::ProvenanceKind::TurbineRx);
+//! assert_eq!(shred.provenance(), solana_shred::ProvenanceSet::TURBINE);
 //!
 //! // `shred.resign(..)` is reachable only from here, and only for resigned variants.
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -144,7 +156,7 @@ pub use crate::{
     kind::{Code, Data, ShredKind},
     policy::AdmissionPolicy,
     provenance::{
-        AnyReceived, Blockstore, Provenance, ProvenanceKind, Received, Recovered, RepairRx,
+        AnyReceived, Blockstore, Origin, Provenance, ProvenanceSet, Received, Recovered, RepairRx,
         SelfProduced, TurbineRx, Unspecified,
     },
     shred::{CodeShred, DataShred, Shred, ShredParsed, parse},

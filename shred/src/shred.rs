@@ -14,7 +14,7 @@ use {
         merkle,
         policy::{self, AdmissionPolicy},
         provenance::{
-            AnyReceived, Blockstore, Provenance, ProvenanceKind, Received, SelfProduced,
+            AnyReceived, Blockstore, Origin, Provenance, ProvenanceSet, Received, SelfProduced,
             Unspecified,
         },
         shred_variant::{ShredType, ShredVariant},
@@ -53,11 +53,14 @@ pub use crate::error::MerkleError as Error;
 /// the signature, Merkle root, proof and retransmitter signature are handed out as references into
 /// the bytes.
 ///
-/// `S` and `P` are uninhabited markers, so all three parameters cost nothing at runtime.
+/// `S` and `P` are uninhabited markers, so the states and the provenance group cost nothing at
+/// runtime. What the provenance *set* records costs one byte, and unlike the type parameter it
+/// survives being widened.
 pub struct Shred<K: ShredKind, S: ShredState, P: Provenance> {
     bytes: Bytes,
     common: CommonHeader,
     header: K::Header,
+    provenance: ProvenanceSet,
     _state: PhantomData<(S, P)>,
 }
 
@@ -65,7 +68,7 @@ pub struct Shred<K: ShredKind, S: ShredState, P: Provenance> {
 ///
 /// This is the one place the kind is a runtime tag: [`parse`] cannot know it until it has read the
 /// variant byte. Matching once here moves the kind into the type for every later stage.
-pub enum ShredParsed<P: Received> {
+pub enum ShredParsed<P: Received + Origin> {
     /// A data shred.
     Data(Shred<Data, Parsed, P>),
     /// A code shred.
@@ -80,9 +83,12 @@ pub enum ShredParsed<P: Received> {
 /// enough to run on every packet that arrives.
 ///
 /// `P` is which socket the packet came from, and the caller is the only one who knows it, so it is
-/// named at the call site: `parse::<TurbineRx>(bytes)`. Only [`Received`] provenances have wire
-/// bytes to parse.
-pub fn parse<P: Received>(bytes: Bytes) -> Result<(ShredParsed<P>, Option<Nonce>), ParseError> {
+/// named at the call site: `parse::<TurbineRx>(bytes)`. It has to be a concrete [`Origin`] and not
+/// just any [`Received`] provenance, because the shred's [`ProvenanceSet`] is seeded from it: a
+/// packet arrives on one socket, so there is nothing to widen yet.
+pub fn parse<P: Received + Origin>(
+    bytes: Bytes,
+) -> Result<(ShredParsed<P>, Option<Nonce>), ParseError> {
     match view::peek_variant(&bytes)?.shred_type() {
         ShredType::Data => {
             let (shred, nonce) = Shred::<Data, Parsed, P>::parse(bytes)?;
@@ -95,7 +101,7 @@ pub fn parse<P: Received>(bytes: Bytes) -> Result<(ShredParsed<P>, Option<Nonce>
     }
 }
 
-impl<P: Received> fmt::Debug for ShredParsed<P> {
+impl<P: Received + Origin> fmt::Debug for ShredParsed<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Data(shred) => shred.fmt(f),
@@ -104,7 +110,7 @@ impl<P: Received> fmt::Debug for ShredParsed<P> {
     }
 }
 
-impl<P: Received> ShredParsed<P> {
+impl<P: Received + Origin> ShredParsed<P> {
     /// The header fields common to both kinds.
     pub fn common(&self) -> &CommonHeader {
         match self {
@@ -114,7 +120,7 @@ impl<P: Received> ShredParsed<P> {
     }
 }
 
-impl<K: ShredKind, P: Received> Shred<K, Parsed, P> {
+impl<K: ShredKind, P: Received + Origin> Shred<K, Parsed, P> {
     /// Reads `bytes` as a shred of this specific kind, followed by an optional repair nonce.
     ///
     /// Every check the bytes have to pass is [`ShredView::read_packet`]'s; all this adds is keeping
@@ -135,6 +141,7 @@ impl<K: ShredKind, P: Received> Shred<K, Parsed, P> {
             bytes,
             common,
             header,
+            provenance: P::BITS,
             _state: PhantomData,
         };
         Ok((shred, nonce))
@@ -191,37 +198,42 @@ impl<K: ShredKind, P: Received> Shred<K, Admissible, P> {
     }
 }
 
-/// The two ways into [`Verified`] that do not check a signature, each pinned to the one provenance
-/// whose bytes justify it.
+/// The ways into a state that do not check a signature, each pinned to the one provenance whose
+/// bytes justify it.
 impl<K: ShredKind> Shred<K, Verified, SelfProduced> {
     /// Takes bytes this node assembled and signed itself as a verified shred.
     ///
     /// The leader signature is good by construction: it was produced here, over a root computed
     /// from these bytes, so the shred starts where the read path ends up.
     pub(crate) fn assume_built(bytes: Bytes) -> Result<Self, ParseError> {
-        Self::from_verified_bytes(bytes)
+        Self::from_trusted_bytes(bytes)
     }
 }
 
-impl<K: ShredKind> Shred<K, Verified, Blockstore> {
-    /// Takes bytes read back from the blockstore as a verified shred.
+impl<K: ShredKind, S: ShredState> Shred<K, S, Blockstore> {
+    /// Takes bytes read back from the blockstore, in whatever state the caller needs them.
     ///
     /// The blockstore only stores shreds whose signature was checked before they were inserted, and
     /// what it holds is never unwound, so a shred that comes out of it is as verified as it was
     /// going in. The caller vouches that the bytes came from there and nowhere else.
-    pub fn assume_verified(bytes: Bytes) -> Result<Self, ParseError> {
-        Self::from_verified_bytes(bytes)
+    ///
+    /// Generic over the state because there is no cascade to walk. The checks the states stand for
+    /// were all passed before the shred was stored, so replaying them on the way out would pay for
+    /// a signature check to learn what is already known. The state is whatever the reading code
+    /// needs, and inference picks it from how the shred is used.
+    pub fn from_blockstore(bytes: Bytes) -> Result<Self, ParseError> {
+        Self::from_trusted_bytes(bytes)
     }
 }
 
-impl<K: ShredKind, P: Provenance> Shred<K, Verified, P> {
-    /// Shared body of the constructors above. Private, so the provenances that have to earn
-    /// [`Verified`] by verifying cannot reach it.
+impl<K: ShredKind, S: ShredState, P: Origin> Shred<K, S, P> {
+    /// Shared body of the constructors above. Private, so the provenances that have to earn their
+    /// state by passing the checks cannot reach it.
     ///
     /// The bytes are put through [`ShredView::read_exact`], which is what makes the reader's rules
     /// the writer's test: a misplaced section surfaces as the [`ParseError`] a receiver would have
     /// raised.
-    fn from_verified_bytes(bytes: Bytes) -> Result<Self, ParseError> {
+    fn from_trusted_bytes(bytes: Bytes) -> Result<Self, ParseError> {
         let (common, header) = {
             let view = ShredView::<K>::read_exact(&bytes)?;
             (view.common, view.header)
@@ -230,6 +242,7 @@ impl<K: ShredKind, P: Provenance> Shred<K, Verified, P> {
             bytes,
             common,
             header,
+            provenance: P::BITS,
             _state: PhantomData,
         })
     }
@@ -268,10 +281,13 @@ impl<K: ShredKind, P: Received> Shred<K, Verified, P> {
 
 /// Accessors available in every state, whatever the shred's provenance.
 impl<K: ShredKind, S: ShredState, P: Provenance> Shred<K, S, P> {
-    /// Where this shred came from, as a value.
+    /// What is known about where this shred came from.
+    ///
+    /// Read from the shred rather than from `P`, so it still answers after the provenance has been
+    /// widened out of the type, and so it can say more than one thing at once.
     #[inline]
-    pub const fn provenance(&self) -> ProvenanceKind {
-        P::KIND
+    pub const fn provenance(&self) -> ProvenanceSet {
+        self.provenance
     }
 
     /// The header fields common to both kinds.
@@ -407,6 +423,7 @@ impl<K: ShredKind, S: ShredState, P: Provenance> Shred<K, S, P> {
             bytes: self.bytes,
             common: self.common,
             header: self.header,
+            provenance: self.provenance,
             _state: PhantomData,
         }
     }
@@ -497,6 +514,7 @@ impl<K: ShredKind, S: ShredState, P: Provenance> Clone for Shred<K, S, P> {
             bytes: self.bytes.clone(),
             common: self.common,
             header: self.header,
+            provenance: self.provenance,
             _state: PhantomData,
         }
     }
@@ -507,6 +525,7 @@ impl<K: ShredKind, S: ShredState, P: Provenance> fmt::Debug for Shred<K, S, P> {
         f.debug_struct("Shred")
             .field("state", &S::NAME)
             .field("provenance", &P::NAME)
+            .field("provenance_set", &self.provenance)
             .field("common", &self.common)
             .field("header", &self.header)
             .finish_non_exhaustive()
