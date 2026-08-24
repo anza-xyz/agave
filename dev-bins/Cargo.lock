@@ -185,7 +185,7 @@ dependencies = [
  "dashmap",
  "futures 0.3.34",
  "histogram",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "num_cpus",
  "pretty-hex",
@@ -404,7 +404,7 @@ dependencies = [
  "bitvec",
  "bytes",
  "crossbeam-channel",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "parking_lot 0.12.5",
  "smallvec",
@@ -601,7 +601,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -612,7 +612,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2228,7 +2228,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3232,6 +3232,15 @@ name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
@@ -5028,7 +5037,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5086,7 +5095,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5533,7 +5542,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5659,7 +5668,7 @@ dependencies = [
  "blake3",
  "bv",
  "dashmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "modular-bitfield",
  "num_cpus",
@@ -6232,7 +6241,7 @@ dependencies = [
  "dashmap",
  "futures 0.3.34",
  "histogram",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy-lru",
  "libc",
  "log",
@@ -6722,7 +6731,7 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "flate2",
  "indexmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy-lru",
  "log",
  "num-traits",
@@ -6937,7 +6946,7 @@ name = "solana-leader-schedule"
 version = "4.4.0-alpha.1"
 dependencies = [
  "agave-random",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "rand_chacha 0.9.0",
  "solana-clock",
  "solana-pubkey 4.3.0",
@@ -6965,7 +6974,7 @@ dependencies = [
  "eager",
  "fs_extra",
  "futures 0.3.34",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy-lru",
  "log",
  "lru 0.18.2",
@@ -7148,7 +7157,7 @@ dependencies = [
  "bytes",
  "cfg-if 1.0.4",
  "dashmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "nix",
  "rand 0.9.4",
@@ -7413,7 +7422,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "cfg-if 1.0.4",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "qualifier_attr",
  "rand 0.9.4",
@@ -7583,7 +7592,7 @@ dependencies = [
  "bs58",
  "crossbeam-channel",
  "dashmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
  "jsonrpc-derive",
@@ -7779,7 +7788,7 @@ dependencies = [
  "crossbeam-utils",
  "dashmap",
  "imbl",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "libc",
  "log",
  "mockall",
@@ -8015,7 +8024,7 @@ name = "solana-send-transaction-service"
 version = "4.4.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "solana-hash 4.6.0",
  "solana-keypair",
@@ -8286,7 +8295,7 @@ dependencies = [
  "crossbeam-channel",
  "futures 0.3.34",
  "indexmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "libc",
  "log",
  "nix",
@@ -8662,7 +8671,7 @@ dependencies = [
  "bytes",
  "futures 0.3.34",
  "futures-util",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "lru 0.18.2",
  "quinn",
@@ -8810,7 +8819,7 @@ dependencies = [
  "agave-votor-messages",
  "bytes",
  "crossbeam-channel",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy-lru",
  "log",
  "lru 0.18.2",
@@ -9482,7 +9491,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10331,7 +10340,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
