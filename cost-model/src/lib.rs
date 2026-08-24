@@ -2,6 +2,7 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
+pub(crate) mod allocated_accounts_data_size;
 pub mod block_cost_limits;
 pub mod cost_model;
 pub mod cost_tracker;
