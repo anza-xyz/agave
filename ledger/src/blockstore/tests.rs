@@ -5,7 +5,7 @@ use {
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT,
             ShredFlags,
-            filter::new_dummy_retransmit_sender,
+            filter::{new_dummy_retransmit_sender, new_test_retransmit_sender},
             max_ticks_per_n_shreds,
             merkle::{
                 finish_erasure_batch_for_tests, sign_with_duplicate_coding_index_for_tests,
@@ -39,6 +39,7 @@ use {
     std::{
         assert_matches,
         borrow::Cow,
+        cell::RefCell,
         cmp::Ordering,
         ops::{Deref, Range},
         time::Duration,
@@ -4945,8 +4946,9 @@ fn test_highest_slot() {
     assert_eq!(blockstore.highest_slot().unwrap(), None);
 }
 
-#[test]
-fn test_recovery() {
+#[test_case(false; "separate_insertion")]
+#[test_case(true; "combined_insertion")]
+fn test_async_recovery(combined_insertion: bool) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let mut pinnable_slice = blockstore.new_pinnable_slice();
@@ -4956,9 +4958,9 @@ fn test_recovery() {
     let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let mut metrics = BlockstoreInsertionMetrics::default();
 
-    let dummy_retransmit_sender = new_dummy_retransmit_sender();
+    let (retransmit_sender, retransmit_receiver) = new_test_retransmit_sender();
+    let mut recovery_context = ShredRecoveryContext::new(root_bank, 0);
     let coding_shreds = coding_shreds.into_iter().map(|shred| {
         (
             Cow::Owned(shred),
@@ -4967,23 +4969,92 @@ fn test_recovery() {
             /*precomputed_merkle_root:*/ None,
         )
     });
-    blockstore
-        .do_insert_shreds(
+    let (_, recovery_tasks) = blockstore
+        .insert_shreds_with_recovered(
             coding_shreds,
-            false, // is_trusted
-            Some(&mut ShredRecoveryContext::new(
-                dummy_retransmit_sender,
-                root_bank,
-                0, // shred_version
-            )),
+            &mut [],
+            &new_dummy_retransmit_sender(),
+            None, // stricter_shred_validation_from
             &mut pinnable_slice,
             &mut write_batch,
-            &mut metrics,
+            &|_| {},
+            &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
-    assert_eq!(metrics.num_recovered_data_shreds, data_shreds.len());
-    assert_eq!(metrics.num_recovered_coding_shreds, 0);
-    assert_eq!(metrics.num_recovered_retransmit_batches, 1);
+    let mut recovered_batches = Vec::with_capacity(recovery_tasks.len());
+    for task in recovery_tasks {
+        let mut batch = RecoveredShredBatch::new(task.erasure_set());
+        assert!(blockstore.recover_shreds_from_task(task, &mut recovery_context, &mut batch));
+        recovered_batches.push(batch);
+    }
+    let num_recovered = recovered_batches
+        .iter()
+        .map(|batch| batch.data_shreds.len())
+        .sum::<usize>();
+    assert_eq!(num_recovered, data_shreds.len());
+    // A turbine shred can arrive before recovered insertion, including as part
+    // of the same transaction. Both paths must preserve duplicate handling.
+    let concurrently_inserted_shred = recovered_batches[0].data_shreds[0].clone();
+    let mut metrics = BlockstoreInsertionMetrics::default();
+    let possible_duplicates = RefCell::new(Vec::new());
+    let handle_duplicate = |duplicate| possible_duplicates.borrow_mut().push(duplicate);
+    if combined_insertion {
+        // Also make a different FEC set recoverable in the shared transaction.
+        let (_, coding) = setup_erasure_shreds(2, 1, 1);
+        let next_erasure_set = coding[0].erasure_set();
+        let mut incoming = coding;
+        incoming.push(concurrently_inserted_shred.clone());
+        let (completed, tasks) = blockstore
+            .insert_shreds_with_recovered(
+                incoming
+                    .into_iter()
+                    .map(|shred| (Cow::Owned(shred), false, BlockLocation::Original, None)),
+                &mut recovered_batches,
+                &retransmit_sender,
+                None, // stricter_shred_validation_from
+                &mut pinnable_slice,
+                &mut write_batch,
+                &handle_duplicate,
+                &mut metrics,
+            )
+            .unwrap();
+        assert!(!completed.is_empty());
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].erasure_set(), next_erasure_set);
+    } else {
+        blockstore
+            .insert_cow_shreds(
+                [Cow::Owned(concurrently_inserted_shred.clone())],
+                false,
+                &mut pinnable_slice,
+                &mut write_batch,
+            )
+            .unwrap();
+        let (_, tasks) = blockstore
+            .insert_shreds_with_recovered(
+                std::iter::empty(),
+                &mut recovered_batches,
+                &retransmit_sender,
+                None, // stricter_shred_validation_from
+                &mut pinnable_slice,
+                &mut write_batch,
+                &handle_duplicate,
+                &mut metrics,
+            )
+            .unwrap();
+        assert!(tasks.is_empty());
+    }
+    assert_eq!(metrics.num_recovered_exists, 1);
+    assert!(possible_duplicates.into_inner().is_empty());
+    assert!(!blockstore.has_duplicate_shreds_in_slot(slot));
+    drop(retransmit_sender);
+    assert_eq!(
+        retransmit_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .len(),
+        num_recovered
+    );
     let shred_bufs: Vec<_> = data_shreds.iter().map(Shred::payload).cloned().collect();
 
     // Check all the data shreds were recovered
@@ -4998,6 +5069,217 @@ fn test_recovery() {
     }
 
     verify_index_integrity(&blockstore, slot);
+}
+
+#[test]
+fn test_prepare_recovery_task_partitions_new_and_stored_shreds() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
+    let (_, mut coding_shreds) = setup_erasure_shreds(1, 0, 1);
+    let just_inserted_shred = coding_shreds.pop().unwrap();
+    let just_inserted_shred_id = just_inserted_shred.id();
+    let stored_shred_ids = coding_shreds.iter().map(Shred::id).collect::<Vec<_>>();
+
+    blockstore
+        .insert_cow_shreds(
+            coding_shreds.into_iter().map(Cow::Owned),
+            false,
+            &mut pinnable_slice,
+            &mut write_batch,
+        )
+        .unwrap();
+    let (_, mut recovery_tasks) = blockstore
+        .insert_shreds_with_recovered(
+            [(
+                Cow::Owned(just_inserted_shred),
+                /*is_repaired:*/ false,
+                BlockLocation::Original,
+                None,
+            )],
+            &mut [],
+            &new_dummy_retransmit_sender(),
+            None, // stricter_shred_validation_from
+            &mut pinnable_slice,
+            &mut write_batch,
+            &|_| {},
+            &mut BlockstoreInsertionMetrics::default(),
+        )
+        .unwrap();
+
+    assert_eq!(recovery_tasks.len(), 1);
+    let task = recovery_tasks.pop().unwrap();
+    assert_eq!(task.just_inserted_shreds.len(), 1);
+    assert_eq!(task.just_inserted_shreds[0].id(), just_inserted_shred_id);
+    assert!(!task.stored_shred_ids.contains(&just_inserted_shred_id));
+    assert_eq!(task.stored_shred_ids.len(), stored_shred_ids.len());
+    assert!(
+        stored_shred_ids
+            .iter()
+            .all(|shred_id| task.stored_shred_ids.contains(shred_id))
+    );
+}
+
+#[test_case(false; "separate_insertion")]
+#[test_case(true; "combined_insertion")]
+fn test_stale_recovery_does_not_discard_current_batch(combined_insertion: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
+    let stale_slot = 1;
+    let valid_slot = 2;
+    let (stale_data, stale_coding) = setup_erasure_shreds(stale_slot, 0, 1);
+    let (current_data, current_coding) = setup_erasure_shreds(stale_slot, 0, 1);
+    let (valid_data, valid_coding) = setup_erasure_shreds(valid_slot, 0, 1);
+    assert_ne!(
+        stale_data[0].merkle_root().unwrap(),
+        current_data[0].merkle_root().unwrap()
+    );
+    let genesis_config = create_genesis_config(2).genesis_config;
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (retransmit_sender, retransmit_receiver) = new_test_retransmit_sender();
+    let mut recovery_context = ShredRecoveryContext::new(root_bank, 0);
+    blockstore
+        .insert_cow_shreds(
+            [
+                Cow::Owned(stale_data[0].clone()),
+                Cow::Owned(valid_data[0].clone()),
+            ],
+            false,
+            &mut pinnable_slice,
+            &mut write_batch,
+        )
+        .unwrap();
+    let mut coding_shreds = stale_coding;
+    coding_shreds.extend(valid_coding);
+    let (_, recovery_tasks) = blockstore
+        .insert_shreds_with_recovered(
+            coding_shreds.into_iter().map(|shred| {
+                (
+                    Cow::Owned(shred),
+                    /*is_repaired:*/ false,
+                    BlockLocation::Original,
+                    None,
+                )
+            }),
+            &mut [],
+            &new_dummy_retransmit_sender(),
+            None, // stricter_shred_validation_from
+            &mut pinnable_slice,
+            &mut write_batch,
+            &|_| {},
+            &mut BlockstoreInsertionMetrics::default(),
+        )
+        .unwrap();
+
+    assert_eq!(recovery_tasks.len(), 2);
+    let mut recovered_batches = recovery_tasks
+        .into_iter()
+        .map(|task| {
+            let mut batch = RecoveredShredBatch::new(task.erasure_set());
+            assert!(blockstore.recover_shreds_from_task(task, &mut recovery_context, &mut batch,));
+            batch
+        })
+        .collect::<Vec<_>>();
+    let stale_erasure_set = stale_data[0].erasure_set();
+    let valid_erasure_set = valid_data[0].erasure_set();
+    let num_stale = recovered_batches
+        .iter()
+        .find(|batch| batch.erasure_set == stale_erasure_set)
+        .unwrap()
+        .data_shreds
+        .len();
+    let num_valid = recovered_batches
+        .iter()
+        .find(|batch| batch.erasure_set == valid_erasure_set)
+        .unwrap()
+        .data_shreds
+        .len();
+
+    // Replace the block after reconstruction but before recovered insertion.
+    blockstore.clear_unconfirmed_slot(stale_slot);
+    blockstore
+        .insert_cow_shreds(
+            current_coding.into_iter().map(Cow::Owned),
+            false,
+            &mut pinnable_slice,
+            &mut write_batch,
+        )
+        .unwrap();
+
+    let mut metrics = BlockstoreInsertionMetrics::default();
+    if combined_insertion {
+        let incoming = current_data[0].clone();
+        let (_, tasks) = blockstore
+            .insert_shreds_with_recovered(
+                [(
+                    Cow::Owned(incoming.clone()),
+                    false,
+                    BlockLocation::Original,
+                    None,
+                )],
+                &mut recovered_batches,
+                &retransmit_sender,
+                None, // stricter_shred_validation_from
+                &mut pinnable_slice,
+                &mut write_batch,
+                &|_| {},
+                &mut metrics,
+            )
+            .unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].erasure_set(), incoming.erasure_set());
+        assert_eq!(
+            blockstore
+                .get_data_shred(incoming.slot(), u64::from(incoming.index()))
+                .unwrap()
+                .unwrap(),
+            incoming.payload().as_ref()
+        );
+    } else {
+        let (_, tasks) = blockstore
+            .insert_shreds_with_recovered(
+                std::iter::empty(),
+                &mut recovered_batches,
+                &retransmit_sender,
+                None, // stricter_shred_validation_from
+                &mut pinnable_slice,
+                &mut write_batch,
+                &|_| {},
+                &mut metrics,
+            )
+            .unwrap();
+        assert!(tasks.is_empty());
+    }
+    assert_eq!(metrics.num_recovered, num_stale + num_valid);
+    assert_eq!(metrics.num_recovered_stale, num_stale);
+    assert_eq!(metrics.num_recovered_inserted, num_valid);
+    drop(retransmit_sender);
+    assert_eq!(
+        retransmit_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .len(),
+        num_valid
+    );
+    for shred in stale_data.into_iter().skip(usize::from(combined_insertion)) {
+        assert!(
+            blockstore
+                .get_data_shred(shred.slot(), u64::from(shred.index()))
+                .unwrap()
+                .is_none()
+        );
+    }
+    for shred in valid_data {
+        assert!(
+            blockstore
+                .get_data_shred(shred.slot(), u64::from(shred.index()))
+                .unwrap()
+                .is_some()
+        );
+    }
 }
 
 #[test]
@@ -5025,44 +5307,38 @@ fn test_skip_alt_recovery() {
                 /*precomputed_merkle_root:*/ None,
             )),
             false, // is_trusted
-            None,
+            ShredRecoveryMode::Disabled,
             &mut pinnable_slice,
             &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
 
-    let genesis_config = create_genesis_config(2).genesis_config;
-    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     let alternate_location = BlockLocation::Alternate {
         block_id: Hash::new_unique(),
     };
     let mut metrics = BlockstoreInsertionMetrics::default();
 
-    blockstore
-        .do_insert_shreds(
+    let (_, recovery_tasks) = blockstore
+        .insert_shreds_with_recovered(
             std::iter::once((
                 Cow::Owned(data_shred),
                 /*is_repaired:*/ true,
                 alternate_location,
                 /*precomputed_merkle_root:*/ None,
             )),
-            false, // is_trusted
-            Some(&mut ShredRecoveryContext::new(
-                dummy_retransmit_sender,
-                root_bank,
-                0, // shred_version
-            )),
+            &mut [],
+            &new_dummy_retransmit_sender(),
+            None, // stricter_shred_validation_from
             &mut pinnable_slice,
             &mut write_batch,
+            &|_| {},
             &mut metrics,
         )
         .unwrap();
 
-    assert_eq!(metrics.num_recovered_data_shreds, 0);
-    assert_eq!(metrics.num_recovered_coding_shreds, 0);
-    assert_eq!(metrics.num_recovered_retransmit_batches, 0);
+    assert!(recovery_tasks.is_empty());
+    assert_eq!(metrics.num_recovered, 0);
     assert!(
         blockstore
             .get_index_from_location(slot, alternate_location)
@@ -5079,6 +5355,171 @@ fn test_skip_alt_recovery() {
     );
 }
 
+// Exercise the public insertion path without automatically running its worker.
+fn insert_async_for_test(
+    blockstore: &Blockstore,
+    shreds: Vec<Shred>,
+    recovered: &mut [RecoveredShredBatch],
+) -> (
+    Vec<CompletedDataSetInfo>,
+    Vec<ShredRecoveryTask>,
+    BlockstoreInsertionMetrics,
+) {
+    let mut metrics = BlockstoreInsertionMetrics::default();
+    let (completed, tasks) = blockstore
+        .insert_shreds_with_recovered(
+            shreds
+                .into_iter()
+                .map(|shred| (Cow::Owned(shred), false, BlockLocation::Original, None)),
+            recovered,
+            &new_dummy_retransmit_sender(),
+            Some(0),
+            &mut blockstore.new_pinnable_slice(),
+            &mut blockstore.get_write_batch(),
+            &|_| {},
+            &mut metrics,
+        )
+        .unwrap();
+    (completed, tasks, metrics)
+}
+
+#[test_case(false; "valid")]
+#[test_case(true; "invalid_parity")]
+fn test_async_validation_gates_slot_completion(invalid: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 100;
+    let (data, code) = setup_erasure_shreds(slot, 0, 1);
+    assert_eq!(data.len(), DATA_SHREDS_PER_FEC_BLOCK);
+    let mut shreds: Vec<_> = data.into_iter().chain(code).collect();
+    if invalid {
+        sign_with_invalid_parity_for_tests(
+            &Keypair::new(),
+            &mut shreds,
+            0..CODING_SHREDS_PER_FEC_BLOCK,
+        );
+    }
+    shreds.truncate(DATA_SHREDS_PER_FEC_BLOCK);
+    let (completed, tasks, _) = insert_async_for_test(&blockstore, shreds, &mut []);
+    assert!(completed.is_empty());
+    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert_eq!(
+        blockstore
+            .get_index(slot)
+            .unwrap()
+            .unwrap()
+            .data()
+            .num_shreds(),
+        DATA_SHREDS_PER_FEC_BLOCK - 1
+    );
+    assert!(!blockstore.is_dead(slot));
+    assert_eq!(tasks.len(), 1);
+    let mut context = ShredRecoveryContext::new(
+        Arc::new(Bank::new_for_tests(
+            &create_genesis_config(2).genesis_config,
+        )),
+        0,
+    );
+    let task = tasks.into_iter().next().unwrap();
+    let mut result = RecoveredShredBatch::new(task.erasure_set());
+    assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
+    // Even a finished worker cannot expose a full slot or mark it dead by itself.
+    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(!blockstore.is_dead(slot));
+    let (completed, tasks, metrics) = insert_async_for_test(&blockstore, vec![], &mut [result]);
+    assert_eq!(completed.len(), 1);
+    assert!(tasks.is_empty());
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert_eq!(blockstore.is_dead(slot), invalid);
+    assert_eq!(metrics.num_fec_set_checks_failed, usize::from(invalid));
+    assert_eq!(metrics.num_fec_set_checks_passed, usize::from(!invalid));
+    verify_index_integrity(&blockstore, slot);
+}
+
+#[test_case(false; "task_evicted")]
+#[test_case(true; "result_evicted")]
+fn test_async_validation_repair_after_eviction_and_restart(evict_result: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let slot = 100;
+    let (data, _) = setup_erasure_shreds(slot, 0, 1);
+    let repair = data.last().unwrap().clone();
+    let mut context = ShredRecoveryContext::new(
+        Arc::new(Bank::new_for_tests(
+            &create_genesis_config(2).genesis_config,
+        )),
+        0,
+    );
+    {
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let (_, tasks, _) = insert_async_for_test(&blockstore, data, &mut []);
+        if evict_result {
+            for task in tasks {
+                let mut result = RecoveredShredBatch::new(task.erasure_set());
+                assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
+                drop(result);
+            }
+        } else {
+            drop(tasks);
+        }
+        assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+        assert!(
+            blockstore
+                .get_data_shred(slot, u64::from(repair.index()))
+                .unwrap()
+                .is_none()
+        );
+    }
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    let (_, tasks, _) = insert_async_for_test(&blockstore, vec![repair], &mut []);
+    assert_eq!(tasks.len(), 1);
+    let task = tasks.into_iter().next().unwrap();
+    let mut result = RecoveredShredBatch::new(task.erasure_set());
+    assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
+    insert_async_for_test(&blockstore, vec![], &mut [result]);
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(!blockstore.is_dead(slot));
+    verify_index_integrity(&blockstore, slot);
+}
+
+#[test]
+fn test_async_validation_stale_failure_cannot_kill_replacement() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 100;
+    let (data, code) = setup_erasure_shreds(slot, 0, 1);
+    let mut shreds: Vec<_> = data.into_iter().chain(code).collect();
+    sign_with_invalid_parity_for_tests(
+        &Keypair::new(),
+        &mut shreds,
+        0..CODING_SHREDS_PER_FEC_BLOCK,
+    );
+    shreds.truncate(DATA_SHREDS_PER_FEC_BLOCK);
+    let (_, tasks, _) = insert_async_for_test(&blockstore, shreds, &mut []);
+    let mut context = ShredRecoveryContext::new(
+        Arc::new(Bank::new_for_tests(
+            &create_genesis_config(2).genesis_config,
+        )),
+        0,
+    );
+    let task = tasks.into_iter().next().unwrap();
+    let mut stale = RecoveredShredBatch::new(task.erasure_set());
+    assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut stale));
+    blockstore.clear_unconfirmed_slot(slot);
+    let (data, _) = setup_erasure_shreds(slot, 0, 1);
+    let (_, tasks, _) = insert_async_for_test(&blockstore, data, &mut []);
+    let (_, _, metrics) = insert_async_for_test(&blockstore, vec![], &mut [stale]);
+    assert_eq!(metrics.num_fec_set_checks_failed, 0);
+    assert!(!blockstore.is_dead(slot));
+    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    let task = tasks.into_iter().next().unwrap();
+    let mut current = RecoveredShredBatch::new(task.erasure_set());
+    assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut current));
+    insert_async_for_test(&blockstore, vec![], &mut [current]);
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(!blockstore.is_dead(slot));
+}
+
 /// Blockstore which runs shred recovery on insert and returns the metrics of
 /// each inserted batch.
 struct RecoveryTestBlockstore {
@@ -5090,15 +5531,10 @@ impl RecoveryTestBlockstore {
     fn new(ledger_path: &Path) -> Self {
         let genesis_config = create_genesis_config(2).genesis_config;
         let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let dummy_retransmit_sender = new_dummy_retransmit_sender();
         let shred_version = 0;
         Self {
             blockstore: Blockstore::open(ledger_path).unwrap(),
-            shred_recovery_context: ShredRecoveryContext::new(
-                dummy_retransmit_sender,
-                root_bank,
-                shred_version,
-            ),
+            shred_recovery_context: ShredRecoveryContext::new(root_bank, shred_version),
         }
     }
 
@@ -5108,7 +5544,6 @@ impl RecoveryTestBlockstore {
         location: BlockLocation,
     ) -> BlockstoreInsertionMetrics {
         let is_repaired = false;
-        let is_trusted = false;
         let mut metrics = BlockstoreInsertionMetrics::default();
         let precomputed_merkle_root = None; // gets computed on demand
         let shreds = shreds.into_iter().map(|shred| {
@@ -5119,13 +5554,40 @@ impl RecoveryTestBlockstore {
                 precomputed_merkle_root,
             )
         });
-        self.blockstore
-            .do_insert_shreds(
+        let sender = new_dummy_retransmit_sender();
+        let mut pinnable = self.blockstore.new_pinnable_slice();
+        let mut write_batch = self.blockstore.get_write_batch();
+        let (_, tasks) = self
+            .blockstore
+            .insert_shreds_with_recovered(
                 shreds,
-                is_trusted,
-                Some(&mut self.shred_recovery_context),
-                &mut self.blockstore.new_pinnable_slice(),
-                &mut self.blockstore.get_write_batch(),
+                &mut [],
+                &sender,
+                self.shred_recovery_context.stricter_shred_validation_from(),
+                &mut pinnable,
+                &mut write_batch,
+                &|_| {},
+                &mut metrics,
+            )
+            .unwrap();
+        let mut recovered: Vec<_> = tasks
+            .into_iter()
+            .filter_map(|task| {
+                let mut batch = RecoveredShredBatch::new(task.erasure_set());
+                self.blockstore
+                    .recover_shreds_from_task(task, &mut self.shred_recovery_context, &mut batch)
+                    .then_some(batch)
+            })
+            .collect();
+        self.blockstore
+            .insert_shreds_with_recovered(
+                std::iter::empty(),
+                &mut recovered,
+                &sender,
+                self.shred_recovery_context.stricter_shred_validation_from(),
+                &mut pinnable,
+                &mut write_batch,
+                &|_| {},
                 &mut metrics,
             )
             .unwrap();
@@ -5643,6 +6105,7 @@ fn test_fec_set_actions(
         &index,
         erasure_set,
         erasure_meta,
+        0,
         num_inserted,
         stricter_shred_validation_active,
     );
@@ -5658,8 +6121,6 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
 
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-    let mut pinnable_slice = blockstore.new_pinnable_slice();
-    let mut write_batch = blockstore.get_write_batch();
 
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -5703,31 +6164,13 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
                 .into_iter()
                 .take(DATA_SHREDS_PER_FEC_BLOCK - 1),
         )
-        .map(|shred| {
-            (
-                Cow::Owned(shred),
-                /*is_repaired:*/ false,
-                BlockLocation::Original,
-                /*precomputed_merkle_root:*/ None,
-            )
-        })
         .collect();
-    let dummy_retransmit_sender = new_dummy_retransmit_sender();
-    let mut metrics = BlockstoreInsertionMetrics::default();
-    blockstore
-        .do_insert_shreds(
-            shreds,
-            false, // is_trusted
-            Some(&mut ShredRecoveryContext::new(
-                dummy_retransmit_sender,
-                root_bank,
-                0, // shred_version
-            )),
-            &mut pinnable_slice,
-            &mut write_batch,
-            &mut metrics,
-        )
-        .unwrap();
+    let mut wrapper = RecoveryTestBlockstore {
+        blockstore,
+        shred_recovery_context: ShredRecoveryContext::new(root_bank, 0),
+    };
+    let metrics = wrapper.insert(shreds, BlockLocation::Original);
+    let blockstore = &wrapper.blockstore;
 
     assert_eq!(metrics.num_recovered_data_shreds, 0);
     // The invalid data shreds are discarded, but the missing coding shred is
@@ -6914,7 +7357,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
         .do_insert_shreds(
             shreds,
             false,
-            None,
+            ShredRecoveryMode::Disabled,
             &mut pinnable_slice,
             &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
@@ -7016,7 +7459,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
         .do_insert_shreds(
             shreds,
             false,
-            None,
+            ShredRecoveryMode::Disabled,
             &mut pinnable_slice,
             &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
@@ -7049,7 +7492,7 @@ fn insert_test_block_at_location(
         .do_insert_shreds(
             shreds,
             false,
-            None,
+            ShredRecoveryMode::Disabled,
             &mut pinnable_slice,
             &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
@@ -7200,7 +7643,7 @@ fn test_get_data_shreds_for_slot() {
             .do_insert_shreds(
                 shreds,
                 false,
-                None,
+                ShredRecoveryMode::Disabled,
                 &mut pinnable_slice,
                 &mut write_batch,
                 &mut BlockstoreInsertionMetrics::default(),

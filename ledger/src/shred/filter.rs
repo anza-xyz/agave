@@ -10,7 +10,6 @@ use {
     crate::blockstore,
     agave_feature_set as feature_set,
     agave_worker_pool::WorkerPool,
-    itertools::Itertools,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::BytesPacket,
@@ -190,6 +189,11 @@ pub struct ShredFilterContext {
 }
 
 impl ShredFilterContext {
+    /// First slot subject to SIMD-0504 validation, if activated in the root bank.
+    pub fn stricter_shred_validation_from(&self) -> Option<Slot> {
+        self.stricter_shred_validation_from
+    }
+
     pub fn new(root_bank: Arc<Bank>, shred_version: u16) -> Self {
         Self::new_with_turbine_mode(root_bank, shred_version, None)
     }
@@ -537,8 +541,6 @@ fn check_last_data_shred_index(index: u32) -> bool {
 
 /// Holds the context to perform filtering on shred recovery
 pub struct ShredRecoveryContext {
-    /// Sender to retransmit the recovered shreds
-    retransmit_sender: RetransmitSender,
     /// Used for filtering recovered shreds
     shred_filter_ctx: ShredFilterContext,
     /// Scratch space for the parity check of erasure batches, reused across
@@ -566,15 +568,27 @@ pub fn new_dummy_retransmit_sender() -> RetransmitSender {
     Arc::new(WorkerPool::spawn(config, |_| |_| {}).unwrap())
 }
 
+/// Creates a retransmit pool that forwards jobs to a bounded test receiver.
+/// Drop the sender before inspecting all jobs so the worker has finished forwarding them.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn new_test_retransmit_sender() -> (RetransmitSender, crossbeam_channel::Receiver<ShredBatch>) {
+    use {agave_worker_pool::WorkerPoolConfig, std::num::NonZeroUsize};
+
+    let (sender, receiver) = crossbeam_channel::bounded(1024);
+    let mut config = WorkerPoolConfig::new("solTestRetrans", NonZeroUsize::MIN);
+    config.job_queue_capacity = NonZeroUsize::new(1024).unwrap();
+    let pool = WorkerPool::spawn(config, move |_| {
+        let sender = sender.clone();
+        move |shreds| sender.try_send(shreds).unwrap()
+    })
+    .unwrap();
+    (Arc::new(pool), receiver)
+}
+
 impl ShredRecoveryContext {
-    pub fn new(
-        retransmit_sender: RetransmitSender,
-        root_bank: Arc<Bank>,
-        shred_version: u16,
-    ) -> Self {
+    pub fn new(root_bank: Arc<Bank>, shred_version: u16) -> Self {
         let shred_filter_ctx = ShredFilterContext::new(root_bank, shred_version);
         Self {
-            retransmit_sender,
             shred_filter_ctx,
             parity_buffer: Vec::new(),
         }
@@ -596,7 +610,7 @@ impl ShredRecoveryContext {
 
     /// Returns the first slot for which SIMD-0504 `stricter_shred_validation`
     /// is effective.
-    pub(crate) fn stricter_shred_validation_from(&self) -> Option<Slot> {
+    pub fn stricter_shred_validation_from(&self) -> Option<Slot> {
         self.shred_filter_ctx.stricter_shred_validation_from
     }
 
@@ -697,16 +711,6 @@ impl ShredRecoveryContext {
             }
         }
         invalid_shreds_found
-    }
-
-    /// Send recovered shreds for retransmit
-    pub fn try_retransmit_shreds(&self, recovered_shreds: Vec<Payload>) {
-        for shreds in &recovered_shreds
-            .into_iter()
-            .chunks(RETRANSMIT_SHRED_BATCH_SIZE)
-        {
-            let _ = self.retransmit_sender.try_send(shreds.collect());
-        }
     }
 
     /// Apply filtering rules to recovered shreds.
@@ -975,10 +979,7 @@ mod tests {
         // Feed recovery only coding shreds. Without the custom limit below, this
         // is enough parity to recover the missing data shreds.
         let max_code_shreds_per_slot = coding_shreds[0].index();
-        let dummy_retransmit_sender = new_dummy_retransmit_sender();
-        let mut shred_recovery_context =
-            ShredRecoveryContext::new(dummy_retransmit_sender, new_test_bank(0), shred_version);
-
+        let mut shred_recovery_context = ShredRecoveryContext::new(new_test_bank(0), shred_version);
         shred_recovery_context
             .shred_filter_ctx
             .set_shred_limits_for_tests(ShredLimits::new(
@@ -1023,7 +1024,6 @@ mod tests {
                     .get_last_slot_in_epoch(root_epoch)
                 + 1
         );
-        let stub_retransmit_sender = new_dummy_retransmit_sender();
 
         let mut rebuild_mixed_signatures = |slot: Slot| {
             let data_size = 1200 * 5;
@@ -1046,11 +1046,8 @@ mod tests {
             subset[DATA_SHREDS_PER_FEC_BLOCK - 1]
                 .set_signature(Keypair::new().sign_message(merkle_root.as_ref()));
 
-            let mut shred_recovery_context = ShredRecoveryContext::new(
-                stub_retransmit_sender.clone(),
-                root_bank.clone(),
-                shred_version,
-            );
+            let mut shred_recovery_context =
+                ShredRecoveryContext::new(root_bank.clone(), shred_version);
             (
                 shred_recovery_context.is_stricter_shred_validation_active(slot),
                 shred_recovery_context.rebuild_erasure_batch(subset),
