@@ -210,6 +210,7 @@ where
 
     pub fn run(&mut self) -> Result<(), SchedulerError> {
         let mut scheduling_slot = None;
+        let mut scheduling_blocked_at = None;
         let mut cost_pacer = None;
 
         while !self.exit.load(Ordering::Relaxed) {
@@ -243,6 +244,16 @@ where
             );
             let scheduling_enabled =
                 scheduling_slot_status != SchedulingSlotStatus::WaitingForInFlight;
+            let scheduling_blocked =
+                !scheduling_enabled && matches!(decision, BufferedPacketsDecision::Consume(_));
+            if scheduling_blocked {
+                scheduling_blocked_at.get_or_insert_with(Instant::now);
+            } else if let Some(blocked_at) = scheduling_blocked_at.take() {
+                self.timing_metrics.update(|timing_metrics| {
+                    timing_metrics.scheduling_slot_transition_blocked_time_us +=
+                        blocked_at.elapsed().as_micros() as u64;
+                });
+            }
             if scheduling_slot_status == SchedulingSlotStatus::Transitioned {
                 self.container.flush_held_transactions();
                 cost_pacer = decision.bank().map(|b| {
