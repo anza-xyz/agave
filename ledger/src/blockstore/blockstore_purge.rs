@@ -10,6 +10,19 @@ pub struct PurgeStats {
     delete_file_in_range: u64,
 }
 
+/// Work performed while removing one slot from the transaction-history columns.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TransactionHistoryPurgeStats {
+    /// Number of rows inspected across all transaction-history columns.
+    pub rows_scanned: u64,
+    /// Number of rows removed across all transaction-history columns.
+    pub rows_deleted: u64,
+    /// Time spent scanning all transaction-history columns.
+    pub scan_us: u64,
+    /// Time spent committing the deletions to Blockstore.
+    pub write_batch_us: u64,
+}
+
 impl PurgeStats {
     fn report(&self, from_slot: Slot, to_slot: Slot) {
         datapoint_info!(
@@ -453,31 +466,50 @@ impl Blockstore {
     /// entries are deleted together in a single write batch. Callers must ensure
     /// that no more transaction-history writes for `slot` can be submitted before
     /// calling this method.
-    pub fn purge_transaction_history_for_slot(&self, slot: Slot) -> Result<()> {
+    pub fn purge_transaction_history_for_slot(
+        &self,
+        slot: Slot,
+    ) -> Result<TransactionHistoryPurgeStats> {
         let mut write_batch = self.get_write_batch();
+        let mut stats = TransactionHistoryPurgeStats::default();
 
+        let mut scan_timer = Measure::start("transaction_history_scan");
         for (index, _) in self.transaction_status_cf.iter(IteratorMode::Start)? {
+            stats.rows_scanned += 1;
             if index.1 == slot {
+                stats.rows_deleted += 1;
                 self.transaction_status_cf
                     .delete_in_batch(&mut write_batch, index);
             }
         }
 
         for (index, _) in self.transaction_memos_cf.iter(IteratorMode::Start)? {
+            stats.rows_scanned += 1;
             if index.1 == slot {
+                stats.rows_deleted += 1;
                 self.transaction_memos_cf
                     .delete_in_batch(&mut write_batch, index);
             }
         }
 
         for (index, _) in self.address_signatures_cf.iter(IteratorMode::Start)? {
+            stats.rows_scanned += 1;
             if index.1 == slot {
+                stats.rows_deleted += 1;
                 self.address_signatures_cf
                     .delete_in_batch(&mut write_batch, index);
             }
         }
+        scan_timer.stop();
+        stats.scan_us = scan_timer.as_us();
 
-        self.write_batch(write_batch)
+        let mut write_batch_timer = Measure::start("write_batch");
+        let write_result = self.write_batch(write_batch);
+        write_batch_timer.stop();
+        stats.write_batch_us = write_batch_timer.as_us();
+        write_result?;
+
+        Ok(stats)
     }
 
     /// Purges special columns (using a non-Slot primary-index) exactly, by
@@ -1127,9 +1159,12 @@ pub mod tests {
                 .unwrap();
         }
 
-        blockstore
+        let stats = blockstore
             .purge_transaction_history_for_slot(purged_slot)
             .unwrap();
+
+        assert_eq!(stats.rows_scanned, 6);
+        assert_eq!(stats.rows_deleted, 3);
 
         assert!(
             blockstore

@@ -25,7 +25,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
-    std::{borrow::Cow, sync::Arc},
+    std::{borrow::Cow, sync::Arc, time::Instant},
 };
 
 type WorkSequence = u64;
@@ -49,6 +49,7 @@ pub enum TransactionStatusMessage {
     Freeze(Arc<Bank>),
     PurgeTransactionHistory {
         slot: Slot,
+        requested_at: Instant,
         done_sender: crossbeam_channel::Sender<()>,
     },
 }
@@ -286,9 +287,14 @@ impl TransactionStatusSender {
     /// TransactionStatusService has finished processing the request.
     pub fn send_purge_transaction_history_for_slot(&self, slot: Slot) -> Result<(), String> {
         let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
+        let requested_at = Instant::now();
 
         self.sender
-            .send(TransactionStatusMessage::PurgeTransactionHistory { slot, done_sender })
+            .send(TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                requested_at,
+                done_sender,
+            })
             .map_err(|err| err.to_string())?;
 
         done_receiver.recv().map_err(|err| err.to_string())

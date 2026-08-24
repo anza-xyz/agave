@@ -272,10 +272,46 @@ impl TransactionStatusService {
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
             }
-            TransactionStatusMessage::PurgeTransactionHistory { slot, done_sender } => {
-                if enable_rpc_transaction_history {
-                    blockstore.purge_transaction_history_for_slot(slot)?;
-                }
+            TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                requested_at,
+                done_sender,
+            } => {
+                let queue_wait_us = requested_at.elapsed().as_micros();
+                let purge_result = if enable_rpc_transaction_history {
+                    blockstore
+                        .purge_transaction_history_for_slot(slot)
+                        .map(Some)
+                } else {
+                    Ok(None)
+                };
+                let request_elapsed_us = requested_at.elapsed().as_micros();
+                let success = purge_result.is_ok();
+                let stats = purge_result
+                    .as_ref()
+                    .ok()
+                    .and_then(|stats| stats.as_ref())
+                    .copied()
+                    .unwrap_or_default();
+
+                datapoint_info!(
+                    "transaction-status-service-purge-transaction-history",
+                    ("slot", slot, i64),
+                    (
+                        "rpc_transaction_history_enabled",
+                        enable_rpc_transaction_history,
+                        bool
+                    ),
+                    ("queue_wait_us", queue_wait_us, i64),
+                    ("rows_scanned", stats.rows_scanned, i64),
+                    ("rows_deleted", stats.rows_deleted, i64),
+                    ("scan_us", stats.scan_us, i64),
+                    ("write_batch_us", stats.write_batch_us, i64),
+                    ("request_elapsed_us", request_elapsed_us, i64),
+                    ("success", success, bool),
+                );
+
+                purge_result?;
                 let _ = done_sender.send(());
             }
         }

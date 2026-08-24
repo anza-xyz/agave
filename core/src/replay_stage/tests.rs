@@ -195,7 +195,9 @@ fn transaction_history_purge_responder() -> (TransactionStatusSender, std::threa
 {
     let (sender, receiver) = bounded(1);
     let response_thread = std::thread::spawn(move || {
-        let TransactionStatusMessage::PurgeTransactionHistory { slot, done_sender } = receiver
+        let TransactionStatusMessage::PurgeTransactionHistory {
+            slot, done_sender, ..
+        } = receiver
             .recv_timeout(std::time::Duration::from_secs(1))
             .unwrap()
         else {
