@@ -53,6 +53,17 @@ pub struct Block {
     pub block_id: Hash,
 }
 
+impl Block {
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Builds a new Block with the given slot and a unique block id
+    pub fn new_unique(slot: Slot) -> Self {
+        Self {
+            slot,
+            block_id: Hash::new_unique(),
+        }
+    }
+}
+
 /// A consensus vote.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct VoteMessage {

@@ -3,7 +3,7 @@ use {
         aggregate_pubkeys, collect_pubkeys, test_create_base2_unverified_certificate,
         test_create_base3_unverified_certificate, verify_certificate,
     },
-    agave_votor_messages::{certificate::CertificateType, consensus_message::Block},
+    agave_votor_messages::certificate::CertificateType,
     bitvec::vec::BitVec,
     criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main},
     rand::Rng,
@@ -11,7 +11,6 @@ use {
         keypair::Keypair as BlsKeypair,
         pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     },
-    solana_hash::Hash,
     std::num::NonZero,
 };
 
@@ -52,11 +51,7 @@ fn bench_verify_cert(c: &mut Criterion) {
         // Assume 2/3rds of validators sign
         let num_signers_base2 = (size * 2) / 3;
         let slot = 100;
-        let hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(Block {
-            slot,
-            block_id: hash,
-        });
+        let cert_type = CertificateType::new_unique_notar(slot);
         let cert_base2 = test_create_base2_unverified_certificate(
             &keypairs,
             shred_version,
@@ -116,11 +111,7 @@ fn bench_verify_cert(c: &mut Criterion) {
         let num_notarize = (size * 40) / 100;
         let num_fallback = (size * 30) / 100;
         let slot = 100;
-        let hash = Hash::new_unique();
-        let cert_type = CertificateType::NotarizeFallback(Block {
-            slot,
-            block_id: hash,
-        });
+        let cert_type = CertificateType::new_unique_notar_fallback(slot);
         let cert_base3 = test_create_base3_unverified_certificate(
             &keypairs,
             shred_version,

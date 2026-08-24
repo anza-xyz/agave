@@ -238,19 +238,13 @@ mod tests {
             slot: 5,
             block_id: block_id_5,
         });
-        controller.enqueue_set_root(Block {
-            slot: 3,
-            block_id: Hash::new_unique(),
-        });
+        controller.enqueue_set_root(Block::new_unique(3));
         let command = receiver.take_set_root_command().unwrap();
         assert_eq!(command.new_root.slot, 5);
         assert_eq!(command.new_root.block_id, block_id_5);
         assert!(receiver.take_set_root_command().is_none());
 
-        controller.enqueue_set_root(Block {
-            slot: 3,
-            block_id: Hash::new_unique(),
-        });
+        controller.enqueue_set_root(Block::new_unique(3));
         controller.enqueue_set_root(Block {
             slot: 5,
             block_id: block_id_5,
@@ -262,24 +256,15 @@ mod tests {
     fn test_bank_forks_controller_signals_pending_set_root() {
         let (controller, receiver) = BankForksControllerHandle::new();
 
-        controller.enqueue_set_root(Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        });
+        controller.enqueue_set_root(Block::new_unique(1));
         receiver
             .set_root_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 1);
 
-        controller.enqueue_set_root(Block {
-            slot: 2,
-            block_id: Hash::new_unique(),
-        });
-        controller.enqueue_set_root(Block {
-            slot: 3,
-            block_id: Hash::new_unique(),
-        });
+        controller.enqueue_set_root(Block::new_unique(2));
+        controller.enqueue_set_root(Block::new_unique(3));
         receiver
             .set_root_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
@@ -310,18 +295,12 @@ mod tests {
         assert!(command.matches_frozen_bank(&bank_forks.read().unwrap()));
 
         let mismatched_command = SetRootCommand {
-            new_root: Block {
-                block_id: Hash::new_unique(),
-                ..command.new_root
-            },
+            new_root: Block::new_unique(command.new_root.slot),
         };
         assert!(!mismatched_command.matches_frozen_bank(&bank_forks.read().unwrap()));
 
         let missing_command = SetRootCommand {
-            new_root: Block {
-                slot: 2,
-                block_id: Hash::new_unique(),
-            },
+            new_root: Block::new_unique(2),
         };
         assert!(!missing_command.matches_frozen_bank(&bank_forks.read().unwrap()));
 

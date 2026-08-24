@@ -618,7 +618,6 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::GenesisConfig,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -664,10 +663,7 @@ mod tests {
         bank: &Bank,
         signing_ranks: &[usize],
     ) -> ValidatedBlockFinalizationCert {
-        let block = Block {
-            slot: bank.slot(),
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(bank.slot());
         let max_rank = signing_ranks.iter().copied().max().unwrap_or(0);
         let mut bitvec = BitVec::<u8, Lsb0>::repeat(false, max_rank.saturating_add(1));
         for &rank in signing_ranks {

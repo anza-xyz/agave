@@ -1742,10 +1742,7 @@ mod tests {
     fn test_restored_parent_ready_sets_timeout() {
         let mut test_context = setup();
         let slot = 4;
-        let parent_block = Block {
-            slot: 3,
-            block_id: Hash::new_unique(),
-        };
+        let parent_block = Block::new_unique(3);
 
         assert!(
             test_context
@@ -1894,10 +1891,7 @@ mod tests {
     fn test_try_skip_window_starts_after_unaligned_genesis() {
         let mut test_context = setup();
         let genesis_slot = 1;
-        let genesis_block = Block {
-            slot: genesis_slot,
-            block_id: Hash::new_unique(),
-        };
+        let genesis_block = Block::new_unique(genesis_slot);
         test_context
             .voting_context
             .vote_history
@@ -2331,10 +2325,7 @@ mod tests {
     #[test]
     fn test_startup_replays_vote_history_to_consensus_pool() {
         let mut test_context = setup();
-        let notarize_vote = Vote::new_notarization_vote(Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        });
+        let notarize_vote = Vote::new_unique_notar(1);
         let skip_vote = Vote::new_skip_vote(2);
         let fallback_vote = Vote::new_skip_fallback_vote(2);
         test_context
@@ -2446,16 +2437,10 @@ mod tests {
             restored_root + 1,
             voted_slot,
         ] {
-            test_context.local_context.pending_blocks.insert(
-                slot,
-                vec![(
-                    Block {
-                        slot,
-                        block_id: Hash::new_unique(),
-                    },
-                    parent_block,
-                )],
-            );
+            test_context
+                .local_context
+                .pending_blocks
+                .insert(slot, vec![(Block::new_unique(slot), parent_block)]);
         }
         test_context.local_context.standstill_slot = Some(restored_root - 1);
 
@@ -2542,16 +2527,10 @@ mod tests {
             effective_root + 1,
             voted_slot,
         ] {
-            test_context.local_context.pending_blocks.insert(
-                slot,
-                vec![(
-                    Block {
-                        slot,
-                        block_id: Hash::new_unique(),
-                    },
-                    parent_block,
-                )],
-            );
+            test_context
+                .local_context
+                .pending_blocks
+                .insert(slot, vec![(Block::new_unique(slot), parent_block)]);
         }
 
         test_context
@@ -2587,10 +2566,7 @@ mod tests {
             .store(&SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
 
-        let restored_vote = Vote::new_notarization_vote(Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        });
+        let restored_vote = Vote::new_unique_notar(1);
         let mut old_vote_history = VoteHistory::new(old_identity.pubkey(), 0);
         old_vote_history.add_vote(restored_vote);
         let saved_vote_history = SavedVoteHistory::new(&old_vote_history, &old_identity).unwrap();

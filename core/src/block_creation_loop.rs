@@ -1524,10 +1524,7 @@ mod tests {
         LeaderWindowInfo {
             start_slot,
             end_slot: last_of_consecutive_leader_slots(start_slot),
-            parent_block: Block {
-                slot: parent_slot,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(parent_slot),
             block_timer: Instant::now(),
         }
     }
@@ -1634,13 +1631,7 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((
-                0,
-                Block {
-                    slot: 0,
-                    block_id: Hash::default(),
-                },
-            ))),
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -1756,13 +1747,7 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((
-                0,
-                Block {
-                    slot: 0,
-                    block_id: Hash::default(),
-                },
-            ))),
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -1834,13 +1819,7 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((
-                2,
-                Block {
-                    slot: 0,
-                    block_id: Hash::default(),
-                },
-            ))),
+            highest_parent_ready: Arc::new(RwLock::new((2, Block::new_unique(0)))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,

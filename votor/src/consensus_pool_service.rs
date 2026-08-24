@@ -990,10 +990,7 @@ mod tests {
     #[test]
     fn test_receive_own_votes_limits_messages_per_call() {
         let mut ctx = TestContext::default();
-        let vote = Vote::new_notarization_vote(Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_unique_notar(1);
         let root_bank = ctx.ctx.sharable_banks.root();
         let rank_map = root_bank.get_rank_map(vote.slot()).unwrap();
         let stake = rank_map.get_pubkey_stake_entry(0).unwrap().stake;
@@ -1195,10 +1192,7 @@ mod tests {
         // Add a ParentReady event for the slot before our leader slot
         events.push(VotorEvent::ParentReady {
             slot: next_leader_slot.0,
-            parent_block: Block {
-                slot: next_leader_slot.0 - 1,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(next_leader_slot.0 - 1),
         });
 
         ConsensusPoolService::add_produce_block_event(
@@ -1236,10 +1230,7 @@ mod tests {
             .0;
         let restored_parent_ready = (
             next_leader_slot,
-            Block {
-                slot: next_leader_slot.checked_sub(1).unwrap(),
-                block_id: Hash::new_unique(),
-            },
+            Block::new_unique(next_leader_slot.checked_sub(1).unwrap()),
         );
         ctx.ctx.vote_history_highest_parent_ready = Some(restored_parent_ready);
         let mut consensus_pool = ctx.ctx.new_consensus_pool();
@@ -1285,38 +1276,20 @@ mod tests {
 
     #[test]
     fn test_kick_off_parent_ready_uses_restored_vote_history() {
-        let genesis_block = Some(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
-        let root_block = Block {
-            slot: 12,
-            block_id: Hash::new_unique(),
-        };
+        let genesis_block = Some(Block::new_unique(10));
+        let root_block = Block::new_unique(12);
         assert_eq!(
             ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, None),
             (13, root_block)
         );
 
-        let restored = (
-            16,
-            Block {
-                slot: 15,
-                block_id: Hash::new_unique(),
-            },
-        );
+        let restored = (16, Block::new_unique(15));
         assert_eq!(
             ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, Some(restored)),
             restored
         );
 
-        let stale = (
-            12,
-            Block {
-                slot: 11,
-                block_id: Hash::new_unique(),
-            },
-        );
+        let stale = (12, Block::new_unique(11));
         assert_eq!(
             ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, Some(stale)),
             (13, root_block)

@@ -508,10 +508,7 @@ mod test {
     fn test_initialize_genesis() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
         vote_history.add_vote(Vote::new_skip_vote(1));
-        let genesis_block = Block {
-            slot: 2,
-            block_id: Hash::new_unique(),
-        };
+        let genesis_block = Block::new_unique(2);
         vote_history.initialize_genesis(genesis_block);
         vote_history.initialize_genesis(genesis_block);
 
@@ -522,10 +519,7 @@ mod test {
         assert!(!vote_history.skipped(2));
         assert!(vote_history.votes_cast_since(0).is_empty());
 
-        let old_genesis_block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let old_genesis_block = Block::new_unique(1);
         vote_history.initialize_genesis(old_genesis_block);
         assert_eq!(vote_history.root(), 2);
         assert!(vote_history.voted(2));
@@ -538,10 +532,7 @@ mod test {
     #[should_panic(expected = "genesis block does not match existing notarization vote")]
     fn test_initialize_genesis_panics_on_voted_notar_mismatch() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let genesis_block = Block {
-            slot: 2,
-            block_id: Hash::new_unique(),
-        };
+        let genesis_block = Block::new_unique(2);
         vote_history
             .voted_notar
             .insert(genesis_block.slot, Hash::new_unique());
@@ -553,17 +544,13 @@ mod test {
     #[should_panic(expected = "genesis block does not match existing notarized block")]
     fn test_initialize_genesis_panics_on_notarized_block_mismatch() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let genesis_block = Block {
-            slot: 2,
-            block_id: Hash::new_unique(),
-        };
+        let genesis_block = Block::new_unique(2);
         vote_history
             .voted_notar
             .insert(genesis_block.slot, genesis_block.block_id);
-        vote_history.notarized_blocks.insert(Block {
-            slot: genesis_block.slot,
-            block_id: Hash::new_unique(),
-        });
+        vote_history
+            .notarized_blocks
+            .insert(Block::new_unique(genesis_block.slot));
 
         vote_history.initialize_genesis(genesis_block);
     }
@@ -571,18 +558,12 @@ mod test {
     #[test]
     fn test_add_notarized_blocks() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let block_1 = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block_1 = Block::new_unique(1);
         assert!(!vote_history.is_block_notarized(&block_1));
         vote_history.add_block_notarized(block_1);
         assert!(vote_history.is_block_notarized(&block_1));
 
-        let block_2 = Block {
-            slot: 2,
-            block_id: Hash::new_unique(),
-        };
+        let block_2 = Block::new_unique(2);
         assert!(!vote_history.is_block_notarized(&block_2));
         vote_history.add_block_notarized(block_2);
         assert!(vote_history.is_block_notarized(&block_2));
@@ -601,10 +582,7 @@ mod test {
     fn test_add_parent_ready() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
         assert_eq!(vote_history.highest_parent_ready_slot(), None);
-        let block_0 = Block {
-            slot: 0,
-            block_id: Hash::new_unique(),
-        };
+        let block_0 = Block::new_unique(0);
         vote_history.add_parent_ready(1, block_0);
         assert!(vote_history.is_parent_ready(1, &block_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
@@ -615,14 +593,8 @@ mod test {
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
 
         // Add parent ready for slot 2
-        let block_2_0 = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
-        let block_2_1 = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block_2_0 = Block::new_unique(1);
+        let block_2_1 = Block::new_unique(1);
         assert!(vote_history.add_parent_ready(2, block_2_0));
         assert!(vote_history.is_parent_ready(2, &block_2_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
@@ -657,10 +629,7 @@ mod test {
         let vote_history_storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
 
         // Add Notarize on 1 and Skip on 2
-        let vote_1 = Vote::new_notarization_vote(Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        });
+        let vote_1 = Vote::new_unique_notar(1);
         let vote_2 = Vote::new_skip_vote(2);
         vote_history.add_vote(vote_1);
         vote_history.add_vote(vote_2);

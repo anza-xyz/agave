@@ -1129,10 +1129,7 @@ mod tests {
         // Migration can still succeed
         let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
         let genesis_cert = GenesisCert {
-            block: Block {
-                slot: 1,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(1),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],

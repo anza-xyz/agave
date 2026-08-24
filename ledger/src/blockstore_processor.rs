@@ -5018,10 +5018,7 @@ pub mod tests {
 
         // After the migrationary phase, no vote-account root may be inferred, including a root
         // whose slot predates migration.
-        let genesis_block = Block {
-            slot: migration_slot - 1,
-            block_id: Hash::new_unique(),
-        };
+        let genesis_block = Block::new_unique(migration_slot - 1);
         migration_status.set_genesis_block(genesis_block);
         migration_status.set_genesis_certificate(genesis_certificate(genesis_block));
         assert!(migration_status.is_ready_to_enable());

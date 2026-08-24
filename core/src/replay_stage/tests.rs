@@ -176,10 +176,7 @@ impl ProcessActiveBanksContext {
 fn post_migration_status_for_tests() -> MigrationStatus {
     let migration_status = MigrationStatus::default();
     migration_status.record_feature_activation(0);
-    let genesis_block = Block {
-        slot: 0,
-        block_id: Hash::default(),
-    };
+    let genesis_block = Block::new_unique(0);
     let genesis_certificate = Arc::new(GenesisCert {
         block: genesis_block,
         signature: CertSignature {
@@ -669,10 +666,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     let my_pubkey = Pubkey::new_unique();
 
     let missing_command = SetRootCommand {
-        new_root: Block {
-            slot: 2,
-            block_id: Hash::new_unique(),
-        },
+        new_root: Block::new_unique(2),
     };
     ReplayStage::process_set_root_command(
         missing_command,
@@ -684,10 +678,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     assert!(!blockstore.is_root(2));
 
     let mismatched_command = SetRootCommand {
-        new_root: Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        },
+        new_root: Block::new_unique(1),
     };
     ReplayStage::process_set_root_command(
         mismatched_command,
@@ -1391,10 +1382,7 @@ fn test_alpenglow_migration_transition_does_not_mark_bank_dead() {
         blockstore.clone(),
         replay_vote_sender,
     );
-    let genesis_block = Block {
-        slot: 0,
-        block_id: Hash::default(),
-    };
+    let genesis_block = Block::new_unique(0);
     process_active_banks_context
         .migration_status
         .record_feature_activation(0);
@@ -3867,10 +3855,7 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 8,
             end_slot: 11,
-            parent_block: Block {
-                slot: 7,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(7),
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3881,10 +3866,7 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 12,
             end_slot: 15,
-            parent_block: Block {
-                slot: 11,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(11),
             block_timer: Instant::now(),
         },
     );
@@ -3898,10 +3880,7 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 20,
             end_slot: 22,
-            parent_block: Block {
-                slot: 19,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(19),
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3912,10 +3891,7 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 20,
             end_slot: 23,
-            parent_block: Block {
-                slot: 19,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(19),
             block_timer: Instant::now(),
         },
     );
@@ -3929,10 +3905,7 @@ fn test_latest_parent_coalesces() {
         .try_send(LeaderWindowInfo {
             start_slot: 20,
             end_slot: 23,
-            parent_block: Block {
-                slot: 19,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(19),
             block_timer: Instant::now(),
         })
         .unwrap();
@@ -3943,10 +3916,7 @@ fn test_latest_parent_coalesces() {
         LeaderWindowInfo {
             start_slot: 16,
             end_slot: 19,
-            parent_block: Block {
-                slot: 15,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(15),
             block_timer: Instant::now(),
         },
     );
