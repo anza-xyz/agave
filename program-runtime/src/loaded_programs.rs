@@ -394,10 +394,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         _last_modification_slot: Slot,
         entry: Arc<ProgramCacheEntry>,
     ) -> bool {
-        debug_assert!(!matches!(
-            &entry.program,
-            ProgramCacheEntryType::DelayVisibility
-        ));
+        debug_assert!(
+            !matches!(&entry.program, ProgramCacheEntryType::DelayVisibility),
+            "Unexpected assignment of a DelayVisibility tombstone"
+        );
         // This function always returns `true` during normal operation.
         // Only during the cache preparation phase this can return `false`
         // for entries with `upcoming_environment`.
@@ -1369,6 +1369,25 @@ pub(crate) mod tests {
                     assert_eq!(program.stats.uses.load(Ordering::Relaxed), 10);
                 }
             });
+    }
+
+    #[test]
+    #[should_panic(expected = "Unexpected assignment of a DelayVisibility tombstone")]
+    fn test_assign_program_delay_visibility_tombstone_panics() {
+        // A tombstone minted by `extract` only ever lives in the batch cache.
+        // Assigning one into the global cache is a caller error.
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        cache.assign_program(
+            &env,
+            Pubkey::new_unique(),
+            100,
+            Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
+                100,
+                ProgramCacheEntryOwner::LoaderV3,
+                Arc::default(),
+            )),
+        );
     }
 
     #[test]
