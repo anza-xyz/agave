@@ -354,7 +354,7 @@ impl SvmTestEnvironment<'_> {
         batch_output
     }
 
-    pub fn is_program_blocked(&self, program_id: &Pubkey) -> bool {
+    pub fn is_program_blocked(&self, program_id: &Pubkey, deployment_slot: Slot) -> bool {
         let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
             self.processing_config.account_overrides,
             &self.mock_bank,
@@ -368,8 +368,8 @@ impl SvmTestEnvironment<'_> {
             vec![ProgramToLoad {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
-                deployment_slot: DEPLOYMENT_SLOT,
-                last_modification_slot: DEPLOYMENT_SLOT,
+                deployment_slot,
+                last_modification_slot: deployment_slot,
             }],
             self.processing_environment
                 .program_runtime_environments
@@ -2956,7 +2956,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
 
     // test in same entry as program change
     env.execute();
-    assert!(env.is_program_blocked(&program_id));
+    assert!(env.is_program_blocked(&program_id, 5));
 
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
@@ -2971,7 +2971,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
     // test in different entry same slot
     env.test_entry = test_entry;
     env.execute();
-    assert!(env.is_program_blocked(&program_id));
+    assert!(env.is_program_blocked(&program_id, 5));
 }
 
 #[test_case(false; "upgrade::scan_only")]
@@ -3088,7 +3088,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
 
     // test in same entry as program change
     env.execute();
-    assert!(env.is_program_blocked(&target));
+    assert!(env.is_program_blocked(&target, 5));
 
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
@@ -3103,7 +3103,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     // test in different entry same slot
     env.test_entry = test_entry;
     env.execute();
-    assert!(env.is_program_blocked(&target));
+    assert!(env.is_program_blocked(&target, 5));
 }
 
 #[test]
