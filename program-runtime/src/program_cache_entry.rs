@@ -188,7 +188,7 @@ impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
         self.deployment_slot == other.deployment_slot
             && self.account_owner == other.account_owner
-            && self.is_tombstone() == other.is_tombstone()
+            && std::mem::discriminant(&self.program) == std::mem::discriminant(&other.program)
     }
 }
 

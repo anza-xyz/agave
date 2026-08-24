@@ -408,16 +408,6 @@ mod tests {
         account
     }
 
-    // `PartialEq for ProgramCacheEntry` is `dev-context-only-utils` and only
-    // compares the deployment slot, the account owner and `is_tombstone()`, so
-    // it cannot tell one tombstone kind from another. Compare the entry kind
-    // too.
-    fn is_same_entry(a: &ProgramCacheEntry, b: &ProgramCacheEntry) -> bool {
-        a.deployment_slot == b.deployment_slot
-            && a.account_owner == b.account_owner
-            && std::mem::discriminant(&a.program) == std::mem::discriminant(&b.program)
-    }
-
     #[test]
     fn test_load_program_accounts_unknown_owner() {
         let mock_bank = MockBankCallback::default();
@@ -729,7 +719,7 @@ mod tests {
         );
         let (entry, last_modification_slot) = result.unwrap();
         assert_eq!(last_modification_slot, 60);
-        assert!(is_same_entry(&entry, &closed_tombstone));
+        assert_eq!(entry, Arc::new(closed_tombstone));
 
         // Assert that it is NOT a `FailedVerification` tombstone.
         let fv_tombstone = ProgramCacheEntry::new_failed_verification_tombstone(
@@ -737,7 +727,7 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV3,
             batch_processor.program_runtime_environment_for_epoch(20),
         );
-        assert!(!is_same_entry(&entry, &fv_tombstone));
+        assert_ne!(entry, Arc::new(fv_tombstone));
 
         // Assert that it is NOT a `DelayVisibility` tombstone.
         let dv_tombstone = ProgramCacheEntry::new_delay_visibility_tombstone(
@@ -745,7 +735,7 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV3,
             Arc::default(),
         );
-        assert!(!is_same_entry(&entry, &dv_tombstone));
+        assert_ne!(entry, Arc::new(dv_tombstone));
     }
 
     #[test]
@@ -803,14 +793,14 @@ mod tests {
         );
         let (entry, last_modification_slot) = result.unwrap();
         assert_eq!(last_modification_slot, 60);
-        assert!(is_same_entry(&entry, &fv_tombstone));
+        assert_eq!(entry, Arc::new(fv_tombstone));
 
         // Assert that it is NOT a `Closed` tombstone.
         let closed_tombstone = ProgramCacheEntry::new_closed_tombstone(
             7, // Deployment slot, not the current slot
             ProgramCacheEntryOwner::LoaderV3,
         );
-        assert!(!is_same_entry(&entry, &closed_tombstone));
+        assert_ne!(entry, Arc::new(closed_tombstone));
 
         // Assert that it is NOT a `DelayVisibility` tombstone.
         let dv_tombstone = ProgramCacheEntry::new_delay_visibility_tombstone(
@@ -818,7 +808,7 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV3,
             Arc::default(),
         );
-        assert!(!is_same_entry(&entry, &dv_tombstone));
+        assert_ne!(entry, Arc::new(dv_tombstone));
     }
 
     #[test]
@@ -907,7 +897,8 @@ mod tests {
             .borrow_mut()
             .insert(key2, (account_data2.clone(), 0));
 
-        // This should return an error
+        // The programdata account is not owned by the loader, so this is a
+        // `Closed` tombstone rather than a `FailedVerification` one.
         let result = load_program_with_pubkey(
             &mock_bank,
             &batch_processor.program_runtime_environment_for_epoch(0),
@@ -915,11 +906,8 @@ mod tests {
             0,
             &mut ExecuteTimings::default(),
         );
-        let loaded_program = ProgramCacheEntry::new_failed_verification_tombstone(
-            0,
-            ProgramCacheEntryOwner::LoaderV3,
-            batch_processor.program_runtime_environment_for_epoch(0),
-        );
+        let loaded_program =
+            ProgramCacheEntry::new_closed_tombstone(0, ProgramCacheEntryOwner::LoaderV3);
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
 
         let mut buffer = load_test_program();
