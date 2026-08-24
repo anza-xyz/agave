@@ -94,6 +94,12 @@ pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 /// extraordinary has occured (congestion control or flow control blocking)
 const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 
+// With the previous 1232-byte transaction limit, transactions were empirically
+// observed to use at most 4 chunks.
+// With the new 4096-byte limit, a max-sized transaction normally spans 3 or 4
+// full datagrams. Use 8 to allow headroom for partially filled datagrams.
+const MAX_EXPECTED_TRANSACTION_CHUNKS: usize = 8;
+
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
 // packet metadata. We use this accumulator to avoid
@@ -102,9 +108,9 @@ const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 #[derive(Clone)]
 struct PacketAccumulator {
     pub meta: Meta,
-    // the capacity here should match or exceed the capacity of the chunks
-    // array used by handle_connection()
-    pub chunks: SmallVec<[Bytes; 4]>,
+    // The capacity here should match or exceed the capacity of the chunks array used
+    // by handle_connection().
+    pub chunks: SmallVec<[Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS]>,
     pub start_time: Instant,
 }
 
@@ -661,15 +667,10 @@ async fn handle_connection<Q, C>(
         }
 
         let mut accum = PacketAccumulator::new(meta);
-        // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
-        // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
-        // transaction will have other protocol frames inserted in the middle. Empirically it's been
-        // observed that 4 is the maximum number of chunks txs get split into.
-        //
-        // Bytes values are small, so overall the array takes only 128 bytes, and the "cost" of
+        // Bytes values are small, so overall the array takes 256 bytes, and the "cost" of
         // overallocating a few bytes is negligible compared to the cost of having to do multiple
         // read_chunks() calls.
-        let mut chunks: [Bytes; 4] = array::from_fn(|_| Bytes::new());
+        let mut chunks: [Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS] = array::from_fn(|_| Bytes::new());
 
         loop {
             // Read the next chunks, waiting up to `wait_for_chunk_timeout`. If we don't get chunks
@@ -803,6 +804,12 @@ fn handle_chunks(
             .total_packet_batches_none
             .fetch_add(1, Ordering::Relaxed);
         return Err(());
+    }
+
+    if accum.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
+        stats
+            .total_packets_at_or_above_chunk_capacity
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     // done receiving chunks
@@ -1171,6 +1178,7 @@ pub mod test {
         crossbeam_channel::{Receiver, bounded},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
+        solana_message::v1::MAX_TRANSACTION_SIZE,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
@@ -2177,6 +2185,53 @@ pub mod test {
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
+    #[test]
+    fn test_packets_at_or_above_chunk_capacity_metric() {
+        let (sender, receiver) = bounded(1);
+        let stats = StreamerStats::default();
+        let mut accum = PacketAccumulator::new(Meta::default());
+        let chunks = (0..MAX_EXPECTED_TRANSACTION_CHUNKS)
+            .map(|byte| Bytes::from(vec![byte as u8]))
+            .collect::<Vec<_>>();
+
+        let state = handle_chunks(
+            chunks.into_iter(),
+            &mut accum,
+            Duration::from_millis(50),
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            MAX_TRANSACTION_SIZE as u32,
+        )
+        .unwrap();
+        assert!(matches!(state, StreamState::Receiving));
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            0
+        );
+
+        let state = handle_chunks(
+            std::iter::empty(),
+            &mut accum,
+            Duration::from_millis(50),
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            MAX_TRANSACTION_SIZE as u32,
+        )
+        .unwrap();
+        assert!(matches!(state, StreamState::Finished));
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert!(receiver.try_recv().is_ok());
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_client_connection_close_invalid_stream() {
         let SpawnTestServerResult {
@@ -2212,7 +2267,7 @@ pub mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_client_connection_accepts_packet_up_to_configured_max_stream_data_bytes() {
-        let max_stream_data_bytes = PACKET_DATA_SIZE as u32 * 2;
+        let max_stream_data_bytes = MAX_TRANSACTION_SIZE as u32;
         let SpawnTestServerResult {
             join_handle,
             receiver,
