@@ -5,9 +5,7 @@ use {
     },
     agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
-    itertools::{Either, Itertools},
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
-    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -18,7 +16,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{LruCache, SlotPubkeys, verify_shreds},
+        sigverify_shreds::verify_shred_with_leader,
     },
     solana_perf::{
         self,
@@ -40,9 +38,6 @@ use {
     },
     thiserror::Error,
 };
-
-// 34MB where each cache entry is 136 bytes.
-const SIGVERIFY_LRU_CACHE_CAPACITY: usize = 1 << 18;
 
 const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 const DEDUPER_NUM_BITS: u64 = 637_534_199; // 76MB
@@ -87,7 +82,6 @@ pub fn spawn_shred_sigverify(
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
     let mut stats = ShredSigVerifyStats::new(Instant::now());
-    let cache = RwLock::new(LruCache::new(SIGVERIFY_LRU_CACHE_CAPACITY));
     let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
         CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
         CLUSTER_NODES_CACHE_TTL,
@@ -120,7 +114,6 @@ pub fn spawn_shred_sigverify(
                 &verified_sender,
                 &cluster_nodes_cache,
                 repair_nonce_location_lookup.as_ref(),
-                &cache,
                 &mut stats,
                 &mut shred_buffer,
             ) {
@@ -151,7 +144,6 @@ fn run_shred_sigverify<const K: usize>(
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     repair_nonce_location_lookup: &RepairNonceLocationLookup,
-    cache: &RwLock<LruCache>,
     stats: &mut ShredSigVerifyStats,
     shred_buffer: &mut Vec<PacketBatch>,
 ) -> Result<(), ShredSigverifyError> {
@@ -184,83 +176,156 @@ fn run_shred_sigverify<const K: usize>(
     // path once a shred is repaired.
     // For backward compatibility we need to allow trailing bytes in the packet
     // after the shred payload, but have to exclude them here from the deduper.
-    stats.num_duplicates += thread_pool.install(|| {
-        shred_buffer
-            .par_iter_mut()
-            .flatten()
-            .filter(|packet| {
-                !packet.meta().discard()
-                    && shred::wire::get_shred(packet.as_ref())
-                        .map(|shred| deduper.dedup(shred))
-                        .unwrap_or(true)
-                    && !packet.meta().repair()
-            })
-            .map(|mut packet| packet.meta_mut().set_discard(true))
-            .count()
-    });
     let (working_bank, root_bank) = {
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.working_bank(), bank_forks.root_bank())
     };
-    verify_packets(
-        thread_pool,
-        &keypair.pubkey(),
-        &working_bank,
-        leader_schedule_cache,
-        shred_buffer,
-        cache,
-    );
-    stats.num_discards_post += count_discards(shred_buffer);
-    // Verify retransmitter's signature, and resign shreds
-    // Merkle root as the retransmitter node.
-    let resign_start = Instant::now();
-    thread_pool.install(|| {
+    let self_pubkey = keypair.pubkey();
+    let (
+        num_duplicates,
+        num_discards_post,
+        resign_micros,
+        num_unknown_block_location,
+        shreds,
+        repairs,
+    ) = thread_pool.install(|| {
         shred_buffer
             .par_iter_mut()
             .flatten()
-            .filter(|packet| !packet.meta().discard())
-            .for_each(|mut packet| {
-                if maybe_verify_and_resign_packet(
-                    &mut packet,
-                    &root_bank,
-                    &working_bank,
-                    cluster_info,
-                    leader_schedule_cache,
-                    cluster_nodes_cache,
-                    stats,
-                    keypair,
-                )
-                .is_err()
-                {
-                    packet.meta_mut().set_discard(true);
-                }
-            })
+            .fold(
+                || (0, 0, 0, 0, Vec::new(), Vec::new()),
+                |(
+                    mut num_duplicates_acc,
+                    mut num_discards_post_acc,
+                    mut resign_micros_acc,
+                    mut num_unknown_block_location_acc,
+                    mut shreds_acc,
+                    mut repairs_acc,
+                ),
+                 mut packet| {
+                    if packet.meta().discard() {
+                        num_discards_post_acc += 1;
+                        return (
+                            num_duplicates_acc,
+                            num_discards_post_acc,
+                            resign_micros_acc,
+                            num_unknown_block_location_acc,
+                            shreds_acc,
+                            repairs_acc,
+                        );
+                    }
+                    let duplicate = shred::wire::get_shred(packet.as_ref())
+                        .map(|shred| deduper.dedup(shred))
+                        .unwrap_or(true);
+                    if duplicate && !packet.meta().repair() {
+                        packet.meta_mut().set_discard(true);
+                        num_duplicates_acc += 1;
+                    }
+                    if !packet.meta().discard()
+                        && !verify_packet_signature(
+                            &self_pubkey,
+                            packet.as_ref(),
+                            &working_bank,
+                            leader_schedule_cache,
+                        )
+                    {
+                        packet.meta_mut().set_discard(true);
+                    }
+                    if packet.meta().discard() {
+                        num_discards_post_acc += 1;
+                        return (
+                            num_duplicates_acc,
+                            num_discards_post_acc,
+                            resign_micros_acc,
+                            num_unknown_block_location_acc,
+                            shreds_acc,
+                            repairs_acc,
+                        );
+                    }
+                    let resign_start = Instant::now();
+                    if maybe_verify_and_resign_packet(
+                        &mut packet,
+                        &root_bank,
+                        &working_bank,
+                        cluster_info,
+                        leader_schedule_cache,
+                        cluster_nodes_cache,
+                        stats,
+                        keypair,
+                    )
+                    .is_err()
+                    {
+                        packet.meta_mut().set_discard(true);
+                    }
+                    resign_micros_acc += resign_start.elapsed().as_micros() as u64;
+                    if !packet.meta().discard()
+                        && let Some((shred, nonce)) =
+                            shred::layout::get_shred_and_repair_nonce(packet.as_ref())
+                    {
+                        let shred = shred::Payload::from(shred.to_vec());
+                        match nonce {
+                            None => {
+                                // Share the payload between the retransmit-stage and the
+                                // window-service.
+                                shreds_acc.push(shred);
+                            }
+                            Some(nonce) => {
+                                if let Some(location) = repair_nonce_location_lookup(nonce) {
+                                    // No need for Arc overhead here because repaired shreds
+                                    // are not retranmitted.
+                                    repairs_acc
+                                        .push((shred, /* is_repaired */ true, location));
+                                } else {
+                                    num_unknown_block_location_acc += 1;
+                                }
+                            }
+                        }
+                    }
+                    (
+                        num_duplicates_acc,
+                        num_discards_post_acc,
+                        resign_micros_acc,
+                        num_unknown_block_location_acc,
+                        shreds_acc,
+                        repairs_acc,
+                    )
+                },
+            )
+            .reduce(
+                || (0, 0, 0, 0, Vec::new(), Vec::new()),
+                |(
+                    num_duplicates_a,
+                    num_discards_post_a,
+                    resign_micros_a,
+                    num_unknown_block_location_a,
+                    mut shreds_a,
+                    mut repairs_a,
+                ),
+                 (
+                    num_duplicates_b,
+                    num_discards_post_b,
+                    resign_micros_b,
+                    num_unknown_block_location_b,
+                    shreds_b,
+                    repairs_b,
+                )| {
+                    shreds_a.extend(shreds_b);
+                    repairs_a.extend(repairs_b);
+                    (
+                        num_duplicates_a + num_duplicates_b,
+                        num_discards_post_a + num_discards_post_b,
+                        resign_micros_a + resign_micros_b,
+                        num_unknown_block_location_a + num_unknown_block_location_b,
+                        shreds_a,
+                        repairs_a,
+                    )
+                },
+            )
     });
-    stats.resign_micros += resign_start.elapsed().as_micros() as u64;
-    // Extract shred payload from packets, and separate out repaired shreds.
-    let (shreds, repairs): (Vec<_>, Vec<_>) = shred_buffer
-        .iter()
-        .flat_map(|batch| batch.iter())
-        .filter(|packet| !packet.meta().discard())
-        .filter_map(|packet| {
-            extract_shred_and_location(packet, repair_nonce_location_lookup, stats)
-        })
-        .partition_map(|(shred, location)| {
-            if let Some(location) = location {
-                // No need for Arc overhead here because repaired shreds are
-                // not retranmitted.
-                Either::Right((
-                    shred::Payload::from(shred),
-                    /* is_repaired */ true,
-                    location,
-                ))
-            } else {
-                // Share the payload between the retransmit-stage and the
-                // window-service.
-                Either::Left(shred::Payload::from(shred))
-            }
-        });
-
+    stats.num_duplicates += num_duplicates;
+    stats.num_discards_post += num_discards_post;
+    stats.resign_micros += resign_micros;
+    stats.num_unknown_block_location += num_unknown_block_location;
     // Repaired shreds are not retransmitted.
     stats.num_retransmit_shreds += shreds.len();
     if let Err(send_err) = retransmit_sender.try_send(shreds.clone()) {
@@ -279,29 +344,6 @@ fn run_shred_sigverify<const K: usize>(
     stats.elapsed_micros += now.elapsed().as_micros() as u64;
     shred_buffer.clear();
     Ok(())
-}
-
-/// Extracts shred bytes and, for repaired shreds, the location where the shred
-/// should be inserted into blockstore.
-fn extract_shred_and_location(
-    packet: PacketRef,
-    repair_nonce_location_lookup: &RepairNonceLocationLookup,
-    stats: &mut ShredSigVerifyStats,
-) -> Option<(Vec<u8>, Option<BlockLocation>)> {
-    let (shred, nonce) = shred::layout::get_shred_and_repair_nonce(packet)?;
-    let Some(nonce) = nonce else {
-        // Turbine shred.
-        return Some((shred.to_vec(), None));
-    };
-
-    // Repair shred.
-    if let Some(location) = repair_nonce_location_lookup(nonce) {
-        Some((shred.to_vec(), Some(location)))
-    } else {
-        // This indicates the request entry was evicted before consumption.
-        stats.num_unknown_block_location += 1;
-        None
-    }
 }
 
 /// Checks whether the shred in the given `packet` is of resigned variant. If
@@ -414,50 +456,29 @@ fn verify_retransmitter_signature(
     }
 }
 
-fn verify_packets(
-    thread_pool: &ThreadPool,
+fn verify_packet_signature(
     self_pubkey: &Pubkey,
+    packet: PacketRef,
     working_bank: &Bank,
     leader_schedule_cache: &LeaderScheduleCache,
-    packets: &mut [PacketBatch],
-    cache: &RwLock<LruCache>,
-) {
-    let leader_slots: SlotPubkeys =
-        get_slot_leaders(self_pubkey, packets, leader_schedule_cache, working_bank)
-            .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
-            .chain(std::iter::once((Slot::MAX, Pubkey::default())))
-            .collect();
-    let out = verify_shreds(thread_pool, packets, &leader_slots, cache);
-    solana_perf::sigverify::mark_disabled(packets, &out);
-}
-
-// Returns pubkey of leaders for shred slots referenced in the packets.
-// Marks packets as discard if:
-//   - fails to deserialize the shred slot.
-//   - slot leader is unknown.
-//   - slot leader is the node itself (circular transmission).
-fn get_slot_leaders<'a>(
-    self_pubkey: &'a Pubkey,
-    batches: &'a mut [PacketBatch],
-    leader_schedule_cache: &'a LeaderScheduleCache,
-    bank: &'a Bank,
-) -> impl Iterator<Item = (Slot, Option<Pubkey>)> + 'a {
-    batches
-        .iter_mut()
-        .flat_map(|batch| batch.iter_mut())
-        .filter(|packet| !packet.meta().discard())
-        .filter_map(move |mut packet| {
-            let shred = shred::layout::get_shred(packet.as_ref());
-            let slot = shred.and_then(shred::layout::get_slot)?;
-            let leader = leader_schedule_cache
-                .slot_leader_at(slot, Some(bank))
-                .map(|leader| leader.id)
-                .filter(|leader| leader != self_pubkey);
-            if leader.is_none() {
-                packet.meta_mut().set_discard(true);
-            }
-            Some((slot, leader))
-        })
+) -> bool {
+    if packet.meta().discard() {
+        return false;
+    }
+    let Some(shred) = shred::layout::get_shred(packet) else {
+        return false;
+    };
+    let Some(slot) = shred::layout::get_slot(shred) else {
+        return false;
+    };
+    let Some(leader) = leader_schedule_cache
+        .slot_leader_at(slot, Some(working_bank))
+        .map(|leader| leader.id)
+        .filter(|leader| leader != self_pubkey)
+    else {
+        return false;
+    };
+    verify_shred_with_leader(packet, &leader)
 }
 
 fn count_discards(packets: &[PacketBatch]) -> usize {
@@ -612,7 +633,7 @@ mod tests {
     };
 
     #[test]
-    fn test_sigverify_shreds_verify_batches() {
+    fn test_verify_packet_signature() {
         let leader_keypair = Arc::new(Keypair::new());
         let wrong_keypair = Keypair::new();
         let leader_pubkey = leader_keypair.pubkey();
@@ -657,23 +678,23 @@ mod tests {
         batches[0][1].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][1].meta_mut().size = shred.payload().len();
 
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let working_bank = bank_forks.read().unwrap().working_bank();
-        let mut batches = batches
+        let batches = batches
             .into_iter()
             .map(PacketBatch::from)
             .collect::<Vec<_>>();
-        verify_packets(
-            &thread_pool,
+        assert!(verify_packet_signature(
             &Pubkey::new_unique(), // self_pubkey
+            batches[0].get(0).unwrap(),
             &working_bank,
             &leader_schedule_cache,
-            &mut batches,
-            &cache,
-        );
-        assert!(!batches[0].get(0).unwrap().meta().discard());
-        assert!(batches[0].get(1).unwrap().meta().discard());
+        ));
+        assert!(!verify_packet_signature(
+            &Pubkey::new_unique(), // self_pubkey
+            batches[0].get(1).unwrap(),
+            &working_bank,
+            &leader_schedule_cache,
+        ));
     }
 
     #[test_matrix(

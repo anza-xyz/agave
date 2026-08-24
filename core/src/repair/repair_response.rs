@@ -49,20 +49,18 @@ mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             shred::Shredder,
-            sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
+            sigverify_shreds::{SlotPubkeys, verify_shred_cpu},
         },
         solana_packet::PacketFlags,
         solana_signer::Signer,
         std::{
             collections::HashMap,
             net::{IpAddr, Ipv4Addr},
-            sync::RwLock,
         },
     };
 
     fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
         agave_logger::setup();
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(slot, &keypair);
 
@@ -77,14 +75,14 @@ mod test {
         packet.meta_mut().flags |= PacketFlags::REPAIR;
 
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(verify_shred_cpu((&packet).into(), &leader_slots));
 
         let wrong_keypair = Keypair::new();
         let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(!verify_shred_cpu((&packet).into(), &leader_slots));
 
         let leader_slots: SlotPubkeys = HashMap::default();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(!verify_shred_cpu((&packet).into(), &leader_slots));
     }
 
     #[test]
