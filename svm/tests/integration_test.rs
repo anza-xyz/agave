@@ -3271,7 +3271,6 @@ fn program_cache_stats() {
         &[&fee_payer_keypair],
         Hash::default(),
     ));
-    noop_tx_usage += 1;
 
     test_entry.drop_expected_account(buffer_address);
 
@@ -3304,6 +3303,7 @@ fn program_cache_stats() {
     );
 
     // third batch, this creates a delayed visibility tombstone
+    let mut noop_tx_usage = 0;
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
         final_accounts: env.test_entry.final_accounts.clone(),
