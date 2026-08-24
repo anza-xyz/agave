@@ -227,9 +227,13 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
             Err(TransactionError::ProgramAccountNotFound)
         }
         ProgramCacheEntryOwner::LoaderV4 => {
-            let state = loader_v4_get_state(program.data())
-                .map_err(|_| TransactionError::ProgramAccountNotFound)?;
-            Ok(state.slot)
+            let slot = loader_v4_get_state(program.data())
+                .ok()
+                .and_then(|state| {
+                    (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
+                })
+                .ok_or(TransactionError::ProgramAccountNotFound)?;
+            Ok(slot)
         }
         ProgramCacheEntryOwner::NativeLoader => unreachable!(),
     }
@@ -1179,15 +1183,7 @@ mod tests {
             Some(TransactionError::ProgramAccountNotFound)
         );
 
-        // TODO: We have a mismatch here in the Loader V4 valid state contract
-        // between `get_program_deployment_slot` and `load_program_accounts`:
-        //
-        // - `load_program_accounts`: Retracted Loader V4 programs result in
-        //   `Closed` tombstones (see `test_load_program_program_loader_v4`).
-        // - `get_program_deployment_slot`: Retracted Loader V4 programs are
-        //   accepted and their deployment slot is returned.
-        //
-        // Case: "gifted" state
+        // Fail: "gifted" state
         // Sized correctly, all-zeroes. Since `LoaderV4Status::Retracted` holds
         // variant `0`, we do NOT currently catch this case.
         let mut program_account = AccountSharedData::default();
@@ -1199,17 +1195,16 @@ mod tests {
                 &program_account,
                 ProgramCacheEntryOwner::LoaderV4
             )
-            .unwrap(),
-            0 // <-- Should be an error
+            .err(),
+            Some(TransactionError::ProgramAccountNotFound)
         );
 
-        // TODO: Same issue as the above case.
-        // Case: status is Retracted
+        // Fail: status is Retracted
         let account = loader_v4_account(9, LoaderV4Status::Retracted, &[]);
         assert_eq!(
             get_program_deployment_slot(&mock_bank, &account, ProgramCacheEntryOwner::LoaderV4)
-                .unwrap(),
-            9 // <-- Should be an error
+                .err(),
+            Some(TransactionError::ProgramAccountNotFound)
         );
 
         // Success
@@ -1526,15 +1521,7 @@ mod tests {
             .account_shared_data
             .borrow_mut()
             .insert(key, (gifted, 100));
-        // TODO: We have a mismatch here in the Loader V4 valid state contract
-        // between `get_program_deployment_slot` and `load_program_accounts`.
-        // See `test_get_program_deployment_slot_loader_v4`.
-        let result = filter_executable_program_accounts(&mock_bank, &batch, keys.iter());
-        assert_eq!(result.len(), 1);
-        let program_to_load = result.first().unwrap();
-        assert_eq!(program_to_load.loader, ProgramCacheEntryOwner::LoaderV4);
-        assert_eq!(program_to_load.deployment_slot, 0);
-        assert_eq!(program_to_load.last_modification_slot, 100);
+        assert!(filter_executable_program_accounts(&mock_bank, &batch, keys.iter()).is_empty());
 
         // Case: program account holds valid state, but is `Retracted`.
         // `load_program_accounts` calls this invalid, so nothing should be
@@ -1543,13 +1530,7 @@ mod tests {
             key,
             (loader_v4_account(9, LoaderV4Status::Retracted, &[]), 100),
         );
-        // TODO: Same issue as the above case.
-        let result = filter_executable_program_accounts(&mock_bank, &batch, keys.iter());
-        assert_eq!(result.len(), 1);
-        let program_to_load = result.first().unwrap();
-        assert_eq!(program_to_load.loader, ProgramCacheEntryOwner::LoaderV4);
-        assert_eq!(program_to_load.deployment_slot, 9);
-        assert_eq!(program_to_load.last_modification_slot, 100);
+        assert!(filter_executable_program_accounts(&mock_bank, &batch, keys.iter()).is_empty());
 
         // Successfully queued.
         // Both fields come from the program account: the deployment slot from

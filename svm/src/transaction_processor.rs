@@ -3545,18 +3545,21 @@ mod tests {
             &program_cache_for_tx_batch,
             keys.iter(),
         );
-        // TODO: But instead we *do* see the program identified for extraction!
-        // At this point, knowing what we know about the continuous loop case
-        // described above in `test_replenish_program_cache_loader_v3_closed`,
-        // we are in trouble...
-        assert_eq!(missing_programs.len(), 1);
+        assert!(missing_programs.is_empty());
 
-        // Since SVM thinks the program must be extracted, let's call into
-        // `replenish_program_cache`.
+        // As in `test_replenish_program_cache_loader_v3_closed`,
+        // `filter_executable_program_accounts` is the guard. Forcing the
+        // program into the search list anyway walks into the continuous loop
+        // described there, which debug mode traps on.
         let panicked = catch_panic(|| {
             batch_processor.replenish_program_cache(
                 &account_loader,
-                missing_programs,
+                vec![ProgramToLoad {
+                    program_id: &program_id,
+                    loader: ProgramCacheEntryOwner::LoaderV4,
+                    deployment_slot: if just_zeroes { 0 } else { 9 },
+                    last_modification_slot: 0,
+                }],
                 &environment,
                 &mut program_cache_for_tx_batch,
                 &mut ExecuteTimings::default(),
@@ -3611,28 +3614,25 @@ mod tests {
             .unwrap()
             .insert(program_id, program_account);
 
-        // We know from the last test that the program will appear in the
-        // search list for extraction.
+        // We know from the last test that the guard keeps the program out of
+        // the search list, so force it in by hand, holding the deployment slot
+        // of the retracted program.
         let keys = [program_id];
-        let mut missing_programs = filter_executable_program_accounts(
-            &mock_bank,
-            &program_cache_for_tx_batch,
-            keys.iter(),
+        assert!(
+            filter_executable_program_accounts(
+                &mock_bank,
+                &program_cache_for_tx_batch,
+                keys.iter(),
+            )
+            .is_empty()
         );
-        assert_eq!(missing_programs.len(), 1);
-
-        // The search criteria will hold the deployment slot of the retracted
-        // program.
         let deployment_slot = if just_zeroes { 0 } else { DEPLOYMENT_SLOT };
-        assert_eq!(
-            missing_programs.first().unwrap(),
-            &ProgramToLoad {
-                program_id: &program_id,
-                loader: ProgramCacheEntryOwner::LoaderV4,
-                deployment_slot,
-                last_modification_slot: 0,
-            }
-        );
+        let mut missing_programs = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV4,
+            deployment_slot,
+            last_modification_slot: 0,
+        }];
 
         // Round one. `extract` finds nothing cached and hands the key back
         // for us to load.
