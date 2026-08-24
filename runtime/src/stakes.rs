@@ -679,9 +679,20 @@ impl Stakes<StakeAccount> {
             new_rate_activation_epoch,
             use_fixed_point_stake_math,
         );
-        // A delegation with neither effective nor activating stake cannot
-        // contribute stake, so there is no reason to keep tracking it.
+        let previous_activation_status = delegation_activation_status(
+            delegation,
+            self.epoch.saturating_sub(1),
+            &self.stake_history,
+            new_rate_activation_epoch,
+            use_fixed_point_stake_math,
+        );
+
+        // A delegation with neither effective nor activating stake in the past
+        // two epochs contributes no stake, and cannot receive rewards, so there
+        // is no reason to track it.
         if remove_inactive_stakes
+            && previous_activation_status.effective == 0
+            && previous_activation_status.activating == 0
             && activation_status.effective == 0
             && activation_status.activating == 0
         {
