@@ -1582,6 +1582,97 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_assign_program_reload_merges_statistics() {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+
+        let stats = Arc::new(ProgramStatistics {
+            uses: 1.into(),
+            compilations: 2.into(),
+            total_compilation_time_us: 3.into(),
+            compilation_time_ema: 100.into(),
+            jit_invocations: 4.into(),
+            total_jit_execution_time_us: 5.into(),
+            jit_execution_time_ema: 200.into(),
+            interpreted_invocations: 6.into(),
+            total_interpretation_time_us: 7.into(),
+            interpretation_time_ema: 300.into(),
+        });
+        let unloaded = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(env.clone()),
+            account_owner: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            stats: Arc::clone(&stats),
+            latest_access_slot: AtomicU64::default(),
+        });
+        cache.assign_program(&env, program_id, 100, unloaded);
+
+        // `Unloaded` -> `Loaded` matches the existing entry, so it is a reload.
+        let loaded = Arc::new(ProgramCacheEntry {
+            program: new_loaded_entry(env.clone()),
+            account_owner: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            stats: Arc::default(), // <-- Empty stats
+            latest_access_slot: AtomicU64::default(),
+        });
+        cache.assign_program(&env, program_id, 100, Arc::clone(&loaded));
+
+        assert_eq!(cache.stats.insertions.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.stats.reloads.load(Ordering::Relaxed), 1);
+
+        let merged = &loaded.stats;
+        let ord = Ordering::Relaxed;
+        assert_eq!(merged.uses.load(ord), stats.uses.load(ord));
+        assert_eq!(merged.compilations.load(ord), stats.compilations.load(ord));
+        assert_eq!(
+            merged.total_compilation_time_us.load(ord),
+            stats.total_compilation_time_us.load(ord)
+        );
+        assert_eq!(
+            merged.jit_invocations.load(ord),
+            stats.jit_invocations.load(ord)
+        );
+        assert_eq!(
+            merged.total_jit_execution_time_us.load(ord),
+            stats.total_jit_execution_time_us.load(ord)
+        );
+        assert_eq!(
+            merged.interpreted_invocations.load(ord),
+            stats.interpreted_invocations.load(ord)
+        );
+        assert_eq!(
+            merged.total_interpretation_time_us.load(ord),
+            stats.total_interpretation_time_us.load(ord)
+        );
+
+        // The moving averages are weighted against the empty ones of the new
+        // entry, which halves them.
+        const EMA_DIVISOR: u64 = 2;
+        assert_eq!(
+            merged.compilation_time_ema.load(ord),
+            stats
+                .compilation_time_ema
+                .load(ord)
+                .wrapping_div(EMA_DIVISOR)
+        );
+        assert_eq!(
+            merged.jit_execution_time_ema.load(ord),
+            stats
+                .jit_execution_time_ema
+                .load(ord)
+                .wrapping_div(EMA_DIVISOR)
+        );
+        assert_eq!(
+            merged.interpretation_time_ema.load(ord),
+            stats
+                .interpretation_time_ema
+                .load(ord)
+                .wrapping_div(EMA_DIVISOR)
+        );
+    }
+
+    #[test]
     fn test_tombstone() {
         let env = get_mock_program_runtime_environment();
         let tombstone = ProgramCacheEntry::new_failed_verification_tombstone(
