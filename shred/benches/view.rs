@@ -5,8 +5,8 @@ use {
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
     rand::{Rng, SeedableRng, rngs::StdRng},
     solana_shred::{
-        Code, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed, ShredFlags,
-        ShredVariant, ShredViewMut, TurbineRx,
+        Code, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed, Received, ShredFlags,
+        ShredVariant, ShredViewMut,
         kind::ShredKind,
         wire_format::{OFFSET_OF_VARIANT, SIZE_OF_NONCE},
     },
@@ -36,7 +36,7 @@ fn bench_view(c: &mut Criterion) {
     let data: Vec<_> = random_shreds::<Data>(ShredVariant::MerkleData)
         .into_iter()
         .map(|bytes| {
-            DataShred::<Parsed, TurbineRx>::parse(bytes)
+            DataShred::<Parsed, Received>::parse(bytes)
                 .expect("random bytes with a valid variant byte parse as a shred")
                 .0
         })
@@ -44,7 +44,7 @@ fn bench_view(c: &mut Criterion) {
     let code: Vec<_> = random_shreds::<Code>(ShredVariant::MerkleCode)
         .into_iter()
         .map(|bytes| {
-            CodeShred::<Parsed, TurbineRx>::parse(bytes)
+            CodeShred::<Parsed, Received>::parse(bytes)
                 .expect("random bytes with a valid variant byte parse as a shred")
                 .0
         })
@@ -139,7 +139,7 @@ fn bench_parse(c: &mut Criterion) {
         b.iter(|| {
             for packet in &packets {
                 // Cloning `Bytes` is a refcount bump, so this measures the parse.
-                black_box(DataShred::<Parsed, TurbineRx>::parse(packet.clone()))
+                black_box(DataShred::<Parsed, Received>::parse(packet.clone()))
                     .expect("the packets were built to parse");
             }
         })

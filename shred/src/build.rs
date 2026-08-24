@@ -283,10 +283,9 @@ fn encode_erasure_batch(spec: &FecSetSpec, payloads: &mut [Vec<u8>]) -> Result<(
     Ok(())
 }
 
-/// The one Reed-Solomon coder there is.
+/// Singleton Reed-Solomon coder.
 ///
-/// Building a coder means building its encoding matrix, which is worth doing once. Once is all it
-/// takes, since every erasure batch has the same fixed 32:32 shape.
+/// Building its encoding matrix is expensive, which is why it is cached.
 fn coder() -> &'static ReedSolomon {
     static CODER: OnceLock<ReedSolomon> = OnceLock::new();
     CODER.get_or_init(|| {
@@ -359,7 +358,6 @@ mod tests {
         super::*,
         crate::{
             policy::AdmissionPolicy,
-            provenance::TurbineRx,
             shred::{ShredParsed, parse},
         },
         solana_signature::Signature,
@@ -406,7 +404,7 @@ mod tests {
 
             let mut reassembled = Vec::new();
             for (position, shred) in set.data.iter().enumerate() {
-                let (parsed, nonce) = parse::<TurbineRx>(shred.bytes().clone()).unwrap();
+                let (parsed, nonce) = parse(shred.bytes().clone()).unwrap();
                 assert_eq!(nonce, None);
                 let ShredParsed::Data(shred) = parsed else {
                     panic!("a data shred parsed as a code shred");
@@ -421,7 +419,7 @@ mod tests {
             assert_eq!(reassembled, data);
 
             for (position, shred) in set.code.iter().enumerate() {
-                let (parsed, _) = parse::<TurbineRx>(shred.bytes().clone()).unwrap();
+                let (parsed, _) = parse(shred.bytes().clone()).unwrap();
                 let ShredParsed::Code(shred) = parsed else {
                     panic!("a code shred parsed as a data shred");
                 };

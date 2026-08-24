@@ -31,42 +31,45 @@
 //!
 //! # Provenance
 //!
-//! The third parameter is where the bytes came from: [`SelfProduced`], [`Blockstore`],
-//! [`Recovered`], [`TurbineRx`] or [`RepairRx`]. It is not on the wire; it is what this node knows
-//! about their origin, and it decides which door into a state is open.
+//! The third parameter is where the bytes came from: [`Received`], [`Recovered`], [`Stored`] or
+//! [`SelfProduced`]. It is not on the wire; it is what this node knows about their origin, and it
+//! decides which door into a state is open. A shred keeps the provenance it was born with for as
+//! long as it exists.
 //!
-//! Four things can put a shred in [`Verified`], and each is reachable from one provenance only:
+//! Four things can put a shred in [`Verified`], one per provenance:
 //!
 //! ```text
-//! Shred<K, Admissible, P: Received>::verify(leader)   hash and ed25519, here
-//! FecSet::build(..)                        -> SelfProduced   signed here, over these bytes
-//! Shred<K, S, Blockstore>::from_blockstore(..)      verified before it was ever stored
-//! (erasure recovery)                       -> Recovered      inherited from the batch
+//! Shred<K, Admissible, Received>::verify(leader)   hash and ed25519, here
+//! (erasure recovery)                 -> Recovered      the batch's root was verified already
+//! Shred<K, S, Stored>::from_blockstore(..)          verified before it was ever stored
+//! FecSet::build(..)                  -> SelfProduced   signed here, over these bytes
 //! ```
 //!
-//! So the shortcuts that skip signature checking are not one function with a warning in its doc
-//! comment; they are separate functions that a shred off a socket cannot name. In the other
-//! direction, [`resign`](Shred::resign) is restricted to [`Received`] provenances: a node
-//! retransmitter-signs what it was sent, and the shreds it produced itself go out with the all-zero
-//! retransmitter signature they were built with.
+//! So the three shortcuts that skip signature checking are not one function with a warning in its
+//! doc comment; they are separate functions that a shred off a socket cannot name. In the other
+//! direction, [`resign`](Shred::resign) belongs to [`Received`] and nothing else: a node
+//! retransmitter-signs what a peer sent it, so a shred it produced itself goes out with the
+//! all-zero retransmitter signature it was built with, and one it rebuilt from an erasure batch has
+//! no upstream to attest to. [`Recovered`] being the more trusted of the two is why that has to be
+//! said: trusted enough to skip verification is not the same as having something to forward.
 //!
-//! Blockstore is the one door that is not a single state: nothing there needs re-checking, so
+//! [`Stored`] is the one door that is not a single state. Every check the states stand for was
+//! passed before the shred was stored and nothing there is ever unwound, so replaying the cascade
+//! on the way out would pay for a signature check to learn what is already known.
 //! `from_blockstore` materializes whichever state the reading code wants, with no transitions in
 //! between.
 //!
-//! Provenance is a type parameter, so shreds that differ in it are different types and cannot share
-//! a collection. Two markers stand for "no longer distinguished":
-//! [`forget_source`](Shred::forget_source) widens a received shred to [`AnyReceived`], which stays
-//! in the group and so stays resignable, and [`forget_provenance`](Shred::forget_provenance) widens
-//! any shred to [`Unspecified`] for the paths that only read fields. Both are one-way.
+//! Which socket a received shred arrived on is deliberately not part of this. Repair and Turbine
+//! differ in how the packet was solicited, not in what may be done with it, and the stage that
+//! counts the difference is at the socket, where the socket is known without asking the shred.
+//! Merging them is what makes a batch of received shreds a single type.
 //!
-//! What widening does *not* discard is [`ProvenanceSet`], the shred's own record of its origin. The
-//! type parameter carries only the property the rules are stated over; the set carries the detail
-//! they do not depend on, as independent bits rather than one value, because the facts compose. A
-//! shred rebuilt by erasure recovery from a batch that was part Turbine and part repair is
-//! `TURBINE|REPAIR|RECOVERED`; one built here and read back later is `SELF_MADE|STORED`. Widening a
-//! provenance out of the type leaves both intact, which is why [`provenance`](Shred::provenance)
-//! reads the field and not `P`.
+//! Provenance is a type parameter, so shreds that differ in it are different types and cannot share
+//! a collection. [`forget_provenance`](Shred::forget_provenance) widens any shred to
+//! [`Unspecified`], which is what a path holding shreds of mixed origin needs: blockstore insertion
+//! takes received and recovered shreds together and neither verifies, admits nor resigns them. The
+//! widening is one-way and grants nothing, so anything that reports the origin reads
+//! [`provenance`](Shred::provenance) before widening.
 //!
 //! [`provenance`](crate::provenance) is where the markers and the [`Received`] group live.
 //!
@@ -89,9 +92,9 @@
 //! # Example
 //!
 //! ```
-//! use solana_shred::{AdmissionPolicy, ShredParsed, TurbineRx, fixtures, parse};
+//! use solana_shred::{AdmissionPolicy, ShredParsed, fixtures, parse};
 //!
-//! let (parsed, repair_nonce) = parse::<TurbineRx>(fixtures::DATA_SHRED)?;
+//! let (parsed, repair_nonce) = parse(fixtures::DATA_SHRED)?;
 //! assert_eq!(repair_nonce, None);
 //!
 //! let ShredParsed::Data(shred) = parsed else {
@@ -109,7 +112,7 @@
 //! let shred = shred.verify(&fixtures::leader())?;
 //! assert_eq!(shred.data()?.len(), 963);
 //!
-//! assert_eq!(shred.provenance(), solana_shred::ProvenanceSet::TURBINE);
+//! assert_eq!(shred.provenance(), solana_shred::ProvenanceKind::Received);
 //!
 //! // `shred.resign(..)` is reachable only from here, and only for resigned variants.
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -156,8 +159,7 @@ pub use crate::{
     kind::{Code, Data, ShredKind},
     policy::AdmissionPolicy,
     provenance::{
-        AnyReceived, Blockstore, Origin, Provenance, ProvenanceSet, Received, Recovered, RepairRx,
-        SelfProduced, TurbineRx, Unspecified,
+        Provenance, ProvenanceKind, Received, Recovered, SelfProduced, Stored, Unspecified,
     },
     shred::{CodeShred, DataShred, Shred, ShredParsed, parse},
     shred_variant::{ShredType, ShredVariant},

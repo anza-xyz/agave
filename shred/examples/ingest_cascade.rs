@@ -6,8 +6,8 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_shred::{
-        AdmissionPolicy, AnyReceived, Blockstore, Data, DataShred, Origin, Parsed, ProvenanceSet,
-        Received, RepairRx, ShredParsed, ShredView, TurbineRx, Verified, fixtures, parse,
+        AdmissionPolicy, Data, DataShred, Received, ShredParsed, ShredView, Stored, Verified,
+        fixtures, parse,
         wire_format::{
             SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE,
         },
@@ -19,7 +19,7 @@ fn main() {
     println!("off the wire: {} bytes", bytes.len());
 
     // Stage 1: length, variant, headers.
-    let (parsed, nonce) = parse::<TurbineRx>(bytes).expect("the fixture is a well-formed shred");
+    let (parsed, nonce) = parse(bytes).expect("the fixture is a well-formed shred");
     let common = *parsed.common();
     let variant = common.variant;
     println!(
@@ -90,55 +90,44 @@ fn main() {
         }
     }
 
-    // Stage 5: a batch mixing the two sockets. Turbine and repair shreds are different types, so
-    // they only share a Vec once both have been widened to the group they have in common.
-    let turbine = verified::<TurbineRx>(&policy, &leader).forget_source();
-    let repair = verified::<RepairRx>(&policy, &leader).forget_source();
-    let mut batch: Vec<DataShred<Verified, AnyReceived>> = Vec::with_capacity(2);
-    batch.extend([turbine, repair]);
-    // The union across the batch is what erasure recovery would stamp on the shreds it rebuilds,
-    // which is a thing no single-valued provenance could say.
-    let batch_provenance = batch.iter().fold(ProvenanceSet::empty(), |seen, shred| {
-        seen.union(shred.provenance())
-    });
+    // Stage 5: a batch of received shreds. Turbine and repair are the same provenance, so a batch
+    // drawn from both sockets is one type with nothing to widen, and stays resignable.
+    let mut batch: Vec<DataShred<Verified, Received>> = Vec::with_capacity(2);
+    batch.extend([verified(&policy, &leader), verified(&policy, &leader)]);
     println!(
-        "\nbatch        {} shreds, per-shred={:?} union={batch_provenance:?}",
+        "\nbatch        {} shreds, provenance={:?}, resign returns {:?}",
         batch.len(),
-        batch
-            .iter()
-            .map(|shred| shred.provenance())
-            .collect::<Vec<_>>(),
-    );
-    // `resign` is still reachable for the batch, because `AnyReceived` is in the `Received` group.
-    // It refuses this fixture on the variant's missing room, which is a wire bit, not a type.
-    println!(
-        "             resign reachable, returns {:?}",
+        batch[0].provenance(),
         batch[0].clone().resign(&Keypair::new()).map(|_| ()),
     );
 
-    // Both widenings drop the provenance from the type without touching what the shred records
-    // about itself, so a widened shred can still be counted under the socket it arrived on.
-    let read_only = batch[0].clone().forget_provenance();
+    // Stage 6: the blockstore is the one source with no cascade to walk. Every check the states
+    // stand for was passed before the shred was stored, so the state is whatever the reading code
+    // asks for. `Verified` here, reached without parsing, admitting or checking a signature.
+    let stored: DataShred<Verified, Stored> = DataShred::from_blockstore(fixtures::DATA_SHRED)
+        .expect("the fixture is a well-formed data shred");
     println!(
-        "read-only    provenance={:?} external={} slot={} index={}",
-        read_only.provenance(),
-        read_only.provenance().is_external(),
-        read_only.slot(),
-        read_only.index(),
-    );
-
-    // Stage 6: the blockstore is the one source with no cascade to walk. Nothing it holds needs
-    // re-checking, so the state is whatever the reading code asks for, materialized in one step.
-    // Here inference takes `Verified` from `resign`, which only exists there.
-    // `Verified` is asked for here, and reached without parsing, admitting or checking a signature.
-    let stored: DataShred<Verified, Blockstore> = DataShred::from_blockstore(fixtures::DATA_SHRED)
-        .expect("the fixture is a well-formed shred");
-    println!(
-        "\nblockstore   provenance={:?} external={} erasure_shard={} bytes",
+        "blockstore   provenance={:?} erasure_shard={} bytes",
         stored.provenance(),
-        stored.provenance().is_external(),
         stored.erasure_shard().len(),
     );
+
+    // Stage 7: a path that holds shreds of more than one origin. This is blockstore insertion's
+    // shape, which takes received and recovered shreds together and only reads them. Widening is
+    // the one way to get them into a single collection, and it grants nothing.
+    let mut mixed = Vec::with_capacity(2);
+    mixed.extend([
+        batch[0].clone().forget_provenance(),
+        stored.forget_provenance(),
+    ]);
+    for shred in &mixed {
+        println!(
+            "mixed        provenance={:?} slot={} index={}",
+            shred.provenance(),
+            shred.slot(),
+            shred.index(),
+        );
+    }
 
     // What the type system refuses, with the error each line would produce:
     //
@@ -146,27 +135,20 @@ fn main() {
     //     the method `resign` exists for Shred<Data, Verified, SelfProduced>, but its trait bounds
     //     were not satisfied
     //
-    //   DataShred::<Verified, TurbineRx>::from_blockstore(bytes);
-    //     no associated function named `from_blockstore` found for Shred<Data, Verified, TurbineRx>
+    //   DataShred::<Verified, Received>::from_blockstore(bytes);
+    //     no function or associated item named `from_blockstore` found for Shred<Data, Verified,
+    //     Received>
     //
-    //   parse::<SelfProduced>(bytes);
-    //     the trait `Received` is not implemented for `SelfProduced`
+    //   mixed[0].clone().resign(&Keypair::new());
+    //     no method named `resign` found for Shred<Data, Verified, Unspecified>
     //
-    //   FecSet::build(&spec, data, &keypair)?.data[0].clone().forget_source();
-    //     the method `forget_source` exists for Shred<Data, Verified, SelfProduced>, but its trait
-    //     bounds were not satisfied
-    //
-    //   read_only.resign(&Keypair::new());
-    //     the method `resign` exists for Shred<Data, Verified, Unspecified>, but its trait bounds
-    //     were not satisfied
+    //   stored.resign(&Keypair::new());
+    //     no method named `resign` found for Shred<Data, Verified, Stored>
 }
 
-/// Runs the fixture through the cascade again, as if it had arrived by way of `P`.
-fn verified<P: Received + Origin>(
-    policy: &AdmissionPolicy,
-    leader: &Pubkey,
-) -> DataShred<Verified, P> {
-    DataShred::<Parsed, P>::parse(fixtures::DATA_SHRED)
+/// Runs the fixture through the cascade again, to make a second shred for the batch.
+fn verified(policy: &AdmissionPolicy, leader: &Pubkey) -> DataShred<Verified, Received> {
+    DataShred::parse(fixtures::DATA_SHRED)
         .expect("the fixture is a well-formed data shred")
         .0
         .admit(policy)

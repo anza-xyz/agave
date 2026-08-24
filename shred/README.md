@@ -209,66 +209,57 @@ interpret as appropriate.
 
 ### Why provenance is a type parameter
 
-Where a shred came from is not on the wire, it is what this node knows about how the bytes arrived:
-built here, read back from the blockstore, erasure-recovered, off the Turbine socket, or in a repair
-response. It decides which door into a state is open, which is why it belongs in the type rather
-than in a field.
+Where a shred came from is not on the wire, it is what this node knows about how the bytes arrived.
+There are four origins: received from a peer, rebuilt by erasure recovery, read back from the
+blockstore, or built here. A shred keeps the one it was born with for as long as it exists. It
+decides which door into a state is open, which is why it belongs in the type rather than in a field.
 
 Four things can put a shred in `Verified`, and they are not interchangeable. A received shred earns
-it by recomputing the Merkle root and checking the leader's signature. A shred this node built has
-it by construction. A shred out of the blockstore has it because nothing is stored there unverified.
-A recovered shred inherits it from the batch it was rebuilt from. Without provenance in the type,
-the three that skip the signature check are one function with a warning in its doc comment, and
-nothing stops it being called on a packet from a stranger. With it, each is a separate constructor
-that a shred of the wrong provenance cannot name.
+it by recomputing the Merkle root and checking the leader's signature. A recovered shred has it
+because recovery runs on a batch whose root was verified before anything was rebuilt from it. A
+shred out of the blockstore has it because nothing is stored there unverified. A shred this node
+built has it by construction. Without provenance in the type, the three that skip the signature check
+are one function with a warning in its doc comment, and nothing stops it being called on a packet
+from a stranger. With it, each is a separate constructor that a shred of the wrong provenance cannot
+name.
 
-The same parameter carries the rule in the other direction: a retransmitter signature is only for
-shreds this node received and forwards, so `resign` is restricted to the received provenances. A
-shred this node produced goes out with the all-zero retransmitter signature it was built with, and
-that is now a compile error to change rather than a convention.
+The same parameter carries the rule in the other direction. A retransmitter signature is a claim
+about what a peer sent this node, so `resign` belongs to `Received` and nothing else: a shred this
+node produced goes out with the all-zero retransmitter signature it was built with, and one it
+rebuilt from an erasure batch has no upstream to attest to. That last case is worth stating because
+`Recovered` is otherwise the *more* trusted of the two, and the ordering invites the wrong
+generalization. Trusted enough to skip verification is not the same as having something to forward.
 
-Provenances are grouped by a marker trait rather than enumerated at each use, so a rule states the
-property it depends on ("came from an untrusted peer") instead of listing the provenances that
-happen to have it today.
+Which socket a received shred arrived on is deliberately not part of provenance. Repair and Turbine
+differ in how the packet was solicited, not in what this node may do with it, and the stage that
+cares about the difference is counting packets at the socket, where the socket is known without
+asking the shred. What a finer split would buy is a downstream metric, "of the shreds that completed
+this FEC set, how many were repaired", which nothing asks for today; what it costs is that a batch
+drawn from both sockets stops being a single type. Merging them is what keeps `Vec<Shred<K, S,
+Received>>` from needing an erasure step, and it removed a marker, a widening and a whole grouping
+trait from this crate.
 
-The cost of putting provenance in the type is that shreds which differ in it are different types and
-cannot share a collection, which is a problem for a batch assembled from both receive paths. The
-answer is not one erased provenance but two, because erasing has to stay inside the group that the
-rules are stated over. `forget_source` widens a received shred to `AnyReceived`, which is still
-`Received`, so a mixed Turbine and repair batch is one type and keeps the operations that being
-received is what justifies. `forget_provenance` widens anything to `Unspecified`, which is outside
-the group, for the paths that only read a shred's fields. Both are one-way retags of a phantom
-parameter: free at runtime, and with no narrowing counterpart, so widening cannot be used to walk a
-self-produced shred into the resign path.
-
-Widening would be lossy if the type were the only record, so it is not the only record. Origin is
-split in two by what the two halves are for. The type parameter carries the property the rules are
-stated over, and nothing else, because that is the part a compile error has to be able to state. The
-`ProvenanceSet` field carries the detail no rule depends on, as independent bits rather than one
-value, because the facts compose and the combinations are the interesting cases: a shred rebuilt by
-erasure recovery from a batch that was part Turbine and part repair is `TURBINE|REPAIR|RECOVERED`,
-and one built here and read back later is `SELF_MADE|STORED`. Neither is expressible as a single
-origin, and both are what a metrics counter wants. The bits survive widening, so a shred counted
-under the socket it arrived on can still be counted that way after its type stopped saying which
-socket that was.
-
-What stays out of the field is the gate itself. A `resign` that checked a bit would be a runtime
-error path in place of a compile error, and, worse, an `assume_verified(bytes, provenance)` taking
-the bits as an argument would be exactly the one skip-the-signature-check function whose safety
-depends on every caller passing the right value. Which door a shred may come through is decided by
-the type; what a metric may say about it is read from the field.
-
-Only the provenances that name a concrete origin can seed the field, which is what the `Origin`
-sub-trait is for. `AnyReceived` and `Unspecified` are `Provenance` but not `Origin`: a widened marker
-says what a shred is no longer distinguished by, which is not enough to say where it came from, so
-the constructors require `Origin` and the widenings require nothing. Construction and retagging are
-different operations and the bounds now say so.
-
-`Blockstore` is the one origin whose constructor is not pinned to a single state. Everything the
-states stand for was established before the shred was stored and nothing there is ever unwound, so
+`Stored` is the one origin whose constructor is not pinned to a single state. Everything the states
+stand for was established before the shred was stored and nothing there is ever unwound, so
 replaying the cascade on the way out would pay for a signature check to learn what is already known.
 `from_blockstore` is generic over the state and materializes whichever one the reading code asks
 for, with no intermediate transitions.
+
+The cost of putting provenance in the type is that shreds which differ in it cannot share a
+collection, and one real path needs them to: blockstore insertion takes received and recovered
+shreds together. `forget_provenance` widens any shred to `Unspecified` for exactly that, and it
+grants nothing, which suits a path that neither admits, verifies nor resigns. It is a one-way retag
+of a phantom parameter, free at runtime, and with no narrowing counterpart, so it cannot be used to
+walk a self-produced shred into the resign path.
+
+An earlier draft split the received provenances by socket and added a `ProvenanceSet` bitfield to
+keep the detail across widening. It is recorded here because the reasoning generalizes: the bits
+existed only to carry the distinctions that the type parameter had to drop in order to make mixed
+batches one type, so removing the distinctions removed the field's only job. What must not move into
+such a field is the gate itself. A `resign` that tested a bit would be a runtime error path in place
+of a compile error, and an `assume_verified(bytes, provenance)` taking the origin as an argument
+would be precisely the one skip-the-signature-check function whose safety depends on every caller
+passing the right value.
 
 ### Why an owned shred plus a borrowed view
 
