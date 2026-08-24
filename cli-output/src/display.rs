@@ -552,16 +552,13 @@ fn write_transaction_config<W: io::Write>(
     )?;
     writeln!(
         w,
-        "{}  Priority Fee: {}",
+        "{}  Priority Fee: {} lamports",
         prefix,
-        match config.priority_fee {
-            Some(lamports) => format!("{lamports} lamports"),
-            None => "0 lamports (unset)".to_string(),
-        },
+        describe_limit(config.priority_fee, 0, "unset"),
     )
 }
 
-fn describe_limit(limit: Option<u32>, unset_value: u32, unset_note: &str) -> String {
+fn describe_limit<T: fmt::Display>(limit: Option<T>, unset_value: T, unset_note: &str) -> String {
     match limit {
         Some(value) => value.to_string(),
         None => format!("{unset_value} ({unset_note})"),
@@ -1124,7 +1121,7 @@ Transaction Config:
   Compute Unit Limit: 0 (unset)
   Loaded Accounts Data Size Limit: 0 (unset)
   Heap Size: 32768 (default)
-  Priority Fee: 0 lamports (unset)
+  Priority Fee: 0 (unset) lamports
 Status: Unavailable
 "
         );
