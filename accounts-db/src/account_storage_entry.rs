@@ -163,6 +163,21 @@ impl AccountStorageEntry {
         self.tombstone_offsets.read().unwrap()
     }
 
+    /// Insert tombstone offsets directly (test-only).
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn insert_tombstone_offsets_for_tests(
+        &self,
+        offsets: impl IntoIterator<Item = Offset>,
+    ) -> usize {
+        self.batch_insert_tombstone_offsets(offsets)
+    }
+
+    /// Remove all obsolete-account marks (test-only).
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn clear_obsolete_accounts_for_tests(&self) {
+        *self.obsolete_accounts.write().unwrap() = ObsoleteAccounts::default();
+    }
+
     /// Number of tombstone offsets in the storage.
     pub(crate) fn num_tombstones(&self) -> usize {
         self.tombstone_offsets.read().unwrap().len()

@@ -1599,6 +1599,159 @@ mod tests {
         );
     }
 
+    /// A full snapshot archive must retain tombstones: if one is excluded while an older
+    /// version of the account is archived unmarked, consumers resurrect the stale balance.
+    #[test]
+    fn test_full_snapshot_archive_with_tombstone_does_not_resurrect_accounts() {
+        let key1 = Keypair::new();
+
+        let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
+        );
+
+        let GenesisConfigInfo {
+            mut genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            1_000_000 * LAMPORTS_PER_SOL,
+        );
+        // the drain transfer below must bring Account1 to exactly zero
+        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
+
+        let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
+        let (bank0, bank_forks) =
+            Bank::new_with_paths_for_tests(&genesis_config, None, vec![accounts_dir.clone()], None)
+                .wrap_with_bank_forks_for_tests();
+        let leader = *bank0.leader();
+        bank0.fill_bank_with_ticks_for_tests();
+
+        // the anchor account keeps slot 1's storage alive when slot 2 supersedes the rest
+        let key_anchor = Keypair::new();
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, 1);
+        bank1
+            .transfer(lamports_to_transfer, &mint_keypair, &key1.pubkey())
+            .unwrap();
+        bank1
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key_anchor.pubkey())
+            .unwrap();
+        bank1.fill_bank_with_ticks_for_tests();
+        bank1.set_block_id(Some(Hash::default()));
+        // flush slot 1 before slot 2 supersedes Account1's funded version
+        bank1.squash();
+        bank1.force_flush_accounts_cache();
+
+        // a full snapshot exists, so newer zero-lamport shadows must be retained
+        bank1
+            .rc
+            .accounts
+            .accounts_db
+            .set_latest_full_snapshot_slot(1);
+
+        // slot 2 (the snapshot slot): drain Account1 back to zero
+        let zeroed_slot = 2;
+        let bank2 =
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, zeroed_slot);
+        bank2
+            .transfer(lamports_to_transfer, &key1, &mint_keypair.pubkey())
+            .unwrap();
+        assert_eq!(
+            bank2.get_balance(&key1.pubkey()),
+            0,
+            "Ensure Account1's balance is zero"
+        );
+        bank2.fill_bank_with_ticks_for_tests();
+        bank2.set_block_id(Some(Hash::default()));
+
+        // root and flush so slot 1's (funded) and slot 2's (zero-lamport) storages exist
+        bank2.squash();
+        bank2.force_flush_accounts_cache();
+
+        let accounts_db = &bank2.rc.accounts.accounts_db;
+
+        // Account1's funded version is the record at risk of resurrection
+        let mut funded_version_lamports = None;
+        let funded_storages = accounts_db.get_storages(1..2).0;
+        funded_storages
+            .first()
+            .expect("slot 1 must have a storage")
+            .accounts
+            .scan_accounts_without_data(|_offset, account| {
+                if account.pubkey() == &key1.pubkey() {
+                    funded_version_lamports = Some(account.lamports);
+                }
+            })
+            .unwrap();
+        assert_eq!(
+            funded_version_lamports,
+            Some(lamports_to_transfer),
+            "Account1's funded version must be in slot 1's storage"
+        );
+
+        let storages = accounts_db.get_storages(zeroed_slot..zeroed_slot + 1).0;
+        let storage = storages.first().expect("slot 2 must have a storage");
+        let mut tombstone_offset = None;
+        storage
+            .accounts
+            .scan_accounts_without_data(|offset, account| {
+                if account.pubkey() == &key1.pubkey() {
+                    assert_eq!(account.lamports, 0);
+                    tombstone_offset = Some(offset);
+                }
+            })
+            .unwrap();
+        let tombstone_offset =
+            tombstone_offset.expect("Account1's zero-lamport record must be in slot 2's storage");
+        storage.insert_tombstone_offsets_for_tests([tombstone_offset]);
+
+        // the archiver never observes the obsolete marks paired with the tombstone
+        funded_storages
+            .first()
+            .unwrap()
+            .clear_obsolete_accounts_for_tests();
+
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank2).unwrap();
+
+        // The rebuilt bank must observe Account1 as dead, with matching capitalization
+        let deserialized_bank = bank_from_snapshot_archives(
+            slice::from_ref(&accounts_dir),
+            &full_snapshot_archive_info,
+            None,
+            &snapshot_config,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None, // leader_for_tests
+            None,
+            false,
+            false,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            deserialized_bank, *bank2,
+            "Ensure rebuilding from the full snapshot matches the live bank"
+        );
+        assert!(
+            deserialized_bank
+                .get_account_modified_slot(&key1.pubkey())
+                .is_none(),
+            "Account1 must not be resurrected by the full snapshot archive"
+        );
+    }
+
     /// Test that cleaning works well in the edge cases of zero-lamport accounts and snapshots.
     /// Here's the scenario:
     ///
