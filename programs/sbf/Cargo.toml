@@ -191,7 +191,7 @@ borsh = { workspace = true }
 solana-account = "4.6.0"
 solana-account-info = "3.1.0"
 solana-client-traits = "4.0.0"
-solana-clock = "3.0.0"
+solana-clock = { workspace = true }
 solana-cluster-type = "3.0.0"
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true, features = [
