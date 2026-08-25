@@ -339,6 +339,7 @@ impl Tvu {
             votor_client_socket,
             votor_ingress_sender,
             votor_peer_list_receiver,
+            *cluster_info.socket_addr_space(),
             votor_rate_limit_pps(),
             cancel,
         )

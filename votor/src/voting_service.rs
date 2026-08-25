@@ -560,6 +560,7 @@ mod tests {
             client_socket,
             ingress_sender,
             peer_list_receiver,
+            SocketAddrSpace::Unspecified,
             votor_rate_limit_pps(),
             CancellationToken::new(),
         )
