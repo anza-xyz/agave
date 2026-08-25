@@ -32,6 +32,7 @@ use {
         rewards::RewardInput,
     },
     agave_votor::{
+        MAX_ALPENGLOW_PACKET_NUM,
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         peer_list_updater::PeerListService,
         slot_clock::SharedAlpenglowSlotClock,
@@ -106,8 +107,6 @@ use {
 /// In reality this means about 200K shreds since most batches are not full.
 const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
 
-/// The maximum number of alpenglow packets that can be processed in a single batch
-pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 /// The maximum number of distinct bls messages that can be sent in a single batch.
 /// This is overprovisioned to account for standstill scenarios, where a large amount
 /// of votes / certificate need to be refreshed.
@@ -520,8 +519,7 @@ impl Tvu {
                 block_commitment_cache.clone(),
                 rpc_subscriptions.clone(),
             );
-        let (own_votes_sender, own_votes_receiver) =
-            EvictingSender::new_bounded(MAX_ALPENGLOW_PACKET_NUM);
+        let (own_votes_sender, own_votes_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (footer_certs_sender, footer_certs_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
         let votor_config = VotorConfig {

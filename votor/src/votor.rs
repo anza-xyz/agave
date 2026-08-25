@@ -45,9 +45,11 @@
 //! ```
 use {
     crate::{
+        MAX_ALPENGLOW_PACKET_NUM,
         commitment::CommitmentAggregationData,
         consensus_metrics::ConsensusMetrics,
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
+        dedup_queue::DedupQueue,
         event::{
             LatestSwitchRequest, LeaderWindowInfo, RepairEventSender, VotorEventReceiver,
             VotorEventSender,
@@ -81,7 +83,6 @@ use {
         bank_forks::BankForks, bank_forks_controller::BankForksController,
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
-    solana_streamer::evicting_sender::EvictingSender,
     solana_validator_exit::Exit,
     std::{
         collections::HashMap,
@@ -139,7 +140,7 @@ pub struct VotorConfig {
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub event_sender: VotorEventSender,
-    pub own_vote_sender: EvictingSender<VoteMessage>,
+    pub own_vote_sender: Sender<VoteMessage>,
     pub own_reward_aggregates_sender: Sender<RewardInput>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
@@ -236,6 +237,11 @@ impl Votor {
             authorized_voter_keypairs,
             vote_history_storage,
             derived_bls_keypairs: HashMap::new(),
+            own_votes_to_send: DedupQueue::new(
+                own_vote_sender
+                    .capacity()
+                    .unwrap_or(MAX_ALPENGLOW_PACKET_NUM),
+            ),
             own_vote_sender,
             own_reward_sender: own_reward_aggregates_sender,
             bls_sender: bls_sender.clone(),

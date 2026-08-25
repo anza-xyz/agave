@@ -10,6 +10,7 @@ pub mod common;
 pub mod consensus_metrics;
 pub mod consensus_pool;
 mod consensus_pool_service;
+mod dedup_queue;
 pub mod event;
 mod event_handler;
 pub mod peer_list_updater;
@@ -25,6 +26,9 @@ pub mod votor;
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;
+
+/// Used to set the sizes of various Alpenglow queues and channels.
+pub const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 
 #[cfg(test)]
 mod tests {

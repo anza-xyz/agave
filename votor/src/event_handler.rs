@@ -1039,6 +1039,7 @@ mod tests {
         super::*,
         crate::{
             commitment::CommitmentAggregationData,
+            dedup_queue::DedupQueue,
             event::{LeaderWindowInfo, RepairEventReceiver},
             slot_clock::SharedAlpenglowSlotClock,
             vote_history_storage::{
@@ -1074,7 +1075,6 @@ mod tests {
             },
             installed_scheduler_pool::BankWithScheduler,
         },
-        solana_streamer::evicting_sender::EvictingSender,
         std::{
             collections::HashMap,
             fs::remove_file,
@@ -1156,7 +1156,7 @@ mod tests {
     fn setup() -> EventHandlerTestContext {
         let (bls_sender, bls_receiver) = bounded(1024);
         let (commitment_sender, commitment_receiver) = bounded(1024);
-        let (own_vote_sender, own_vote_receiver) = EvictingSender::new_bounded(1024);
+        let (own_vote_sender, own_vote_receiver) = bounded(1024);
         let (reward_aggregates_sender, reward_aggregates_receiver) = bounded(1024);
         let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
@@ -1256,6 +1256,7 @@ mod tests {
             vote_history_storage: vote_history_storage.clone(),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
+            own_votes_to_send: DedupQueue::new(1024),
             own_reward_sender: reward_aggregates_sender,
             consensus_metrics_sender,
             leader_schedule: leader_schedule_cache,

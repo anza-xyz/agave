@@ -1,11 +1,9 @@
 use {
-    crate::{
-        block_creation_loop::rewards::{
-            certs_builder::CertsBuilder, certs_requestor::CertsRequestor, msg_types::RewardRequest,
-        },
-        tvu::MAX_ALPENGLOW_PACKET_NUM,
+    crate::block_creation_loop::rewards::{
+        certs_builder::CertsBuilder, certs_requestor::CertsRequestor, msg_types::RewardRequest,
     },
     agave_bls_sigverify::rewards::RewardInput,
+    agave_votor::MAX_ALPENGLOW_PACKET_NUM,
     crossbeam_channel::{Receiver, Sender, bounded, select_biased},
     solana_gossip::cluster_info::ClusterInfo,
     solana_runtime::bank_forks::SharableBanks,
