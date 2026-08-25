@@ -45,7 +45,7 @@
 //! `Crds`, which causes the recv to fail and the thread to terminate.
 
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_plugin_host::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaContactInfoV0_0_1, ReplicaContactInfoVersions,
     },
@@ -141,7 +141,7 @@ pub fn channel(capacity: usize) -> (ContactInfoSender, ContactInfoReceiver) {
 /// completely unaffected.
 pub fn any_plugin_opts_in(plugin_manager: &GeyserPluginManager) -> bool {
     plugin_manager
-        .plugins
+        .plugins()
         .iter()
         .any(|p| p.contact_info_notifications_enabled())
 }
@@ -235,7 +235,7 @@ fn dispatch_updated(
     is_startup: bool,
 ) {
     let plugin_manager = plugin_manager.load();
-    if plugin_manager.plugins.is_empty() {
+    if plugin_manager.plugins().is_empty() {
         return;
     }
 
@@ -269,7 +269,7 @@ fn dispatch_updated(
         alpenglow: snapshot.alpenglow,
     };
 
-    for plugin in plugin_manager.plugins.iter() {
+    for plugin in plugin_manager.plugins().iter() {
         if !plugin.contact_info_notifications_enabled() {
             continue;
         }
@@ -291,11 +291,11 @@ fn dispatch_updated(
 /// other plugins continue to be called.
 fn dispatch_removed(plugin_manager: &Arc<ArcSwap<GeyserPluginManager>>, pubkey: &Pubkey) {
     let plugin_manager = plugin_manager.load();
-    if plugin_manager.plugins.is_empty() {
+    if plugin_manager.plugins().is_empty() {
         return;
     }
     let pubkey_bytes = pubkey.as_ref();
-    for plugin in plugin_manager.plugins.iter() {
+    for plugin in plugin_manager.plugins().iter() {
         if !plugin.contact_info_notifications_enabled() {
             continue;
         }
@@ -373,7 +373,7 @@ fn semantic_fingerprint(s: &ContactInfoSnapshot) -> u64 {
 mod tests {
     use {
         super::*,
-        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_host::{GeyserPluginManager, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{
             GeyserPlugin, ReplicaContactInfoVersions,
         },
@@ -498,15 +498,15 @@ mod tests {
         let live = Arc::new(AtomicUsize::new(0));
         let startup = Arc::new(AtomicUsize::new(0));
         let removed = Arc::new(AtomicUsize::new(0));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded(recording_plugin(
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager::from_plugins(
+            vec![loaded(recording_plugin(
                 "recorder",
                 true,
                 live.clone(),
                 startup.clone(),
                 removed.clone(),
             ))],
-        })));
+        ))));
 
         let pk_a = Pubkey::new_unique();
         let pk_b = Pubkey::new_unique();
@@ -532,15 +532,15 @@ mod tests {
         let live = Arc::new(AtomicUsize::new(0));
         let startup = Arc::new(AtomicUsize::new(0));
         let removed = Arc::new(AtomicUsize::new(0));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded(recording_plugin(
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager::from_plugins(
+            vec![loaded(recording_plugin(
                 "recorder",
                 true,
                 live.clone(),
                 startup.clone(),
                 removed.clone(),
             ))],
-        })));
+        ))));
 
         let pk = Pubkey::new_unique();
         let (sender, receiver) = channel(64);
@@ -564,8 +564,8 @@ mod tests {
     fn skips_disabled_plugins() {
         let enabled_count = Arc::new(AtomicUsize::new(0));
         let disabled_count = Arc::new(AtomicUsize::new(0));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager::from_plugins(
+            vec![
                 loaded(recording_plugin(
                     "enabled",
                     true,
@@ -581,7 +581,7 @@ mod tests {
                     Arc::new(AtomicUsize::new(0)),
                 )),
             ],
-        })));
+        ))));
 
         let pk = Pubkey::new_unique();
         let (sender, receiver) = channel(64);
@@ -599,35 +599,31 @@ mod tests {
 
     #[test]
     fn any_plugin_opts_in_returns_correct_value() {
-        let none_enabled = GeyserPluginManager {
-            plugins: vec![loaded(recording_plugin(
+        let none_enabled = GeyserPluginManager::from_plugins(vec![loaded(recording_plugin(
+            "off",
+            false,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        ))]);
+        assert!(!any_plugin_opts_in(&none_enabled));
+
+        let one_enabled = GeyserPluginManager::from_plugins(vec![
+            loaded(recording_plugin(
                 "off",
                 false,
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicUsize::new(0)),
-            ))],
-        };
-        assert!(!any_plugin_opts_in(&none_enabled));
-
-        let one_enabled = GeyserPluginManager {
-            plugins: vec![
-                loaded(recording_plugin(
-                    "off",
-                    false,
-                    Arc::new(AtomicUsize::new(0)),
-                    Arc::new(AtomicUsize::new(0)),
-                    Arc::new(AtomicUsize::new(0)),
-                )),
-                loaded(recording_plugin(
-                    "on",
-                    true,
-                    Arc::new(AtomicUsize::new(0)),
-                    Arc::new(AtomicUsize::new(0)),
-                    Arc::new(AtomicUsize::new(0)),
-                )),
-            ],
-        };
+            )),
+            loaded(recording_plugin(
+                "on",
+                true,
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+            )),
+        ]);
         assert!(any_plugin_opts_in(&one_enabled));
     }
 
@@ -644,9 +640,9 @@ mod tests {
             removed.clone(),
         );
         let last_removed_pubkey = plugin.last_removed_pubkey.clone();
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded(plugin)],
-        })));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager::from_plugins(
+            vec![loaded(plugin)],
+        ))));
 
         let pk = Pubkey::new_unique();
         let (sender, receiver) = channel(64);

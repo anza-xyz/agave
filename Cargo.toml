@@ -37,6 +37,7 @@ members = [
     "fs",
     "genesis",
     "genesis-utils",
+    "geyser-plugin-host",
     "geyser-plugin-interface",
     "geyser-plugin-manager",
     "gossip",
@@ -174,6 +175,7 @@ agave-bls-sigverify = { path = "bls-sigverify", version = "=4.4.0-alpha.3", feat
 agave-cpu-utils = { path = "cpu-utils", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 agave-feature-set = { path = "feature-set", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
+agave-geyser-plugin-host = { path = "geyser-plugin-host", version = "=4.4.0-alpha.3" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=4.4.0-alpha.3" }
 agave-io-uring = { path = "io-uring", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }

@@ -19,6 +19,7 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
+agave-geyser-plugin-host = { workspace = true }
 agave-geyser-plugin-interface = { workspace = true }
 arc-swap.workspace = true
 bs58 = { workspace = true }

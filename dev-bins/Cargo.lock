@@ -171,6 +171,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-geyser-plugin-host"
+version = "4.4.0-alpha.3"
+dependencies = [
+ "agave-geyser-plugin-interface",
+ "json5",
+ "libloading",
+ "log",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "4.4.0-alpha.3"
 dependencies = [
@@ -6693,6 +6705,7 @@ dependencies = [
 name = "solana-geyser-plugin-manager"
 version = "4.4.0-alpha.3"
 dependencies = [
+ "agave-geyser-plugin-host",
  "agave-geyser-plugin-interface",
  "arc-swap",
  "bs58",

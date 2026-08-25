@@ -1,6 +1,6 @@
 /// Module responsible for notifying plugins of transactions
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_plugin_host::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
     },
@@ -46,11 +46,11 @@ impl TransactionNotifier for TransactionNotifierImpl {
 
         let plugin_manager = self.plugin_manager.load();
 
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             if !plugin.transaction_notifications_enabled() {
                 continue;
             }
