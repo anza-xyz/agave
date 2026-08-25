@@ -222,7 +222,7 @@ impl Bank {
     }
 
     pub(crate) fn migrate_builtin_to_core_bpf(
-        &mut self,
+        &self,
         builtin_program_id: &Pubkey,
         config: &CoreBpfMigrationConfig,
         allow_prefunded: bool,
@@ -323,7 +323,7 @@ impl Bank {
     /// ```
     // #[expect(dead_code)] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_core_bpf_program(
-        &mut self,
+        &self,
         core_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
         datapoint_name: &'static str,
@@ -401,7 +401,7 @@ impl Bank {
     /// (state equal to [`UpgradeableLoaderState::Buffer`]).
     // #[expect(dead_code)] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
-        &mut self,
+        &self,
         loader_v2_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
         allow_prefunded: bool,
@@ -475,7 +475,7 @@ impl Bank {
     }
 
     fn update_captalization(
-        &mut self,
+        &self,
         lamports_to_burn: u64,
         lamports_to_fund: u64,
     ) -> Result<(), CoreBpfMigrationError> {
@@ -808,7 +808,7 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_migrate_builtin(upgrade_authority_address: Option<Pubkey>) {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -880,7 +880,7 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_migrate_stateless_builtin(upgrade_authority_address: Option<Pubkey>) {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -944,7 +944,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_migrate_fail_authority_mismatch() {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -994,7 +994,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_migrate_fail_verified_build_mismatch() {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1044,7 +1044,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_migrate_none_authority_with_some_buffer_authority() {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1111,7 +1111,7 @@ pub(crate) mod tests {
     }
 
     fn set_up_test_core_bpf_program(
-        bank: &mut Bank,
+        bank: &Bank,
         program_address: &Pubkey,
         upgrade_authority_address: Option<Pubkey>,
     ) {
@@ -1169,16 +1169,12 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_upgrade_core_bpf_program(upgrade_authority_address: Option<Pubkey>) {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let core_bpf_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
 
-        set_up_test_core_bpf_program(
-            &mut bank,
-            &core_bpf_program_address,
-            upgrade_authority_address,
-        );
+        set_up_test_core_bpf_program(&bank, &core_bpf_program_address, upgrade_authority_address);
 
         let test_context = TestContext::new(
             &bank,
@@ -1221,14 +1217,14 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_fail_authority_mismatch() {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
 
         let upgrade_authority_address = Some(Pubkey::new_unique());
 
-        set_up_test_core_bpf_program(&mut bank, &program_address, upgrade_authority_address);
+        set_up_test_core_bpf_program(&bank, &program_address, upgrade_authority_address);
 
         let _test_context = TestContext::new(
             &bank,
@@ -1250,12 +1246,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_none_authority_with_some_buffer_authority() {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
 
-        set_up_test_core_bpf_program(&mut bank, &program_address, None);
+        set_up_test_core_bpf_program(&bank, &program_address, None);
 
         let _test_context = TestContext::new(
             &bank,
@@ -1853,7 +1849,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_loader_v2_program_with_loader_v3_program() {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1930,7 +1926,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_loader_v2_program_with_loader_v3_program_fail_invalid_buffer() {
-        let mut bank = create_simple_test_bank(0);
+        let bank = create_simple_test_bank(0);
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -2142,7 +2138,7 @@ pub(crate) mod tests {
         let leader_id = Pubkey::new_unique();
         let GenesisConfigInfo { genesis_config, .. } =
             create_genesis_config_with_leader(0, &leader_id, LAMPORTS_PER_SOL);
-        let mut bank = Bank::new_for_tests(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
