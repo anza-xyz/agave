@@ -1596,8 +1596,8 @@ impl AccountsDb {
 
         self.report_store_stats();
 
-        // purge_slots_from_cache delays handling of pubkeys removed from the cache
-        // to avoid collisions with background threads. Handle any removals here
+        // purge_slots_from_cache delays handling of the pubkeys it removes from the cache
+        // so that the purge path never modifies the accounts index. Handle them here
         let (_, handle_pubkeys_removed_from_cache_us) =
             measure_us!(self.handle_pubkeys_removed_from_cache());
 
@@ -2990,22 +2990,17 @@ impl AccountsDb {
         // P1 purge_slot()                        | N/A
         //          |                             |
         //          V                             |
-        // P2 purge_slots_from_cache()            | map of caches/stores (removes old entry)
+        // P2 purge_slots_from_cache()            | map of caches (removes old entry)
         //          |                             |
         //          V                             |
-        // P3 purge_slots_from_cache()/           | index
-        //       remove_dead_slots_metadata()     | (removes index roots metadata for cached slot)
-        //       purge_slot_storage()/            |
-        //          purge_keys_exact()            | (removes accounts index entries)
-        //          handle_reclaims()             | (removes storage entries)
-        //      OR                                |
-        //    clean_accounts()/                   |
-        //        clean_accounts_older_than_root()| (removes existing store_id, offset for stores)
-        //                                        V
+        // P3 clean_accounts()/                   | index
+        //     handle_pubkeys_removed_from_cache()| (secondary index removal + write-through
+        //                                        |  for pubkeys that P2 removed from the cache)
         //
         // Remarks for purger: So, for any reading operations, it's a race condition
-        // where P2 happens between R1 and R2. In that case, retrying from R1 is safu.
-        // In that case, we may bail at index read retry when P3 hasn't been run
+        // where P2 happens between R1 and R2. In that case, retrying from R1 is safu,
+        // and None would be returned: a purged (unrooted) slot is never present in the
+        // primary index, so P3 (deferred to clean) is not a step readers race with.
 
         #[cfg(test)]
         {
@@ -3297,7 +3292,7 @@ impl AccountsDb {
         self.purge_slots(std::iter::once(&slot));
     }
 
-    /// Purges each slot in `removed_slots` from the write cache, and queues any pubkeys that
+    /// Purges each slot in `removed_slots` from the write cache, and defers any pubkeys that
     /// were fully removed from the write cache to clean to handle removal from the secondary
     /// index. Slots no longer present in the cache are skipped. This never touches backing
     /// storage, so it cannot delete a flushed slot's data. Returns whether any slot was actually
@@ -3326,7 +3321,7 @@ impl AccountsDb {
                     .accounts_cache
                     .remove_slot(*remove_slot)
                     .expect("slot cache entry must still be present");
-                self.queue_pubkeys_removed_from_cache(pubkeys_removed);
+                self.add_pubkeys_removed_from_cache(pubkeys_removed);
             }
         }
 
@@ -3343,10 +3338,10 @@ impl AccountsDb {
         num_cached_slots_removed > 0
     }
 
-    /// Queue any keys that were removed from the cache and need follow-up work by clean
-    /// Only required if secondary indexes are enabled, or disk index is enabled
-    fn queue_pubkeys_removed_from_cache(&self, pubkeys: Vec<Pubkey>) {
-        if self.account_indexes.is_empty() && !self.accounts_index.is_disk_index_enabled() {
+    /// Add any keys that were removed from the cache and need follow-up work by clean
+    /// Only required if secondary indexes are enabled, or write-through is enabled
+    fn add_pubkeys_removed_from_cache(&self, pubkeys: Vec<Pubkey>) {
+        if self.account_indexes.is_empty() && !self.accounts_index.should_write_through() {
             return;
         }
         self.pubkeys_removed_from_cache
@@ -3356,26 +3351,21 @@ impl AccountsDb {
     }
 
     /// For each pubkey in the list:
-    /// 1. write-through to disk if the pubkey is dirty and not present in the cache
-    /// 2. remove the pubkey from the secondary index if it is not present in either teh cache
+    /// 1. remove the pubkey from the secondary index if it is not present in either the cache
     ///    or the index
+    /// 2. write-through to disk if the pubkey is dirty and not present in the cache
     fn handle_pubkeys_removed_from_cache(&self) {
-        let queued = mem::take(&mut *self.pubkeys_removed_from_cache.lock().unwrap());
-        for pubkeys in queued {
+        let pubkeys_removed_from_cache =
+            mem::take(&mut *self.pubkeys_removed_from_cache.lock().unwrap());
+        for mut pubkeys in pubkeys_removed_from_cache {
             if !self.account_indexes.is_empty() {
                 let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys);
                 self.purge_secondary_indexes_for_dead_keys(&removed_keys);
             }
 
-            // If the pubkey hasn't been re-added to the cache in the meantime, write
-            // it to disk
-            for pubkey in pubkeys
-            {
-                if !self.accounts_cache.contains_pubkey(&pubkey)
-                {
-                    self.accounts_index.write_through_pubkeys(vec![pubkey]);
-                }
-            }
+            // Write through any pubkey that hasn't been re-added to the cache in the meantime
+            pubkeys.retain(|pubkey| !self.accounts_cache.contains_pubkey(pubkey));
+            self.accounts_index.write_through_pubkeys(pubkeys);
         }
     }
 

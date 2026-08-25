@@ -254,6 +254,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.storage.storage.is_disk_index_enabled()
     }
 
+    /// If true, dirty entries are flushed to disk once `slot_list.len() == 1`, making them
+    /// evictable
+    pub(crate) fn should_write_through(&self) -> bool {
+        self.storage.storage.should_write_through()
+    }
+
     /// Gets the index's entry for `pubkey` and applies `callback` to it
     ///
     /// If `callback`'s boolean return value is true, add this entry to the in-mem cache.
