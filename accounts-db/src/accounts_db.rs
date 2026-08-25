@@ -3366,7 +3366,16 @@ impl AccountsDb {
                 let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys);
                 self.purge_secondary_indexes_for_dead_keys(&removed_keys);
             }
-            self.accounts_index.write_through_pubkeys(pubkeys);
+
+            // If the pubkey hasn't been re-added to the cache in the meantime, write
+            // it to disk
+            for pubkey in pubkeys
+            {
+                if !self.accounts_cache.contains_pubkey(&pubkey)
+                {
+                    self.accounts_index.write_through_pubkeys(vec![pubkey]);
+                }
+            }
         }
     }
 
