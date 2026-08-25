@@ -119,6 +119,7 @@ impl ForwardAddressGetter {
         leaders.extend(leader_pubkeys.iter().filter_map(|leader_pubkey| {
             self.cluster_info
                 .lookup_contact_info(leader_pubkey, |node| node.tpu_forwards(Protocol::QUIC))?
+                .filter(|addr| self.cluster_info.socket_addr_space().check(addr))
         }));
     }
 
@@ -136,6 +137,7 @@ impl ForwardAddressGetter {
         leader_pubkeys.into_iter().find_map(|leader_pubkey| {
             self.cluster_info
                 .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(Protocol::UDP))?
+                .filter(|addr| self.cluster_info.socket_addr_space().check(addr))
         })
     }
 }
