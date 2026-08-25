@@ -5,11 +5,12 @@ use {
         block_metadata_notifier_interface::BlockMetadataNotifierArc,
         deshred_transaction_notifier::DeshredTransactionNotifierImpl,
         entry_notifier::EntryNotifierImpl,
-        geyser_plugin_manager::{GeyserPluginManager, GeyserPluginManagerRequest},
+        geyser_plugin_manager::{self, GeyserPluginManagerRequest},
         slot_status_notifier::SlotStatusNotifierImpl,
         slot_status_observer::SlotStatusObserver,
         transaction_notifier::TransactionNotifierImpl,
     },
+    agave_geyser_plugin_host::GeyserPluginHost,
     arc_swap::ArcSwap,
     crossbeam_channel::Receiver,
     log::*,
@@ -41,7 +42,7 @@ pub(crate) const ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION: Duration = Duration::fro
 /// The service managing the Geyser plugin workflow.
 pub struct GeyserPluginService {
     slot_status_observer: Option<SlotStatusObserver>,
-    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     deshred_transaction_notifier: Option<DeshredTransactionNotifierArc>,
@@ -88,9 +89,7 @@ impl GeyserPluginService {
         )>,
     ) -> Result<Self, GeyserPluginServiceError> {
         info!("Starting GeyserPluginService from config files: {geyser_plugin_config_files:?}");
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: Vec::new(),
-        })));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::default())));
 
         for geyser_plugin_config_file in geyser_plugin_config_files {
             Self::load_plugin(&plugin_manager, geyser_plugin_config_file)?;
@@ -195,10 +194,10 @@ impl GeyserPluginService {
     }
 
     fn load_plugin(
-        plugin_manager: &ArcSwap<GeyserPluginManager>,
+        plugin_manager: &ArcSwap<GeyserPluginHost>,
         geyser_plugin_config_file: &Path,
     ) -> Result<(), GeyserPluginServiceError> {
-        GeyserPluginManager::load_plugin(plugin_manager, geyser_plugin_config_file)
+        geyser_plugin_manager::load_plugin(plugin_manager, geyser_plugin_config_file)
             .map_err(|e| GeyserPluginServiceError::FailedToLoadPlugin(e.into()))?;
         Ok(())
     }
@@ -212,7 +211,7 @@ impl GeyserPluginService {
     /// contact info notifier) outside `GeyserPluginService::new`,
     /// because they require resources (such as `ClusterInfo`) that are
     /// not available at this point.
-    pub fn plugin_manager_handle(&self) -> Arc<ArcSwap<GeyserPluginManager>> {
+    pub fn plugin_manager_handle(&self) -> Arc<ArcSwap<GeyserPluginHost>> {
         self.plugin_manager.clone()
     }
 
@@ -241,9 +240,7 @@ impl GeyserPluginService {
             slot_status_observer.join()?;
         }
 
-        let empty_plugin_manager = GeyserPluginManager {
-            plugins: Vec::new(),
-        };
+        let empty_plugin_manager = GeyserPluginHost::default();
         let mut geyser_plugin_manager_ref =
             self.plugin_manager.swap(Arc::new(empty_plugin_manager));
         loop {
@@ -263,7 +260,7 @@ impl GeyserPluginService {
     }
 
     fn start_manager_rpc_handler(
-        plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+        plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
         request_receiver: Receiver<GeyserPluginManagerRequest>,
         exit: Arc<AtomicBool>,
     ) {
@@ -274,7 +271,8 @@ impl GeyserPluginService {
                     if let Ok(request) = request_receiver.recv_timeout(Duration::from_secs(5)) {
                         match request {
                             GeyserPluginManagerRequest::ListPlugins { response_sender } => {
-                                let plugin_list = plugin_manager.load().list_plugins();
+                                let plugin_list =
+                                    geyser_plugin_manager::list_plugins(&plugin_manager.load());
                                 response_sender
                                     .send(plugin_list)
                                     .expect("Admin rpc service will be waiting for response");
@@ -285,7 +283,7 @@ impl GeyserPluginService {
                                 ref config_file,
                                 response_sender,
                             } => {
-                                let reload_result = GeyserPluginManager::reload_plugin(
+                                let reload_result = geyser_plugin_manager::reload_plugin(
                                     &plugin_manager,
                                     name,
                                     config_file,
@@ -299,8 +297,10 @@ impl GeyserPluginService {
                                 ref config_file,
                                 response_sender,
                             } => {
-                                let load_result =
-                                    GeyserPluginManager::load_plugin(&plugin_manager, config_file);
+                                let load_result = geyser_plugin_manager::load_plugin(
+                                    &plugin_manager,
+                                    config_file,
+                                );
                                 response_sender
                                     .send(load_result)
                                     .expect("Admin rpc service will be waiting for response");
@@ -311,7 +311,7 @@ impl GeyserPluginService {
                                 response_sender,
                             } => {
                                 let unload_result =
-                                    GeyserPluginManager::unload_plugin(&plugin_manager, name);
+                                    geyser_plugin_manager::unload_plugin(&plugin_manager, name);
                                 response_sender
                                     .send(unload_result)
                                     .expect("Admin rpc service will be waiting for response");
@@ -332,4 +332,104 @@ impl GeyserPluginService {
 pub enum GeyserPluginServiceError {
     #[error("Failed to load a geyser plugin")]
     FailedToLoadPlugin(#[from] Box<dyn std::error::Error>),
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::geyser_plugin_manager::{TESTPLUGIN_CONFIG, TESTPLUGIN2_CONFIG},
+        crossbeam_channel::{Sender, unbounded},
+        jsonrpc_core::Result as JsonRpcResult,
+        tokio::sync::oneshot,
+    };
+
+    fn request<T>(
+        sender: &Sender<GeyserPluginManagerRequest>,
+        make_request: impl FnOnce(oneshot::Sender<JsonRpcResult<T>>) -> GeyserPluginManagerRequest,
+    ) -> JsonRpcResult<T> {
+        let (response_sender, response) = oneshot::channel();
+        sender.send(make_request(response_sender)).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(5), response)
+                    .await
+                    .unwrap()
+                    .unwrap()
+            })
+    }
+
+    #[test]
+    fn test_service_dispatches_admin_requests_and_unloads_on_shutdown() {
+        let (slot_sender, slot_receiver) = unbounded();
+        let (sender, receiver) = unbounded();
+        let exit = Arc::new(AtomicBool::new(false));
+        let service = GeyserPluginService::new_with_receiver(
+            slot_receiver,
+            true,
+            &[PathBuf::from(TESTPLUGIN_CONFIG)],
+            Some((receiver, Arc::clone(&exit))),
+        )
+        .unwrap();
+        let manager = service.plugin_manager_handle();
+        assert!(service.get_accounts_update_notifier().is_some());
+        assert!(service.get_transaction_notifier().is_some());
+        assert!(service.get_deshred_transaction_notifier().is_some());
+        assert!(service.get_entry_notifier().is_some());
+        assert!(service.get_block_metadata_notifier().is_some());
+        assert!(service.get_slot_status_notifier().is_some());
+
+        let names = request(&sender, |response_sender| {
+            GeyserPluginManagerRequest::ListPlugins { response_sender }
+        })
+        .unwrap();
+        assert_eq!(names, ["dummy"]);
+        request(&sender, |response_sender| {
+            GeyserPluginManagerRequest::UnloadPlugin {
+                name: "dummy".to_owned(),
+                response_sender,
+            }
+        })
+        .unwrap();
+        assert!(manager.load().plugins().is_empty());
+        let name = request(&sender, |response_sender| {
+            GeyserPluginManagerRequest::LoadPlugin {
+                config_file: TESTPLUGIN2_CONFIG.to_owned(),
+                response_sender,
+            }
+        })
+        .unwrap();
+        assert_eq!(name, "another_dummy");
+        request(&sender, |response_sender| {
+            GeyserPluginManagerRequest::ReloadPlugin {
+                name,
+                config_file: TESTPLUGIN_CONFIG.to_owned(),
+                response_sender,
+            }
+        })
+        .unwrap();
+        assert_eq!(manager.load().plugins()[0].name(), "dummy");
+
+        exit.store(true, Ordering::Relaxed);
+        drop(sender);
+        drop(slot_sender);
+        service.join().unwrap();
+        assert!(manager.load().plugins().is_empty());
+    }
+
+    #[test]
+    fn test_service_without_plugins_disables_notifiers() {
+        let (_sender, receiver) = unbounded();
+        let service = GeyserPluginService::new(receiver, false, &[]).unwrap();
+        assert!(service.get_accounts_update_notifier().is_none());
+        assert!(service.get_transaction_notifier().is_none());
+        assert!(service.get_deshred_transaction_notifier().is_none());
+        assert!(service.get_entry_notifier().is_none());
+        assert!(service.get_block_metadata_notifier().is_none());
+        assert!(service.get_slot_status_notifier().is_none());
+        service.join().unwrap();
+    }
 }

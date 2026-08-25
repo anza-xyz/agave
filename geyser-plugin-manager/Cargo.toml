@@ -19,16 +19,14 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
+agave-geyser-plugin-host = { workspace = true }
 agave-geyser-plugin-interface = { workspace = true }
 arc-swap.workspace = true
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
-json5 = { workspace = true }
 jsonrpc-core = { workspace = true }
 lazy-lru = { workspace = true }
-libloading = { workspace = true }
 log = { workspace = true }
-serde_json = { workspace = true }
 smallvec = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
@@ -52,9 +50,14 @@ tokio = { workspace = true }
 
 [dev-dependencies]
 agave-votor-messages = { workspace = true }
+libloading = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
+solana-keypair = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-reward-info = { workspace = true }
+solana-signer = { workspace = true }
 solana-transaction-error = { workspace = true }
 
 [lints]

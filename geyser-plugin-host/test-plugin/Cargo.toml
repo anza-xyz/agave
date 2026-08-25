@@ -1,0 +1,14 @@
+[package]
+name = "agave-geyser-plugin-host-test-plugin"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+agave-geyser-plugin-interface = { workspace = true }
+
+[lints]
+workspace = true
