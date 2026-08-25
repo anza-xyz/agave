@@ -402,8 +402,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                     OccupyIfMatches::SuccessfulInit => {}
                     OccupyIfMatches::FoundDuplicate => {
                         // pubkey is same, and it is occupied, so we found a duplicate
-                        let v_existing =
-                            elem.read_value(index, data_buckets);
+                        let v_existing = elem.read_value(index, data_buckets);
                         // someone is already allocated with this pubkey, so we found a duplicate
                         duplicates.push((ix, *v_existing.first().unwrap()));
                     }
@@ -479,8 +478,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 } else {
                     // occupied, see if the key already exists here
                     if elem.key(index) == k {
-                        let v_existing =
-                            elem.read_value(index, data_buckets);
+                        let v_existing = elem.read_value(index, data_buckets);
                         duplicates.push((i, *v_existing.first().unwrap()));
                         continue 'outer; // this 'insertion' is completed: found a duplicate entry
                     }
@@ -541,7 +539,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 } else {
                     self.stats
                         .index
-                        .index_uses_uncommon_slot_list_len_or_refcount
+                        .index_uses_uncommon_slot_list_len
                         .store(true, Ordering::Relaxed);
                     OccupiedEnum::ZeroSlots
                 },
@@ -561,7 +559,6 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             let elem_loc = multiple_slots.data_loc(current_bucket);
 
             if best_fit_bucket == bucket_ix as u64 {
-
                 // write data
                 assert!(!current_bucket.is_free(elem_loc));
                 let slice: &mut [T] = current_bucket.get_slice_mut(
@@ -635,7 +632,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 );
                 self.stats
                     .index
-                    .index_uses_uncommon_slot_list_len_or_refcount
+                    .index_uses_uncommon_slot_list_len
                     .store(true, Ordering::Relaxed);
                 success = true;
                 break;

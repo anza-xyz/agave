@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use {
-    crate::{
-        bucket_storage::{BucketCapacity, BucketOccupied, BucketStorage, Capacity, IncludeHeader},
+    crate::bucket_storage::{
+        BucketCapacity, BucketOccupied, BucketStorage, Capacity, IncludeHeader,
     },
     bv::BitVec,
     modular_bitfield::prelude::*,
@@ -30,9 +30,9 @@ impl BucketCapacity for BucketWithHeader {
 /// needs to be multiple of size_of::<u64>()
 #[derive(Copy, Clone)]
 #[repr(C)]
-struct DataBucketRefCountOccupiedHeader {
+struct DataBucketOccupiedHeader {
     /// stores occupied = OCCUPIED_OCCUPIED or OCCUPIED_FREE
-    packed_ref_count: PackedRefCount,
+    packed_header: PackedHeader,
 }
 
 #[derive(Debug, PartialEq)]
@@ -55,20 +55,20 @@ pub struct BucketWithHeader {
 impl BucketOccupied for BucketWithHeader {
     fn occupy(&mut self, element: &mut [u8], ix: usize) {
         assert!(self.is_free(element, ix));
-        let entry = get_mut_from_bytes::<DataBucketRefCountOccupiedHeader>(element);
-        entry.packed_ref_count.set_occupied(OCCUPIED_OCCUPIED);
+        let entry = get_mut_from_bytes::<DataBucketOccupiedHeader>(element);
+        entry.packed_header.set_occupied(OCCUPIED_OCCUPIED);
     }
     fn free(&mut self, element: &mut [u8], ix: usize) {
         assert!(!self.is_free(element, ix));
-        let entry = get_mut_from_bytes::<DataBucketRefCountOccupiedHeader>(element);
-        entry.packed_ref_count.set_occupied(OCCUPIED_FREE);
+        let entry = get_mut_from_bytes::<DataBucketOccupiedHeader>(element);
+        entry.packed_header.set_occupied(OCCUPIED_FREE);
     }
     fn is_free(&self, element: &[u8], _ix: usize) -> bool {
-        let entry = get_from_bytes::<DataBucketRefCountOccupiedHeader>(element);
-        entry.packed_ref_count.occupied() == OCCUPIED_FREE
+        let entry = get_from_bytes::<DataBucketOccupiedHeader>(element);
+        entry.packed_header.occupied() == OCCUPIED_FREE
     }
     fn offset_to_first_data() -> usize {
-        std::mem::size_of::<DataBucketRefCountOccupiedHeader>()
+        std::mem::size_of::<DataBucketOccupiedHeader>()
     }
     fn new(capacity: Capacity) -> Self {
         assert!(matches!(capacity, Capacity::Pow2(_)));
@@ -189,19 +189,19 @@ pub struct IndexEntryPlaceInBucket<T: 'static> {
 /// stored in the index bucket
 pub struct IndexEntry<T: Clone + Copy> {
     pub(crate) key: Pubkey, // can this be smaller if we have reduced the keys into buckets already?
-    /// depends on the contents of ref_count.slot_count_enum
     contents: SingleElementOrMultipleSlots<T>,
 }
 
-/// hold a big `RefCount` while leaving room for extra bits to be used for things like 'Occupied'
+/// store extra bits for tracking metadata such as 'Occupied'
 #[bitfield(bits = 64)]
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
-pub(crate) struct PackedRefCount {
+struct PackedHeader {
     /// whether this entry in the data file is occupied or not
-    pub(crate) occupied: B1,
+    occupied: B1,
     /// Unused
-    pub(crate) unused: B63,
+    #[skip]
+    __: B63,
 }
 
 /// required fields when an index element references the data file
@@ -419,7 +419,7 @@ impl<T: Copy + PartialEq + 'static> IndexEntryPlaceInBucket<T> {
         index_bucket: &'a BucketStorage<IndexBucket<T>>,
         data_buckets: &'a [BucketStorage<DataBucket>],
     ) -> &'a [T] {
-        let slot_list = match self.get_slot_count_enum(index_bucket) {
+        match self.get_slot_count_enum(index_bucket) {
             OccupiedEnum::ZeroSlots => {
                 // num_slots is 0. This means empty slot list
                 &[]
@@ -441,8 +441,7 @@ impl<T: Copy + PartialEq + 'static> IndexEntryPlaceInBucket<T> {
             _ => {
                 panic!("trying to read data from a free entry");
             }
-        };
-        slot_list
+        }
     }
 
     pub fn new(ix: u64) -> Self {

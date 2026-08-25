@@ -2,8 +2,8 @@
 use crate::bucket_item::BucketItem;
 use {
     crate::{
-        MaxSearch, bucket::Bucket, bucket_map::BucketMapError,
-        bucket_stats::BucketMapStats, restart::RestartableBucket,
+        MaxSearch, bucket::Bucket, bucket_map::BucketMapError, bucket_stats::BucketMapStats,
+        restart::RestartableBucket,
     },
     solana_pubkey::Pubkey,
     std::{
@@ -69,11 +69,11 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
 
     /// Get the values for Pubkey `key`
     pub fn read_value<C: for<'a> From<&'a [T]>>(&self, key: &Pubkey) -> Option<C> {
-        self.bucket.read().unwrap().as_ref().and_then(|bucket| {
-            bucket
-                .read_value(key)
-                .map(|value| C::from(value))
-        })
+        self.bucket
+            .read()
+            .unwrap()
+            .as_ref()
+            .and_then(|bucket| bucket.read_value(key).map(|value| C::from(value)))
     }
 
     pub fn bucket_len(&self) -> u64 {
@@ -145,11 +145,7 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
         bucket.as_mut().unwrap().update(key, updatefn)
     }
 
-    pub fn try_write(
-        &self,
-        pubkey: &Pubkey,
-        value: &[T],
-    ) -> Result<(), BucketMapError> {
+    pub fn try_write(&self, pubkey: &Pubkey, value: &[T]) -> Result<(), BucketMapError> {
         let mut bucket = self.get_write_bucket();
         bucket
             .as_mut()

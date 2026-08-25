@@ -1,9 +1,7 @@
 //! BucketMap is a mostly contention free concurrent map backed by MmapMut
 
 use {
-    crate::{
-        MaxSearch, bucket_api::BucketApi, bucket_stats::BucketMapStats, restart::Restart,
-    },
+    crate::{MaxSearch, bucket_api::BucketApi, bucket_stats::BucketMapStats, restart::Restart},
     solana_pubkey::Pubkey,
     std::{
         convert::TryInto,
@@ -402,10 +400,9 @@ mod tests {
 
             let gen_rand_value = || {
                 let count = rng().random_range(0..max_slot_list_len);
-                let v = (0..count)
+                (0..count)
                     .map(|x| (x as usize, x as usize /*rng().random::<usize>()*/))
-                    .collect::<Vec<_>>();
-                v
+                    .collect::<Vec<_>>()
             };
 
             let get_key = || {

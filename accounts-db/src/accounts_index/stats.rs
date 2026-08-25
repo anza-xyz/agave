@@ -463,7 +463,7 @@ impl Stats {
                     disk.map(|disk| disk
                         .stats
                         .index
-                        .index_uses_uncommon_slot_list_len_or_refcount
+                        .index_uses_uncommon_slot_list_len
                         .load(Ordering::Relaxed))
                         .unwrap_or_default(),
                     i64
