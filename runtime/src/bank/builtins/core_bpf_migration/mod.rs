@@ -529,6 +529,7 @@ pub(crate) mod tests {
         solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
+            loaded_programs::ProgramToLoad,
             program_cache_entry::{
                 ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             },
@@ -537,6 +538,8 @@ pub(crate) mod tests {
         solana_pubkey::Pubkey,
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader, system_program},
         solana_signer::Signer,
+        solana_svm::account_loader::AccountLoader,
+        solana_svm_timings::ExecuteTimings,
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
         std::{fs::File, io::Read, sync::Arc},
@@ -758,27 +761,46 @@ pub(crate) mod tests {
             );
 
             // The cache should contain the target program.
-            let program_cache = bank
-                .transaction_processor
-                .global_program_cache
-                .read()
-                .unwrap();
-            let entries = program_cache.get_flattened_entries_for_tests();
-            let target_entry = entries
-                .iter()
-                .rfind(|(program_id, _entry)| program_id == &self.target_program_address)
-                .map(|(_program_id, entry)| entry)
+            let feature_set = bank.feature_set.runtime_features();
+            let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
+                None, // account_overrides
+                bank,
+                &feature_set,
+                1,
+            );
+            let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(bank.slot());
+            let mut execute_timings = ExecuteTimings::default();
+            bank.transaction_processor.replenish_program_cache(
+                &account_loader,
+                vec![ProgramToLoad {
+                    program_id: &self.target_program_address,
+                    loader: ProgramCacheEntryOwner::LoaderV3,
+                    deployment_slot: migration_or_upgrade_slot,
+                    last_modification_slot: migration_or_upgrade_slot,
+                }],
+                &bank.transaction_processor.program_runtime_environment,
+                &mut program_cache_for_tx_batch,
+                &mut execute_timings,
+                false, // limit_to_load_programs
+                true,  // increment_usage_counter
+            );
+            let target_entry = program_cache_for_tx_batch
+                .find(&self.target_program_address)
                 .unwrap();
 
             // The target program entry should be updated.
             assert_eq!(target_entry.deployment_slot, migration_or_upgrade_slot);
-            assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot + 1);
+            if let ProgramCacheEntryType::Loaded(..) = &target_entry.program {
+                assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot + 1);
+            } else {
+                assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot);
+            }
 
             // The target program entry should be a loader v3 BPF program.
             assert_eq!(target_entry.account_owner, ProgramCacheEntryOwner::LoaderV3);
             assert_matches!(
                 target_entry.program,
-                ProgramCacheEntryType::Unloaded(..) | ProgramCacheEntryType::Loaded(..)
+                ProgramCacheEntryType::DelayVisibility | ProgramCacheEntryType::Loaded(..)
             );
         }
     }
