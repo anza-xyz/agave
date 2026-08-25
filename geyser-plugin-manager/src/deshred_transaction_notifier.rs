@@ -1,6 +1,6 @@
 /// Module responsible for notifying plugins of transactions when deshredded
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaDeshredTransactionInfoV2, ReplicaDeshredTransactionInfoVersions,
         ReplicaDeshredUpdateParentInfo, ReplicaDeshredUpdateParentInfoVersions,
@@ -23,9 +23,9 @@ use {
 /// at validator startup. CompletedDataSetsService invokes the notify_deshred_transaction method
 /// when entries are formed from shreds. The implementation in turn invokes the
 /// notify_deshred_transaction of each plugin enabled with deshred transaction notification
-/// managed by the GeyserPluginManager.
+/// managed by the GeyserPluginHost.
 pub(crate) struct DeshredTransactionNotifierImpl {
-    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
 }
 
 impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
@@ -41,7 +41,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
     ) {
         let plugin_manager = self.plugin_manager.load();
 
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
@@ -56,7 +56,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             completed_data_set_ending_shred_index_exclusive,
         };
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             if !plugin.deshred_transaction_notifications_enabled() {
                 continue;
             }
@@ -96,7 +96,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             parent_slot: update_parent.parent_slot,
             parent_block_id: &update_parent.parent_block_id,
         };
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             if plugin.deshred_transaction_notifications_enabled()
                 && let Err(err) = plugin.notify_deshred_update_parent(
                     ReplicaDeshredUpdateParentInfoVersions::V0_0_1(&update_parent_info),
@@ -112,7 +112,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
 }
 
 impl DeshredTransactionNotifierImpl {
-    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginHost>>) -> Self {
         Self { plugin_manager }
     }
 }
