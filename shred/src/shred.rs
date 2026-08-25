@@ -1,4 +1,4 @@
-//! The shred itself: [`Shred<K, S, P>`](Shred), the transitions between its states, and the
+//! The shred itself: [`Shred<K, S>`](Shred), the transitions between its states, and the
 //! accessors each state and kind allows.
 //!
 //! The states and what they mean are in [`state`](crate::state); the sections the accessors read
@@ -17,7 +17,7 @@ use {
         kind::{Code, Data, ShredLayout},
         merkle,
         policy::{self, AdmissionPolicy},
-        provenance::{Provenance, ProvenanceKind, Received, SelfProduced, Stored, Unspecified},
+        provenance::{Provenance, ShredSource},
         shred_variant::{ShredKind, ShredVariant},
         state::{Parsed, ShredState, Verified},
         view::{self, AnyShredView, ShredView, ShredViewMut},
@@ -47,19 +47,22 @@ pub mod merkle_tree;
 /// The error the shared [`merkle_tree`] file raises, under the name it knows it by.
 pub use crate::error::MerkleError as Error;
 
-/// A shred of kind `K` that has reached validation state `S`, having arrived by way of `P`.
+/// A shred of kind `K` that has reached validation state `S`.
 ///
 /// The bytes are held as [`Bytes`], so moving a shred between pipeline stages and cloning it for
 /// several consumers costs a refcount rather than a copy. Only the header scalars are materialized;
 /// the signature, Merkle root, proof and retransmitter signature are handed out as references into
 /// the bytes.
 ///
-/// `S` and `P` are uninhabited markers, so all three parameters cost nothing at runtime.
-pub struct Shred<K: ShredLayout, S: ShredState, P: Provenance> {
+/// `S` is an uninhabited marker, so both parameters cost nothing at runtime.
+/// [`Provenance`](crate::Provenance) is the one thing about a shred that is neither on the wire nor
+/// a type: see its documentation for why.
+pub struct Shred<K: ShredLayout, S: ShredState> {
     bytes: Bytes,
     common: CommonHeader,
     header: K::Header,
-    _state: PhantomData<(S, P)>,
+    provenance: Provenance,
+    _state: PhantomData<S>,
 }
 
 /// Reads `bytes` as a shred of whichever kind its variant byte selects, splitting off a trailing
@@ -74,22 +77,25 @@ pub struct Shred<K: ShredLayout, S: ShredState, P: Provenance> {
 /// [`AnyShred::into_data`] or [`AnyShred::into_code`], which moves the kind into the type for every
 /// stage that follows, so the match the variant byte forces is the only one the read path pays.
 ///
-/// Wire bytes are the one thing only a [`Received`] shred has, so this is where that provenance
-/// enters and the only place it can.
-pub fn parse(bytes: Bytes) -> Result<(AnyShred<Parsed, Received>, Option<Nonce>), ParseError> {
+/// Wire bytes are the one thing only a received shred has, so `source` is where a provenance of
+/// [`Provenance::Received`] enters and the only place it can.
+pub fn parse(
+    bytes: Bytes,
+    source: ShredSource,
+) -> Result<(AnyShred<Parsed>, Option<Nonce>), ParseError> {
     match view::peek_variant(&bytes)?.shred_kind() {
         ShredKind::Data => {
-            let (shred, nonce) = Shred::<Data, Parsed, Received>::parse(bytes)?;
+            let (shred, nonce) = Shred::<Data, Parsed>::parse(bytes, source)?;
             Ok((shred.into(), nonce))
         }
         ShredKind::Code => {
-            let (shred, nonce) = Shred::<Code, Parsed, Received>::parse(bytes)?;
+            let (shred, nonce) = Shred::<Code, Parsed>::parse(bytes, source)?;
             Ok((shred.into(), nonce))
         }
     }
 }
 
-impl<K: ShredLayout> Shred<K, Parsed, Received> {
+impl<K: ShredLayout> Shred<K, Parsed> {
     /// Reads `bytes` as a shred of this specific kind, followed by an optional repair nonce.
     ///
     /// Every check the bytes have to pass is [`ShredView::read_packet`]'s; all this adds is keeping
@@ -97,7 +103,10 @@ impl<K: ShredLayout> Shred<K, Parsed, Received> {
     /// [`ParseError::UnexpectedKind`] if the variant byte selects the other kind, which is what a
     /// caller that knew the kind in advance (from a kind-specific blockstore column, say) sees when
     /// that expectation was wrong.
-    pub fn parse(mut bytes: Bytes) -> Result<(Self, Option<Nonce>), ParseError> {
+    pub fn parse(
+        mut bytes: Bytes,
+        source: ShredSource,
+    ) -> Result<(Self, Option<Nonce>), ParseError> {
         // The view borrows from `bytes`, so it has to go out of scope before the buffer is trimmed.
         let (common, header, nonce) = {
             let (view, nonce) = ShredView::<K>::read_wire_packet(&bytes)?;
@@ -110,6 +119,7 @@ impl<K: ShredLayout> Shred<K, Parsed, Received> {
             bytes,
             common,
             header,
+            provenance: Provenance::Received(source),
             _state: PhantomData,
         };
         Ok((shred, nonce))
@@ -125,13 +135,14 @@ impl<K: ShredLayout> Shred<K, Parsed, Received> {
     /// of which hash anything, so a shred they reject never reaches the one hash of the leaf, the
     /// six to climb the proof, and the ed25519 verification.
     ///
-    /// Only shreds that arrived over the network reach here. The other provenances establish their
+    /// Only shreds that arrived over the network reach here: [`parse`] is the only way to a
+    /// [`Parsed`] shred that was not read out of a store. The other provenances establish their
     /// signature by construction, each through its own constructor.
     pub fn verify(
         self,
         policy: &AdmissionPolicy,
         leader: &Pubkey,
-    ) -> Result<Shred<K, Verified, Received>, Reject> {
+    ) -> Result<Shred<K, Verified>, Reject> {
         self.check_admissible(policy)?;
         let root = self.merkle_root()?;
         if !self.signature().verify(leader.as_ref(), root.as_ref()) {
@@ -163,19 +174,29 @@ impl<K: ShredLayout> Shred<K, Parsed, Received> {
     }
 }
 
-/// The ways into a state that do not check a signature, each pinned to the one provenance whose
-/// bytes justify it.
-impl<K: ShredLayout> Shred<K, Verified, SelfProduced> {
+/// The ways into a state that do not check a signature, each naming the provenance whose bytes
+/// justify it.
+impl<K: ShredLayout> Shred<K, Verified> {
     /// Takes bytes this node assembled and signed itself as a verified shred.
     ///
     /// The leader signature is good by construction: it was produced here, over a root computed
     /// from these bytes, so the shred starts where the read path ends up.
     pub(crate) fn assume_built(bytes: Bytes) -> Result<Self, ParseError> {
-        Self::from_trusted_bytes(bytes)
+        Self::from_trusted_bytes(bytes, Provenance::BlockProduction)
+    }
+
+    /// Takes bytes erasure recovery rebuilt as a verified shred.
+    ///
+    /// What the leader signed is the Merkle root of the whole FEC set, and
+    /// [`recover`](crate::recover) only hands bytes here once the tree over the rebuilt batch hashes
+    /// to the root the surviving shreds carry. The signature copied into these bytes is therefore
+    /// the leader's over them, checked the same way a received shred's was.
+    pub(crate) fn assume_recovered(bytes: Bytes) -> Result<Self, ParseError> {
+        Self::from_trusted_bytes(bytes, Provenance::Recovered)
     }
 }
 
-impl<K: ShredLayout, S: ShredState> Shred<K, S, Stored> {
+impl<K: ShredLayout, S: ShredState> Shred<K, S> {
     /// Takes bytes read back from the blockstore, in whatever state the caller needs them.
     ///
     /// The blockstore only stores shreds whose signature was checked before they were inserted, and
@@ -187,18 +208,16 @@ impl<K: ShredLayout, S: ShredState> Shred<K, S, Stored> {
     /// a signature check to learn what is already known. The state is whatever the reading code
     /// needs, and inference picks it from how the shred is used.
     pub fn from_blockstore(bytes: Bytes) -> Result<Self, ParseError> {
-        Self::from_trusted_bytes(bytes)
+        Self::from_trusted_bytes(bytes, Provenance::Blockstore)
     }
-}
 
-impl<K: ShredLayout, S: ShredState, P: Provenance> Shred<K, S, P> {
-    /// Shared body of the constructors above. Private, so [`Received`], which has to earn its state
-    /// by passing the checks, cannot reach it.
+    /// Shared body of the constructors above. Private, so a shred off a socket, which has to earn
+    /// its state by passing the checks, cannot reach it.
     ///
     /// The bytes are put through [`ShredView::read_exact`], which is what makes the reader's rules
     /// the writer's test: a misplaced section surfaces as the [`ParseError`] a receiver would have
     /// raised.
-    fn from_trusted_bytes(bytes: Bytes) -> Result<Self, ParseError> {
+    fn from_trusted_bytes(bytes: Bytes, provenance: Provenance) -> Result<Self, ParseError> {
         let (common, header) = {
             let view = ShredView::<K>::read_exact(&bytes)?;
             (view.common, view.header)
@@ -207,36 +226,40 @@ impl<K: ShredLayout, S: ShredState, P: Provenance> Shred<K, S, P> {
             bytes,
             common,
             header,
+            provenance,
             _state: PhantomData,
         })
     }
 }
 
-impl<K: ShredLayout> Shred<K, Verified, Received> {
+impl<K: ShredLayout> Shred<K, Verified> {
     /// Signs the Merkle root as the retransmitter in the Turbine tree, leaving the leader's
     /// signature intact.
     ///
     /// Reachable only from [`Verified`], so a shred can never be resigned on this node's authority
-    /// before its leader signature was checked, and only for a [`Received`] provenance: a node
-    /// retransmits what it was sent, and the shreds it produced itself go out with the
-    /// retransmitter signature they were built with, which is all zeroes.
+    /// before its leader signature was checked. The other half of the rule is a value: a node
+    /// retransmits what a peer sent it, so a shred of any other provenance is rejected with
+    /// [`Reject::NotReceived`]. Shreds this node produced itself go out with the all-zero
+    /// retransmitter signature they were built with.
     ///
     /// Fails with [`Reject::NotResignable`] when the variant has no room for a retransmitter
-    /// signature, which depends on a wire bit and so cannot be settled by the type system. The
-    /// shred is dropped in that case rather than handed back: a variant with nowhere to put a
-    /// retransmitter signature has no business on the retransmit path.
+    /// signature. The shred is dropped in either case rather than handed back: neither a variant
+    /// with nowhere to put a retransmitter signature nor a shred with no upstream to name has any
+    /// business on the retransmit path.
     ///
     /// The retransmitter signature covers the same Merkle root the leader signed, which is what
     /// lets a downstream node check it without knowing anything about this shred's contents.
     ///
     /// The state does not change. A separate `Resigned` state would record something no consumer
-    /// gates on, and would force a widening on the insert path, which takes verified shreds of
-    /// several provenances and does not care whether any of them was retransmit-signed. What does
-    /// carry weight, that a shred is never resigned before its leader signature was checked, is held
-    /// by this method living on [`Verified`]. The cost is that resigning twice is a logic bug rather
-    /// than a compile error; the second write is idempotent under the same key, so it wastes work
-    /// and forges nothing.
+    /// gates on, and the insert path, which takes verified shreds of several provenances, does not
+    /// care whether any of them was retransmit-signed. What does carry weight, that a shred is never
+    /// resigned before its leader signature was checked, is held by this method living on
+    /// [`Verified`]. The cost is that resigning twice is a logic bug rather than a compile error;
+    /// the second write is idempotent under the same key, so it wastes work and forges nothing.
     pub fn resign(mut self, keypair: &Keypair) -> Result<Self, Reject> {
+        if !self.provenance.is_received() {
+            return Err(Reject::NotReceived);
+        }
         if self.view().retransmitter_signature.is_none() {
             return Err(Reject::NotResignable);
         }
@@ -254,11 +277,11 @@ impl<K: ShredLayout> Shred<K, Verified, Received> {
 }
 
 /// Accessors available in every state, whatever the shred's provenance.
-impl<K: ShredLayout, S: ShredState, P: Provenance> Shred<K, S, P> {
-    /// Where this shred came from, as a value.
+impl<K: ShredLayout, S: ShredState> Shred<K, S> {
+    /// Where this shred came from.
     #[inline]
-    pub const fn provenance(&self) -> ProvenanceKind {
-        P::KIND
+    pub const fn provenance(&self) -> Provenance {
+        self.provenance
     }
 
     /// The header fields common to both kinds.
@@ -371,36 +394,21 @@ impl<K: ShredLayout, S: ShredState, P: Provenance> Shred<K, S, P> {
         self.bytes
     }
 
-    /// Drops the record of where this shred came from, so that shreds of different provenance can
-    /// be held together.
-    ///
-    /// One-way, and it grants nothing: the result can be read and no more. Blockstore insertion is
-    /// the path that needs it, taking received and recovered shreds in one batch and neither
-    /// verifying nor resigning them. Anything that reports the origin has to read
-    /// [`provenance`](Self::provenance) before widening, because nothing puts it back.
-    #[inline]
-    pub fn forget_provenance(self) -> Shred<K, S, Unspecified> {
-        self.retag()
-    }
-
-    fn transition<T: ShredState>(self) -> Shred<K, T, P> {
-        self.retag()
-    }
-
-    /// Rewrites the two phantom parameters. Private: the transitions and the widenings above are
-    /// the only ones whose target is sound.
-    fn retag<T: ShredState, Q: Provenance>(self) -> Shred<K, T, Q> {
+    /// Rewrites the state parameter. Private: the transitions above are the only ones whose target
+    /// is sound.
+    fn transition<T: ShredState>(self) -> Shred<K, T> {
         Shred {
             bytes: self.bytes,
             common: self.common,
             header: self.header,
+            provenance: self.provenance,
             _state: PhantomData,
         }
     }
 }
 
 /// Accessors that only exist for data shreds.
-impl<S: ShredState, P: Provenance> Shred<Data, S, P> {
+impl<S: ShredState> Shred<Data, S> {
     /// Distance in slots back to this shred's parent.
     #[inline]
     pub fn parent_offset(&self) -> u16 {
@@ -438,7 +446,7 @@ impl<S: ShredState, P: Provenance> Shred<Data, S, P> {
 }
 
 /// Accessors that only exist for code shreds.
-impl<S: ShredState, P: Provenance> Shred<Code, S, P> {
+impl<S: ShredState> Shred<Code, S> {
     /// Number of data shreds in this shred's FEC set.
     #[inline]
     pub fn num_data_shreds(&self) -> u16 {
@@ -466,29 +474,30 @@ impl<S: ShredState, P: Provenance> Shred<Code, S, P> {
     }
 }
 
-impl<K: ShredLayout, S: ShredState, P: Provenance> Clone for Shred<K, S, P> {
+impl<K: ShredLayout, S: ShredState> Clone for Shred<K, S> {
     fn clone(&self) -> Self {
         Self {
             bytes: self.bytes.clone(),
             common: self.common,
             header: self.header,
+            provenance: self.provenance,
             _state: PhantomData,
         }
     }
 }
 
-impl<K: ShredLayout, S: ShredState, P: Provenance> fmt::Debug for Shred<K, S, P> {
+impl<K: ShredLayout, S: ShredState> fmt::Debug for Shred<K, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Shred")
             .field("state", &S::NAME)
-            .field("provenance", &P::NAME)
+            .field("provenance", &self.provenance)
             .field("common", &self.common)
             .field("header", &self.header)
             .finish_non_exhaustive()
     }
 }
 
-impl<K: ShredLayout, S: ShredState, P: Provenance> AsRef<[u8]> for Shred<K, S, P> {
+impl<K: ShredLayout, S: ShredState> AsRef<[u8]> for Shred<K, S> {
     #[inline]
     fn as_ref(&self) -> &[u8] {
         &self.bytes
@@ -512,28 +521,30 @@ impl<K: ShredLayout, S: ShredState, P: Provenance> AsRef<[u8]> for Shred<K, S, P
 ///
 /// Recovery is where they come apart again, which is what [`into_data`](Self::into_data) and
 /// [`into_code`](Self::into_code) are for. Code that works on a shred rather than moving it should
-/// take a [`Shred<K, S, P>`](Shred).
-pub struct AnyShred<S: ShredState, P: Provenance> {
+/// take a [`Shred<K, S>`](Shred).
+pub struct AnyShred<S: ShredState> {
     bytes: Bytes,
     common: CommonHeader,
     header: AnyHeader,
-    _state: PhantomData<(S, P)>,
+    provenance: Provenance,
+    _state: PhantomData<S>,
 }
 
-impl<K: ShredLayout, S: ShredState, P: Provenance> From<Shred<K, S, P>> for AnyShred<S, P> {
+impl<K: ShredLayout, S: ShredState> From<Shred<K, S>> for AnyShred<S> {
     /// Erasing the kind is infallible and costs ~nothing.
     #[inline]
-    fn from(shred: Shred<K, S, P>) -> Self {
+    fn from(shred: Shred<K, S>) -> Self {
         Self {
             bytes: shred.bytes,
             common: shred.common,
             header: shred.header.into(),
+            provenance: shred.provenance,
             _state: PhantomData,
         }
     }
 }
 
-impl<S: ShredState, P: Provenance> AnyShred<S, P> {
+impl<S: ShredState> AnyShred<S> {
     #[inline]
     pub const fn kind(&self) -> ShredKind {
         self.common.variant.shred_kind()
@@ -543,12 +554,13 @@ impl<S: ShredState, P: Provenance> AnyShred<S, P> {
     ///
     /// Returns the shred on mismatch rather than dropping it, because guessing wrong about the kind
     /// says nothing against the shred, and a caller splitting a mixed batch needs both halves.
-    pub fn into_data(self) -> Result<DataShred<S, P>, Self> {
+    pub fn into_data(self) -> Result<DataShred<S>, Self> {
         match self.header {
             AnyHeader::Data(header) => Ok(Shred {
                 bytes: self.bytes,
                 common: self.common,
                 header,
+                provenance: self.provenance,
                 _state: PhantomData,
             }),
             AnyHeader::Code(_) => Err(self),
@@ -556,12 +568,13 @@ impl<S: ShredState, P: Provenance> AnyShred<S, P> {
     }
 
     /// See [`into_data`](Self::into_data).
-    pub fn into_code(self) -> Result<CodeShred<S, P>, Self> {
+    pub fn into_code(self) -> Result<CodeShred<S>, Self> {
         match self.header {
             AnyHeader::Code(header) => Ok(Shred {
                 bytes: self.bytes,
                 common: self.common,
                 header,
+                provenance: self.provenance,
                 _state: PhantomData,
             }),
             AnyHeader::Data(_) => Err(self),
@@ -570,12 +583,13 @@ impl<S: ShredState, P: Provenance> AnyShred<S, P> {
 
     /// Borrows the shred as a typed one, for a caller that needs a kind-specific accessor and not
     /// ownership. Costs a refcount on the bytes and a header copy.
-    pub fn as_data(&self) -> Option<DataShred<S, P>> {
+    pub fn as_data(&self) -> Option<DataShred<S>> {
         match self.header {
             AnyHeader::Data(header) => Some(Shred {
                 bytes: self.bytes.clone(),
                 common: self.common,
                 header,
+                provenance: self.provenance,
                 _state: PhantomData,
             }),
             AnyHeader::Code(_) => None,
@@ -583,22 +597,23 @@ impl<S: ShredState, P: Provenance> AnyShred<S, P> {
     }
 
     /// See [`as_data`](Self::as_data).
-    pub fn as_code(&self) -> Option<CodeShred<S, P>> {
+    pub fn as_code(&self) -> Option<CodeShred<S>> {
         match self.header {
             AnyHeader::Code(header) => Some(Shred {
                 bytes: self.bytes.clone(),
                 common: self.common,
                 header,
+                provenance: self.provenance,
                 _state: PhantomData,
             }),
             AnyHeader::Data(_) => None,
         }
     }
 
-    /// Where this shred came from, as a value.
+    /// Where this shred came from.
     #[inline]
-    pub const fn provenance(&self) -> ProvenanceKind {
-        P::KIND
+    pub const fn provenance(&self) -> Provenance {
+        self.provenance
     }
 
     /// The header fields common to both kinds.
@@ -720,47 +735,32 @@ impl<S: ShredState, P: Provenance> AnyShred<S, P> {
     pub fn into_bytes(self) -> Bytes {
         self.bytes
     }
-
-    /// Drops the record of where this shred came from, so that shreds of different provenance can
-    /// be held together.
-    ///
-    /// Blockstore insert is what needs this, and it needs the erased shred too: it holds shreds that
-    /// just arrived, shreds already stored and shreds rebuilt by erasure recovery, of both kinds, in
-    /// one pipeline that only reads them. See [`Shred::forget_provenance`].
-    #[inline]
-    pub fn forget_provenance(self) -> AnyShred<S, Unspecified> {
-        AnyShred {
-            bytes: self.bytes,
-            common: self.common,
-            header: self.header,
-            _state: PhantomData,
-        }
-    }
 }
 
-impl<S: ShredState, P: Provenance> Clone for AnyShred<S, P> {
+impl<S: ShredState> Clone for AnyShred<S> {
     fn clone(&self) -> Self {
         Self {
             bytes: self.bytes.clone(),
             common: self.common,
             header: self.header,
+            provenance: self.provenance,
             _state: PhantomData,
         }
     }
 }
 
-impl<S: ShredState, P: Provenance> fmt::Debug for AnyShred<S, P> {
+impl<S: ShredState> fmt::Debug for AnyShred<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AnyShred")
             .field("state", &S::NAME)
-            .field("provenance", &P::NAME)
+            .field("provenance", &self.provenance)
             .field("common", &self.common)
             .field("header", &self.header)
             .finish_non_exhaustive()
     }
 }
 
-impl<S: ShredState, P: Provenance> AsRef<[u8]> for AnyShred<S, P> {
+impl<S: ShredState> AsRef<[u8]> for AnyShred<S> {
     #[inline]
     fn as_ref(&self) -> &[u8] {
         &self.bytes
@@ -768,9 +768,9 @@ impl<S: ShredState, P: Provenance> AsRef<[u8]> for AnyShred<S, P> {
 }
 
 /// Convenience aliases used by callers that only ever hold one kind.
-pub type DataShred<S, P> = Shred<Data, S, P>;
+pub type DataShred<S> = Shred<Data, S>;
 /// See [`DataShred`].
-pub type CodeShred<S, P> = Shred<Code, S, P>;
+pub type CodeShred<S> = Shred<Code, S>;
 
 #[cfg(all(test, feature = "dev-context-only-utils"))]
 mod tests {
@@ -794,7 +794,7 @@ mod tests {
 
     #[test]
     fn parse_fixture_matches_expected_sections() {
-        let (parsed, nonce) = parse(fixtures::DATA_SHRED).unwrap();
+        let (parsed, nonce) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
         assert_matches!(nonce, None);
         let shred = parsed
             .into_data()
@@ -845,7 +845,7 @@ mod tests {
 
     #[test]
     fn cascade_reaches_verified() {
-        let (parsed, _) = parse(fixtures::DATA_SHRED).unwrap();
+        let (parsed, _) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
         let shred = parsed
             .into_data()
             .expect("the fixture is a data shred, not a code shred");
@@ -855,7 +855,7 @@ mod tests {
         assert_eq!(shred.data().unwrap().len(), 963);
 
         // The same shred against any other signer.
-        let (parsed, _) = parse(fixtures::DATA_SHRED).unwrap();
+        let (parsed, _) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
         let shred = parsed
             .into_data()
             .expect("the fixture is a data shred, not a code shred");
@@ -878,7 +878,7 @@ mod tests {
                 ShredVariant::MerkleDataResigned,
             ),
         ] {
-            let (parsed, _) = parse(bytes).unwrap();
+            let (parsed, _) = parse(bytes, ShredSource::Turbine).unwrap();
             let shred = parsed
                 .into_data()
                 .unwrap_or_else(|_| panic!("{variant:?} is a data shred, not a code shred"));
@@ -896,7 +896,7 @@ mod tests {
                 ShredVariant::MerkleCodeResigned,
             ),
         ] {
-            let (parsed, _) = parse(bytes).unwrap();
+            let (parsed, _) = parse(bytes, ShredSource::Turbine).unwrap();
             let shred = parsed
                 .into_code()
                 .unwrap_or_else(|_| panic!("{variant:?} is a code shred, not a data shred"));
@@ -912,7 +912,7 @@ mod tests {
     }
 
     /// A verified shred may be resigned exactly when its variant reserves room for the signature.
-    fn assert_resignable<K: ShredLayout>(shred: Shred<K, Verified, Received>, resignable: bool) {
+    fn assert_resignable<K: ShredLayout>(shred: Shred<K, Verified>, resignable: bool) {
         let resigned = shred.resign(&fixtures::leader_keypair());
         if resignable {
             let resigned = resigned.expect("a resigned variant reserves room for the signature");
@@ -933,7 +933,7 @@ mod tests {
         let shred = fixtures::DATA_SHRED;
         for len in 0..shred.len() {
             assert_matches!(
-                parse(shred.slice(..len)),
+                parse(shred.slice(..len), ShredSource::Turbine),
                 Err(ParseError::TooShort { .. }),
                 "a {len}-byte prefix of a 1203-byte shred must be rejected as too short"
             );
@@ -949,7 +949,7 @@ mod tests {
         let mut bytes = fixtures::DATA_SHRED.to_vec();
         bytes[OFFSET_OF_VARIANT] = byte;
         assert_matches!(
-            parse(Bytes::from(bytes)),
+            parse(Bytes::from(bytes), ShredSource::Turbine),
             Err(ParseError::InvalidVariant(found)) if found == byte
         );
     }
@@ -958,12 +958,15 @@ mod tests {
     fn trailing_repair_nonce_is_split_off() {
         let mut bytes = fixtures::DATA_SHRED.to_vec();
         bytes.extend_from_slice(&0x0a0b_0c0du32.to_le_bytes());
-        let (_, nonce) = parse(Bytes::from(bytes.clone())).unwrap();
+        let (_, nonce) = parse(Bytes::from(bytes.clone()), ShredSource::Repair).unwrap();
         assert_eq!(nonce, Some(0x0a0b_0c0d));
 
         // Anything else trailing the shred is neither a nonce nor padding we should accept.
         bytes.push(0);
-        assert_matches!(parse(Bytes::from(bytes)), Err(ParseError::TrailingBytes(5)));
+        assert_matches!(
+            parse(Bytes::from(bytes), ShredSource::Turbine),
+            Err(ParseError::TrailingBytes(5))
+        );
     }
 
     #[test_case(
@@ -983,7 +986,7 @@ mod tests {
         Reject::BadParentOffset { slot: fixtures::FIXTURE_SLOT, parent_offset: 1 }
     )]
     fn admit_rejects_out_of_policy(policy: AdmissionPolicy, expected: Reject) {
-        let (parsed, _) = parse(fixtures::DATA_SHRED).unwrap();
+        let (parsed, _) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
         let shred = parsed
             .into_data()
             .expect("the fixture is a data shred, not a code shred");
@@ -996,7 +999,7 @@ mod tests {
     #[test]
     fn parsing_as_the_wrong_kind_is_rejected() {
         assert_matches!(
-            Shred::<Code, Parsed, Received>::parse(fixtures::DATA_SHRED),
+            Shred::<Code, Parsed>::parse(fixtures::DATA_SHRED, ShredSource::Turbine),
             Err(ParseError::UnexpectedKind {
                 expected: ShredKind::Code,
                 found: ShredKind::Data,

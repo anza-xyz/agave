@@ -6,8 +6,8 @@ use {
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
     rand::{Rng, SeedableRng, rngs::StdRng},
     solana_shred::{
-        AnyShred, Code, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed, Received,
-        ShredFlags, ShredVariant, ShredViewMut,
+        AnyShred, Code, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed, ShredFlags,
+        ShredSource, ShredVariant, ShredViewMut,
         kind::ShredLayout,
         parse,
         wire_format::{OFFSET_OF_VARIANT, SIZE_OF_NONCE},
@@ -38,7 +38,7 @@ fn bench_view(c: &mut Criterion) {
     let data: Vec<_> = random_shreds::<Data>(ShredVariant::MerkleData)
         .into_iter()
         .map(|bytes| {
-            DataShred::<Parsed, Received>::parse(bytes)
+            DataShred::<Parsed>::parse(bytes, ShredSource::Turbine)
                 .expect("random bytes with a valid variant byte parse as a shred")
                 .0
         })
@@ -46,7 +46,7 @@ fn bench_view(c: &mut Criterion) {
     let code: Vec<_> = random_shreds::<Code>(ShredVariant::MerkleCode)
         .into_iter()
         .map(|bytes| {
-            CodeShred::<Parsed, Received>::parse(bytes)
+            CodeShred::<Parsed>::parse(bytes, ShredSource::Turbine)
                 .expect("random bytes with a valid variant byte parse as a shred")
                 .0
         })
@@ -54,8 +54,7 @@ fn bench_view(c: &mut Criterion) {
 
     // The same data shreds with the kind erased, so the two `view()` rows are directly comparable:
     // the erased one pays for a match on the header discriminant before it can pick a `K`.
-    let erased: Vec<AnyShred<Parsed, Received>> =
-        data.iter().cloned().map(AnyShred::from).collect();
+    let erased: Vec<AnyShred<Parsed>> = data.iter().cloned().map(AnyShred::from).collect();
 
     let mut group = c.benchmark_group("shred_view");
     group.throughput(Throughput::Elements(SHREDS as u64));
@@ -153,8 +152,11 @@ fn bench_parse(c: &mut Criterion) {
         b.iter(|| {
             for packet in &packets {
                 // Cloning `Bytes` is a refcount bump, so this measures the parse.
-                black_box(DataShred::<Parsed, Received>::parse(packet.clone()))
-                    .expect("the packets were built to parse");
+                black_box(DataShred::<Parsed>::parse(
+                    packet.clone(),
+                    ShredSource::Turbine,
+                ))
+                .expect("the packets were built to parse");
             }
         })
     });
@@ -163,7 +165,8 @@ fn bench_parse(c: &mut Criterion) {
     group.bench_function("erased", |b| {
         b.iter(|| {
             for packet in &packets {
-                black_box(parse(packet.clone())).expect("the packets were built to parse");
+                black_box(parse(packet.clone(), ShredSource::Turbine))
+                    .expect("the packets were built to parse");
             }
         })
     });

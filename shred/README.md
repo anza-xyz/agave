@@ -240,64 +240,57 @@ Callers who know the kind from where the bytes came from, such as a kind-specifi
 still get a typed entry point, whose kind mismatch means corruption rather than a malformed packet.
 That mismatch is returned as an error for the caller to interpret as appropriate.
 
-### Why provenance is a type parameter
+### Why provenance is a value and not a type parameter
 
 Where a shred came from is not on the wire, it is what this node knows about how the bytes arrived.
 There are four origins: received from a peer, rebuilt by erasure recovery, read back from the
-blockstore, or built here. A shred keeps the one it was born with for as long as it exists. It
-decides which door into a state is open, which is why it belongs in the type rather than in a field.
+blockstore, or built here. A shred keeps the one it was born with for as long as it exists, and
+`Provenance` is the field that records it.
 
 Four things can put a shred in `Verified`, and they are not interchangeable. A received shred earns
 it by recomputing the Merkle root and checking the leader's signature. A recovered shred has it
 because recovery runs on a batch whose root was verified before anything was rebuilt from it. A
 shred out of the blockstore has it because nothing is stored there unverified. A shred this node
-built has it by construction. Without provenance in the type, the three that skip the signature check
-are one function with a warning in its doc comment, and nothing stops it being called on a packet
-from a stranger. With it, each is a separate constructor that a shred of the wrong provenance cannot
-name.
+built has it by construction. Each is a separate constructor, so the three that skip the signature
+check are not one function with a warning in its doc comment, and each stamps the origin it stands
+for rather than taking it as an argument. An `assume_verified(bytes, provenance)` would be precisely
+the one skip-the-signature-check function whose safety depends on every caller passing the right
+value; the constructors are named for their doors instead.
 
-The same parameter carries the rule in the other direction. A retransmitter signature is a claim
-about what a peer sent this node, so `resign` belongs to `Received` and nothing else: a shred this
-node produced goes out with the all-zero retransmitter signature it was built with, and one it
-rebuilt from an erasure batch has no upstream to attest to. That last case is worth stating because
-`Recovered` is otherwise the *more* trusted of the two, and the ordering invites the wrong
-generalization. Trusted enough to skip verification is not the same as having something to forward.
+The rule in the other direction is a check on that field. A retransmitter signature is a claim about
+what a peer sent this node, so `resign` requires `Provenance::Received`: a shred this node produced
+goes out with the all-zero retransmitter signature it was built with, and one it rebuilt from an
+erasure batch has no upstream to attest to. That last case is worth stating because `Recovered` is
+otherwise the *more* trusted of the two, and the ordering invites the wrong generalization. Trusted
+enough to skip verification is not the same as having something to forward.
 
-Which socket a received shred arrived on is deliberately not part of provenance. Repair and Turbine
-differ in how the packet was solicited, not in what this node may do with it, and the stage that
-cares about the difference is counting packets at the socket, where the socket is known without
-asking the shred. What a finer split would buy is what `ShredSource` in `ledger/src/slot_stats.rs` already
-counts, "of the shreds that completed this FEC set, how many were repaired", which feeds statistics
-and three warnings and gates nothing; what it costs is that a batch drawn from both sockets stops
-being a single type. Merging them is what keeps `Vec<Shred<K, S,
-Received>>` from needing an erasure step, and it removed a marker, a widening and a whole grouping
-trait from this crate.
+An earlier draft made provenance a third type parameter with a marker per origin. It did not earn
+the parameter. `resign` was the only rule that turned on provenance, and it is a runtime check
+either way, because whether a shred is resignable also depends on a wire bit its variant byte
+carries; a type that ruled out three of four origins still could not rule out an unresigned variant.
+What the parameter cost was paid on every signature in the crate, plus an `Unspecified` marker and a
+`forget_provenance` widening that existed for the one real path that needs mixed origins in one
+collection: blockstore insert holds shreds that just arrived, shreds already stored and shreds
+rebuilt by erasure recovery, in one pipeline that only reads them. As a field, that path is a plain
+`Vec` and every shred in it can still say where it came from, which the widening had to erase
+exactly where a counter would want to read it.
 
-`Stored` is the one origin whose constructor is not pinned to a single state. Everything the states
-stand for was established before the shred was stored and nothing there is ever unwound, so
-replaying the cascade on the way out would pay for a signature check to learn what is already known.
-`from_blockstore` is generic over the state and materializes whichever one the reading code asks
-for, with no intermediate transitions. It stays typed in the kind: data and code shreds live in
-separate blockstore columns, so a read always knows which kind it asked for and `AnyShred` needs no
-door of its own.
+Demoting it also made room for the distinction the parameter had to merge away. Which socket a
+received shred arrived on is a `ShredSource` inside `Provenance::Received`. Repair and Turbine
+differ in how the packet was solicited, not in what this node may do with it, so nothing in this
+crate reads it; what it buys is what `ShredSource` in `ledger/src/slot_stats.rs` already counts, "of
+the shreds that completed this FEC set, how many were repaired". As a type parameter that split
+would have made a batch drawn from both sockets stop being a single type, which is why the earlier
+draft merged the two and then needed a `ProvenanceSet` bitfield to carry the detail back across the
+widening. A field needs neither.
 
-The cost of putting provenance in the type is that shreds which differ in it cannot share a
-collection, and one real path needs them to: blockstore insert holds shreds that just arrived,
-shreds already stored and shreds rebuilt by erasure recovery, in one pipeline that only reads them.
-`forget_provenance` widens any shred to `Unspecified` for exactly that, and it grants nothing, which
-suits a path that neither verifies nor resigns. That path is also the one that needs the kind erased,
-so it is where the two erasures meet, and the only place that needs both. It is a one-way retag
-of a phantom parameter, free at runtime, and with no narrowing counterpart, so it cannot be used to
-walk a self-produced shred into the resign path.
-
-An earlier draft split the received provenances by socket and added a `ProvenanceSet` bitfield to
-keep the detail across widening. It is recorded here because the reasoning generalizes: the bits
-existed only to carry the distinctions that the type parameter had to drop in order to make mixed
-batches one type, so removing the distinctions removed the field's only job. What must not move into
-such a field is the gate itself. A `resign` that tested a bit would be a runtime error path in place
-of a compile error, and an `assume_verified(bytes, provenance)` taking the origin as an argument
-would be precisely the one skip-the-signature-check function whose safety depends on every caller
-passing the right value.
+`Provenance::Blockstore` is the one origin whose constructor is not pinned to a single state.
+Everything the states stand for was established before the shred was stored and nothing there is
+ever unwound, so replaying the cascade on the way out would pay for a signature check to learn what
+is already known. `from_blockstore` is generic over the state and materializes whichever one the
+reading code asks for, with no intermediate transitions. It stays typed in the kind: data and code
+shreds live in separate blockstore columns, so a read always knows which kind it asked for and
+`AnyShred` needs no door of its own.
 
 ### Why an owned shred plus a borrowed view
 

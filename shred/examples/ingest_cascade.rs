@@ -5,12 +5,13 @@
 
 use {
     bytes::{Bytes, BytesMut},
+    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_shred::{
-        AdmissionPolicy, AnyShred, CodeShred, Data, DataShred, ParseError, Parsed, Received,
-        Reject, Shred, ShredKind, ShredLayout, ShredView, Stored, Unspecified, Verified, fixtures,
-        parse,
+        AdmissionPolicy, AnyShred, CodeShred, Data, DataShred, FecSet, FecSetSpec, ParseError,
+        Parsed, Reject, Shred, ShredKind, ShredLayout, ShredSource, ShredView, Verified, fixtures,
+        parse, recover,
         wire_format::{
             Nonce, SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY,
             SIZE_OF_NONCE,
@@ -42,17 +43,17 @@ impl fmt::Debug for BlockLocation {
 struct Inbound {
     /// The reader parses, because it has to read the trailing nonce anyway and a parse is cheap. So what
     /// crosses this channel is a shred rather than a buffer, and the worker never sees the wire format.
-    shred: AnyShred<Parsed, Received>,
+    shred: AnyShred<Parsed>,
     /// What the nonce resolved to, for a repair response; `None` for a Turbine shred.
+    ///
+    /// Which socket the shred came off is in its provenance; where the repaired block goes is not,
+    /// because it is a blockstore column rather than anything about the bytes.
     repair_location: Option<BlockLocation>,
 }
 
 /// A shred on its way from a sigverify worker to blockstore insertion.
 struct Outbound {
-    /// The repair location travels beside the shred rather than in its type. Repair and Turbine differ
-    /// in how a packet was solicited, not in what may be done with it, so they share the [`Received`]
-    /// provenance; what the difference decides is where the shred is written, which is a value.
-    shred: AnyShred<Verified, Received>,
+    shred: AnyShred<Verified>,
     location: Option<BlockLocation>,
 }
 
@@ -121,18 +122,20 @@ fn main() {
     // channel carries both kinds and every provenance. The kind only has to be erased in transit,
     // and the receiver puts it back as it sorts the shreds into the batches erasure recovery wants.
     println!("\n--- blockstore insert ---");
-    let mut data: Vec<DataShred<Verified, Unspecified>> = Vec::new();
-    let mut code: Vec<CodeShred<Verified, Unspecified>> = Vec::new();
+    let mut data: Vec<DataShred<Verified>> = Vec::new();
+    let mut code: Vec<CodeShred<Verified>> = Vec::new();
     for Outbound { shred, location } in verified {
         println!(
-            "out          kind={:?} slot={} index={} location={:?} retransmitter_signature={}",
+            "out          kind={:?} slot={} index={} provenance={:?} location={:?} \
+             retransmitter_signature={}",
             shred.kind(),
             shred.slot(),
             shred.index(),
+            shred.provenance(),
             location,
             shred.retransmitter_signature().is_some(),
         );
-        match shred.forget_provenance().into_data() {
+        match shred.into_data() {
             Ok(shred) => data.push(shred),
             Err(shred) => code.push(shred.into_code().expect("a shred is data or code")),
         }
@@ -141,57 +144,85 @@ fn main() {
     // A shred the blockstore already holds, joining the same batch. It never travels a channel, so
     // its kind was never erased: data and code shreds come out of separate columns, and the reader
     // knows which it asked for.
-    let stored = CodeShred::<Verified, Stored>::from_blockstore(fixtures::CODE_SHRED)
+    let stored = CodeShred::<Verified>::from_blockstore(fixtures::CODE_SHRED)
         .expect("the fixture is a well-formed shred");
     println!(
-        "stored       kind={:?} slot={} index={}",
+        "stored       kind={:?} slot={} index={} provenance={:?}",
         stored.variant().shred_kind(),
         stored.slot(),
         stored.index(),
+        stored.provenance(),
     );
-    code.push(stored.forget_provenance());
+    code.push(stored);
 
-    // Erasure recovery works on the two kinds apart, which is what the sort above was for.
-    println!("\n--- recovery ---");
     println!(
-        "fec set      {} data shreds, {} code shreds",
+        "batch        {} data shreds, {} code shreds",
         data.len(),
         code.len(),
     );
-    for shred in &data {
+
+    // Erasure recovery works on the two kinds apart, which is what the sort above was for. The
+    // fixtures the pipeline replays are all one shred, so this stage brings its own batch: a whole
+    // FEC set, holed, and rebuilt from what is left.
+    println!("\n--- erasure recovery ---");
+    let holed = holed_batch();
+    println!(
+        "survivors    {} data shreds, {} code shreds",
+        holed.data.len(),
+        holed.code.len(),
+    );
+    let recovered = recover(&holed.data, &holed.code)
+        .expect("half a batch is enough to rebuild the other half");
+    for shred in &recovered.data {
         println!(
-            "data         parent_offset={} data={} bytes",
+            "recovered    data index={} provenance={:?} parent_offset={} data={} bytes",
+            shred.index(),
+            shred.provenance(),
             shred.parent_offset(),
             shred
                 .data()
-                .expect("the fixture's size field is sane")
+                .expect("a rebuilt shred's size field came out of its own shard")
                 .len(),
         );
     }
-    for shred in &code {
+    for shred in &recovered.code {
         println!(
-            "code         {}:{} position={}",
+            "recovered    code index={} provenance={:?} {}:{} position={}",
+            shred.index(),
+            shred.provenance(),
             shred.num_data_shreds(),
             shred.num_code_shreds(),
             shred.position(),
         );
     }
 
-    // What the type system refuses, with the error each line would produce:
-    //
-    //   FecSet::build(&spec, data, &keypair)?.data[0].clone().resign(&keypair);
-    //     the method `resign` exists for Shred<Data, Verified, SelfProduced>, but its trait bounds
-    //     were not satisfied
-    //
-    //   DataShred::<Verified, Received>::from_blockstore(bytes);
-    //     no function or associated item named `from_blockstore` found for Shred<Data, Verified,
-    //     Received>
-    //
-    //   data[0].clone().resign(&Keypair::new());
-    //     no method named `resign` found for Shred<Data, Verified, Unspecified>
-    //
-    //   parse(bytes)?.0.into_data().unwrap().resign(&Keypair::new());
-    //     no method named `resign` found for Shred<Data, Parsed, Received>
+    // Recovery is only sound if a rebuilt shred is the shred the leader sent, byte for byte: it
+    // carries the leader's signature over the batch's Merkle root, and nothing later re-checks it.
+    let rebuilt = recovered
+        .data
+        .iter()
+        .map(Shred::bytes)
+        .chain(recovered.code.iter().map(Shred::bytes));
+    let count = recovered.data.len().saturating_add(recovered.code.len());
+    println!(
+        "identical    rebuilt bytes match the {} lost shreds: {}",
+        holed.lost.len(),
+        count == holed.lost.len()
+            && rebuilt
+                .zip(&holed.lost)
+                .all(|(rebuilt, lost)| rebuilt == lost),
+    );
+
+    // Rebuilt shreds go back into the same insert batch as the ones that arrived over a socket and
+    // the one read out of a column. They share a vector because provenance is a field rather than a
+    // type parameter, and each shred still says where it came from once it is in there.
+    data.extend(recovered.data);
+    code.extend(recovered.code);
+    println!(
+        "batch        {} data shreds, {} code shreds",
+        data.len(),
+        code.len(),
+    );
 }
 
 /// One sigverify worker: parsed shreds in, verified shreds out.
@@ -239,11 +270,11 @@ fn sigverify_worker(
 
 /// Everything a worker does to a shred whose kind it knows, which is everything expensive.
 fn validate_and_resign<K: ShredLayout>(
-    shred: Shred<K, Parsed, Received>,
+    shred: Shred<K, Parsed>,
     policy: &AdmissionPolicy,
     leader: &Pubkey,
     node: &Keypair,
-) -> Result<AnyShred<Verified, Received>, Reject> {
+) -> Result<AnyShred<Verified>, Reject> {
     // The policy checks and the signature check, cheapest first: nothing is hashed until the
     // headers have passed.
     let shred = shred.verify(policy, leader)?;
@@ -271,7 +302,11 @@ fn read_packet(
     from_repair: bool,
     outstanding: &mut HashSet<Nonce>,
 ) -> Result<Inbound, Dropped> {
-    let (shred, nonce) = parse(packet).map_err(Dropped::Malformed)?;
+    let source = match from_repair {
+        true => ShredSource::Repair,
+        false => ShredSource::Turbine,
+    };
+    let (shred, nonce) = parse(packet, source).map_err(Dropped::Malformed)?;
     if !from_repair {
         return Ok(Inbound {
             shred,
@@ -287,6 +322,55 @@ fn read_packet(
         }),
         None => Err(Dropped::Unsolicited(nonce)),
     }
+}
+
+/// Builds one FEC set, drops shreds from both halves of it, and hands back what survives.
+///
+/// The batch is built rather than replayed from a fixture because recovery is about a whole set:
+/// the survivors have to agree on a Merkle root, which only shreds of one real batch do.
+fn holed_batch() -> HoledBatch {
+    let spec = FecSetSpec {
+        slot: fixtures::FIXTURE_SLOT,
+        parent_slot: fixtures::FIXTURE_SLOT.saturating_sub(1),
+        version: 42,
+        reference_tick: 5,
+        fec_set_index: 0,
+        chained_merkle_root: Hash::new_from_array([3u8; 32]),
+        resigned: false,
+        last_in_slot: false,
+    };
+    let batch = FecSet::build(&spec, &vec![7u8; spec.capacity()], &Keypair::new())
+        .expect("a batch of exactly its own capacity is buildable");
+    // Turbine loses shreds anywhere in a set, so hole both halves of it. The lost bytes are kept
+    // to compare the rebuilt shreds against, in the shard order recovery hands them back in.
+    let (data, lost_data): (Vec<_>, Vec<_>) = batch
+        .data
+        .into_iter()
+        .enumerate()
+        .partition(|(position, _)| !matches!(position, 3 | 7 | 20));
+    let (code, lost_code): (Vec<_>, Vec<_>) = batch
+        .code
+        .into_iter()
+        .enumerate()
+        .partition(|(position, _)| !matches!(position, 0 | 31));
+    let lost = lost_data
+        .into_iter()
+        .map(|(_, shred)| shred.into_bytes())
+        .chain(lost_code.into_iter().map(|(_, shred)| shred.into_bytes()))
+        .collect();
+    HoledBatch {
+        data: data.into_iter().map(|(_, shred)| shred).collect(),
+        code: code.into_iter().map(|(_, shred)| shred).collect(),
+        lost,
+    }
+}
+
+/// One FEC set with holes in it: what still has shreds, and the bytes of what does not.
+struct HoledBatch {
+    data: Vec<DataShred<Verified>>,
+    code: Vec<CodeShred<Verified>>,
+    /// The payloads of the dropped shreds, in the shard order recovery rebuilds them in.
+    lost: Vec<Bytes>,
 }
 
 /// The packets the two sockets would hand the reader, including the ones nothing accepts.
@@ -330,7 +414,8 @@ fn with_nonce(shred: Bytes, nonce: Nonce) -> Bytes {
 /// Parses one fixture and prints its sections, to show what the worker's first stage reads.
 fn print_wire_layout() {
     println!("off the wire: {} bytes", fixtures::DATA_SHRED.len());
-    let (parsed, nonce) = parse(fixtures::DATA_SHRED).expect("the fixture is a well-formed shred");
+    let (parsed, nonce) = parse(fixtures::DATA_SHRED, ShredSource::Turbine)
+        .expect("the fixture is a well-formed shred");
     let common = *parsed.common();
     println!(
         "parsed {:?}  resigned={}  repair_nonce={:?}  provenance={:?}",

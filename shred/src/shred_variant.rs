@@ -62,6 +62,24 @@ pub enum ShredVariant {
 }
 
 impl ShredVariant {
+    /// The data-shred variant of the layout `resigned` selects.
+    #[inline]
+    pub const fn data(resigned: bool) -> Self {
+        match resigned {
+            true => Self::MerkleDataResigned,
+            false => Self::MerkleData,
+        }
+    }
+
+    /// The code-shred variant of the layout `resigned` selects.
+    #[inline]
+    pub const fn code(resigned: bool) -> Self {
+        match resigned {
+            true => Self::MerkleCodeResigned,
+            false => Self::MerkleCode,
+        }
+    }
+
     /// Whether a retransmitter signature trails the Merkle proof.
     #[inline]
     pub const fn resigned(self) -> bool {

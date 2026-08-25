@@ -25,7 +25,6 @@ use {
         kind::{Code, Data, ShredLayout},
         merkle,
         policy::DATA_SHREDS_PER_FEC_BLOCK,
-        provenance::SelfProduced,
         shred::{AnyShred, CodeShred, DataShred, merkle_tree::MerkleTree},
         shred_variant::ShredVariant,
         state::Verified,
@@ -97,17 +96,11 @@ impl FecSetSpec {
     }
 
     const fn data_variant(&self) -> ShredVariant {
-        match self.resigned {
-            true => ShredVariant::MerkleDataResigned,
-            false => ShredVariant::MerkleData,
-        }
+        ShredVariant::data(self.resigned)
     }
 
     const fn code_variant(&self) -> ShredVariant {
-        match self.resigned {
-            true => ShredVariant::MerkleCodeResigned,
-            false => ShredVariant::MerkleCode,
-        }
+        ShredVariant::code(self.resigned)
     }
 }
 
@@ -115,9 +108,9 @@ impl FecSetSpec {
 #[derive(Clone, Debug)]
 pub struct FecSet {
     /// The batch's data shreds, in index order.
-    pub data: Vec<DataShred<Verified, SelfProduced>>,
+    pub data: Vec<DataShred<Verified>>,
     /// The batch's code shreds, in index order.
-    pub code: Vec<CodeShred<Verified, SelfProduced>>,
+    pub code: Vec<CodeShred<Verified>>,
     /// The root the leader signed, which the next batch chains to.
     pub merkle_root: Hash,
 }
@@ -130,7 +123,7 @@ impl FecSet {
     /// channel that carried [`FecSet`] would only make the receiver undo it.
     ///
     /// The Merkle root is dropped, since it belongs to the next batch rather than to these shreds.
-    pub fn into_any(self) -> Vec<AnyShred<Verified, SelfProduced>> {
+    pub fn into_any(self) -> Vec<AnyShred<Verified>> {
         let mut shreds = Vec::with_capacity(self.data.len().saturating_add(self.code.len()));
         shreds.extend(self.data.into_iter().map(AnyShred::from));
         shreds.extend(self.code.into_iter().map(AnyShred::from));
@@ -300,7 +293,7 @@ fn encode_erasure_batch(spec: &FecSetSpec, payloads: &mut [Vec<u8>]) -> Result<(
 /// Singleton Reed-Solomon coder.
 ///
 /// Building its encoding matrix is expensive, which is why it is cached.
-fn coder() -> &'static ReedSolomon {
+pub(crate) fn coder() -> &'static ReedSolomon {
     static CODER: OnceLock<ReedSolomon> = OnceLock::new();
     CODER.get_or_init(|| {
         ReedSolomon::new(DATA_SHREDS, CODE_SHREDS)
@@ -370,7 +363,7 @@ impl<'a> AnyShredViewMut<'a> {
 mod tests {
     use {
         super::*,
-        crate::{policy::AdmissionPolicy, shred::parse},
+        crate::{policy::AdmissionPolicy, provenance::ShredSource, shred::parse},
         solana_signature::Signature,
         solana_signer::Signer,
     };
@@ -415,7 +408,7 @@ mod tests {
 
             let mut reassembled = Vec::new();
             for (position, shred) in set.data.iter().enumerate() {
-                let (parsed, nonce) = parse(shred.bytes().clone()).unwrap();
+                let (parsed, nonce) = parse(shred.bytes().clone(), ShredSource::Turbine).unwrap();
                 assert_eq!(nonce, None);
                 let shred = parsed
                     .into_data()
@@ -429,7 +422,7 @@ mod tests {
             assert_eq!(reassembled, data);
 
             for (position, shred) in set.code.iter().enumerate() {
-                let (parsed, _) = parse(shred.bytes().clone()).unwrap();
+                let (parsed, _) = parse(shred.bytes().clone(), ShredSource::Turbine).unwrap();
                 let shred = parsed
                     .into_code()
                     .expect("a code shred parsed as a data shred");
