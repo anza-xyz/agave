@@ -21,7 +21,7 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    solana_clock::DEFAULT_MS_PER_SLOT,
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::bank_forks::SharableBanks,
@@ -44,6 +44,28 @@ const CHECK_CHUNK: usize = 128;
 const SATURATION_BUFFER_PCT: u8 = 99;
 /// Clear the priority floor once the retained buffer drains below this watermark.
 const DESATURATION_BUFFER_PCT: u8 = 95;
+
+#[derive(Debug, PartialEq, Eq)]
+enum SchedulingSlotStatus {
+    Ready,
+    Transitioned,
+    WaitingForInFlight,
+}
+
+fn update_scheduling_slot(
+    scheduling_slot: &mut Option<Slot>,
+    decision_slot: Option<Slot>,
+    has_in_flight_transactions: bool,
+) -> SchedulingSlotStatus {
+    if *scheduling_slot == decision_slot {
+        SchedulingSlotStatus::Ready
+    } else if has_in_flight_transactions {
+        SchedulingSlotStatus::WaitingForInFlight
+    } else {
+        *scheduling_slot = decision_slot;
+        SchedulingSlotStatus::Transitioned
+    }
+}
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
@@ -187,7 +209,8 @@ where
     }
 
     pub fn run(&mut self) -> Result<(), SchedulerError> {
-        let mut most_recent_leader_slot = None;
+        let mut scheduling_slot = None;
+        let mut scheduling_blocked_at = None;
         let mut cost_pacer = None;
 
         while !self.exit.load(Ordering::Relaxed) {
@@ -213,9 +236,26 @@ where
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
-            if most_recent_leader_slot != new_leader_slot {
+            self.receive_completed()?;
+            let scheduling_slot_status = update_scheduling_slot(
+                &mut scheduling_slot,
+                new_leader_slot,
+                self.scheduler.has_in_flight_transactions(),
+            );
+            let scheduling_enabled =
+                scheduling_slot_status != SchedulingSlotStatus::WaitingForInFlight;
+            let scheduling_blocked =
+                !scheduling_enabled && matches!(decision, BufferedPacketsDecision::Consume(_));
+            if scheduling_blocked {
+                scheduling_blocked_at.get_or_insert_with(Instant::now);
+            } else if let Some(blocked_at) = scheduling_blocked_at.take() {
+                self.timing_metrics.update(|timing_metrics| {
+                    timing_metrics.scheduling_slot_transition_blocked_time_us +=
+                        blocked_at.elapsed().as_micros() as u64;
+                });
+            }
+            if scheduling_slot_status == SchedulingSlotStatus::Transitioned {
                 self.container.flush_held_transactions();
-                most_recent_leader_slot = new_leader_slot;
                 cost_pacer = decision.bank().map(|b| {
                     let cost_tracker = b.read_cost_tracker().unwrap();
                     let block_limit = cost_tracker.get_block_limit();
@@ -251,9 +291,15 @@ where
                 });
             }
 
-            self.receive_completed()?;
             let mut receiving_stats = self.drain_check_results(&decision);
-            let _scheduled = self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
+            // A slot transition gates only new scheduling. Check-result processing,
+            // ingestion, buffering, and maintenance below continue while old work returns.
+            let _scheduled =
+                if scheduling_enabled || !matches!(decision, BufferedPacketsDecision::Consume(_)) {
+                    self.process_transactions(&decision, cost_pacer.as_ref(), &now)?
+                } else {
+                    0
+                };
             if decision.bank().is_none() {
                 let (_, clean_time_us) = measure_us!(self.incremental_recheck());
                 self.timing_metrics.update(|timing_metrics| {
@@ -300,14 +346,15 @@ where
         now: &Instant,
     ) -> Result<usize, SchedulerError> {
         let scheduled = match decision {
-            BufferedPacketsDecision::Consume(_bank) => {
+            BufferedPacketsDecision::Consume(bank) => {
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(
-                    self.scheduler
-                        .schedule(&mut self.container, scheduling_budget,)?
-                );
+                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
+                    &mut self.container,
+                    bank.slot(),
+                    scheduling_budget,
+                )?);
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
@@ -584,6 +631,34 @@ mod tests {
             sync::{Arc, RwLock},
         },
     };
+
+    #[test]
+    fn test_scheduling_slot_waits_for_in_flight_and_adopts_latest_slot() {
+        let mut scheduling_slot = Some(10);
+
+        assert_eq!(
+            update_scheduling_slot(&mut scheduling_slot, Some(11), true),
+            SchedulingSlotStatus::WaitingForInFlight
+        );
+        assert_eq!(scheduling_slot, Some(10));
+
+        // Ingestion may observe a newer slot while old work is still in flight.
+        assert_eq!(
+            update_scheduling_slot(&mut scheduling_slot, Some(12), true),
+            SchedulingSlotStatus::WaitingForInFlight
+        );
+        assert_eq!(scheduling_slot, Some(10));
+
+        assert_eq!(
+            update_scheduling_slot(&mut scheduling_slot, Some(12), false),
+            SchedulingSlotStatus::Transitioned
+        );
+        assert_eq!(scheduling_slot, Some(12));
+        assert_eq!(
+            update_scheduling_slot(&mut scheduling_slot, Some(12), true),
+            SchedulingSlotStatus::Ready
+        );
+    }
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
         (0..num).map(|_| bounded(1024)).unzip()
@@ -898,6 +973,7 @@ mod tests {
         finished_consume_work_sender
             .send(FinishedConsumeWork {
                 work: ConsumeWork {
+                    target_slot: 0,
                     batch_id: TransactionBatchId::new(0),
                     ids: vec![],
                     transactions: vec![],
@@ -959,6 +1035,7 @@ mod tests {
 
         test_receive_then_schedule(&mut scheduler_controller);
         let consume_work = consume_work_receivers[0].try_recv().unwrap();
+        assert_eq!(consume_work.target_slot, bank.slot());
         assert_eq!(consume_work.ids.len(), 2);
         assert_eq!(consume_work.transactions.len(), 2);
         let message_hashes = consume_work

@@ -38,7 +38,7 @@ use {
         slot_clock::SharedAlpenglowSlotClock,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
-        voting_service::{VOTOR_RATE_LIMIT_PPS, VotingService as BLSVotingService},
+        voting_service::{VotingService as BLSVotingService, votor_rate_limit_pps},
         votor::{Votor, VotorConfig},
     },
     agave_votor_messages::{
@@ -338,7 +338,7 @@ impl Tvu {
             votor_client_socket,
             votor_ingress_sender,
             votor_peer_list_receiver,
-            VOTOR_RATE_LIMIT_PPS,
+            votor_rate_limit_pps(),
             cancel,
         )
         .map_err(|e| format!("alpenglow endpoint: {e:?}"))?;

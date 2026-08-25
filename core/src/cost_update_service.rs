@@ -2,6 +2,9 @@
 
 use {
     crossbeam_channel::Receiver,
+    solana_clock::Slot,
+    solana_cost_model::cost_tracker::CostTrackerStats,
+    solana_metrics::datapoint_info,
     solana_runtime::bank::Bank,
     std::{
         sync::Arc,
@@ -27,6 +30,67 @@ pub struct CostUpdateService {
 const MAX_LOOP_COUNT: usize = 25;
 // Throttle checking the count to avoid excessive polling
 const LOOP_LIMITER: Duration = Duration::from_millis(10);
+
+pub fn report_cost_tracker_stats(
+    stats: &CostTrackerStats,
+    bank_slot: Slot,
+    is_leader: bool,
+    total_transaction_fee: u64,
+    total_priority_fee: u64,
+) {
+    // Skip reporting if the block is empty.
+    if stats.transaction_count == 0 {
+        return;
+    }
+
+    datapoint_info!(
+        "cost_tracker_stats",
+        "is_leader" => is_leader.to_string(),
+        ("bank_slot", bank_slot, i64),
+        ("block_cost", stats.block_cost, i64),
+        ("transaction_count", stats.transaction_count, i64),
+        ("number_of_accounts", stats.number_of_accounts, i64),
+        ("costliest_account", stats.costliest_account.to_string(), String),
+        ("costliest_account_cost", stats.costliest_account_cost, i64),
+        (
+            "allocated_accounts_data_size",
+            stats.allocated_accounts_data_size,
+            i64
+        ),
+        (
+            "transaction_signature_count",
+            stats.transaction_signature_count,
+            i64
+        ),
+        (
+            "secp256k1_instruction_signature_count",
+            stats.secp256k1_instruction_signature_count,
+            i64
+        ),
+        (
+            "ed25519_instruction_signature_count",
+            stats.ed25519_instruction_signature_count,
+            i64
+        ),
+        (
+            "inflight_transaction_count",
+            stats.in_flight_transaction_count,
+            i64
+        ),
+        (
+            "secp256r1_instruction_signature_count",
+            stats.secp256r1_instruction_signature_count,
+            i64
+        ),
+        ("total_transaction_fee", total_transaction_fee, i64),
+        ("total_priority_fee", total_priority_fee, i64),
+        (
+            "number_of_contended_accounts",
+            stats.number_of_contended_accounts,
+            i64
+        ),
+    );
+}
 
 impl CostUpdateService {
     pub fn new(cost_update_receiver: CostUpdateReceiver) -> Self {
@@ -74,7 +138,8 @@ impl CostUpdateService {
                                     "inflight transaction count is {in_flight_transaction_count} \
                                      for slot {slot} after {loop_count} iteration(s)"
                                 );
-                                cost_tracker.report_stats(
+                                report_cost_tracker_stats(
+                                    &cost_tracker.stats(),
                                     slot,
                                     is_leader_block,
                                     total_transaction_fee,

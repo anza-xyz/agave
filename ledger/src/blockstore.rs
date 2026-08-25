@@ -512,8 +512,7 @@ impl ParentInfo {
             return None;
         }
 
-        let shred_bytes = current_shred.payload();
-        let payload = shred::layout::get_data(shred_bytes).ok()?;
+        let payload = current_shred.data().ok()?;
 
         if !BlockComponent::infer_is_block_marker(payload).unwrap_or(false) {
             return None;

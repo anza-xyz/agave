@@ -203,16 +203,6 @@ pub fn get_shred_id(shred: &[u8]) -> Option<ShredId> {
     ))
 }
 
-pub fn get_reference_tick(shred: &[u8]) -> Result<u8, Error> {
-    if get_shred_type(shred)? != ShredType::Data {
-        return Err(Error::InvalidShredType);
-    }
-    let Some(flags) = shred.get(85) else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
-    Ok(flags & ShredFlags::SHRED_TICK_REFERENCE_MASK.bits())
-}
-
 pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
     match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode {
@@ -612,7 +602,6 @@ mod tests {
             if let Shred::ShredCode(_) = shred {
                 assert_matches!(get_flags(bytes), Err(Error::InvalidShredType));
                 assert_matches!(get_data(bytes), Err(Error::InvalidShredType));
-                assert_matches!(get_reference_tick(bytes), Err(Error::InvalidShredType));
             }
             if let Shred::ShredData(shred) = shred {
                 let shred_data_header = shred.data_header();
@@ -623,9 +612,6 @@ mod tests {
                 assert_eq!(get_flags(bytes).unwrap(), shred_data_header.flags);
                 assert_eq!(get_data_size(bytes).unwrap(), shred_data_header.size);
                 assert_eq!(get_data(bytes).unwrap(), shred.data().unwrap());
-                assert_eq!(get_reference_tick(bytes).unwrap(), {
-                    shred.reference_tick()
-                });
             }
         }
     }

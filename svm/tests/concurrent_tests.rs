@@ -62,7 +62,7 @@ fn program_cache_execution(threads: usize) {
                     .map(|program_id| ProgramToLoad {
                         program_id,
                         loader: ProgramCacheEntryOwner::LoaderV3,
-                        deployed_on_or_after_slot: 0,
+                        deployment_slot: 0,
                         last_modification_slot: 0,
                     })
                     .collect();

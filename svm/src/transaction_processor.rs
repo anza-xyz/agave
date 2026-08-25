@@ -353,7 +353,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .map(|program_id| ProgramToLoad {
                 program_id,
                 loader: ProgramCacheEntryOwner::NativeLoader,
-                deployed_on_or_after_slot: 0,
+                deployment_slot: 0,
                 last_modification_slot: 0,
             })
             .collect();
@@ -1409,6 +1409,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .replenish(program_id, entry);
     }
 
+    /// Remove a builtin-program from this fork.
+    ///
+    /// This removes the builtin from the fork guard (`builtin_program_ids` and
+    /// `builtin_program_cache`), but it does not remove it from the global
+    /// program cache. Another fork could be relying on the global entry.
+    pub fn remove_builtin(&self, program_id: &Pubkey) {
+        self.builtin_program_cache
+            .write()
+            .unwrap()
+            .remove_entry(program_id);
+        self.builtin_program_ids.write().unwrap().remove(program_id);
+    }
+
     #[cfg(feature = "dev-context-only-utils")]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn writable_sysvar_cache(&self) -> &RwLock<SysvarCache> {
@@ -1923,7 +1936,7 @@ mod tests {
             vec![ProgramToLoad {
                 program_id: &key,
                 loader: ProgramCacheEntryOwner::LoaderV3,
-                deployed_on_or_after_slot: 0,
+                deployment_slot: 0,
                 last_modification_slot: 0,
             }],
             &program_runtime_environment_for_execution,
@@ -1962,7 +1975,7 @@ mod tests {
                 vec![ProgramToLoad {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::LoaderV2,
-                    deployed_on_or_after_slot: 0,
+                    deployment_slot: 0,
                     last_modification_slot: 0,
                 }],
                 &program_runtime_environment_for_execution,
@@ -2209,7 +2222,7 @@ mod tests {
                 &mut vec![ProgramToLoad {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::NativeLoader,
-                    deployed_on_or_after_slot: 0,
+                    deployment_slot: 0,
                     last_modification_slot: 0,
                 }],
                 &mut loaded_programs_for_tx_batch,
@@ -2424,32 +2437,23 @@ mod tests {
                     batch_processor.program_runtime_environment.clone(),
                 )),
             );
-        batch_processor
-            .builtin_program_ids
-            .write()
-            .unwrap()
-            .remove(&key);
+        batch_processor.remove_builtin(&key);
 
-        // For the rest of the slot the builtin is still served: the batch cache was
-        // seeded at the start of the block and is unaffected by the guard change.
-        // `filter_executable_program_accounts` finds it there and short circuits,
-        // so the newly deployed program is never even searched for.
+        // The builtin leaves the batch cache in the same slot.
         let program_cache_for_tx_batch = batch_processor
             .builtin_program_cache
             .read()
             .unwrap()
             .clone();
-        let entry = program_cache_for_tx_batch.find(&key).unwrap();
-        assert!(matches!(entry.program, ProgramCacheEntryType::Builtin(_)));
-        assert_eq!(entry.deployment_slot, BUILTIN_SLOT);
+        assert!(program_cache_for_tx_batch.find(&key).is_none());
 
-        // Had it been searched for, it would not have been usable anyway: the
-        // program is deployed in this slot, so it is not effective until the next
-        // one and extraction yields a delay visibility tombstone.
+        // The new account state seeds the extraction search, and since the
+        // program was just "deployed" in this slot, we get a delayed visibility
+        // tombstone.
         let mut search_for = vec![ProgramToLoad {
             program_id: &key,
             loader: ProgramCacheEntryOwner::LoaderV3,
-            deployed_on_or_after_slot: MIGRATION_SLOT,
+            deployment_slot: MIGRATION_SLOT,
             last_modification_slot: MIGRATION_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(MIGRATION_SLOT);
@@ -2487,7 +2491,7 @@ mod tests {
         let mut search_for = vec![ProgramToLoad {
             program_id: &key,
             loader: ProgramCacheEntryOwner::LoaderV3,
-            deployed_on_or_after_slot: MIGRATION_SLOT,
+            deployment_slot: MIGRATION_SLOT,
             last_modification_slot: MIGRATION_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
@@ -2506,7 +2510,7 @@ mod tests {
         let mut search_for = vec![ProgramToLoad {
             program_id: &key,
             loader: ProgramCacheEntryOwner::NativeLoader,
-            deployed_on_or_after_slot: BUILTIN_SLOT,
+            deployment_slot: BUILTIN_SLOT,
             last_modification_slot: BUILTIN_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);

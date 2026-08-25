@@ -29,6 +29,9 @@ Release channels have their own copy of this changelog:
 * Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
 * Previously deprecated `--tpu-connection-pool-size` has been removed. The connection pool size is fixed at the previous default of 1.
 * scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
+* Previously deprecated `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`
+  and `--experimental-retransmit-xdp-zero-copy` have been removed. Use `--xdp-interface`, `--xdp-cpu-cores`
+  and `--xdp-zero-copy` instead.
 #### Deprecations
 * `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
   default). The flag is still accepted for backward compatibility.
