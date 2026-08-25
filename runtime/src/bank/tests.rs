@@ -354,7 +354,7 @@ pub(crate) fn create_simple_test_bank(lamports: u64) -> Bank {
     Bank::new_for_tests(&genesis_config)
 }
 
-fn create_simple_test_arc_bank(lamports: u64) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+pub(crate) fn create_simple_test_arc_bank(lamports: u64) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
     let bank = create_simple_test_bank(lamports);
     bank.wrap_with_bank_forks_for_tests()
 }

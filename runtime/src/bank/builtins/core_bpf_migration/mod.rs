@@ -503,7 +503,7 @@ pub(crate) mod tests {
             bank::{
                 Bank, SlotLeader,
                 test_utils::goto_end_of_slot,
-                tests::{create_genesis_config, create_simple_test_bank},
+                tests::{create_genesis_config, create_simple_test_arc_bank},
             },
             genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             runtime_config::RuntimeConfig,
@@ -808,7 +808,7 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_migrate_builtin(upgrade_authority_address: Option<Pubkey>) {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -880,7 +880,7 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_migrate_stateless_builtin(upgrade_authority_address: Option<Pubkey>) {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -944,7 +944,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_migrate_fail_authority_mismatch() {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -994,7 +994,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_migrate_fail_verified_build_mismatch() {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1044,7 +1044,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_migrate_none_authority_with_some_buffer_authority() {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1169,7 +1169,7 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_upgrade_core_bpf_program(upgrade_authority_address: Option<Pubkey>) {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let core_bpf_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1217,7 +1217,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_fail_authority_mismatch() {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1246,7 +1246,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_none_authority_with_some_buffer_authority() {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1849,7 +1849,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_loader_v2_program_with_loader_v3_program() {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1926,7 +1926,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_loader_v2_program_with_loader_v3_program_fail_invalid_buffer() {
-        let bank = create_simple_test_bank(0);
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -2138,7 +2138,8 @@ pub(crate) mod tests {
         let leader_id = Pubkey::new_unique();
         let GenesisConfigInfo { genesis_config, .. } =
             create_genesis_config_with_leader(0, &leader_id, LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -2229,6 +2230,7 @@ pub(crate) mod tests {
             Arc::default(),
         )
         .unwrap();
+        let (roundtrip_bank, _bank_forks) = roundtrip_bank.wrap_with_bank_forks_for_tests();
 
         // Load the migrated program to the cache and run checks.
         let entry = roundtrip_bank
