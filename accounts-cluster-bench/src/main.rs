@@ -1512,7 +1512,7 @@ pub mod test {
             ..ClusterConfig::default()
         };
 
-        let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+        let cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
         let iterations = 100;
         let maybe_space = None;
         let batch_size = 20;

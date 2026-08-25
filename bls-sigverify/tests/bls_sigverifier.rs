@@ -40,9 +40,7 @@ use {
     solana_runtime::{
         bank::{Bank, SlotLeader},
         bank_forks::{BankForks, SharableBanks},
-        genesis_utils::{
-            ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-        },
+        genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
     },
     solana_signer::Signer,
     solana_signer_store::encode_base2,
@@ -107,7 +105,7 @@ impl TestContext {
         let stakes_vec = (0..validator_keypairs.len())
             .map(|i| 1_000u64.saturating_sub(i as u64))
             .collect::<Vec<_>>();
-        let mut genesis = create_genesis_config_with_alpenglow_vote_accounts(
+        let mut genesis = create_genesis_config_with_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             stakes_vec,
