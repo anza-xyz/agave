@@ -1208,26 +1208,37 @@ impl AccountsDb {
     ///
     /// Cache writes populate the secondary indexes but not the primary index, so a key that is gone
     /// from the primary index can still be alive in the write cache and must keep its secondary
-    /// entries. This is tricky due to the races that need to be considered:
+    /// entries.
+    ///
+    /// Clean calls this for the keys whose last primary index entry it removed, and for the keys
+    /// that `purge_slots_from_cache` removed from the cache and deferred to
+    /// `handle_pubkeys_removed_from_cache`. Flush calls it for a zero-lamport account that leaves
+    /// the cache without a primary index entry, either skipped or stored as a tombstone and deleted
+    /// from the index. Callers never run concurrently with each other: clean and flush both run on
+    /// the ABS thread and the snapshot minimizer runs standalone, so the only concurrent writer is
+    /// replay. This is tricky due to the races that need to be considered:
     /// 1) Removed from the cache then re-added to the cache by replay
     /// - This is protected by re-checking the cache in the closure passed to purge. Since purge
     ///   holds the secondary index's reverse-index lock when it re-checks cache presence, and a
     ///   cache store writes the cache before inserting into the secondary index under that same
     ///   lock, either the re-check sees the cache write and the entry is not removed, or the
     ///   removal wins and the store's later insert re-adds it.
-    /// 2) Removed from the cache, and also removed from storage by clean
-    /// - Since both the cache removal and the index removal are done before the removal from the
+    /// 2) The same key is handled twice, e.g. flush purges a tombstoned key that clean then purges
+    ///    again from the deferred list
+    /// - Since the cache removal and the index removal are both done before the removal from the
     ///   secondary index, the worst case is a double removal (both paths remove the same secondary
     ///   index entry). This is safe since the secondary index removal is idempotent.
-    /// 3) Removed from the storage, but still present in the cache
+    /// 3) Removed from the primary index, but still present in the cache
     /// - This is protected by checking the cache presence in the closure. If the pubkey is still
-    ///   present in the cache, the secondary index entry is not removed.
-    ///
-    /// We do not need to consider removed from cache -> added to storage. Adding to storage
-    /// requires a cache entry to be present first, so a fresh store of the key would have to be
-    /// rooted and flushed inside this window — impossible because rooting is driven by the same
-    /// ReplayStage thread that purges unrooted slots, and clean runs serially with flush on the
-    /// ABS thread.
+    ///   present in the cache, the secondary index entry is not removed. It is purged when the key
+    ///   later leaves the cache: by flush if the key is skipped or tombstoned, otherwise by the
+    ///   deferred handling in clean.
+    /// 4) A deferred key is re-added to the cache, rooted, and flushed to storage before clean
+    ///    handles it
+    /// - The deferred keys are passed through `handle_dead_keys` first, which yields a key only
+    ///   when its slot list is absent or empty, checked under the key's index entry lock. A key
+    ///   that regained a primary index entry in the deferral window is not yielded, and flush
+    ///   cannot add one while clean is running since both run on the ABS thread.
     fn purge_secondary_indexes_for_dead_keys<'a>(
         &self,
         removed_keys: impl IntoIterator<Item = &'a Pubkey>,
