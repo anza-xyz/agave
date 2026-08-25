@@ -1082,7 +1082,9 @@ impl RepairService {
             .filter_map(|(pubkey, stake)| {
                 let peer_repair_addr = cluster_info
                     .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
-                if let Some(Some(peer_repair_addr)) = peer_repair_addr {
+                if let Some(Some(peer_repair_addr)) = peer_repair_addr
+                    && cluster_info.socket_addr_space().check(&peer_repair_addr)
+                {
                     trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
                     Some((
                         *pubkey,
@@ -1128,7 +1130,9 @@ impl RepairService {
         if let Some(pubkey) = pubkey {
             let peer_repair_addr =
                 cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
-            if let Some(Some(peer_repair_addr)) = peer_repair_addr {
+            if let Some(Some(peer_repair_addr)) = peer_repair_addr
+                && cluster_info.socket_addr_space().check(&peer_repair_addr)
+            {
                 trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
                 repair_peers.push((pubkey, peer_repair_addr));
             }
