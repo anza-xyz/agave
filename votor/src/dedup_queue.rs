@@ -3,8 +3,7 @@ use std::{
     hash::Hash,
 };
 
-/// A fixed size queue that does not allow duplicates and access to the front and
-/// the back of the queue.
+/// A fixed size queue that does not allow duplicates.
 pub(crate) struct DedupQueue<T> {
     queue: VecDeque<T>,
     set: HashSet<T>,
