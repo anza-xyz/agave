@@ -106,7 +106,7 @@ agave-feature-set = { path = "../../feature-set", version = "=4.4.0-alpha.1" }
 agave-logger = { path = "../../logger", version = "=4.4.0-alpha.1" }
 agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=4.4.0-alpha.1" }
 agave-validator = { path = "../../validator", version = "=4.4.0-alpha.1" }
-array-bytes = "=1.4.1"
+array-bytes = "9.3.0"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
 borsh = "1.5.1"
