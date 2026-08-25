@@ -7,7 +7,10 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_runtime::validated_block_finalization::ValidatedBlockFinalizationCert,
+    solana_runtime::{
+        slot_params::slot_time_feature_gates,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
+    },
     std::{
         collections::{BTreeMap, HashSet},
         ops::Bound::{Excluded, Included, Unbounded},
@@ -18,18 +21,46 @@ use {
     tokio::sync::{mpsc, mpsc::error::TrySendError},
 };
 
-/// The maximum amount of packets per second we expect from an honest node
-pub const VOTOR_RATE_LIMIT_PPS: usize = 50;
-
-/// Max new packets per second in steady state:
+/// Max new packets per slot in steady state:
 /// - Notarize + Finalize votes
 /// - NotarizeFallback + Notarize + FastFinalize + Finalize certificates
-///
-/// 200ms slots, 6 packets * 5 slots per second = 30 PPS
-const NEW_PACKETS_PER_SECOND: usize = 30;
+const NEW_PACKETS_PER_SLOT: usize = 6;
 
 /// The amount of packets we should send per second from the standstill queue
-const STANDSTILL_REFRESH_BATCH_SIZE: usize = VOTOR_RATE_LIMIT_PPS - NEW_PACKETS_PER_SECOND;
+const STANDSTILL_REFRESH_BATCH_SIZE: usize = 20;
+
+/// The packets per second an honest node produces at `slot_duration`.
+///
+/// `NEW_PACKETS_PER_SLOT` for every slot in a second, plus the standstill refresh
+/// budget:
+///
+/// `pps = NEW_PACKETS_PER_SLOT * 1_000 / slot_duration_ms + STANDSTILL_REFRESH_BATCH_SIZE`
+fn rate_limit_pps_for_slot_duration(slot_duration: Duration) -> usize {
+    const MS_IN_SEC: usize = 1_000;
+
+    let slot_ms = slot_duration.as_millis();
+    assert!(slot_ms > 0, "slot duration must be at least 1ms");
+
+    let new_packets_per_second = NEW_PACKETS_PER_SLOT
+        .saturating_mul(MS_IN_SEC)
+        .div_ceil(slot_ms.try_into().expect("slot_ms can't exceed usize::MAX"));
+
+    new_packets_per_second.saturating_add(STANDSTILL_REFRESH_BATCH_SIZE)
+}
+
+/// The maximum amount of packets per second we expect from an honest node.
+/// Calculated based on the min slot duration from `slot_time_feature_gates`.
+pub fn votor_rate_limit_pps() -> usize {
+    // The shortest slot duration the runtime can run at, across every slot-time
+    // reduction feature.
+    let min_slot_duration = slot_time_feature_gates()
+        .iter()
+        .min_by_key(|(_, params)| params.ns_per_slot())
+        .map(|(_, params)| Duration::from_nanos_u128(params.ns_per_slot()))
+        .expect("slot_time_feature_gates is never empty");
+
+    rate_limit_pps_for_slot_duration(min_slot_duration)
+}
 
 /// How often we should refresh messages from the standstill queue
 const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -404,6 +435,35 @@ mod tests {
     }
 
     #[test]
+    fn test_rate_limit_pps_for_slot_duration() {
+        assert_eq!(
+            rate_limit_pps_for_slot_duration(Duration::from_millis(100)),
+            80
+        );
+        assert_eq!(
+            rate_limit_pps_for_slot_duration(Duration::from_millis(200)),
+            50
+        );
+        assert_eq!(
+            rate_limit_pps_for_slot_duration(Duration::from_millis(400)),
+            35
+        );
+    }
+
+    #[test]
+    fn test_votor_rate_limit_pps_covers_every_slot_time_reduction() {
+        let limit = votor_rate_limit_pps();
+
+        for (_, params) in slot_time_feature_gates() {
+            let duration = Duration::from_nanos_u128(params.ns_per_slot());
+            assert!(
+                limit >= rate_limit_pps_for_slot_duration(duration),
+                "limit {limit} is below the honest rate at {duration:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_standstill_refresh_queue_cycles_by_slot() {
         let shred_verion = rand::rng().random();
         let mut queue = StandstillRefreshQueue::default();
@@ -500,7 +560,7 @@ mod tests {
             client_socket,
             ingress_sender,
             peer_list_receiver,
-            VOTOR_RATE_LIMIT_PPS,
+            votor_rate_limit_pps(),
             CancellationToken::new(),
         )
         .expect("QuicDatagramEndpoint::spawn");

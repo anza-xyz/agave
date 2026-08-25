@@ -772,7 +772,7 @@ pub(crate) fn encode_confirmed_block(
         BlockEncodingOptions {
             transaction_details: TransactionDetails::Full,
             show_rewards: true,
-            max_supported_transaction_version: Some(0),
+            max_supported_transaction_version: Some(1),
         },
     )?;
 

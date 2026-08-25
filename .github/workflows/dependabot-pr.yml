@@ -59,9 +59,13 @@ jobs:
         run: |
           echo "crate_name: $CRATE_NAME, old_version: $OLD_VERSION, new_version: $NEW_VERSION"
 
-          cargo anza-xtask update-crate --package "$CRATE_NAME" --from "$OLD_VERSION" --to "$NEW_VERSION"
-
+          # Bump lockfiles before manifests: while the manifests still request the old
+          # version, cargo swaps just this node; a manifest-first edit leaves the locked
+          # version unsatisfiable, which unlocks all of crates.io and rewrites unrelated
+          # resolution choices. No-ops for semver-major bumps, handled by `tree` below.
           ./scripts/cargo-for-all-lock-files.sh --ignore-exit-code -- update -p "$CRATE_NAME:$OLD_VERSION" --precise "$NEW_VERSION"
+
+          cargo anza-xtask update-crate --package "$CRATE_NAME" --from "$OLD_VERSION" --to "$NEW_VERSION"
 
           ./scripts/cargo-for-all-lock-files.sh tree
 

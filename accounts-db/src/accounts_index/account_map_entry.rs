@@ -1,6 +1,6 @@
 use {
     super::{
-        AtomicRefCount, DiskIndexValue, IndexValue, RefCount, SlotList, SlotListItem,
+        DiskIndexValue, IndexValue, SlotList, SlotListItem,
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
     },
     crate::{account_info::AccountInfo, is_zero_lamport::IsZeroLamport},
@@ -19,9 +19,6 @@ use {
 /// Represents the value for an account key in the in-memory accounts index
 #[derive(Debug)]
 pub struct AccountMapEntry<T> {
-    /// number of alive slots that contain >= 1 instances of account data for this pubkey
-    /// where alive represents a slot that has not yet been removed by clean via AccountsDB::clean_stored_dead_slots() for containing no up to date account information
-    ref_count: AtomicRefCount,
     /// list of slots in which this pubkey was updated
     /// Note that 'clean' removes outdated entries (ie. older roots) from this slot_list
     /// purge_slot() also removes non-rooted slots from this list
@@ -34,10 +31,9 @@ pub struct AccountMapEntry<T> {
 const _: () = assert!(size_of::<AccountMapEntry<AccountInfo>>() == 48);
 
 impl<T: IndexValue> AccountMapEntry<T> {
-    pub fn new(slot_list: SlotList<T>, ref_count: RefCount, meta: AccountMapEntryMeta) -> Self {
+    pub fn new(slot_list: SlotList<T>, meta: AccountMapEntryMeta) -> Self {
         Self {
             slot_list: RwLock::new(slot_list),
-            ref_count: AtomicRefCount::new(ref_count),
             meta,
         }
     }
@@ -46,39 +42,8 @@ impl<T: IndexValue> AccountMapEntry<T> {
     pub(super) fn empty_for_tests() -> Self {
         Self {
             slot_list: RwLock::default(),
-            ref_count: AtomicRefCount::default(),
             meta: AccountMapEntryMeta::default(),
         }
-    }
-
-    pub fn ref_count(&self) -> RefCount {
-        self.ref_count.load(Ordering::Acquire)
-    }
-
-    pub fn addref(&self) {
-        let previous = self.ref_count.fetch_add(1, Ordering::Release);
-        // ensure ref count does not overflow
-        assert_ne!(previous, RefCount::MAX);
-        self.mark_dirty();
-    }
-
-    /// decrement the ref count by one
-    /// return the refcount prior to subtracting 1
-    /// 0 indicates an under refcounting error in the system.
-    pub fn unref(&self) -> RefCount {
-        self.unref_by_count(1)
-    }
-
-    /// decrement the ref count by the passed in amount
-    /// return the refcount prior to the ref count change
-    pub fn unref_by_count(&self, count: RefCount) -> RefCount {
-        let previous = self.ref_count.fetch_sub(count, Ordering::Release);
-        self.mark_dirty();
-        assert!(
-            previous >= count,
-            "decremented ref count below zero: {self:?}"
-        );
-        previous
     }
 
     pub fn dirty(&self) -> bool {
@@ -273,7 +238,7 @@ impl<T: IndexValue> From<PreAllocatedAccountMapEntry<T>> for SlotListItem<T> {
 
 impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
     /// create an entry that is equivalent to this process:
-    /// 1. new empty (refcount=0, slot_list={})
+    /// 1. new empty (slot_list={})
     /// 2. update(slot, account_info)
     ///
     /// This code is called when the first entry [ie. (slot,account_info)] for a pubkey is inserted into the index.
@@ -295,11 +260,9 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
         account_info: T,
         storage: &BucketMapHolder<T, U>,
     ) -> Box<AccountMapEntry<T>> {
-        let ref_count = 1;
         let meta = AccountMapEntryMeta::new_dirty(storage, false);
         Box::new(AccountMapEntry::new(
             SlotList::from([(slot, account_info)]),
-            ref_count,
             meta,
         ))
     }

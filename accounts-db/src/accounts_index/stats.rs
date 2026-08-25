@@ -247,10 +247,10 @@ impl Stats {
                     ),
                 );
             }
-            // If an entry is held in-mem due to ref count or slot list length,
+            // If an entry is held in-mem due to slot list length,
             // then assume it has two slot list entries.
             // Since `approx_size_of_one_entry()` assumes 'regular' entries
-            // (aka ref count == 1 and slot list len == 1), and the single slot list entry is
+            // (aka slot list len == 1), and the single slot list entry is
             // stored inline in the slot list itself, then when we have larger slot lists,
             // account for them here.
             let estimate_mem_bytes =

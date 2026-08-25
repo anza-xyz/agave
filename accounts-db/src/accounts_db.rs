@@ -47,7 +47,7 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
-            ReclaimsWithNewestSlot, RefCount, ScanFilter, Startup, UpsertReclaim,
+            ReclaimsWithNewestSlot, ScanFilter, Startup, UpsertReclaim,
             in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
@@ -156,12 +156,7 @@ pub(crate) struct AliveAccountsSeparated<'a> {
 pub(crate) trait ShrinkCollector<'a>: Sync + Send {
     fn with_capacity(capacity: usize, slot: Slot) -> Self;
     fn collect(&mut self, other: Self);
-    fn add(
-        &mut self,
-        ref_count: RefCount,
-        account: &'a AccountFromStorage,
-        slot_list: &[(Slot, AccountInfo)],
-    );
+    fn add(&mut self, account: &'a AccountFromStorage, slot_list: &[(Slot, AccountInfo)]);
     fn len(&self) -> usize;
     fn alive_bytes(&self) -> usize;
     fn alive_accounts(&self) -> &Vec<&'a AccountFromStorage>;
@@ -179,12 +174,7 @@ impl<'a> ShrinkCollector<'a> for AliveAccounts<'a> {
             slot,
         }
     }
-    fn add(
-        &mut self,
-        _ref_count: RefCount,
-        account: &'a AccountFromStorage,
-        _slot_list: &[(Slot, AccountInfo)],
-    ) {
+    fn add(&mut self, account: &'a AccountFromStorage, _slot_list: &[(Slot, AccountInfo)]) {
         self.accounts.push(account);
         self.bytes = self.bytes.saturating_add(account.stored_size());
     }
@@ -213,18 +203,14 @@ impl<'a> ShrinkCollector<'a> for AliveAccountsSeparated<'a> {
             not_newest_duplicate: AliveAccounts::with_capacity(0, slot),
         }
     }
-    fn add(
-        &mut self,
-        ref_count: RefCount,
-        account: &'a AccountFromStorage,
-        slot_list: &[(Slot, AccountInfo)],
-    ) {
-        let other = if ref_count == 1 {
+    fn add(&mut self, account: &'a AccountFromStorage, slot_list: &[(Slot, AccountInfo)]) {
+        assert!(!slot_list.is_empty());
+        let slot = self.no_duplicates.slot;
+        let other = if slot_list.len() == 1 {
             &mut self.no_duplicates
-        } else if slot_list.len() == 1
-            || !slot_list
-                .iter()
-                .any(|(slot_list_slot, _info)| slot_list_slot > &self.not_newest_duplicate.slot)
+        } else if !slot_list
+            .iter()
+            .any(|(slot_list_slot, _info)| slot_list_slot > &slot)
         {
             // this entry is alive but is newer than any other slot in the index
             &mut self.newest_duplicate
@@ -233,7 +219,7 @@ impl<'a> ShrinkCollector<'a> for AliveAccountsSeparated<'a> {
             // We would expect clean to get rid of the entry for THIS slot at some point, but clean hasn't done that yet.
             &mut self.not_newest_duplicate
         };
-        other.add(ref_count, account, slot_list);
+        other.add(account, slot_list);
     }
     fn len(&self) -> usize {
         self.no_duplicates
@@ -1178,7 +1164,7 @@ impl AccountsDb {
 
     /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
     ///
-    /// The reclaimed accounts were already unref'd and removed from the slot list when the
+    /// The reclaimed accounts were already removed from the slot list when the
     /// reclaims were collected
     fn clean_accounts_older_than_root(&self, reclaims: &ReclaimsWithNewestSlot<AccountInfo>) {
         if reclaims.is_empty() {
@@ -1637,9 +1623,9 @@ impl AccountsDb {
                     let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
                         iter::once(&candidate_pubkey),
-                        |_candidate_pubkey, slot_list_and_ref_count| {
+                        |_candidate_pubkey, slot_list| {
                             let mut useless = true;
-                            if let Some((slot_list, _)) = slot_list_and_ref_count {
+                            if let Some(slot_list) = slot_list {
                                 // find the highest rooted slot in the slot list
                                 let index_in_slot_list = self.accounts_index.latest_slot(
                                     None,
@@ -1859,8 +1845,8 @@ impl AccountsDb {
     /// * 'mark_accounts_obsolete' - Whether to mark accounts as obsolete or not. If `Yes`, then
     ///   obsolete account entry will be marked in the storage so snapshots/accounts hash can
     ///   determine the state of the account at a specified slot. This should only be done if the
-    ///   account is already unrefed and removed from the accounts index
-    ///   It must be unrefed and removed to avoid double counting or missed counting in shrink
+    ///   account is already removed from the accounts index
+    ///   It must be removed to avoid double counting or missed counting in shrink
     ///
     /// Returns the set of dead slots that were removed from storage as a result of this call.
     fn handle_reclaims<'a, I>(
@@ -1923,9 +1909,9 @@ impl AccountsDb {
         let mut index_scan_returned_none_count = 0;
         self.accounts_index.scan(
             accounts.iter().map(|account| account.pubkey()),
-            |_pubkey, slots_refs| {
+            |_pubkey, slot_list| {
                 let stored_account = &accounts[index];
-                if let Some((slot_list, ref_count)) = slots_refs {
+                if let Some(slot_list) = slot_list {
                     index_scan_returned_some_count += 1;
                     let is_alive = slot_list.iter().any(|(slot, _acct_info)| {
                         // if the accounts index contains an entry at this slot, then the append vec we're asking about contains this item and thus, it is alive at this slot
@@ -1934,17 +1920,16 @@ impl AccountsDb {
 
                     // All obsolete and tombstones have been filtered. Account MUST be alive in this slot
                     assert!(is_alive);
-                    alive_accounts.add(ref_count, stored_account, slot_list);
+                    alive_accounts.add(stored_account, slot_list);
                 } else {
                     index_scan_returned_none_count += 1;
-                    // getting None here means the account is 'normal' and was written to disk. This means it must have ref_count=1 and
+                    // getting None here means the account is 'normal' and was written to disk. This means it must have
                     // slot_list.len() = 1. This means it must be alive in this slot. This is by far the most common case.
                     // Note that we could get Some(...) here if the account is in the in mem index because it is hot.
                     // Note this could also mean the account isn't on disk either. That would indicate a bug in accounts db.
                     // Account is alive.
-                    let ref_count = 1;
                     let slot_list = [(slot_to_shrink, AccountInfo::default())];
-                    alive_accounts.add(ref_count, stored_account, &slot_list);
+                    alive_accounts.add(stored_account, &slot_list);
                 }
                 index += 1;
             },
@@ -5521,7 +5506,7 @@ impl AccountsDb {
     }
 
     /// Use the duplicated pubkeys to mark all older version of the pubkeys as obsolete
-    /// This will unref the accounts and then reclaim the accounts
+    /// This will remove the older entries from the slot lists and then reclaim the accounts
     fn mark_obsolete_accounts_at_startup(
         &self,
         slot_marked_obsolete: Slot,
@@ -5532,7 +5517,7 @@ impl AccountsDb {
             .map(|pubkeys_by_bin| {
                 let reclaims = self
                     .accounts_index
-                    .clean_and_unref_rooted_entries_by_bin(pubkeys_by_bin);
+                    .clean_rooted_entries_by_bin(pubkeys_by_bin);
                 let stats = PurgeStats::default();
 
                 // Mark all the entries as obsolete, and remove any empty storages
@@ -5574,8 +5559,8 @@ impl AccountsDb {
         let mut capitalization_from_duplicates = 0_u128;
         self.accounts_index.scan(
             pubkeys.iter(),
-            |pubkey, slots_refs| {
-                if let Some((slot_list, _ref_count)) = slots_refs
+            |pubkey, slot_list| {
+                if let Some(slot_list) = slot_list
                     && slot_list.len() > 1
                 {
                     // Only the account data len in the highest slot should be used, and the rest are
@@ -5669,8 +5654,7 @@ impl AccountsDb {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
                     if let Some(account_entry) = account_entry {
                         let list_r = account_entry.slot_list_read_lock();
-                        info!(" key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
-                        info!("      slots: {list_r:?}");
+                        info!(" key: {pubkey} slots: {list_r:?}");
                     }
                     let add_to_in_mem_cache = false;
                     (add_to_in_mem_cache, ())
@@ -5722,7 +5706,7 @@ enum PubkeysToStore {
 }
 
 /// Specify whether obsolete accounts should be marked or not during reclaims
-/// They should only be marked if they are also getting unreffed in the index
+/// They should only be marked if they are also getting removed from the index
 ///
 /// When an account is marked obsolete at the slot it is present in (Eg. if the account is present
 /// in slot 10 and marked obsolete at slot 10), it means the account was deleted rather than
