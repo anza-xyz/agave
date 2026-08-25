@@ -2,7 +2,7 @@
 //! shred, [`Reject`] for a shred that does not pass a stage of the cascade, [`BuildError`] for a
 //! batch that could not be built.
 
-use {crate::shred_variant::ShredType, solana_clock::Slot, thiserror::Error};
+use {crate::shred_variant::ShredKind, solana_clock::Slot, thiserror::Error};
 
 /// A shred's bytes could not be interpreted as a well-formed shred.
 #[derive(Debug, Error)]
@@ -25,9 +25,9 @@ pub enum ParseError {
     #[error("expected a {expected:?} shred, got {found:?}")]
     UnexpectedKind {
         /// The kind the caller asked for.
-        expected: ShredType,
+        expected: ShredKind,
         /// The kind found on the wire.
-        found: ShredType,
+        found: ShredKind,
     },
     /// The headers could not be deserialized.
     #[error(transparent)]

@@ -6,8 +6,8 @@
 use {
     crate::{
         error::ParseError,
-        headers::CommonHeader,
-        kind::ShredKind,
+        headers::{AnyHeader, CommonHeader},
+        kind::ShredLayout,
         shred_variant::ShredVariant,
         wire_format::{
             MERKLE_PROOF_ENTRIES, Nonce, OFFSET_OF_VARIANT, ProofEntry, SIZE_OF_NONCE, Section,
@@ -22,7 +22,7 @@ use {
 
 /// The sections of one shred, borrowed from its bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ShredView<'a, K: ShredKind> {
+pub struct ShredView<'a, K: ShredLayout> {
     /// The leader's signature over the FEC set's Merkle root.
     pub signature: &'a Signature,
     /// The header fields common to both kinds.
@@ -41,8 +41,51 @@ pub struct ShredView<'a, K: ShredKind> {
     /// signature and the proof, the chained Merkle root included.
     pub merkle_leaf: &'a [u8],
     /// The region covered by erasure coding, which starts where this kind's
-    /// [`ERASURE_SHARD_START`](ShredKind::ERASURE_SHARD_START) says and ends with the body.
+    /// [`ERASURE_SHARD_START`](ShredLayout::ERASURE_SHARD_START) says and ends with the body.
     pub erasure_shard: &'a [u8],
+}
+
+/// The sections of one shred whose kind is a runtime tag rather than a type parameter.
+///
+/// Every field but [`header`](Self::header) is identical to [`ShredView`]'s, which is the whole
+/// reason a kind-erased shred is cheap: one match builds this, and every accessor on
+/// [`AnyShred`](crate::AnyShred) that would otherwise need its own match becomes a field read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AnyShredView<'a> {
+    /// The leader's signature over the FEC set's Merkle root.
+    pub signature: &'a Signature,
+    /// The header fields common to both kinds.
+    pub common: CommonHeader,
+    /// The header of whichever kind this shred turned out to be.
+    pub header: AnyHeader,
+    /// Ledger data for a data shred, erasure codes for a code shred, zero padding included.
+    pub body: &'a [u8],
+    /// The Merkle root of the preceding erasure batch.
+    pub chained_merkle_root: &'a Hash,
+    /// The Merkle proof witnessing this shred's leaf in its FEC set's tree.
+    pub merkle_proof: &'a [ProofEntry; MERKLE_PROOF_ENTRIES],
+    /// The retransmitter's signature, present only for resigned variants.
+    pub retransmitter_signature: Option<&'a Signature>,
+    /// The region hashed to produce this shred's Merkle leaf.
+    pub merkle_leaf: &'a [u8],
+    /// The region covered by erasure coding.
+    pub erasure_shard: &'a [u8],
+}
+
+impl<'a, K: ShredLayout> From<ShredView<'a, K>> for AnyShredView<'a> {
+    fn from(view: ShredView<'a, K>) -> Self {
+        Self {
+            signature: view.signature,
+            common: view.common,
+            header: view.header.into(),
+            body: view.body,
+            chained_merkle_root: view.chained_merkle_root,
+            merkle_proof: view.merkle_proof,
+            retransmitter_signature: view.retransmitter_signature,
+            merkle_leaf: view.merkle_leaf,
+            erasure_shard: view.erasure_shard,
+        }
+    }
 }
 
 /// Reads the variant byte without committing to a shred kind.
@@ -58,7 +101,7 @@ pub fn peek_variant(bytes: &[u8]) -> Result<ShredVariant, ParseError> {
     ShredVariant::try_from(byte)
 }
 
-impl<'a, K: ShredKind> ShredView<'a, K> {
+impl<'a, K: ShredLayout> ShredView<'a, K> {
     /// Reads `bytes` as exactly one shred of kind `K`, with nothing following it.
     pub fn read_exact(bytes: &'a [u8]) -> Result<Self, ParseError> {
         let (view, trailer) = Self::read_prefix(bytes)?;
@@ -85,11 +128,11 @@ impl<'a, K: ShredKind> ShredView<'a, K> {
         // The kind is checked before the length, so that bytes of the other kind are reported as
         // such instead of as a shred of this kind that came out the wrong size.
         let variant = peek_variant(bytes)?;
-        let shred_type = variant.shred_type();
-        if shred_type != K::SHRED_TYPE {
+        let kind = variant.shred_kind();
+        if kind != K::SHRED_KIND {
             return Err(ParseError::UnexpectedKind {
-                expected: K::SHRED_TYPE,
-                found: shred_type,
+                expected: K::SHRED_KIND,
+                found: kind,
             });
         }
         let Some((payload, trailer)) = bytes.split_at_checked(K::SIZE_OF_PAYLOAD) else {
@@ -135,23 +178,23 @@ impl<'a, K: ShredKind> ShredView<'a, K> {
 /// mutable slices may not alias. So the payload is held whole and each section is borrowed from it
 /// on request, which is also the order a shred is built in: headers, body, chained root, then the
 /// proof and signature the FEC set's tree produces.
-pub struct ShredViewMut<'a, K: ShredKind> {
+pub struct ShredViewMut<'a, K: ShredLayout> {
     payload: &'a mut [u8],
     sections: Sections,
     _kind: PhantomData<K>,
 }
 
-impl<'a, K: ShredKind> ShredViewMut<'a, K> {
+impl<'a, K: ShredLayout> ShredViewMut<'a, K> {
     /// Takes `payload` as the buffer of one shred of kind `K` with the layout `variant` selects.
     ///
     /// The buffer must be exactly one shred long. Its contents are not read, so this is how a shred
     /// under construction is addressed as well as how a finished one is modified.
     pub fn new(payload: &'a mut [u8], variant: ShredVariant) -> Result<Self, ParseError> {
-        let shred_type = variant.shred_type();
-        if shred_type != K::SHRED_TYPE {
+        let kind = variant.shred_kind();
+        if kind != K::SHRED_KIND {
             return Err(ParseError::UnexpectedKind {
-                expected: K::SHRED_TYPE,
-                found: shred_type,
+                expected: K::SHRED_KIND,
+                found: kind,
             });
         }
         if payload.len() != K::SIZE_OF_PAYLOAD {

@@ -7,9 +7,9 @@
 use {
     crate::{
         error::Reject,
-        headers::{CodeHeader, CommonHeader, DataHeader},
+        headers::{AnyHeader, CodeHeader, CommonHeader, DataHeader},
         policy::{self, AdmissionPolicy, DATA_SHREDS_PER_FEC_BLOCK},
-        shred_variant::ShredType,
+        shred_variant::ShredKind,
         wire_format::{
             self, SIZE_OF_CODE_HEADER, SIZE_OF_CODE_PAYLOAD, SIZE_OF_COMMON_HEADER,
             SIZE_OF_DATA_HEADER, SIZE_OF_DATA_PAYLOAD, SIZE_OF_TRAILER, SIZE_OF_TRAILER_RESIGNED,
@@ -24,16 +24,21 @@ mod sealed {
     pub trait Sealed {}
 }
 
-/// A kind of shred. Sealed; the kinds are exactly [`Data`] and [`Code`].
-pub trait ShredKind: sealed::Sealed + 'static {
+/// The layout and header type of one kind of shred, as type-level data. Sealed; the kinds are
+/// exactly [`Data`] and [`Code`], and [`ShredKind`] is the same distinction as a runtime value.
+pub trait ShredLayout: sealed::Sealed + 'static {
     /// The header this kind carries after the common header.
+    ///
+    /// [`Into<AnyHeader>`] is required so that kind-generic code can hand a shred to the
+    /// kind-erased [`AnyShred`](crate::AnyShred) without knowing which kind it holds.
     type Header: Copy
         + Debug
+        + Into<AnyHeader>
         + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Header>
         + SchemaWrite<DefaultConfig, Src = Self::Header>;
 
-    /// The shred type this kind corresponds to on the wire.
-    const SHRED_TYPE: ShredType;
+    /// The kind this layout corresponds to on the wire.
+    const SHRED_KIND: ShredKind;
     /// Total on-the-wire length of a shred of this kind.
     const SIZE_OF_PAYLOAD: usize;
     /// Length of everything before the body: the signature, the common header and this kind's own.
@@ -69,10 +74,10 @@ pub struct Data;
 pub struct Code;
 
 impl sealed::Sealed for Data {}
-impl ShredKind for Data {
+impl ShredLayout for Data {
     type Header = DataHeader;
 
-    const SHRED_TYPE: ShredType = ShredType::Data;
+    const SHRED_KIND: ShredKind = ShredKind::Data;
     const SIZE_OF_PAYLOAD: usize = SIZE_OF_DATA_PAYLOAD;
     const SIZE_OF_HEADERS: usize =
         wire_format::SIZE_OF_SIGNATURE + SIZE_OF_COMMON_HEADER + SIZE_OF_DATA_HEADER;
@@ -121,10 +126,10 @@ impl ShredKind for Data {
 }
 
 impl sealed::Sealed for Code {}
-impl ShredKind for Code {
+impl ShredLayout for Code {
     type Header = CodeHeader;
 
-    const SHRED_TYPE: ShredType = ShredType::Code;
+    const SHRED_KIND: ShredKind = ShredKind::Code;
     const SIZE_OF_PAYLOAD: usize = SIZE_OF_CODE_PAYLOAD;
     const SIZE_OF_HEADERS: usize =
         wire_format::SIZE_OF_SIGNATURE + SIZE_OF_COMMON_HEADER + SIZE_OF_CODE_HEADER;

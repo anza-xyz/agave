@@ -11,6 +11,33 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
+/// A kind's own header, with the kind as a runtime tag.
+///
+/// This is what makes a kind-erased shred possible: erasing the header field is enough, because
+/// everything else about a shred is either common to both kinds or derived from the variant byte.
+/// See [`AnyShred`](crate::AnyShred).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnyHeader {
+    /// A data shred's header.
+    Data(DataHeader),
+    /// A code shred's header.
+    Code(CodeHeader),
+}
+
+impl From<DataHeader> for AnyHeader {
+    #[inline]
+    fn from(header: DataHeader) -> Self {
+        Self::Data(header)
+    }
+}
+
+impl From<CodeHeader> for AnyHeader {
+    #[inline]
+    fn from(header: CodeHeader) -> Self {
+        Self::Code(header)
+    }
+}
+
 /// The part of the header that is common to both shred kinds, signature excluded.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub struct CommonHeader {

@@ -1,4 +1,4 @@
-//! The admission policy: everything the [`admit`](crate::Shred::admit) transition needs to know
+//! The admission policy: everything the [`verify`](crate::Shred::verify) transition needs to know
 //! about the node's current view of the cluster.
 //!
 //! Deliberately plain data. Resolving these values is the caller's job.

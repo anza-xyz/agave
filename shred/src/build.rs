@@ -22,11 +22,11 @@ use {
     crate::{
         error::BuildError,
         headers::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
-        kind::{Code, Data, ShredKind},
+        kind::{Code, Data, ShredLayout},
         merkle,
         policy::DATA_SHREDS_PER_FEC_BLOCK,
         provenance::SelfProduced,
-        shred::{CodeShred, DataShred, merkle_tree::MerkleTree},
+        shred::{AnyShred, CodeShred, DataShred, merkle_tree::MerkleTree},
         shred_variant::ShredVariant,
         state::Verified,
         view::ShredViewMut,
@@ -70,7 +70,7 @@ pub struct FecSetSpec {
     ///
     /// The two kinds are indexed by separate counters on the wire, but with every FEC set holding 32
     /// of each the counters advance together from zero, so they never disagree. A shred whose index
-    /// falls outside its own FEC set is rejected by [`admit`](crate::Shred::admit) anyway.
+    /// falls outside its own FEC set is rejected by [`verify`](crate::Shred::verify) anyway.
     pub fec_set_index: u32,
     /// Merkle root of the preceding erasure batch.
     pub chained_merkle_root: Hash,
@@ -123,6 +123,20 @@ pub struct FecSet {
 }
 
 impl FecSet {
+    /// Flattens the batch into one stream of kind-erased shreds, data shreds first.
+    ///
+    /// Both of the write path's consumers want them this way: blockstore insert runs one pipeline
+    /// for both kinds, and broadcast puts them on the wire. Neither would use the split, and a
+    /// channel that carried [`FecSet`] would only make the receiver undo it.
+    ///
+    /// The Merkle root is dropped, since it belongs to the next batch rather than to these shreds.
+    pub fn into_any(self) -> Vec<AnyShred<Verified, SelfProduced>> {
+        let mut shreds = Vec::with_capacity(self.data.len().saturating_add(self.code.len()));
+        shreds.extend(self.data.into_iter().map(AnyShred::from));
+        shreds.extend(self.code.into_iter().map(AnyShred::from));
+        shreds
+    }
+
     /// Builds and signs the erasure batch carrying `data`.
     ///
     /// `data` is a serialized `&[Entry]`, or the tail of one; it is split across the batch's data
@@ -356,10 +370,7 @@ impl<'a> AnyShredViewMut<'a> {
 mod tests {
     use {
         super::*,
-        crate::{
-            policy::AdmissionPolicy,
-            shred::{ShredParsed, parse},
-        },
+        crate::{policy::AdmissionPolicy, shred::parse},
         solana_signature::Signature,
         solana_signer::Signer,
     };
@@ -406,11 +417,10 @@ mod tests {
             for (position, shred) in set.data.iter().enumerate() {
                 let (parsed, nonce) = parse(shred.bytes().clone()).unwrap();
                 assert_eq!(nonce, None);
-                let ShredParsed::Data(shred) = parsed else {
-                    panic!("a data shred parsed as a code shred");
-                };
-                let shred = shred.admit(&policy(&spec)).unwrap();
-                let shred = shred.verify(&keypair.pubkey()).unwrap();
+                let shred = parsed
+                    .into_data()
+                    .expect("a data shred parsed as a code shred");
+                let shred = shred.verify(&policy(&spec), &keypair.pubkey()).unwrap();
                 assert_eq!(shred.merkle_root().unwrap(), set.merkle_root);
                 assert_eq!(shred.index(), spec.fec_set_index + position as u32);
                 assert_eq!(shred.erasure_shard_index(), Some(position));
@@ -420,11 +430,10 @@ mod tests {
 
             for (position, shred) in set.code.iter().enumerate() {
                 let (parsed, _) = parse(shred.bytes().clone()).unwrap();
-                let ShredParsed::Code(shred) = parsed else {
-                    panic!("a code shred parsed as a data shred");
-                };
-                let shred = shred.admit(&policy(&spec)).unwrap();
-                let shred = shred.verify(&keypair.pubkey()).unwrap();
+                let shred = parsed
+                    .into_code()
+                    .expect("a code shred parsed as a data shred");
+                let shred = shred.verify(&policy(&spec), &keypair.pubkey()).unwrap();
                 assert_eq!(shred.merkle_root().unwrap(), set.merkle_root);
                 assert_eq!(shred.position(), position as u16);
                 assert_eq!(shred.erasure_shard_index(), Some(DATA_SHREDS + position));

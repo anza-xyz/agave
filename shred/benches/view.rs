@@ -1,13 +1,15 @@
-//! How much a `Shred::view()` costs, since every accessor takes one.
+//! How much a `Shred::view()` costs, since every accessor takes one, and what the kind-erased
+//! `AnyShred` adds on top of it.
 
 use {
     bytes::Bytes,
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
     rand::{Rng, SeedableRng, rngs::StdRng},
     solana_shred::{
-        Code, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed, Received, ShredFlags,
-        ShredVariant, ShredViewMut,
-        kind::ShredKind,
+        AnyShred, Code, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed, Received,
+        ShredFlags, ShredVariant, ShredViewMut,
+        kind::ShredLayout,
+        parse,
         wire_format::{OFFSET_OF_VARIANT, SIZE_OF_NONCE},
     },
     std::hint::black_box,
@@ -20,7 +22,7 @@ const SHREDS: usize = 1024 * 64;
 ///
 /// Every field but that byte is unconstrained: parsing reads the headers as scalars and validates
 /// nothing about them.
-fn random_shreds<K: ShredKind>(variant: ShredVariant) -> Vec<Bytes> {
+fn random_shreds<K: ShredLayout>(variant: ShredVariant) -> Vec<Bytes> {
     let mut rng = StdRng::seed_from_u64(0x5eed);
     (0..SHREDS)
         .map(|_| {
@@ -50,6 +52,11 @@ fn bench_view(c: &mut Criterion) {
         })
         .collect();
 
+    // The same data shreds with the kind erased, so the two `view()` rows are directly comparable:
+    // the erased one pays for a match on the header discriminant before it can pick a `K`.
+    let erased: Vec<AnyShred<Parsed, Received>> =
+        data.iter().cloned().map(AnyShred::from).collect();
+
     let mut group = c.benchmark_group("shred_view");
     group.throughput(Throughput::Elements(SHREDS as u64));
     group.bench_function("data", |b| {
@@ -62,6 +69,13 @@ fn bench_view(c: &mut Criterion) {
     group.bench_function("code", |b| {
         b.iter(|| {
             for shred in &code {
+                black_box(shred.view());
+            }
+        })
+    });
+    group.bench_function("erased", |b| {
+        b.iter(|| {
+            for shred in &erased {
                 black_box(shred.view());
             }
         })
@@ -141,6 +155,15 @@ fn bench_parse(c: &mut Criterion) {
                 // Cloning `Bytes` is a refcount bump, so this measures the parse.
                 black_box(DataShred::<Parsed, Received>::parse(packet.clone()))
                     .expect("the packets were built to parse");
+            }
+        })
+    });
+    // What a socket-reading worker actually calls: the same parse, plus the variant peek that
+    // picks the kind and the erasure that follows it.
+    group.bench_function("erased", |b| {
+        b.iter(|| {
+            for packet in &packets {
+                black_box(parse(packet.clone())).expect("the packets were built to parse");
             }
         })
     });

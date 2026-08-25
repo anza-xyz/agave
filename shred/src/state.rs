@@ -12,15 +12,9 @@ pub trait ShredState: sealed::Sealed {
 /// The shred's length and headers are well-formed. Nothing about its content is known.
 pub enum Parsed {}
 
-/// The headers agree with the caller's admission policy: right cluster, plausible slot, index and
-/// FEC set, self-consistent flags. No cryptography has been checked.
-pub enum Admissible {}
-
-/// The leader's signature over the shred's Merkle root verifies.
+/// The leader's signature over the shred's Merkle root verifies, and the headers agreed with the
+/// caller's admission policy on the way.
 pub enum Verified {}
-
-/// A retransmitter signature has been written over the verified Merkle root.
-pub enum Resigned {}
 
 macro_rules! impl_state {
     ($state:ident) => {
@@ -32,6 +26,4 @@ macro_rules! impl_state {
 }
 
 impl_state!(Parsed);
-impl_state!(Admissible);
 impl_state!(Verified);
-impl_state!(Resigned);

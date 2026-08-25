@@ -190,22 +190,55 @@ Typestate enforces properties such as "these checks ran, in this order". A signa
 worthless if a later stage can be reached without it. Holding a `Shred` in `Verified` state
 is compiler-enforced proof that the verifications ran in the correct order.
 
-The stage boundaries are drawn by cost, cheapest first: reading headers, then policy checks against
-those headers, then cryptography. Rejecting a shred is then as cheap as the earliest stage that can
-reject it, and the expensive stage is unreachable until the cheap ones have passed. The tiers a
-stricter-validation rule needs are stages, so each new check has exactly one place to live.
+The work is still ordered by cost, cheapest first: reading headers, then policy checks against those
+headers, then cryptography. But a state boundary is only worth drawing where code stands on it. There
+are two: `Parsed` and `Verified`.
+
+`verify` runs the policy checks and the signature check together, because a sigverify worker takes
+one shred off the queue and does both, so a state between them would name a boundary nothing holds a
+shred at. The ordering is kept inside the function instead, and a shred the policy rejects never
+reaches the hashing.
+
+`resign` leaves the state alone for the same reason. A `Resigned` state would record which shreds
+carry a retransmitter signature, which no consumer gates on, and it would force a widening on the
+insert path, which takes verified shreds of every provenance and does not care. The invariant that
+does carry weight, that a shred is never resigned before its leader signature was checked, is held by
+`resign` living on `Verified`. What this gives up is that resigning twice stops being a compile
+error; the second write is idempotent under the same key, so it wastes work rather than forging
+anything.
 
 ### Why the shred kind is a type parameter
 
 Many accessors are meaningful for only one of the two kinds. Previously that was a comment plus a
 `debug_assert`. As a type parameter, the wrong accessor does not exist to be called, and the layout differences between the kinds are resolved at compile time.
 
-The kind is still a runtime tag at exactly one place, because a shred arriving off the wire carries
-its kind in its own bytes and nothing before parsing can know it. Both entry points are deliberate:
-callers who cannot know the kind get a dispatching one, and callers who know it from where the bytes
-came from (e.g., a kind-specific blockstore column) get a typed one whose kind mismatch means
-corruption rather than a malformed packet. That mismatch is returned as error for the caller to
-interpret as appropriate.
+The kind is a runtime tag where it has to be, and `AnyShred` is that form: the same shred with the
+header field erased to an enum. Everything else about a shred is either common to both kinds or
+derived from the variant byte, so erasing one field is enough, and the two kinds differ by one
+discriminant.
+
+Three boundaries need it. The channel out of sigverify, because blockstore runs one pipeline for both
+kinds. The output of the shredder, because Reed-Solomon produces both at once and both insert and
+broadcast want them flat. Blockstore insert itself, up to erasure recovery, which is where the kinds
+come apart again and `into_data`/`into_code` put them back in the type.
+
+It costs two matches. One in `view()`, which every layout accessor then reads as a plain field, and
+one in `erasure_shard_index`, which is the single thing a kind-erased shred cannot derive from the
+layout because a code shred's leaf index is a function of its own header. Neither is on a path where
+a branch on a hot cache line competes with a Merkle recompute and an ed25519 verify. The read path
+pays nothing extra at all: `parse` has to read the variant byte anyway, so the match it forces is
+the one the erased shred was going to need.
+
+An alternative to `AnyShred` is an enum over the two typed shreds, which is what `ledger/src/shred.rs`
+does and where its `dispatch!` macro comes from. All ten of that macro's uses are kind-agnostic:
+each is a function of the bytes, the common header and the variant. It is not erasing a kind
+difference, it is forwarding to two structs that each keep their own copy of the common part and each
+reimplement the same layout arithmetic. The duplication is the defect and the macro only makes it
+cheap to maintain.
+
+Callers who know the kind from where the bytes came from, such as a kind-specific blockstore column,
+still get a typed entry point, whose kind mismatch means corruption rather than a malformed packet.
+That mismatch is returned as an error for the caller to interpret as appropriate.
 
 ### Why provenance is a type parameter
 
@@ -233,9 +266,10 @@ generalization. Trusted enough to skip verification is not the same as having so
 Which socket a received shred arrived on is deliberately not part of provenance. Repair and Turbine
 differ in how the packet was solicited, not in what this node may do with it, and the stage that
 cares about the difference is counting packets at the socket, where the socket is known without
-asking the shred. What a finer split would buy is a downstream metric, "of the shreds that completed
-this FEC set, how many were repaired", which nothing asks for today; what it costs is that a batch
-drawn from both sockets stops being a single type. Merging them is what keeps `Vec<Shred<K, S,
+asking the shred. What a finer split would buy is what `ShredSource` in `ledger/src/slot_stats.rs` already
+counts, "of the shreds that completed this FEC set, how many were repaired", which feeds statistics
+and three warnings and gates nothing; what it costs is that a batch drawn from both sockets stops
+being a single type. Merging them is what keeps `Vec<Shred<K, S,
 Received>>` from needing an erasure step, and it removed a marker, a widening and a whole grouping
 trait from this crate.
 
@@ -243,12 +277,16 @@ trait from this crate.
 stand for was established before the shred was stored and nothing there is ever unwound, so
 replaying the cascade on the way out would pay for a signature check to learn what is already known.
 `from_blockstore` is generic over the state and materializes whichever one the reading code asks
-for, with no intermediate transitions.
+for, with no intermediate transitions. It stays typed in the kind: data and code shreds live in
+separate blockstore columns, so a read always knows which kind it asked for and `AnyShred` needs no
+door of its own.
 
 The cost of putting provenance in the type is that shreds which differ in it cannot share a
-collection, and one real path needs them to: blockstore insertion takes received and recovered
-shreds together. `forget_provenance` widens any shred to `Unspecified` for exactly that, and it
-grants nothing, which suits a path that neither admits, verifies nor resigns. It is a one-way retag
+collection, and one real path needs them to: blockstore insert holds shreds that just arrived,
+shreds already stored and shreds rebuilt by erasure recovery, in one pipeline that only reads them.
+`forget_provenance` widens any shred to `Unspecified` for exactly that, and it grants nothing, which
+suits a path that neither verifies nor resigns. That path is also the one that needs the kind erased,
+so it is where the two erasures meet, and the only place that needs both. It is a one-way retag
 of a phantom parameter, free at runtime, and with no narrowing counterpart, so it cannot be used to
 walk a self-produced shred into the resign path.
 

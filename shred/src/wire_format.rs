@@ -33,7 +33,7 @@ pub use crate::shred::merkle_tree::{MerkleProofEntry as ProofEntry, SIZE_OF_MERK
 use {
     crate::{
         headers::{CodeHeader, CommonHeader, DataHeader},
-        kind::{Code, Data, ShredKind},
+        kind::{Code, Data, ShredLayout},
         shred::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH,
     },
     solana_hash::Hash,
@@ -163,7 +163,7 @@ pub struct Sections {
 }
 
 /// The section layout of a shred of kind `K`
-pub const fn sections<K: ShredKind>(resigned: bool) -> Sections {
+pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
     let end_of_signature = SIZE_OF_SIGNATURE;
     let end_of_headers = K::SIZE_OF_HEADERS;
     let end_of_body = end_of_headers.saturating_add(if resigned {
@@ -220,7 +220,7 @@ pub const fn sections<K: ShredKind>(resigned: bool) -> Sections {
 
 /// The payload is exactly the sections, with nothing left over, for all four layouts.
 const _: () = {
-    const fn end_of_shred<K: ShredKind>(resigned: bool) -> usize {
+    const fn end_of_shred<K: ShredLayout>(resigned: bool) -> usize {
         let sections = sections::<K>(resigned);
         match sections.retransmitter_signature {
             Some(retransmitter_signature) => retransmitter_signature.end,
@@ -237,7 +237,7 @@ const _: () = {
 /// apart: Reed-Solomon needs equal-length shards, and a code shred spends on headers what a data
 /// shred spends on its signature.
 const _: () = {
-    const fn erasure_shard_len<K: ShredKind>(resigned: bool) -> usize {
+    const fn erasure_shard_len<K: ShredLayout>(resigned: bool) -> usize {
         sections::<K>(resigned).erasure_shard.len()
     }
     assert!(erasure_shard_len::<Data>(false) == erasure_shard_len::<Code>(false));

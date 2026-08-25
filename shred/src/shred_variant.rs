@@ -14,7 +14,7 @@ use {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SchemaRead, SchemaWrite)]
 #[wincode(tag_encoding = "u8")]
 #[repr(u8)]
-pub enum ShredType {
+pub enum ShredKind {
     /// Carries ledger entries.
     #[wincode(tag = 0b1010_0101)]
     Data = 0b1010_0101,
@@ -70,10 +70,10 @@ impl ShredVariant {
 
     /// Whether this variant carries ledger data or erasure codes.
     #[inline]
-    pub const fn shred_type(self) -> ShredType {
+    pub const fn shred_kind(self) -> ShredKind {
         match self {
-            Self::MerkleCode | Self::MerkleCodeResigned => ShredType::Code,
-            Self::MerkleData | Self::MerkleDataResigned => ShredType::Data,
+            Self::MerkleCode | Self::MerkleCodeResigned => ShredKind::Code,
+            Self::MerkleData | Self::MerkleDataResigned => ShredKind::Data,
         }
     }
 }

@@ -6,28 +6,31 @@
 //!
 //! # The cascade
 //!
-//! A shred arrives as an opaque [`Bytes`](bytes::Bytes) buffer and advances through four states,
+//! A shred arrives as an opaque [`Bytes`](bytes::Bytes) buffer and advances through two states,
 //! each reachable only by calling the transition that establishes it:
 //!
 //! ```text
 //! Bytes
-//!   │  parse()          length, variant, headers          cheap: no hashing
+//!   │  parse()                  length, variant, headers        cheap: no hashing
 //!   ▼  Shred<K, Parsed>
-//!   │  admit(policy)    slot, index, FEC set, flags       cheap: no cryptography
-//!   ▼  Shred<K, Admissible>
-//!   │  verify(leader)   Merkle root, leader signature     expensive
+//!   │  verify(policy, leader)   policy, then Merkle root and    cheap checks first, then
+//!   │                           leader signature                the expensive one
 //!   ▼  Shred<K, Verified>
-//!   │  resign(keypair)  retransmitter signature
-//!   ▼  Shred<K, Resigned>
+//!      resign(keypair)          retransmitter signature, in place
 //! ```
 //!
 //! Because the states are uninhabited markers with no public constructors, a `Shred<_, Verified>` in
-//! hand is proof that verification ran. Skipping a stage is a compile error rather than a bug: a
-//! shred cannot be resigned on this node's authority before its leader signature was checked.
+//! hand is proof that verification ran. Skipping it is a compile error rather than a bug: a shred
+//! cannot be resigned on this node's authority before its leader signature was checked.
 //!
-//! The kind ([`Data`] or [`Code`]) is likewise a type parameter, so accessors that only make
-//! sense for one kind do not exist on the other. [`ShredParsed`] is the single point where the kind
-//! is still a runtime tag, because [`parse`] cannot know it before reading the variant byte.
+//! The policy checks and the signature check are one transition because nothing in the pipeline
+//! stands between them. A sigverify worker takes one shred and runs both, cheapest first, so a state
+//! in between would name a boundary no code stands on. `resign` leaves the state alone for the same
+//! reason: which shreds carry a retransmitter signature is not something any consumer gates on.
+//!
+//! The kind ([`Data`] or [`Code`]) is likewise a type parameter, so accessors that only make sense
+//! for one kind do not exist on the other. [`AnyShred`] is the kind-erased form, for the channels
+//! and pipelines that carry both at once; see its documentation for where those are.
 //!
 //! # Provenance
 //!
@@ -39,7 +42,7 @@
 //! Four things can put a shred in [`Verified`], one per provenance:
 //!
 //! ```text
-//! Shred<K, Admissible, Received>::verify(leader)   hash and ed25519, here
+//! Shred<K, Parsed, Received>::verify(policy, leader)   hash and ed25519, here
 //! (erasure recovery)                 -> Recovered      the batch's root was verified already
 //! Shred<K, S, Stored>::from_blockstore(..)          verified before it was ever stored
 //! FecSet::build(..)                  -> SelfProduced   signed here, over these bytes
@@ -67,11 +70,11 @@
 //! Provenance is a type parameter, so shreds that differ in it are different types and cannot share
 //! a collection. [`forget_provenance`](Shred::forget_provenance) widens any shred to
 //! [`Unspecified`], which is what a path holding shreds of mixed origin needs: blockstore insertion
-//! takes received and recovered shreds together and neither verifies, admits nor resigns them. The
+//! holds received, recovered and stored shreds together and neither verifies nor resigns them. The
 //! widening is one-way and grants nothing, so anything that reports the origin reads
 //! [`provenance`](Shred::provenance) before widening.
 //!
-//! [`provenance`](crate::provenance) is where the markers and the [`Received`] group live.
+//! [`provenance`](crate::provenance) is where the markers live.
 //!
 //! # Cost
 //!
@@ -92,14 +95,12 @@
 //! # Example
 //!
 //! ```
-//! use solana_shred::{AdmissionPolicy, ShredParsed, fixtures, parse};
+//! use solana_shred::{AdmissionPolicy, fixtures, parse};
 //!
 //! let (parsed, repair_nonce) = parse(fixtures::DATA_SHRED)?;
 //! assert_eq!(repair_nonce, None);
 //!
-//! let ShredParsed::Data(shred) = parsed else {
-//!     panic!("the fixture is a data shred");
-//! };
+//! let shred = parsed.into_data().expect("the fixture is a data shred");
 //! let policy = AdmissionPolicy {
 //!     shred_version: shred.version(),
 //!     root: shred.slot() - 1,
@@ -108,8 +109,7 @@
 //!     max_code_shreds_per_slot: 32_768,
 //! };
 //!
-//! let shred = shred.admit(&policy)?;
-//! let shred = shred.verify(&fixtures::leader())?;
+//! let shred = shred.verify(&policy, &fixtures::leader())?;
 //! assert_eq!(shred.data()?.len(), 963);
 //!
 //! assert_eq!(shred.provenance(), solana_shred::ProvenanceKind::Received);
@@ -155,15 +155,15 @@ pub mod wire_format;
 pub use crate::{
     build::{FecSet, FecSetSpec},
     error::{BuildError, InvalidDataSize, ParseError, Reject},
-    headers::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
-    kind::{Code, Data, ShredKind},
+    headers::{AnyHeader, CodeHeader, CommonHeader, DataHeader, ShredFlags},
+    kind::{Code, Data, ShredLayout},
     policy::AdmissionPolicy,
     provenance::{
         Provenance, ProvenanceKind, Received, Recovered, SelfProduced, Stored, Unspecified,
     },
-    shred::{CodeShred, DataShred, Shred, ShredParsed, parse},
-    shred_variant::{ShredType, ShredVariant},
-    state::{Admissible, Parsed, Resigned, ShredState, Verified},
-    view::{ShredView, ShredViewMut},
+    shred::{AnyShred, CodeShred, DataShred, Shred, parse},
+    shred_variant::{ShredKind, ShredVariant},
+    state::{Parsed, ShredState, Verified},
+    view::{AnyShredView, ShredView, ShredViewMut},
     wire_format::{Nonce, ProofEntry, Sections, sections},
 };
