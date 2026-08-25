@@ -2,8 +2,13 @@
 #![cfg(feature = "dev-context-only-utils")]
 
 use {
-    crate::{bank::Bank, static_ids},
+    crate::{
+        bank::Bank,
+        block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
+        static_ids,
+    },
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
     dashmap::DashSet,
     log::info,
     rayon::{
@@ -129,6 +134,9 @@ impl<'a> SnapshotMinimizer<'a> {
         static_ids::STATIC_IDS.iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
         });
+        self.minimized_account_set
+            .insert(*GENESIS_CERTIFICATE_ACCOUNT);
+        self.minimized_account_set.insert(*VOTE_REWARD_ACCOUNT_ADDR);
     }
 
     /// Used to get reserved accounts in `minimize`

@@ -332,7 +332,9 @@ mod tests {
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_runtime::{
-            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
+            genesis_utils::{
+                ValidatorVoteKeypairs, create_genesis_config_with_tower_vote_accounts,
+            },
             stake_utils,
         },
         solana_signer::Signer,
@@ -641,11 +643,12 @@ mod tests {
 
         let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs];
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            vec![100; 1],
-        );
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_tower_vote_accounts(
+                1_000_000_000,
+                &validator_keypairs,
+                vec![100; 1],
+            );
 
         let (_bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
