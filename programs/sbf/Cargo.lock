@@ -402,6 +402,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tikv-jemallocator",
  "tokio",
+ "toml",
 ]
 
 [[package]]
