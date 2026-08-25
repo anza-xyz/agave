@@ -13,9 +13,9 @@ use {
         genesis_utils::{
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
-            create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
-            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
-            minimum_vote_account_balance_for_vat,
+            create_genesis_config_with_leader, create_genesis_config_with_tower_leader,
+            create_genesis_config_with_vote_accounts, create_lockup_stake_account,
+            genesis_sysvar_and_builtin_program_lamports, minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
@@ -148,7 +148,7 @@ use {
     solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
-    solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, TowerSync},
+    solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::{
         vote_instruction,
         vote_state::{
@@ -1765,15 +1765,24 @@ fn test_readonly_accounts() {
     bank.transfer(1, &mint_keypair, &authorized_voter.pubkey())
         .unwrap();
 
-    let vote = TowerSync::new_from_slot(bank.parent_slot, bank.parent_hash);
-    let ix0 = vote_instruction::tower_sync(&vote_pubkey0, &authorized_voter.pubkey(), vote.clone());
+    let ix0 = vote_instruction::authorize(
+        &vote_pubkey0,
+        &authorized_voter.pubkey(),
+        &Pubkey::new_unique(),
+        VoteAuthorize::Withdrawer,
+    );
     let tx0 = Transaction::new_signed_with_payer(
         &[ix0],
         Some(&payer0.pubkey()),
         &[&payer0, &authorized_voter],
         bank.last_blockhash(),
     );
-    let ix1 = vote_instruction::tower_sync(&vote_pubkey1, &authorized_voter.pubkey(), vote.clone());
+    let ix1 = vote_instruction::authorize(
+        &vote_pubkey1,
+        &authorized_voter.pubkey(),
+        &Pubkey::new_unique(),
+        VoteAuthorize::Withdrawer,
+    );
     let tx1 = Transaction::new_signed_with_payer(
         &[ix1],
         Some(&payer1.pubkey()),
@@ -1788,7 +1797,12 @@ fn test_readonly_accounts() {
     assert_eq!(results[0], Ok(()));
     assert_eq!(results[1], Ok(()));
 
-    let ix0 = vote_instruction::tower_sync(&vote_pubkey2, &authorized_voter.pubkey(), vote);
+    let ix0 = vote_instruction::authorize(
+        &vote_pubkey2,
+        &authorized_voter.pubkey(),
+        &Pubkey::new_unique(),
+        VoteAuthorize::Withdrawer,
+    );
     let tx0 = Transaction::new_signed_with_payer(
         &[ix0],
         Some(&payer0.pubkey()),
@@ -5585,7 +5599,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         .collect::<Vec<_>>();
     let GenesisConfigInfo {
         mut genesis_config, ..
-    } = genesis_utils::create_genesis_config_with_alpenglow_vote_accounts(
+    } = genesis_utils::create_genesis_config_with_vote_accounts(
         1_000_000_000,
         &validator_keypairs,
         vec![STAKE_LAMPORTS; NUM_VALIDATORS],
@@ -7045,7 +7059,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
     );
 
     let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
-    genesis_utils::activate_all_features_alpenglow(&mut genesis_config);
+    genesis_utils::activate_all_features(&mut genesis_config);
     assert_eq!(genesis_config.poh_config.hashes_per_tick, None);
     assert_reduced_slot_time_hashes_per_tick(genesis_config, None, None);
 }
@@ -7139,7 +7153,7 @@ fn test_update_clock_slot_range_duration() {
         mut genesis_config,
         voting_keypair,
         ..
-    } = create_genesis_config_with_leader(5, &leader_pubkey, 3);
+    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
     genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
     activate_feature(
         &mut genesis_config,
@@ -7740,7 +7754,7 @@ fn test_timestamp_slow() {
         mut genesis_config,
         voting_keypair,
         ..
-    } = create_genesis_config_with_leader(5, &leader_pubkey, 3);
+    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
     let slots_in_epoch = 32;
     genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
     let (mut bank, _bank_forks) =
@@ -7785,7 +7799,7 @@ fn test_timestamp_fast() {
         mut genesis_config,
         voting_keypair,
         ..
-    } = create_genesis_config_with_leader(5, &leader_pubkey, 3);
+    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
     let slots_in_epoch = 32;
     genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
     let (mut bank, _bank_forks) =

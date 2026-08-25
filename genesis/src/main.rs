@@ -839,7 +839,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     if is_alpenglow {
         solana_runtime::genesis_utils::activate_all_features_alpenglow(&mut genesis_config);
     } else {
-        solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+        solana_runtime::genesis_utils::activate_all_features_tower(&mut genesis_config);
     }
 
     if !features_to_deactivate.is_empty() {

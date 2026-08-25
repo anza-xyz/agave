@@ -203,12 +203,16 @@ impl LocalCluster {
     }
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
-        Self::init(config, socket_addr_space, AlpenglowMode::Disabled)
+        Self::new_alpenglow(config, socket_addr_space)
     }
 
     pub fn new_alpenglow(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         config.poh_config.hashes_per_tick = None;
         Self::init(config, socket_addr_space, AlpenglowMode::Enabled)
+    }
+
+    pub fn new_tower(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        Self::init(config, socket_addr_space, AlpenglowMode::Disabled)
     }
 
     pub fn init(

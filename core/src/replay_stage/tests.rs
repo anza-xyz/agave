@@ -62,7 +62,10 @@ use {
         bank::BankTestConfig,
         block_component_processor::BlockComponentProcessorError,
         commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
-        genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
+        genesis_utils::{
+            GenesisConfigInfo, ValidatorVoteKeypairs, bootstrap_validator_stake_lamports,
+            create_genesis_config_with_tower_leader,
+        },
     },
     solana_sha256_hasher::hash,
     solana_shred_version::compute_shred_version,
@@ -6586,7 +6589,11 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     agave_logger::setup();
     let GenesisConfigInfo {
         mut genesis_config, ..
-    } = create_genesis_config(123);
+    } = create_genesis_config_with_tower_leader(
+        123,
+        &Pubkey::new_unique(),
+        bootstrap_validator_stake_lamports(),
+    );
 
     let ticks_per_slot = 1;
     genesis_config.ticks_per_slot = ticks_per_slot;

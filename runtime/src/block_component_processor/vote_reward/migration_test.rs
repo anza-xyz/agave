@@ -9,8 +9,8 @@ mod tests {
                 tests::{new_bank_from_parent, set_commission, split_commission_checked},
             },
             genesis_utils::{
-                ValidatorVoteKeypairs, activate_all_features, create_genesis_config_with_leader_ex,
-                create_validator,
+                ValidatorVoteKeypairs, activate_all_features_tower,
+                create_genesis_config_with_leader_ex, create_validator,
             },
             stake_utils,
             sysvar_account::from_account,
@@ -155,11 +155,11 @@ mod tests {
                 FeeRateGovernor::new(0, 0),
                 Rent::default(),
                 ClusterType::Development,
-                &FeatureSet::all_enabled(),
+                &FeatureSet::default(),
                 vec![],
             );
             genesis_config.epoch_schedule = EpochSchedule::without_warmup();
-            activate_all_features(&mut genesis_config);
+            activate_all_features_tower(&mut genesis_config);
             for (ind, keypair) in validators.iter().enumerate().skip(1) {
                 let node_pubkey = keypair.node_keypair.pubkey();
                 let vote_pubkey = keypair.vote_keypair.pubkey();

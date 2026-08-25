@@ -441,8 +441,8 @@ mod tests {
             bank::{SlotLeader, tests::create_genesis_config},
             bank_forks::BankForks,
             genesis_utils::{
-                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
-                deactivate_features,
+                GenesisConfigInfo, ValidatorVoteKeypairs,
+                create_genesis_config_with_tower_vote_accounts, deactivate_features,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
@@ -625,7 +625,11 @@ mod tests {
 
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
+        } = create_genesis_config_with_tower_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            stakes,
+        );
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         deactivate_features(&mut genesis_config, &features_to_deactivate);
 
@@ -1088,7 +1092,7 @@ mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config_with_vote_accounts(
+        } = create_genesis_config_with_tower_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![1_000_000_000; 1],

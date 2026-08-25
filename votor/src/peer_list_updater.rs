@@ -238,9 +238,7 @@ mod tests {
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-            },
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -327,11 +325,8 @@ mod tests {
             })
             .collect();
 
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stakes,
-        );
+        let genesis =
+            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
 
         let mut bank0 = Bank::new_for_tests(&genesis.genesis_config);
         let base_slot_epoch = bank0.epoch_schedule().get_epoch(base_slot);

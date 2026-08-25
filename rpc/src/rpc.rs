@@ -4647,6 +4647,9 @@ pub mod tests {
         solana_runtime::{
             bank::{BankTestConfig, SlotLeader},
             commitment::{BlockCommitment, CommitmentSlots},
+            genesis_utils::{
+                bootstrap_validator_stake_lamports, create_genesis_config_with_tower_leader,
+            },
             non_circulating_supply::non_circulating_accounts,
         },
         solana_sdk_ids::bpf_loader_upgradeable,
@@ -4658,7 +4661,6 @@ pub mod tests {
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_sysvar::slot_hashes::SlotHashes,
-        solana_time_utils::slot_duration_from_slots_per_year,
         solana_transaction::{Transaction, versioned::TransactionVersion},
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
@@ -4859,14 +4861,38 @@ pub mod tests {
             })
         }
 
+        fn start_tower() -> Self {
+            let config = JsonRpcConfig {
+                enable_rpc_transaction_history: true,
+                ..JsonRpcConfig::default()
+            };
+            let genesis_config_info = create_genesis_config_with_tower_leader(
+                TEST_MINT_LAMPORTS,
+                &Pubkey::new_unique(),
+                bootstrap_validator_stake_lamports(),
+            );
+            Self::start_with_config_and_genesis(config, genesis_config_info)
+        }
+
         fn start_with_config(config: JsonRpcConfig) -> Self {
+            let genesis_config_info = create_genesis_config(TEST_MINT_LAMPORTS);
+            Self::start_with_config_and_genesis(config, genesis_config_info)
+        }
+
+        fn start_with_config_and_genesis(
+            config: JsonRpcConfig,
+            genesis_config_info: GenesisConfigInfo,
+        ) -> Self {
             let (bank_forks, mint_keypair, leader_vote_keypair) =
-                new_bank_forks_with_config(BankTestConfig {
-                    accounts_db_config: AccountsDbConfig {
-                        account_indexes: Some(config.account_indexes.clone()),
-                        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+                new_bank_forks_with_config_and_genesis(
+                    BankTestConfig {
+                        accounts_db_config: AccountsDbConfig {
+                            account_indexes: Some(config.account_indexes.clone()),
+                            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+                        },
                     },
-                });
+                    genesis_config_info,
+                );
 
             let ledger_path = get_tmp_ledger_path!();
             let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
@@ -6022,6 +6048,7 @@ pub mod tests {
         assert_eq!(result, expected);
 
         // Set up nonce accounts to test filters
+        let nonce_account_owner = Pubkey::new_unique();
         let nonce_authorities = (0..2)
             .map(|_| {
                 let pubkey = Pubkey::new_unique();
@@ -6033,7 +6060,7 @@ pub mod tests {
                         DurableNonce::default(),
                         1000,
                     )),
-                    &system_program::id(),
+                    &nonce_account_owner,
                 )
                 .unwrap();
                 bank.store_account(&pubkey, &account);
@@ -6045,7 +6072,7 @@ pub mod tests {
         let request = create_test_request(
             "getProgramAccounts",
             Some(json!([
-                system_program::id().to_string(),
+                nonce_account_owner.to_string(),
                 {"filters": [{
                     "memcmp": {
                         "offset": 4,
@@ -6060,7 +6087,7 @@ pub mod tests {
         let request = create_test_request(
             "getProgramAccounts",
             Some(json!([
-                system_program::id().to_string(),
+                nonce_account_owner.to_string(),
                 {"filters": [{
                     "memcmp": {
                         "offset": 4,
@@ -6076,7 +6103,7 @@ pub mod tests {
         let request = create_test_request(
             "getProgramAccounts",
             Some(json!([
-                system_program::id().to_string(),
+                nonce_account_owner.to_string(),
                 {"filters": [{"dataSize": nonce::state::State::size()}]},
             ])),
         );
@@ -6086,7 +6113,7 @@ pub mod tests {
         let request = create_test_request(
             "getProgramAccounts",
             Some(json!([
-                system_program::id().to_string(),
+                nonce_account_owner.to_string(),
                 {"filters": [{"dataSize": 1}]},
             ])),
         );
@@ -6097,7 +6124,7 @@ pub mod tests {
         let request = create_test_request(
             "getProgramAccounts",
             Some(json!([
-                system_program::id().to_string(),
+                nonce_account_owner.to_string(),
                 {"filters": [{
                     "memcmp": {
                         "offset": 4,
@@ -6117,7 +6144,7 @@ pub mod tests {
         let request = create_test_request(
             "getProgramAccounts",
             Some(json!([
-                system_program::id().to_string(),
+                nonce_account_owner.to_string(),
                 {"filters": [{
                     "memcmp": {
                         "offset": 4,
@@ -7224,12 +7251,19 @@ pub mod tests {
     fn new_bank_forks_with_config(
         config: BankTestConfig,
     ) -> (Arc<RwLock<BankForks>>, Keypair, Arc<Keypair>) {
+        new_bank_forks_with_config_and_genesis(config, create_genesis_config(TEST_MINT_LAMPORTS))
+    }
+
+    fn new_bank_forks_with_config_and_genesis(
+        config: BankTestConfig,
+        genesis_config_info: GenesisConfigInfo,
+    ) -> (Arc<RwLock<BankForks>>, Keypair, Arc<Keypair>) {
         let GenesisConfigInfo {
             mut genesis_config,
             mint_keypair,
             voting_keypair,
             ..
-        } = create_genesis_config(TEST_MINT_LAMPORTS);
+        } = genesis_config_info;
 
         genesis_config.rent.lamports_per_byte = 100;
         genesis_config.epoch_schedule =
@@ -7770,28 +7804,35 @@ pub mod tests {
         let rpc = RpcHandler::start();
         rpc.add_roots_to_blockstore(vec![1, 2, 3, 4, 5, 6, 7]);
 
-        let base_timestamp = rpc
-            .bank_forks
-            .read()
-            .unwrap()
-            .get(0)
-            .unwrap()
-            .unix_timestamp_from_genesis();
         rpc.block_commitment_cache
             .write()
             .unwrap()
             .set_highest_super_majority_root(7);
 
-        let slot_duration = slot_duration_from_slots_per_year(rpc.working_bank().slots_per_year());
-
         let request = create_test_request("getBlockTime", Some(json!([2u64])));
         let result: Option<UnixTimestamp> = parse_success_result(rpc.handle_request_sync(request));
-        let expected = Some(base_timestamp);
+        let expected = Some(
+            rpc.bank_forks
+                .read()
+                .unwrap()
+                .get(2)
+                .unwrap()
+                .clock()
+                .unix_timestamp,
+        );
         assert_eq!(result, expected);
 
         let request = create_test_request("getBlockTime", Some(json!([7u64])));
         let result: Option<UnixTimestamp> = parse_success_result(rpc.handle_request_sync(request));
-        let expected = Some(base_timestamp + (7 * slot_duration).as_secs() as i64);
+        let expected = Some(
+            rpc.bank_forks
+                .read()
+                .unwrap()
+                .get(7)
+                .unwrap()
+                .clock()
+                .unix_timestamp,
+        );
         assert_eq!(result, expected);
 
         let request = create_test_request("getBlockTime", Some(json!([12345u64])));
@@ -7805,7 +7846,7 @@ pub mod tests {
 
     #[test]
     fn test_get_vote_accounts() {
-        let rpc = RpcHandler::start();
+        let rpc = RpcHandler::start_tower();
         let mut bank = rpc.working_bank();
         let RpcHandler {
             ref io,

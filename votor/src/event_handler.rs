@@ -1067,9 +1067,7 @@ mod tests {
             bank::{Bank, BankTestConfig, SlotLeader},
             bank_forks::BankForks,
             bank_forks_controller::{BankForksController, BankForksControllerError},
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-            },
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
             installed_scheduler_pool::BankWithScheduler,
         },
         solana_streamer::evicting_sender::EvictingSender,
@@ -1172,11 +1170,8 @@ mod tests {
             .rev()
             .map(|i| 100_u64.saturating_add(i as u64))
             .collect::<Vec<_>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stakes,
-        );
+        let genesis =
+            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         let my_index = 0;
         let my_node_keypair = validator_keypairs[my_index].node_keypair.insecure_clone();
         let my_vote_keypair = validator_keypairs[my_index].vote_keypair.insecure_clone();

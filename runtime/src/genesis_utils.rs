@@ -153,12 +153,21 @@ pub fn create_genesis_config_with_vote_accounts(
         stakes,
         ClusterType::Development,
         &FeatureSet::all_enabled(),
-        false,
+        true,
     )
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub fn create_genesis_config_with_alpenglow_vote_accounts(
+    mint_lamports: u64,
+    voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
+    stakes: Vec<u64>,
+) -> GenesisConfigInfo {
+    create_genesis_config_with_vote_accounts(mint_lamports, voting_keypairs, stakes)
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_genesis_config_with_tower_vote_accounts(
     mint_lamports: u64,
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
@@ -169,7 +178,7 @@ pub fn create_genesis_config_with_alpenglow_vote_accounts(
         stakes,
         ClusterType::Development,
         &FeatureSet::all_enabled(),
-        true,
+        false,
     )
 }
 
@@ -196,7 +205,16 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             .public
             .to_bytes_compressed(),
     );
-    let mut genesis_config = create_genesis_config_with_leader_ex(
+    let mut feature_set = if is_alpenglow {
+        FeatureSet::all_enabled()
+    } else {
+        feature_set.clone()
+    };
+    if !is_alpenglow {
+        feature_set.deactivate(&agave_feature_set::alpenglow::id());
+    }
+
+    let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         &validator_pubkey,
@@ -208,13 +226,9 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         cluster_type,
-        feature_set,
+        &feature_set,
         vec![],
     );
-
-    if is_alpenglow {
-        activate_all_features_alpenglow(&mut genesis_config);
-    }
 
     let mut genesis_config_info = GenesisConfigInfo {
         genesis_config,
@@ -283,11 +297,45 @@ pub fn create_genesis_config_with_leader(
     )
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_genesis_config_with_tower_leader(
+    mint_lamports: u64,
+    validator_pubkey: &Pubkey,
+    validator_stake_lamports: u64,
+) -> GenesisConfigInfo {
+    let mint_keypair = Keypair::from_seed(&MINT_KEYPAIR_SEED).unwrap();
+    let mut feature_set = FeatureSet::all_enabled();
+    feature_set.deactivate(&agave_feature_set::alpenglow::id());
+    create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
+        mint_keypair,
+        mint_lamports,
+        validator_pubkey,
+        validator_stake_lamports,
+        &feature_set,
+    )
+}
+
 pub fn create_genesis_config_with_leader_with_mint_keypair(
     mint_keypair: Keypair,
     mint_lamports: u64,
     validator_pubkey: &Pubkey,
     validator_stake_lamports: u64,
+) -> GenesisConfigInfo {
+    create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
+        mint_keypair,
+        mint_lamports,
+        validator_pubkey,
+        validator_stake_lamports,
+        &FeatureSet::all_enabled(),
+    )
+}
+
+fn create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
+    mint_keypair: Keypair,
+    mint_lamports: u64,
+    validator_pubkey: &Pubkey,
+    validator_stake_lamports: u64,
+    feature_set: &FeatureSet,
 ) -> GenesisConfigInfo {
     // Use deterministic keypair so we don't get confused by randomness in tests
     let voting_keypair = Keypair::from_seed(&[
@@ -315,7 +363,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
-        &FeatureSet::all_enabled(),
+        feature_set,
         vec![],
     );
 
@@ -328,6 +376,10 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
 }
 
 pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
+    activate_all_features(genesis_config);
+}
+
+pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<true>(genesis_config);
     configure_alpenglow_at_genesis(genesis_config);
 }
@@ -363,7 +415,7 @@ fn configure_alpenglow_at_genesis(genesis_config: &mut GenesisConfig) {
     EpochInflationAccountState::insert_into_genesis_config(genesis_config);
 }
 
-pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
+pub fn activate_all_features_tower(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<false>(genesis_config);
 }
 
@@ -561,11 +613,10 @@ pub fn create_genesis_config_with_leader_ex(
     );
 
     for feature_id in feature_set.active().keys() {
-        // Skip alpenglow (existing behavior)
-        if *feature_id == agave_feature_set::alpenglow::id() {
-            continue;
-        }
         activate_feature(&mut genesis_config, *feature_id);
+    }
+    if feature_set.is_active(&agave_feature_set::alpenglow::id()) {
+        configure_alpenglow_at_genesis(&mut genesis_config);
     }
 
     genesis_config
@@ -631,4 +682,85 @@ pub fn create_lockup_stake_account(
         .expect("set_state");
 
     stake_account
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_alpenglow_genesis(genesis_config: &GenesisConfig) {
+        assert!(
+            genesis_config
+                .accounts
+                .contains_key(&agave_feature_set::alpenglow::id())
+        );
+        assert!(
+            genesis_config
+                .accounts
+                .contains_key(&agave_feature_set::alpenglow_fast_leader_handover::id())
+        );
+        assert!(
+            genesis_config
+                .accounts
+                .contains_key(&GENESIS_CERTIFICATE_ACCOUNT)
+        );
+        assert!(genesis_config.poh_config.hashes_per_tick.is_none());
+    }
+
+    fn assert_tower_genesis(genesis_config: &GenesisConfig) {
+        assert!(
+            !genesis_config
+                .accounts
+                .contains_key(&agave_feature_set::alpenglow::id())
+        );
+        assert!(
+            genesis_config
+                .accounts
+                .contains_key(&agave_feature_set::alpenglow_fast_leader_handover::id())
+        );
+        assert!(
+            !genesis_config
+                .accounts
+                .contains_key(&GENESIS_CERTIFICATE_ACCOUNT)
+        );
+    }
+
+    #[test]
+    fn test_default_genesis_is_alpenglow() {
+        assert_alpenglow_genesis(&create_genesis_config(1_000_000).genesis_config);
+    }
+
+    #[test]
+    fn test_default_vote_account_genesis_is_alpenglow() {
+        let validator = ValidatorVoteKeypairs::new_rand();
+        let genesis_config =
+            create_genesis_config_with_vote_accounts(1_000_000, &[validator], vec![1])
+                .genesis_config;
+        assert_alpenglow_genesis(&genesis_config);
+    }
+
+    #[test]
+    fn test_activate_all_features_includes_alpenglow() {
+        let mut genesis_config = GenesisConfig::default();
+        activate_all_features(&mut genesis_config);
+        assert_alpenglow_genesis(&genesis_config);
+    }
+
+    #[test]
+    fn test_tower_genesis_helpers_disable_alpenglow() {
+        let validator = ValidatorVoteKeypairs::new_rand();
+        let vote_account_genesis =
+            create_genesis_config_with_tower_vote_accounts(1_000_000, &[validator], vec![1])
+                .genesis_config;
+        assert_tower_genesis(&vote_account_genesis);
+
+        let leader_genesis =
+            create_genesis_config_with_tower_leader(1_000_000, &Pubkey::new_unique(), 1)
+                .genesis_config;
+        assert_tower_genesis(&leader_genesis);
+
+        let mut activated_genesis = GenesisConfig::default();
+        activate_all_features_tower(&mut activated_genesis);
+        assert_tower_genesis(&activated_genesis);
+    }
 }

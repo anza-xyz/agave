@@ -1517,7 +1517,7 @@ mod tests {
             bank_forks,
             validator_voting_keypairs,
             subscriptions,
-        } = setup();
+        } = setup_with_tower();
         let migration_status = bank_forks.read().unwrap().migration_status();
         let (votes_sender, votes_receiver) = bounded(1024);
         let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
@@ -2200,14 +2200,29 @@ mod tests {
     }
 
     fn setup() -> SetupComponents {
+        setup_with_consensus(false)
+    }
+
+    fn setup_with_tower() -> SetupComponents {
+        setup_with_consensus(true)
+    }
+
+    fn setup_with_consensus(use_tower: bool) -> SetupComponents {
         let validator_voting_keypairs: Vec<_> =
             (0..10).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
-        let GenesisConfigInfo { genesis_config, .. } =
+        let GenesisConfigInfo { genesis_config, .. } = if use_tower {
+            genesis_utils::create_genesis_config_with_tower_vote_accounts(
+                10_000,
+                &validator_voting_keypairs,
+                vec![100; validator_voting_keypairs.len()],
+            )
+        } else {
             genesis_utils::create_genesis_config_with_vote_accounts(
                 10_000,
                 &validator_voting_keypairs,
                 vec![100; validator_voting_keypairs.len()],
-            );
+            )
+        };
         let bank = Bank::new_for_tests(&genesis_config);
         let vote_tracker = VoteTracker::default();
         let exit = Arc::new(AtomicBool::new(false));

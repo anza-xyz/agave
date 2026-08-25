@@ -1255,7 +1255,9 @@ mod tests {
             stakes::{Stakes, tests::create_staked_node_accounts},
         },
         agave_feature_set::{FeatureSet, delay_commission_updates},
-        agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
+        agave_votor_messages::{
+            consensus_message::BLS_KEYPAIR_DERIVE_SEED, migration::AG_MIGRATION_EPOCH_CREDIT,
+        },
         proptest::prelude::*,
         rand::Rng,
         rayon::ThreadPoolBuilder,
@@ -1694,15 +1696,16 @@ mod tests {
     #[derive(Default)]
     struct VoteOperations {
         expect_reward: bool,
-        // Additional lamport amount to ignore in collector account, used for
-        // VAT burns in Alpenglow when the incinerator is an inflation collector
-        extra_reward_lamport_amount: Option<u64>,
         // ops to perform before epoch ends
         create_with_balance: Option<u64>,
         delegate_stake_amount: Option<u64>,
         new_commission: Option<u8>,
         earned_credits: Option<u64>,
         new_inflation_rewards_collector: Option<Pubkey>,
+    }
+
+    fn vote_account_balance_for_tests() -> u64 {
+        genesis_utils::minimum_vote_account_balance_for_vat(100)
     }
 
     fn recalculate_reward_commissions_for_tests(bank: &Bank) -> RewardCommissions {
@@ -1722,6 +1725,9 @@ mod tests {
             stake_delegations,
             cached_vote_accounts,
         } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
+        let ag_epoch_type = AlpenglowEpochType::get(bank, rewarded_epoch, || {
+            RewardEpochDelegatedStakes::get(bank)
+        });
 
         let (reward_commissions, ..) = bank.calculate_stake_rewards_and_commissions(
             &stake_history,
@@ -1729,7 +1735,7 @@ mod tests {
             cached_vote_accounts,
             rewarded_epoch,
             point_value,
-            &AlpenglowEpochType::Tower,
+            &ag_epoch_type,
             &thread_pool,
             null_tracer(),
             &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
@@ -1813,7 +1819,7 @@ mod tests {
         assert_eq!(bank.epoch(), op.epoch);
         for (vote_address, vote_op) in &op.vote_operations {
             if let Some(balance) = &vote_op.create_with_balance {
-                // Create a BLS pubkey so the vote account passes VAT filtering
+                // Create a BLS pubkey so the vote account passes VAT filtering.
                 let identity = Keypair::new();
                 let bls_keypair =
                     BLSKeypair::derive_from_signer(&identity, BLS_KEYPAIR_DERIVE_SEED).unwrap();
@@ -1883,7 +1889,9 @@ mod tests {
                 modify_vote_state(&|vote_state: &mut VoteStateV4| {
                     let last_credits = vote_state
                         .epoch_credits
-                        .last()
+                        .iter()
+                        .rev()
+                        .find(|entry| **entry != AG_MIGRATION_EPOCH_CREDIT)
                         .map(|(_epoch, credits, _)| *credits)
                         .unwrap_or(0);
                     vote_state.epoch_credits.push((
@@ -1891,6 +1899,20 @@ mod tests {
                         last_credits + earned_credits,
                         last_credits,
                     ));
+                    // Slot 0 is the only Tower slot in the default test genesis, so credits
+                    // synthesized there precede the migration marker. Later credits are AG.
+                    let is_migration_epoch =
+                        bank.get_alpenglow_migration_slot()
+                            .is_some_and(|migration_slot| {
+                                bank.epoch_schedule().get_epoch(migration_slot) == bank.epoch()
+                            });
+                    if is_migration_epoch
+                        && !vote_state
+                            .epoch_credits
+                            .contains(&AG_MIGRATION_EPOCH_CREDIT)
+                    {
+                        vote_state.epoch_credits.push(AG_MIGRATION_EPOCH_CREDIT);
+                    }
                 });
             }
         }
@@ -1928,9 +1950,37 @@ mod tests {
             let collector_balance = bank.get_balance(&collector_address);
 
             if vote_op.expect_reward {
-                let reward_lamports = collector_balance
+                let leader_schedule_epoch = prev_bank
+                    .epoch_schedule()
+                    .get_leader_schedule_epoch(bank.slot());
+                let (collector_vat_burn, vat_transferred_to_collector) =
+                    if bank.feature_set.snapshot().alpenglow
+                        && prev_bank.epoch_stakes(leader_schedule_epoch).is_none()
+                    {
+                        let vote_accounts = bank
+                            .epoch_stakes(leader_schedule_epoch)
+                            .unwrap()
+                            .stakes()
+                            .vote_accounts();
+                        let vat = bank.vat_to_burn_per_epoch();
+                        (
+                            if vote_accounts.get(&collector_address).is_some() {
+                                vat
+                            } else {
+                                0
+                            },
+                            if collector_address == incinerator::id() {
+                                vat * vote_accounts.len() as u64
+                            } else {
+                                0
+                            },
+                        )
+                    } else {
+                        (0, 0)
+                    };
+                let reward_lamports = collector_balance + collector_vat_burn
                     - prev_collector_balance
-                    - vote_op.extra_reward_lamport_amount.unwrap_or(0);
+                    - vat_transferred_to_collector;
                 let expected_vote_reward = RewardInfo {
                     reward_type: RewardType::Voting,
                     lamports: reward_lamports as i64,
@@ -1941,8 +1991,13 @@ mod tests {
                 assert_eq!(
                     vote_reward,
                     Some(expected_vote_reward),
-                    "epoch {}: unexpected reward info",
-                    op.epoch
+                    "epoch {}: unexpected reward info; previous collector balance: {}, collector \
+                     balance: {}, collector VAT burn: {}, VAT transferred to collector: {}",
+                    op.epoch,
+                    prev_collector_balance,
+                    collector_balance,
+                    collector_vat_burn,
+                    vat_transferred_to_collector,
                 );
 
                 assert_eq!(
@@ -2001,7 +2056,7 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        create_with_balance: Some(LAMPORTS_PER_SOL),
+                        create_with_balance: Some(vote_account_balance_for_tests()),
                         new_commission: Some(1),
                         earned_credits: Some(1000),
                         delegate_stake_amount: Some(LAMPORTS_PER_SOL),
@@ -2091,7 +2146,7 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        create_with_balance: Some(LAMPORTS_PER_SOL),
+                        create_with_balance: Some(vote_account_balance_for_tests()),
                         new_commission: Some(1),
                         earned_credits: Some(1000),
                         expect_reward: true,
@@ -2785,7 +2840,7 @@ mod tests {
         let validator_keypairs = vec![genesis_utils::ValidatorVoteKeypairs::new_rand()];
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = genesis_utils::create_genesis_config_with_alpenglow_vote_accounts(
+        } = genesis_utils::create_genesis_config_with_vote_accounts(
             1_000_000_000 * LAMPORTS_PER_SOL,
             &validator_keypairs,
             vec![stake_lamports],
@@ -2905,7 +2960,7 @@ mod tests {
         let validator_keypairs = vec![genesis_utils::ValidatorVoteKeypairs::new_rand()];
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = genesis_utils::create_genesis_config_with_alpenglow_vote_accounts(
+        } = genesis_utils::create_genesis_config_with_vote_accounts(
             1_000_000_000 * LAMPORTS_PER_SOL,
             &validator_keypairs,
             vec![100 * LAMPORTS_PER_SOL],
@@ -3005,7 +3060,7 @@ mod tests {
             .pubkey();
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = genesis_utils::create_genesis_config_with_alpenglow_vote_accounts(
+        } = genesis_utils::create_genesis_config_with_vote_accounts(
             1_000_000_000 * LAMPORTS_PER_SOL,
             &validator_keypairs,
             stakes,
@@ -3860,7 +3915,7 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        create_with_balance: Some(LAMPORTS_PER_SOL),
+                        create_with_balance: Some(vote_account_balance_for_tests()),
                         new_commission: Some(1),
                         earned_credits: Some(1000),
                         delegate_stake_amount: Some(LAMPORTS_PER_SOL),
@@ -3961,7 +4016,7 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        create_with_balance: Some(LAMPORTS_PER_SOL),
+                        create_with_balance: Some(vote_account_balance_for_tests()),
                         new_commission: Some(100),
                         earned_credits: Some(1000),
                         delegate_stake_amount: Some(LAMPORTS_PER_SOL),
@@ -3982,7 +4037,7 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        earned_credits: Some(1),
+                        earned_credits: Some(1_000_000),
                         expect_reward: true,
                         ..VoteOperations::default()
                     },
@@ -4020,7 +4075,7 @@ mod tests {
                     (
                         vote1_address,
                         VoteOperations {
-                            create_with_balance: Some(LAMPORTS_PER_SOL),
+                            create_with_balance: Some(vote_account_balance_for_tests()),
                             new_commission: Some(50),
                             earned_credits: Some(1000),
                             delegate_stake_amount: Some(LAMPORTS_PER_SOL),
@@ -4031,7 +4086,7 @@ mod tests {
                     (
                         vote2_address,
                         VoteOperations {
-                            create_with_balance: Some(LAMPORTS_PER_SOL),
+                            create_with_balance: Some(vote_account_balance_for_tests()),
                             new_commission: Some(100),
                             earned_credits: Some(1000),
                             delegate_stake_amount: Some(LAMPORTS_PER_SOL),
@@ -4054,7 +4109,7 @@ mod tests {
                     (
                         vote1_address,
                         VoteOperations {
-                            earned_credits: Some(1),
+                            earned_credits: Some(1_000_000),
                             expect_reward: true,
                             ..VoteOperations::default()
                         },
@@ -4062,7 +4117,7 @@ mod tests {
                     (
                         vote2_address,
                         VoteOperations {
-                            earned_credits: Some(1),
+                            earned_credits: Some(1_000_000),
                             expect_reward: true,
                             ..VoteOperations::default()
                         },
@@ -4100,7 +4155,7 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        create_with_balance: Some(LAMPORTS_PER_SOL),
+                        create_with_balance: Some(vote_account_balance_for_tests()),
                         new_commission: Some(100),
                         earned_credits: Some(1000),
                         delegate_stake_amount: Some(LAMPORTS_PER_SOL),
@@ -4137,14 +4192,18 @@ mod tests {
         );
 
         let epoch_rewards = bank.get_epoch_rewards_sysvar();
+        let reward_commissions = recalculate_reward_commissions_for_tests(&bank);
+        let reward_commission = reward_commissions.get(&invalid_collector).unwrap();
+        let expected_distributed_rewards =
+            reward_commission.commission_lamports + reward_commission.burned_lamports;
 
-        // The burned commission lamports must be reflected in the epoch rewards
-        // sysvar. Since this test uses 100% commission, all calculated rewards
-        // went through the invalid collector path.
-        assert!(epoch_rewards.total_rewards > 0);
+        // The burned commission lamports must be reflected in the epoch rewards sysvar. Under
+        // Alpenglow, total rewards is the epoch budget while distributed rewards tracks the
+        // credits actually earned, including rewards burned by an invalid collector.
+        assert!(epoch_rewards.total_rewards > epoch_rewards.distributed_rewards);
         assert_eq!(
-            epoch_rewards.total_rewards,
-            epoch_rewards.distributed_rewards
+            epoch_rewards.distributed_rewards,
+            expected_distributed_rewards
         );
     }
 
@@ -4206,7 +4265,7 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        create_with_balance: Some(LAMPORTS_PER_SOL),
+                        create_with_balance: Some(vote_account_balance_for_tests()),
                         new_commission: Some(100),
                         earned_credits: Some(1000),
                         delegate_stake_amount: Some(LAMPORTS_PER_SOL),
@@ -4230,7 +4289,7 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        earned_credits: Some(1000),
+                        earned_credits: Some(1_000_000),
                         expect_reward: true,
                         ..VoteOperations::default()
                     },
@@ -4240,8 +4299,7 @@ mod tests {
         let pre_balance = bank.get_balance(&collector_into_vote_address);
         assert_ne!(pre_balance, 0);
         // Fund the converted vote account enough to pass VAT filtering.
-        let pre_balance =
-            pre_balance.max(bank.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of()));
+        let pre_balance = pre_balance.max(vote_account_balance_for_tests());
 
         // Transform the collector into a vote account, see that all rewards
         // are burned for this epoch
@@ -4283,8 +4341,9 @@ mod tests {
             .unwrap();
         assert_eq!(vote_reward.lamports, 0);
 
-        let unchanged_balance = bank.get_balance(&collector_into_vote_address);
-        assert_eq!(unchanged_balance, pre_balance);
+        let balance_after_conversion = bank.get_balance(&collector_into_vote_address);
+        let vat = bank.vat_to_burn_per_epoch();
+        assert_eq!(balance_after_conversion + vat, pre_balance);
 
         // `collector_into_vote_address` receives its rewards, but `vote_address`
         // has its rewards burned
@@ -4316,7 +4375,7 @@ mod tests {
 
         // Some rewards were distributed
         let post_balance = bank.get_balance(&collector_into_vote_address);
-        assert!(post_balance > pre_balance);
+        assert!(post_balance + vat > balance_after_conversion);
 
         // They're reflected in the reported rewards
         let vote_reward = bank
@@ -4327,7 +4386,10 @@ mod tests {
             .find(|(address, _reward)| *address == collector_into_vote_address)
             .map(|(_address, reward)| *reward)
             .unwrap();
-        assert_eq!(vote_reward.lamports as u64, post_balance - pre_balance);
+        assert_eq!(
+            vote_reward.lamports as u64,
+            post_balance + vat - balance_after_conversion
+        );
 
         // Some lamports were burned
         let reward_commissions = recalculate_reward_commissions_for_tests(&bank);

@@ -284,7 +284,7 @@ fn test_two_unbalanced_stakes() {
     let num_ticks_per_slot = 16;
     let num_slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH;
 
-    let mut cluster = LocalCluster::new(
+    let mut cluster = LocalCluster::new_tower(
         &mut ClusterConfig {
             node_stakes: vec![DEFAULT_NODE_STAKE * 100, DEFAULT_NODE_STAKE],
             mint_lamports: DEFAULT_MINT_LAMPORTS + DEFAULT_NODE_STAKE * 100,
@@ -1249,7 +1249,7 @@ fn test_snapshot_restart_tower() {
         ..ClusterConfig::default()
     };
 
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
 
     // Let the nodes run for a while, then stop one of the validators
     sleep(Duration::from_millis(5000));
@@ -1509,7 +1509,7 @@ fn test_no_voting() {
         validator_configs: vec![validator_config],
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
     let rpc_client = cluster
         .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
@@ -1568,7 +1568,7 @@ fn test_optimistic_confirmation_violation_detection() {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
     // Let the nodes run for a while. Wait for validators to vote on slot `S`
     // so that the vote on `S-1` is definitely in gossip and optimistic confirmation is
     // detected on slot `S-1` for sure, then stop the heavier of the two
@@ -1782,7 +1782,7 @@ fn test_validator_saves_tower() {
         validator_keys: Some(vec![(validator_keys.clone(), true)]),
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
 
     let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
@@ -1939,7 +1939,7 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
 
     let val_a_ledger_path = cluster.ledger_path(&validator_a_pubkey);
     let root_before_restart;
@@ -2108,7 +2108,7 @@ fn test_hard_fork_invalidates_tower() {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let cluster = std::sync::Arc::new(std::sync::Mutex::new(LocalCluster::new(
+    let cluster = std::sync::Arc::new(std::sync::Mutex::new(LocalCluster::new_tower(
         &mut config,
         SocketAddrSpace::Unspecified,
     )));
@@ -2295,7 +2295,7 @@ fn test_hard_fork_with_gap_in_roots() {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let cluster = std::sync::Arc::new(std::sync::Mutex::new(LocalCluster::new(
+    let cluster = std::sync::Arc::new(std::sync::Mutex::new(LocalCluster::new_tower(
         &mut config,
         SocketAddrSpace::Unspecified,
     )));
@@ -2454,7 +2454,7 @@ fn test_restart_tower_rollback() {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
 
     let val_b_ledger_path = cluster.ledger_path(&b_pubkey);
 
@@ -2586,7 +2586,7 @@ fn test_run_test_load_program_accounts_partition_root() {
         None,
         false,
         additional_accounts,
-        false,
+        true,
     );
 }
 
@@ -2634,7 +2634,7 @@ fn test_oc_bad_signatures() {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
 
     // 2) Kill our node and start up a thread to simulate votes to control our voting behavior
     let our_info = cluster.exit_node(&our_id);
@@ -3185,7 +3185,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
 
     let val_a_ledger_path = cluster.ledger_path(&validator_a_pubkey);
     let val_b_ledger_path = cluster.ledger_path(&validator_b_pubkey);
@@ -4442,7 +4442,7 @@ fn test_slot_hash_expiry() {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
 
     let mut common_ancestor_slot = 8;
 
@@ -4678,7 +4678,7 @@ fn test_duplicate_with_pruned_ancestor() {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
 
     let majority_ledger_path = cluster.ledger_path(&majority_pubkey);
     let minority_ledger_path = cluster.ledger_path(&minority_pubkey);
@@ -5011,17 +5011,17 @@ fn test_boot_from_local_state() {
     );
     info!("Waiting for validator3 to create snapshots... DONE");
 
-    // Ensure that all validators have the correct state by comparing snapshots.
+    // Ensure that all validators have the correct state by comparing full snapshots.
     // Since validator1 has been running the longest, if may be ahead of the others,
     // so use it as the comparison for others.
     // - wait for validator1 to take new snapshots
     // - wait for the other validators to have high enough snapshots
     // - ensure the other validators' full snapshots match validator1's
     //
-    // NOTE: There's a chance validator 2 or 3 has crossed the next full snapshot past what
-    // validator 1 has.  If that happens, validator 2 or 3 may have purged the snapshots needed
-    // to compare with validator 1, and thus assert.  If that happens, the full snapshot interval
-    // may need to be adjusted larger.
+    // Incremental snapshots are validated by the boot chain above: validator2 boots from
+    // validator1's full and incremental snapshots, then validator3 boots from the snapshots
+    // validator2 created after fastboot.  Validators are not guaranteed to independently create
+    // incremental snapshots at the same slot, so only full snapshot hashes are compared here.
 
     info!("Waiting for validator1 to create snapshots...");
     let (incremental_snapshot_archive, full_snapshot_archive) =
@@ -5739,7 +5739,7 @@ fn test_invalid_forks_persisted_on_restart() {
     // Majority shouldn't duplicate confirm anything
     validator_configs[1].voting_disabled = true;
 
-    let mut cluster = LocalCluster::new(
+    let mut cluster = LocalCluster::new_tower(
         &mut ClusterConfig {
             mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
             validator_configs,
@@ -5883,7 +5883,7 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         },
         ..ClusterConfig::default()
     };
-    let mut cluster = LocalCluster::new_alpenglow(&mut config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     assert_eq!(cluster.validators.len(), num_nodes);
 
     // Check transactions land
@@ -5949,7 +5949,7 @@ fn test_restart_node_alpenglow() {
     let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH * 2;
     let ticks_per_slot = 16;
     let validator_config = ValidatorConfig::default_for_test();
-    let mut cluster = LocalCluster::new_alpenglow(
+    let mut cluster = LocalCluster::new(
         &mut ClusterConfig {
             node_stakes: vec![DEFAULT_NODE_STAKE],
             validator_configs: vec![safe_clone_config(&validator_config)],
@@ -6050,8 +6050,7 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
     };
 
     // Create local cluster
-    let mut cluster =
-        LocalCluster::new_alpenglow(&mut cluster_config, SocketAddrSpace::Unspecified);
+    let mut cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
 
     // Ensure all nodes are voting
     cluster.check_for_new_processed(
@@ -6146,7 +6145,7 @@ fn test_alpenglow_basic_equivocation() {
     };
 
     // Create local cluster
-    let cluster = LocalCluster::new_alpenglow(&mut cluster_config, SocketAddrSpace::Unspecified);
+    let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
     let node_b_pubkey = validator_keys[1].node_keypair.pubkey();
 
     // Check to make sure the low staked node observes duplicate blocks
@@ -6243,7 +6242,7 @@ fn test_alpenglow_migration(
     ));
 
     // Create local cluster with alpenglow accounts but feature not activated
-    let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
+    let cluster = LocalCluster::new_tower(&mut cluster_config, SocketAddrSpace::Unspecified);
 
     let validator_keys: Vec<Arc<Keypair>> =
         keys.iter().map(|keys| keys.node_keypair.clone()).collect();
