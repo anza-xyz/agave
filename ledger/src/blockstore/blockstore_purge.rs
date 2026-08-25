@@ -126,8 +126,9 @@ impl Blockstore {
         self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ true)
     }
 
-    /// Like `purge_slot_cleanup_chaining` but preserves alternate block columns.
-    /// Used when switching from an alternate block to allow repair data to be retained.
+    /// Like `purge_slot_cleanup_chaining` but preserves alternate block columns and the duplicate
+    /// proof. Used when switching from an alternate block to allow repair data and the historical
+    /// equivocation evidence to be retained.
     pub(crate) fn purge_slot_cleanup_chaining_keep_alt(&self, slot: Slot) -> Result<()> {
         self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ false)
     }
@@ -261,8 +262,6 @@ impl Blockstore {
             .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.dead_slots_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot);
-        self.duplicate_slots_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.erasure_meta_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.orphans_cf
@@ -296,6 +295,11 @@ impl Blockstore {
             // columns. When `purge_alt_columns` is specified we delete the
             // entire column.
             self.double_merkle_meta_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot);
+            // This column stores the proof that the leader was malicious and
+            // equivocated. We do not want to purge this unless we are in cleanup,
+            // as this information can be used to slash leaders in the future.
+            self.duplicate_slots_cf
                 .delete_range_in_batch(write_batch, from_slot, to_slot);
         } else {
             // This column stores information for both the original and alternate
@@ -1269,9 +1273,14 @@ pub mod tests {
         blockstore.insert_shreds(slot_11, false).unwrap();
         let (slot_12, _) = make_slot_entries(12, 5, 5);
         blockstore.insert_shreds(slot_12, false).unwrap();
+        blockstore
+            .store_duplicate_slot(5, vec![1], vec![2])
+            .unwrap();
+        assert!(blockstore.has_duplicate_shreds_in_slot(5));
 
         blockstore.purge_slot_cleanup_chaining(5).unwrap();
 
+        assert!(!blockstore.has_duplicate_shreds_in_slot(5));
         let slot_meta = blockstore.meta(5).unwrap().unwrap();
         let expected_slot_meta = SlotMeta {
             slot: 5,

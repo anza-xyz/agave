@@ -6778,11 +6778,22 @@ fn test_block_id_reads_remain_consistent_after_switch() {
         insert_test_block_at_location(&blockstore, slot, parent_slot, temporary_alternate_location);
 
     assert_ne!(original_block_id, alternate_block_id);
+    blockstore
+        .store_duplicate_slot(
+            slot,
+            original_shreds[0].payload().clone(),
+            alternate_shreds[0].payload().clone(),
+        )
+        .unwrap();
+    assert!(blockstore.has_duplicate_shreds_in_slot(slot));
 
     blockstore
         .switch_block_from_alternate(slot, temporary_alternate_location)
         .unwrap();
 
+    let duplicate_proof = blockstore.get_duplicate_slot(slot).unwrap();
+    assert_eq!(duplicate_proof.shred1, *original_shreds[0].payload());
+    assert_eq!(duplicate_proof.shred2, *alternate_shreds[0].payload());
     assert_eq!(
         blockstore
             .get_double_merkle_root(slot, BlockLocation::Original)
