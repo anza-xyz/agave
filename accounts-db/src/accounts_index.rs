@@ -7,7 +7,6 @@ mod secondary;
 mod stats;
 use {
     crate::{
-        accounts_scan::ScanConfig,
         ancestors::Ancestors,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
@@ -339,13 +338,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         pubkeys_removed_from_accounts_index
     }
 
-    /// call func with every pubkey and index visible from a given set of ancestors
+    /// call func with every pubkey and index visible from a given set of ancestors.
+    /// `should_abort` is checked after each pubkey; the scan stops once it returns true.
     pub(crate) fn scan_accounts<F>(
         &self,
         ancestors: &Ancestors,
         max_root: Slot,
         mut func: F,
-        config: &ScanConfig,
+        should_abort: impl Fn() -> bool,
     ) where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
@@ -363,7 +363,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                     let add_to_in_mem_cache = false;
                     (add_to_in_mem_cache, ())
                 });
-                if config.is_aborted() {
+                if should_abort() {
                     return;
                 }
             }
@@ -1038,12 +1038,7 @@ mod tests {
         assert!(!index.contains_with(key, &ancestors));
 
         let mut num = 0;
-        index.scan_accounts(
-            &ancestors,
-            0,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index.scan_accounts(&ancestors, 0, |_pubkey, _index| num += 1, || false);
         assert_eq!(num, 0);
     }
 
@@ -1106,12 +1101,7 @@ mod tests {
         assert!(index.contains_with(&key, &ancestors));
 
         let mut num = 0;
-        index.scan_accounts(
-            &ancestors,
-            0,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index.scan_accounts(&ancestors, 0, |_pubkey, _index| num += 1, || false);
         assert_eq!(num, 1);
     }
 
@@ -1163,12 +1153,7 @@ mod tests {
         assert_eq!(index.slot_list_len(pubkey), 1);
 
         let mut num = 0;
-        index.scan_accounts(
-            &ancestors,
-            0,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index.scan_accounts(&ancestors, 0, |_pubkey, _index| num += 1, || false);
         assert_eq!(num, 1);
 
         // not zero lamports
@@ -1186,12 +1171,7 @@ mod tests {
         assert_eq!(index.slot_list_len(pubkey), 1);
 
         let mut num = 0;
-        index.scan_accounts(
-            &ancestors,
-            0,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index.scan_accounts(&ancestors, 0, |_pubkey, _index| num += 1, || false);
         assert_eq!(num, 1);
     }
 
@@ -1560,7 +1540,7 @@ mod tests {
                 };
                 num += 1
             },
-            &ScanConfig::default(),
+            || false,
         );
 
         assert_eq!(num, 1);
@@ -1611,7 +1591,7 @@ mod tests {
             |pubkey, _index| {
                 scanned_keys.insert(*pubkey);
             },
-            &ScanConfig::default(),
+            || false,
         );
         assert_eq!(scanned_keys.len(), num_pubkeys);
     }
@@ -1729,7 +1709,7 @@ mod tests {
                 };
                 num += 1
             },
-            &ScanConfig::default(),
+            || false,
         );
         assert_eq!(num, 1);
         assert!(found_key);

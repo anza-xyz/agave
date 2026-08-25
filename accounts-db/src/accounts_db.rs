@@ -2663,7 +2663,7 @@ impl AccountsDb {
                 });
                 scan_func(account_slot)
             },
-            config,
+            || config.is_aborted(),
         );
 
         // Step 3: Call scan_func on cache-only entries — pubkeys that exist in the cache but not
