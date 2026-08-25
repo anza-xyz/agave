@@ -70,3 +70,51 @@ impl<T: Eq + Hash + Clone> DedupQueue<T> {
         self.queue.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_push_back_ejecting_deduplicates_and_ejects_oldest() {
+        let mut queue = DedupQueue::new(2);
+
+        assert_eq!(queue.push_back_ejecting(1), Ok(()));
+        assert_eq!(queue.push_back_ejecting(2), Ok(()));
+        // Inserting a duplicate is a no-op and does not change its position.
+        assert_eq!(queue.push_back_ejecting(1), Ok(()));
+        assert_eq!(queue.push_back_ejecting(3), Err(1));
+
+        assert_eq!(queue.pop_front(), Some(2));
+        assert_eq!(queue.pop_front(), Some(3));
+        assert_eq!(queue.pop_front(), None);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_try_push_front_restores_popped_value() {
+        let mut queue = DedupQueue::new(2);
+        queue.push_back_ejecting(1).unwrap();
+        queue.push_back_ejecting(2).unwrap();
+
+        let pending_value = queue.pop_front().unwrap();
+        assert_eq!(queue.try_push_front(pending_value), Ok(()));
+
+        assert_eq!(queue.pop_front(), Some(1));
+        assert_eq!(queue.pop_front(), Some(2));
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_try_push_front_rejects_new_value_when_full() {
+        let mut queue = DedupQueue::new(2);
+        queue.push_back_ejecting(1).unwrap();
+        queue.push_back_ejecting(2).unwrap();
+
+        assert_eq!(queue.try_push_front(3), Err(3));
+        // A duplicate remains a no-op even when the queue is full.
+        assert_eq!(queue.try_push_front(2), Ok(()));
+        assert_eq!(queue.pop_front(), Some(1));
+        assert_eq!(queue.pop_front(), Some(2));
+    }
+}

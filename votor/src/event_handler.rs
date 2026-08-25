@@ -1690,6 +1690,65 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_channels_drains_pending_vote_when_capacity_becomes_available() {
+        let mut test_context = setup();
+        let occupying_vote = test_context.expected_vote_message(&Vote::new_skip_vote(1));
+        let pending_vote = test_context.expected_vote_message(&Vote::new_skip_vote(2));
+        let (own_vote_sender, own_vote_receiver) = bounded(1);
+        own_vote_sender.send(occupying_vote.clone()).unwrap();
+        test_context.voting_context.own_vote_sender = own_vote_sender;
+        test_context
+            .voting_context
+            .own_votes_to_send
+            .push_back_ejecting(pending_vote.clone())
+            .unwrap();
+
+        let (event_sender, event_receiver) = bounded(1);
+        let receiver_thread = thread::spawn(move || {
+            // Ensure handle_channels observes the saturated channel before capacity is released.
+            thread::sleep(Duration::from_millis(25));
+            assert_eq!(own_vote_receiver.recv().unwrap(), occupying_vote);
+            let received_pending_vote = own_vote_receiver.recv_timeout(Duration::from_secs(2));
+            event_sender.send(VotorEvent::SetIdentity).unwrap();
+            received_pending_vote
+        });
+
+        let event =
+            EventHandler::handle_channels(&event_receiver, &mut test_context.voting_context)
+                .unwrap();
+        assert!(matches!(event, Some(VotorEvent::SetIdentity)));
+        assert_eq!(receiver_thread.join().unwrap().unwrap(), pending_vote);
+        assert!(test_context.voting_context.own_votes_to_send.is_empty());
+    }
+
+    #[test]
+    fn test_handle_channels_restores_pending_vote_when_event_arrives() {
+        let mut test_context = setup();
+        let occupying_vote = test_context.expected_vote_message(&Vote::new_skip_vote(1));
+        let pending_vote = test_context.expected_vote_message(&Vote::new_skip_vote(2));
+        let (own_vote_sender, _own_vote_receiver) = bounded(1);
+        own_vote_sender.send(occupying_vote).unwrap();
+        test_context.voting_context.own_vote_sender = own_vote_sender;
+        test_context
+            .voting_context
+            .own_votes_to_send
+            .push_back_ejecting(pending_vote.clone())
+            .unwrap();
+        let (event_sender, event_receiver) = bounded(1);
+        event_sender.send(VotorEvent::SetIdentity).unwrap();
+
+        let event =
+            EventHandler::handle_channels(&event_receiver, &mut test_context.voting_context)
+                .unwrap();
+
+        assert!(matches!(event, Some(VotorEvent::SetIdentity)));
+        assert_eq!(
+            test_context.voting_context.own_votes_to_send.pop_front(),
+            Some(pending_vote)
+        );
+    }
+
+    #[test]
     fn test_received_block_event_and_parent_ready_event() {
         // Test different orders of received block event and parent ready event
         // some will send Notarize immediately, some will wait for parent ready
