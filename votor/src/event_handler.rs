@@ -24,7 +24,7 @@ use {
         consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
         vote::Vote,
     },
-    crossbeam_channel::select,
+    crossbeam_channel::{Receiver, select},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -165,14 +165,9 @@ impl EventHandler {
 
             while !exit.load(Ordering::Relaxed) {
                 let mut receive_event_time = Measure::start("receive_event");
-                let event = select! {
-                    recv(event_receiver) -> msg => {
-                        msg
-                    },
-                    default(Duration::from_secs(1))  => continue
+                let Some(event) = Self::handle_channels(&event_receiver, &mut vctx)? else {
+                    continue;
                 };
-                let event = event
-                    .map_err(|_| EventLoopError::ChannelDisconnected("votor_event_receiver"))?;
                 receive_event_time.stop();
                 local_context.stats.receive_event_time_us = local_context
                     .stats
@@ -221,6 +216,49 @@ impl EventHandler {
         }
 
         Ok(())
+    }
+
+    fn handle_channels(
+        event_receiver: &Receiver<VotorEvent>,
+        vctx: &mut VotingContext,
+    ) -> Result<Option<VotorEvent>, EventLoopError> {
+        let event = loop {
+            if let Some(pending_vote) = vctx.own_votes_to_send.pop_front() {
+                select! {
+                    send(vctx.own_vote_sender, pending_vote.clone()) -> result => {
+                        result.map_err(|_| {
+                            EventLoopError::VotingError(
+                                VoteError::ChannelDisconnected("own_vote_sender")
+                            )
+                        })?;
+                        continue;
+                    }
+                    recv(event_receiver) -> event => {
+                        vctx.own_votes_to_send
+                            .try_push_front(pending_vote)
+                            .expect("queue had one free slot");
+                        break event;
+                    }
+                    default(Duration::from_secs(1)) => {
+                        vctx.own_votes_to_send
+                            .try_push_front(pending_vote)
+                            .expect("queue had one free slot");
+                        return Ok(None);
+                    }
+                }
+            } else {
+                select! {
+                    recv(event_receiver) -> event => {
+                        break event;
+                    },
+                    default(Duration::from_secs(1))  => return Ok(None)
+                };
+            }
+        };
+        match event {
+            Ok(e) => Ok(Some(e)),
+            Err(_) => Err(EventLoopError::ChannelDisconnected("votor_event_receiver")),
+        }
     }
 
     fn handle_parent_ready_event(
