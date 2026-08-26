@@ -216,7 +216,10 @@ impl SigVerifier {
             }
             self.stats.maybe_report(self.sharable_banks.root().slot());
         }
-        self.stats.do_report(self.sharable_banks.root().slot());
+        self.stats.do_report(
+            self.sharable_banks.root().slot(),
+            self.stats.elapsed_since_last_report(),
+        );
     }
 
     #[cfg(test)]

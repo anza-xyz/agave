@@ -32,10 +32,11 @@ impl Reporting {
         }
     }
 
-    /// Returns `true` if reporting should be done else `false`.
-    fn should_report(&self, root_slot: Slot) -> bool {
-        root_slot >= self.slot.saturating_add(SLOTS_INTERVAL)
-            || self.time.elapsed() > DURATION_INTERVAL
+    /// Returns `Some(duration since last report)` if reporting should be done else `None`.
+    fn should_report(&self, root_slot: Slot) -> Option<Duration> {
+        let elapsed = self.time.elapsed();
+        (root_slot >= self.slot.saturating_add(SLOTS_INTERVAL) || elapsed > DURATION_INTERVAL)
+            .then_some(elapsed)
     }
 }
 
@@ -100,18 +101,25 @@ impl SigVerifierStats {
         }
     }
 
+    pub(super) fn elapsed_since_last_report(&self) -> Duration {
+        self.last_report.time.elapsed()
+    }
+
     /// Reports stats if they have not been reported in some time.
     ///
     /// Also resets all stats.
     pub(super) fn maybe_report(&mut self, root_slot: Slot) {
-        if self.last_report.should_report(root_slot) {
-            self.do_report(root_slot);
+        if let Some(elapsed) = self.last_report.should_report(root_slot) {
+            self.do_report(root_slot, elapsed);
             *self = SigVerifierStats::new(root_slot);
         }
     }
 
     /// Reports stats regardless of when they were last reported.
-    pub(super) fn do_report(&mut self, root_slot: Slot) {
+    ///
+    /// `root_slot` should be the current root slot and is reported.
+    /// `elapsed` should be the time since last report and is reported.
+    pub(super) fn do_report(&mut self, root_slot: Slot, elapsed: Duration) {
         let Self {
             vote_stats,
             cert_stats,
@@ -138,6 +146,7 @@ impl SigVerifierStats {
         datapoint_info!(
             "bls_sig_verifier_stats",
             ("root_slot", root_slot, i64),
+            ("elapsed_ms", elapsed.as_millis(), i64),
             (
                 "extract_and_verify_us_count",
                 extract_filter_msgs_us.count(),
