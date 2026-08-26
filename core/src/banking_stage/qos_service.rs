@@ -213,7 +213,6 @@ impl QosService {
 mod tests {
     use {
         super::*,
-        itertools::Itertools,
         solana_cost_model::cost_tracker::CostTrackerLimits,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -255,16 +254,12 @@ mod tests {
 
         // verify the size of txs_costs and its contents
         assert_eq!(txs_costs.len(), txs.len());
-        txs_costs
-            .iter()
-            .enumerate()
-            .map(|(index, cost)| {
-                assert_eq!(
-                    cost.as_ref().unwrap().sum(),
-                    CostModel::calculate_cost(&txs[index], &FeatureSet::all_enabled()).sum()
-                );
-            })
-            .collect_vec();
+        txs_costs.iter().enumerate().for_each(|(index, cost)| {
+            assert_eq!(
+                cost.as_ref().unwrap().sum(),
+                CostModel::calculate_cost(&txs[index], &FeatureSet::all_enabled()).sum()
+            );
+        });
     }
 
     #[test]
