@@ -313,7 +313,7 @@ dependencies = [
  "crossbeam-channel",
  "fd-lock",
  "indicatif",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
  "jsonrpc-derive",
@@ -391,7 +391,7 @@ dependencies = [
  "bitvec",
  "bytes",
  "crossbeam-channel",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "parking_lot 0.12.2",
  "smallvec",
@@ -3218,6 +3218,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5689,7 +5698,7 @@ dependencies = [
  "blake3",
  "bv",
  "dashmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "modular-bitfield",
  "num_cpus",
@@ -6330,7 +6339,7 @@ dependencies = [
  "dashmap",
  "futures 0.3.34",
  "histogram",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy-lru",
  "libc",
  "log",
@@ -6853,7 +6862,7 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "flate2",
  "indexmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy-lru",
  "log",
  "num-traits",
@@ -7070,7 +7079,7 @@ name = "solana-leader-schedule"
 version = "4.4.0-alpha.1"
 dependencies = [
  "agave-random",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "rand_chacha 0.9.0",
  "solana-clock",
  "solana-pubkey 4.3.0",
@@ -7098,7 +7107,7 @@ dependencies = [
  "eager",
  "fs_extra",
  "futures 0.3.34",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy-lru",
  "log",
  "lru 0.18.2",
@@ -7281,7 +7290,7 @@ dependencies = [
  "bytes",
  "cfg-if 1.0.4",
  "dashmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "nix",
  "rand 0.9.4",
@@ -7594,7 +7603,7 @@ dependencies = [
  "base64 0.23.1",
  "bincode",
  "cfg-if 1.0.4",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "qualifier_attr",
  "rand 0.9.4",
@@ -7826,7 +7835,7 @@ dependencies = [
  "bs58",
  "crossbeam-channel",
  "dashmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
  "jsonrpc-derive",
@@ -8021,7 +8030,7 @@ dependencies = [
  "crossbeam-utils",
  "dashmap",
  "imbl",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "libc",
  "log",
  "mockall",
@@ -8985,7 +8994,7 @@ name = "solana-send-transaction-service"
 version = "4.4.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "solana-hash 4.6.0",
  "solana-keypair",
@@ -9256,7 +9265,7 @@ dependencies = [
  "crossbeam-channel",
  "futures 0.3.34",
  "indexmap",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "libc",
  "log",
  "nix",
@@ -9655,7 +9664,7 @@ dependencies = [
  "bytes",
  "futures 0.3.34",
  "futures-util",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "lru 0.18.2",
  "quinn",
@@ -9803,7 +9812,7 @@ dependencies = [
  "agave-votor-messages",
  "bytes",
  "crossbeam-channel",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy-lru",
  "log",
  "lru 0.18.2",
