@@ -1441,6 +1441,7 @@ mod tests {
                 ValidatedTransactionDetails,
             },
             nonce_info::NonceInfo,
+            program_loader::test_utils::*,
             rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
@@ -1451,7 +1452,6 @@ mod tests {
         solana_fee_calculator::FeeCalculator,
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
-        solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
         solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
         solana_nonce as nonce,
@@ -3136,59 +3136,6 @@ mod tests {
         );
     }
 
-    fn test_elf() -> Vec<u8> {
-        let mut dir = std::env::current_dir().unwrap();
-        dir.push("tests");
-        dir.push("example-programs");
-        dir.push("hello-solana");
-        dir.push("hello_solana_program.so");
-        std::fs::read(dir).expect("file not found")
-    }
-
-    fn loader_v3_program_account(programdata_address: Pubkey) -> AccountSharedData {
-        let mut account = AccountSharedData::default();
-        account.set_owner(bpf_loader_upgradeable::id());
-        account.set_data_from_slice(
-            &bincode::serialize(&UpgradeableLoaderState::Program {
-                programdata_address,
-            })
-            .unwrap(),
-        );
-        account
-    }
-
-    fn loader_v3_programdata_account(slot: Slot) -> AccountSharedData {
-        let mut data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
-            slot,
-            upgrade_authority_address: None,
-        })
-        .unwrap();
-        data.resize(UpgradeableLoaderState::size_of_programdata_metadata(), 0);
-
-        let elf = test_elf();
-        data.extend_from_slice(&elf);
-
-        let mut account = AccountSharedData::default();
-        account.set_owner(bpf_loader_upgradeable::id());
-        account.set_data_from_slice(&data);
-        account
-    }
-
-    fn loader_v4_account(slot: Slot, status: LoaderV4Status) -> AccountSharedData {
-        let mut data = vec![0u8; LoaderV4State::program_data_offset()];
-        data[0..8].copy_from_slice(&slot.to_le_bytes());
-        data[8..40].copy_from_slice(Pubkey::new_unique().as_ref());
-        data[40..48].copy_from_slice(&(status as u64).to_le_bytes());
-
-        let elf = test_elf();
-        data.extend_from_slice(&elf);
-
-        let mut account = AccountSharedData::default();
-        account.set_owner(loader_v4::id());
-        account.set_data_from_slice(&data);
-        account
-    }
-
     fn catch_panic(f: impl FnOnce()) -> Option<String> {
         let previous_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
@@ -3227,7 +3174,7 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV1 | ProgramCacheEntryOwner::LoaderV2 => {
                 let mut account = AccountSharedData::default();
                 account.set_owner(Pubkey::from(loader));
-                account.set_data_from_slice(&test_elf());
+                account.set_data_from_slice(&load_test_program());
                 mock_bank
                     .account_shared_data
                     .write()
@@ -3244,14 +3191,18 @@ mod tests {
                     .insert(program_id, loader_v3_program_account(programdata_id));
                 mock_bank.account_shared_data.write().unwrap().insert(
                     programdata_id,
-                    loader_v3_programdata_account(DEPLOYMENT_SLOT),
+                    loader_v3_programdata_account(DEPLOYMENT_SLOT, &load_test_program()),
                 );
                 DEPLOYMENT_SLOT
             }
             ProgramCacheEntryOwner::LoaderV4 => {
                 mock_bank.account_shared_data.write().unwrap().insert(
                     program_id,
-                    loader_v4_account(DEPLOYMENT_SLOT, LoaderV4Status::Deployed),
+                    loader_v4_account(
+                        DEPLOYMENT_SLOT,
+                        LoaderV4Status::Deployed,
+                        &load_test_program(),
+                    ),
                 );
                 DEPLOYMENT_SLOT
             }
@@ -3579,7 +3530,7 @@ mod tests {
             account
         } else {
             // Case: status is Retracted
-            loader_v4_account(9, LoaderV4Status::Retracted)
+            loader_v4_account(9, LoaderV4Status::Retracted, &load_test_program())
         };
         mock_bank
             .account_shared_data
@@ -3648,7 +3599,11 @@ mod tests {
             account
         } else {
             // Case: status is Retracted
-            loader_v4_account(DEPLOYMENT_SLOT, LoaderV4Status::Retracted)
+            loader_v4_account(
+                DEPLOYMENT_SLOT,
+                LoaderV4Status::Retracted,
+                &load_test_program(),
+            )
         };
         mock_bank
             .account_shared_data

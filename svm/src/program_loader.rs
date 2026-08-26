@@ -302,9 +302,75 @@ fn loader_v4_get_state(data: &[u8]) -> Result<&LoaderV4State, InstructionError> 
 }
 
 #[cfg(test)]
-mod tests {
+pub mod test_utils {
     use {
         super::*,
+        solana_account::WritableAccount,
+        std::{fs::File, io::Read},
+    };
+
+    pub fn load_test_program() -> Vec<u8> {
+        let mut dir = std::env::current_dir().unwrap();
+        dir.push("tests");
+        dir.push("example-programs");
+        dir.push("hello-solana");
+        dir.push("hello_solana_program.so");
+        let mut file = File::open(dir.clone()).expect("file not found");
+        let metadata = std::fs::metadata(dir).expect("Unable to read metadata");
+        let mut buffer = vec![0; metadata.len() as usize];
+        file.read_exact(&mut buffer).expect("Buffer overflow");
+        buffer
+    }
+
+    pub fn loader_v3_program_account(programdata_address: Pubkey) -> AccountSharedData {
+        let mut account = AccountSharedData::default();
+        account.set_owner(bpf_loader_upgradeable::id());
+        account.set_data_from_slice(
+            &bincode::serialize(&UpgradeableLoaderState::Program {
+                programdata_address,
+            })
+            .unwrap(),
+        );
+        account
+    }
+
+    pub fn loader_v3_programdata_account(slot: Slot, elf: &[u8]) -> AccountSharedData {
+        let offset = UpgradeableLoaderState::size_of_programdata_metadata();
+        let mut data = vec![0u8; offset];
+        bincode::serialize_into(
+            &mut data[..offset],
+            &UpgradeableLoaderState::ProgramData {
+                slot,
+                upgrade_authority_address: None,
+            },
+        )
+        .unwrap();
+        data.extend_from_slice(elf);
+
+        let mut account = AccountSharedData::default();
+        account.set_owner(bpf_loader_upgradeable::id());
+        account.set_data_from_slice(&data);
+        account
+    }
+
+    pub fn loader_v4_account(slot: Slot, status: LoaderV4Status, elf: &[u8]) -> AccountSharedData {
+        let mut data = vec![0u8; LoaderV4State::program_data_offset()];
+        data[0..8].copy_from_slice(&slot.to_le_bytes());
+        data[8..40].copy_from_slice(Pubkey::new_unique().as_ref());
+        data[40..48].copy_from_slice(&(status as u64).to_le_bytes());
+        data.extend_from_slice(elf);
+
+        let mut account = AccountSharedData::default();
+        account.set_owner(loader_v4::id());
+        account.set_data_from_slice(&data);
+        account
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::{test_utils::*, *},
         crate::transaction_processor::TransactionBatchProcessor,
         solana_account::WritableAccount,
         solana_hash::Hash,
@@ -322,13 +388,7 @@ mod tests {
         solana_svm_transaction::svm_message::SVMMessage,
         solana_svm_type_overrides::sync::atomic::AtomicU64,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        std::{
-            cell::RefCell,
-            collections::HashMap,
-            env,
-            fs::{self, File},
-            io::Read,
-        },
+        std::{cell::RefCell, collections::HashMap},
     };
 
     struct TestForkGraph {}
@@ -359,53 +419,6 @@ mod tests {
                 other => panic!("Invalid result: {other:?}"),
             };
         };
-    }
-
-    fn loader_v3_program_account(programdata_address: Pubkey) -> AccountSharedData {
-        let mut account = AccountSharedData::default();
-        account.set_owner(bpf_loader_upgradeable::id());
-        account.set_data_from_slice(
-            &bincode::serialize(&UpgradeableLoaderState::Program {
-                programdata_address,
-            })
-            .unwrap(),
-        );
-        account
-    }
-
-    fn loader_v3_programdata_account(slot: Slot) -> AccountSharedData {
-        let mut account = AccountSharedData::default();
-        account.set_owner(bpf_loader_upgradeable::id());
-        account.set_data_from_slice(
-            &bincode::serialize(&UpgradeableLoaderState::ProgramData {
-                slot,
-                upgrade_authority_address: None,
-            })
-            .unwrap(),
-        );
-        account
-    }
-
-    fn loader_v4_account(slot: Slot, status: LoaderV4Status) -> AccountSharedData {
-        let mut data = vec![0u8; LoaderV4State::program_data_offset()];
-        // Safety: the buffer is exactly the size the state is transmuted from.
-        let state = unsafe {
-            let bytes: &mut [u8; LoaderV4State::program_data_offset()] = (&mut data
-                [0..LoaderV4State::program_data_offset()])
-                .try_into()
-                .unwrap();
-            std::mem::transmute::<&mut [u8; LoaderV4State::program_data_offset()], &mut LoaderV4State>(
-                bytes,
-            )
-        };
-        state.slot = slot;
-        state.authority_address_or_next_version = Pubkey::new_unique();
-        state.status = status;
-
-        let mut account = AccountSharedData::default();
-        account.set_owner(loader_v4::id());
-        account.set_data_from_slice(&data);
-        account
     }
 
     #[test]
@@ -514,7 +527,7 @@ mod tests {
         // Fail: programdata wrong owner
         // We also need to be careful here as well, since the load fails but
         // we still get the *actual* last modified slot.
-        let mut programdata_account = loader_v3_programdata_account(7);
+        let mut programdata_account = loader_v3_programdata_account(7, &[]);
         programdata_account.set_owner(Pubkey::new_unique());
         mock_bank
             .account_shared_data
@@ -540,7 +553,7 @@ mod tests {
         assert_eq!(last_modification_slot, 60); // <-- slot again persists
 
         // Success
-        let programdata_account = loader_v3_programdata_account(7);
+        let programdata_account = loader_v3_programdata_account(7, &[]);
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -594,10 +607,10 @@ mod tests {
         assert_eq!(last_modification_slot, 100);
 
         // Fail: status is Retracted
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (loader_v4_account(9, LoaderV4Status::Retracted), 100));
+        mock_bank.account_shared_data.borrow_mut().insert(
+            key,
+            (loader_v4_account(9, LoaderV4Status::Retracted, &[]), 100),
+        );
         let result = load_program_accounts(&mock_bank, &key);
         unwrap_as!(result, InvalidAccountData(owner), last_modification_slot);
         assert_eq!(owner, ProgramCacheEntryOwner::LoaderV4);
@@ -606,7 +619,7 @@ mod tests {
         // Success: any status but `Retracted`, and the state's slot is the
         // deployment slot
         for status in [LoaderV4Status::Deployed, LoaderV4Status::Finalized] {
-            let program_account = loader_v4_account(9, status);
+            let program_account = loader_v4_account(9, status, &[]);
             mock_bank
                 .account_shared_data
                 .borrow_mut()
@@ -621,19 +634,6 @@ mod tests {
             assert_eq!(deployment_slot, 9);
             assert_eq!(last_modification_slot, 100);
         }
-    }
-
-    fn load_test_program() -> Vec<u8> {
-        let mut dir = env::current_dir().unwrap();
-        dir.push("tests");
-        dir.push("example-programs");
-        dir.push("hello-solana");
-        dir.push("hello_solana_program.so");
-        let mut file = File::open(dir.clone()).expect("file not found");
-        let metadata = fs::metadata(dir).expect("Unable to read metadata");
-        let mut buffer = vec![0; metadata.len() as usize];
-        file.read_exact(&mut buffer).expect("Buffer overflow");
-        buffer
     }
 
     #[test]
@@ -754,7 +754,7 @@ mod tests {
 
         // Create a valid programdata account, but with invalid ELF bytes after
         // the metadata.
-        let mut programdata_account = loader_v3_programdata_account(7);
+        let mut programdata_account = loader_v3_programdata_account(7, &[]);
         let mut data = programdata_account.data().to_vec();
         data.resize(UpgradeableLoaderState::size_of_programdata_metadata(), 0);
         data.extend_from_slice(&[0xff; 64]);
@@ -960,10 +960,10 @@ mod tests {
         let environment = batch_processor.program_runtime_environment_for_epoch(20);
 
         // Retracted, closed tombstone.
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (loader_v4_account(9, LoaderV4Status::Retracted), 100));
+        mock_bank.account_shared_data.borrow_mut().insert(
+            key,
+            (loader_v4_account(9, LoaderV4Status::Retracted, &[]), 100),
+        );
         let (entry, _) = load_program_with_pubkey(
             &mock_bank,
             &environment,
@@ -976,10 +976,10 @@ mod tests {
         assert_eq!(entry.deployment_slot, 200);
 
         // No ELF, fail verification.
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (loader_v4_account(9, LoaderV4Status::Deployed), 100));
+        mock_bank.account_shared_data.borrow_mut().insert(
+            key,
+            (loader_v4_account(9, LoaderV4Status::Deployed, &[]), 100),
+        );
         let (entry, _) = load_program_with_pubkey(
             &mock_bank,
             &environment,
@@ -995,7 +995,7 @@ mod tests {
         assert_eq!(entry.deployment_slot, 9);
 
         // Valid ELF, success.
-        let mut account = loader_v4_account(9, LoaderV4Status::Deployed);
+        let mut account = loader_v4_account(9, LoaderV4Status::Deployed, &[]);
         let mut data = account.data().to_vec();
         data.extend_from_slice(&load_test_program());
         account.set_data_from_slice(&data);
@@ -1111,7 +1111,7 @@ mod tests {
         );
 
         // Fail: programdata account not owned by the loader
-        let mut programdata_account = loader_v3_programdata_account(7);
+        let mut programdata_account = loader_v3_programdata_account(7, &[]);
         programdata_account.set_owner(Pubkey::new_unique());
         mock_bank
             .account_shared_data
@@ -1149,7 +1149,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(programdata_key, (loader_v3_programdata_account(7), 60));
+            .insert(programdata_key, (loader_v3_programdata_account(7, &[]), 60));
         assert_eq!(
             get_program_deployment_slot(
                 &mock_bank,
@@ -1205,7 +1205,7 @@ mod tests {
 
         // TODO: Same issue as the above case.
         // Case: status is Retracted
-        let account = loader_v4_account(9, LoaderV4Status::Retracted);
+        let account = loader_v4_account(9, LoaderV4Status::Retracted, &[]);
         assert_eq!(
             get_program_deployment_slot(&mock_bank, &account, ProgramCacheEntryOwner::LoaderV4)
                 .unwrap(),
@@ -1214,7 +1214,7 @@ mod tests {
 
         // Success
         for status in [LoaderV4Status::Deployed, LoaderV4Status::Finalized] {
-            let account = loader_v4_account(9, status);
+            let account = loader_v4_account(9, status, &[]);
             assert_eq!(
                 get_program_deployment_slot(&mock_bank, &account, ProgramCacheEntryOwner::LoaderV4)
                     .unwrap(),
@@ -1464,7 +1464,7 @@ mod tests {
 
         // Case: programdata account exists, but wrong owner.
         // Can't read deployment slot, nothing is queued.
-        let mut programdata_account = loader_v3_programdata_account(7);
+        let mut programdata_account = loader_v3_programdata_account(7, &[]);
         programdata_account.set_owner(Pubkey::new_unique());
         mock_bank
             .account_shared_data
@@ -1489,7 +1489,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(programdata_key, (loader_v3_programdata_account(7), 60));
+            .insert(programdata_key, (loader_v3_programdata_account(7, &[]), 60));
         let result = filter_executable_program_accounts(&mock_bank, &batch, keys.iter());
         assert_eq!(result.len(), 1);
         let program_to_load = result.first().unwrap();
@@ -1539,10 +1539,10 @@ mod tests {
         // Case: program account holds valid state, but is `Retracted`.
         // `load_program_accounts` calls this invalid, so nothing should be
         // queued here either.
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (loader_v4_account(9, LoaderV4Status::Retracted), 100));
+        mock_bank.account_shared_data.borrow_mut().insert(
+            key,
+            (loader_v4_account(9, LoaderV4Status::Retracted, &[]), 100),
+        );
         // TODO: Same issue as the above case.
         let result = filter_executable_program_accounts(&mock_bank, &batch, keys.iter());
         assert_eq!(result.len(), 1);
@@ -1554,10 +1554,10 @@ mod tests {
         // Successfully queued.
         // Both fields come from the program account: the deployment slot from
         // its state, the modification slot from the account itself.
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (loader_v4_account(9, LoaderV4Status::Deployed), 100));
+        mock_bank.account_shared_data.borrow_mut().insert(
+            key,
+            (loader_v4_account(9, LoaderV4Status::Deployed, &[]), 100),
+        );
         let result = filter_executable_program_accounts(&mock_bank, &batch, keys.iter());
         assert_eq!(result.len(), 1);
         let program_to_load = result.first().unwrap();
@@ -1579,7 +1579,7 @@ mod tests {
         // Exactly the state, and the state with program data after it, both
         // read back the fields which were written.
         for extra_bytes in [0, 8] {
-            let mut account = loader_v4_account(42, LoaderV4Status::Deployed);
+            let mut account = loader_v4_account(42, LoaderV4Status::Deployed, &[]);
             let mut data = account.data().to_vec();
             data.resize(data.len().saturating_add(extra_bytes), 0);
             account.set_data_from_slice(&data);
