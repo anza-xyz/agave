@@ -36,7 +36,7 @@ use {
 const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, 1203);
 const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 
-/// A data shred: one MTU-sized frame of a slot's serialized ledger entries.
+/// A data shred: one MTU-sized frame of a serialized block.
 ///
 /// Layout: {common, data} headers | data buffer
 ///     | [Merkle root of the previous erasure batch if chained]
@@ -70,8 +70,8 @@ pub struct ShredData {
     /// `ShredData::SIZE_OF_PAYLOAD` bytes; longer buffers are truncated on
     /// parse and shorter ones rejected.
     ///
-    /// Cheaply cloneable, so a recovered shred's bytes can be shared between
-    /// the blockstore-insert and retransmit paths without copying.
+    /// Cheaply cloneable so shred bytes can be shared by multiple consumers
+    /// without full copies.
     payload: Payload,
 }
 

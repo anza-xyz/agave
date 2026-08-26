@@ -149,12 +149,6 @@ pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
 
 bitflags! {
     /// Flags carried by data shreds in [`DataShredHeader::flags`].
-    ///
-    /// The low six bits hold the reference tick; the top two bits are boolean
-    /// markers. Note that `LAST_SHRED_IN_SLOT` sets *both* of the top bits and
-    /// therefore implies `DATA_COMPLETE_SHRED`: a shred cannot end the slot
-    /// without also completing an entry batch. `sanitize` rejects shreds whose
-    /// flags violate that invariant with [`Error::InvalidShredFlags`].
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
     pub struct ShredFlags:u8 {
         /// Mask selecting the six bits that hold the *reference tick*: how many
@@ -264,10 +258,11 @@ pub enum Error {
 )]
 #[wincode(tag_encoding = "u8")]
 pub enum ShredType {
-    /// Carries ledger entries.
+    /// Shreds containing serialized block data.
     #[wincode(tag = 0b1010_0101)]
     Data = 0b1010_0101,
-    /// Carries Reed-Solomon parity over the data shreds of one erasure batch.
+    /// Shreds containing Reed-Solomon parity over the data shreds of one
+    /// erasure batch.
     #[wincode(tag = 0b0101_1010)]
     Code = 0b0101_1010,
 }
