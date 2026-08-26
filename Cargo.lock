@@ -9008,6 +9008,7 @@ dependencies = [
  "serial_test",
  "solana-account 4.6.0",
  "solana-accounts-db",
+ "solana-bls-signatures",
  "solana-client-traits",
  "solana-clock",
  "solana-cluster-type",

@@ -17,6 +17,7 @@ use {
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
+    solana_bls_signatures::signature::SignatureAffine,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_core::consensus::tower_storage::{
@@ -686,9 +687,10 @@ fn convert_datagram_to_vote_message(
     let bank = bank_forks.read().unwrap().root_bank();
     let rank_map = bank.get_rank_map(vote_msg.vote.slot())?;
     let (rank, sender_entry) = rank_map.get_ranked_entry_for_node(&sender)?;
+    let signature = SignatureAffine::try_from(vote_msg.signature).ok()?;
     Some(VoteMessage {
         vote: vote_msg.vote,
-        signature: vote_msg.signature,
+        signature,
         rank,
         stake: sender_entry.stake,
     })

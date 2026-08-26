@@ -40,6 +40,7 @@ rand = { workspace = true }
 rayon = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
