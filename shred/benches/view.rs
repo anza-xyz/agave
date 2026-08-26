@@ -6,11 +6,9 @@ use {
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
     rand::{Rng, SeedableRng, rngs::StdRng},
     solana_shred::{
-        AnyShred, Code, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed, ShredFlags,
-        ShredSource, ShredVariant, ShredViewMut,
-        kind::ShredLayout,
-        parse,
-        wire_format::{OFFSET_OF_VARIANT, SIZE_OF_NONCE},
+        AnyShred, Code, CodeHeader, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed,
+        ShredFlags, ShredSource, ShredVariant, ShredViewMut, kind::ShredLayout, parse,
+        wire_format::SIZE_OF_NONCE,
     },
     std::hint::black_box,
 };
@@ -18,24 +16,65 @@ use {
 /// Number of distinct shreds each iteration walks, chosen so they do not all stay in caches.
 const SHREDS: usize = 1024 * 64;
 
-/// Random bytes of `K`'s payload length, with a valid variant byte of `K`'s kind at offset 64.
+/// Random bytes of `K`'s payload length, with real headers written over them.
 ///
-/// Every field but that byte is unconstrained: parsing reads the headers as scalars and validates
-/// nothing about them.
-fn random_shreds<K: ShredLayout>(variant: ShredVariant) -> Vec<Bytes> {
+/// The bodies are unconstrained, since nothing downstream of the headers reads them, but the headers
+/// themselves have to be the ones a writer would produce: a data shred's `size` is validated against
+/// the layout while the shred is read, so random bytes there do not parse. Writing them with
+/// [`ShredViewMut`] is also what keeps the layout out of this file.
+fn random_shreds<K: ShredLayout>(common: &CommonHeader, header: &K::Header) -> Vec<Bytes> {
     let mut rng = StdRng::seed_from_u64(0x5eed);
     (0..SHREDS)
         .map(|_| {
-            let mut bytes = vec![0u8; K::SIZE_OF_PAYLOAD];
-            rng.fill(&mut bytes[..]);
-            bytes[OFFSET_OF_VARIANT] = u8::from(variant);
-            Bytes::from(bytes)
+            let mut payload = vec![0u8; K::SIZE_OF_PAYLOAD];
+            rng.fill(&mut payload[..]);
+            ShredViewMut::<K>::new(&mut payload, common.variant)
+                .expect("the buffer is one shred of this kind long")
+                .write_headers(common, header)
+                .expect("the headers fit the section they are written to");
+            Bytes::from(payload)
         })
         .collect()
 }
 
+/// Headers of the first data shred of a full FEC set, whose `size` covers the whole body.
+fn data_headers(variant: ShredVariant) -> (CommonHeader, DataHeader) {
+    let common = CommonHeader {
+        variant,
+        slot: 1_000,
+        index: 64,
+        version: 42,
+        fec_set_index: 64,
+    };
+    let header = DataHeader {
+        parent_offset: 1,
+        flags: ShredFlags::from(9),
+        size: u16::try_from(Data::SIZE_OF_HEADERS.saturating_add(Data::SIZE_OF_BODY))
+            .expect("a data shred's length fits a u16"),
+    };
+    (common, header)
+}
+
+/// Headers of the first code shred of a full FEC set.
+fn code_headers(variant: ShredVariant) -> (CommonHeader, CodeHeader) {
+    let common = CommonHeader {
+        variant,
+        slot: 1_000,
+        index: 96,
+        version: 42,
+        fec_set_index: 64,
+    };
+    let header = CodeHeader {
+        num_data_shreds: 32,
+        num_code_shreds: 32,
+        position: 0,
+    };
+    (common, header)
+}
+
 fn bench_view(c: &mut Criterion) {
-    let data: Vec<_> = random_shreds::<Data>(ShredVariant::MerkleData)
+    let (common, header) = data_headers(ShredVariant::MerkleData);
+    let data: Vec<_> = random_shreds::<Data>(&common, &header)
         .into_iter()
         .map(|bytes| {
             DataShred::<Parsed>::parse(bytes, ShredSource::Turbine)
@@ -43,7 +82,8 @@ fn bench_view(c: &mut Criterion) {
                 .0
         })
         .collect();
-    let code: Vec<_> = random_shreds::<Code>(ShredVariant::MerkleCode)
+    let (code_common, code_header) = code_headers(ShredVariant::MerkleCode);
+    let code: Vec<_> = random_shreds::<Code>(&code_common, &code_header)
         .into_iter()
         .map(|bytes| {
             CodeShred::<Parsed>::parse(bytes, ShredSource::Turbine)
@@ -92,18 +132,7 @@ fn bench_view(c: &mut Criterion) {
 
 /// The writer's side of the same sections: what building one shred's worth of bytes costs.
 fn bench_view_mut(c: &mut Criterion) {
-    let common = CommonHeader {
-        variant: ShredVariant::MerkleData,
-        slot: 1_000,
-        index: 64,
-        version: 42,
-        fec_set_index: 64,
-    };
-    let header = DataHeader {
-        parent_offset: 1,
-        flags: ShredFlags::from(9),
-        size: 1_051,
-    };
+    let (common, header) = data_headers(ShredVariant::MerkleData);
     let mut payloads = vec![vec![0u8; Data::SIZE_OF_PAYLOAD]; SHREDS];
 
     let mut group = c.benchmark_group("shred_view_mut");
@@ -133,7 +162,8 @@ fn bench_view_mut(c: &mut Criterion) {
 
 fn bench_parse(c: &mut Criterion) {
     // Half the packets carry a repair nonce, so the trailer branch is exercised too.
-    let packets: Vec<_> = random_shreds::<Data>(ShredVariant::MerkleData)
+    let (common, header) = data_headers(ShredVariant::MerkleData);
+    let packets: Vec<_> = random_shreds::<Data>(&common, &header)
         .into_iter()
         .enumerate()
         .map(|(index, shred)| match index % 2 {

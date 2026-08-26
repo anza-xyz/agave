@@ -31,23 +31,28 @@ covers it. Reading it splits it off the buffer and hands it back beside the shre
 ## **1. Header Structure**
 Each shred contains a **header** that includes essential metadata:
 
-| **Shred Type** | **Common Header** | **Specific Header** | **Body**  | **Trailer** |
-|----------------|-------------------|---------------------|-----------|-------------|
-| Data Shred     | 83 bytes          | 5 bytes             | 963 / 899 | 152 / 216   |
-| Coding Shred   | 83 bytes          | 6 bytes             | 987 / 923 | 152 / 216   |
+| **Shred Type** | **Signature** | **Common Header** | **Specific Header** | **Body**  | **Trailer** |
+|----------------|---------------|-------------------|---------------------|-----------|-------------|
+| Data Shred     | 64 bytes      | 19 bytes          | 5 bytes             | 963 / 899 | 152 / 216   |
+| Coding Shred   | 64 bytes      | 19 bytes          | 6 bytes             | 987 / 923 | 152 / 216   |
 
 Body and trailer are fixed too, not variable: each pair is the unresigned and the resigned layout,
 and a resigned shred gives up 64 bytes of body for the retransmitter signature its trailer reserves.
 Section 7 derives all four.
 
 Thus, the total **header size** for each shred type is:
-- **Data Shreds:** `Common Header (83) + Data Shred Header (5) = 88 bytes`
-- **Coding Shreds:** `Common Header (83) + Coding Shred Header (6) = 89 bytes`
+- **Data Shreds:** `Signature (64) + Common Header (19) + Data Shred Header (5) = 88 bytes`
+- **Coding Shreds:** `Signature (64) + Common Header (19) + Coding Shred Header (6) = 89 bytes`
+
+The leader's signature is counted here because it precedes the headers and everything after it is
+what the shred's own offsets are measured from, but it is not part of the common header: it is the
+signature *over* the rest of the shred, and the code names the two separately as
+`SIZE_OF_SIGNATURE` and `SIZE_OF_COMMON_HEADER`.
 
 ---
 
-## **2. Common Header (83 bytes, Little Endian)**
-The **Shred Common Header** is present in all shreds.
+## **2. Signature and Common Header (64 + 19 bytes, Little Endian)**
+The signature and the **Shred Common Header** are present in all shreds, in this order.
 
 | Field Name        | Size   | Type     | Description                                       |
 |-------------------|--------|----------|---------------------------------------------------|
@@ -59,8 +64,10 @@ The **Shred Common Header** is present in all shreds.
 | **Version**       | 2      | `uint16` | Cluster and fork identifier, see below            |
 | **FEC Set Index** | 4      | `uint32` | Index of the first shred of this FEC set          |
 
-The signature is not part of the 19-byte common header proper: it covers the rest of the shred,
-and the code names the two separately (`SIZE_OF_SIGNATURE` and `SIZE_OF_COMMON_HEADER`).
+Everything below the signature adds up to the 19 bytes of common header, which is what
+`SIZE_OF_COMMON_HEADER` names; the signature is `SIZE_OF_SIGNATURE`, separate because it is the
+signature over everything that follows it. The **Shred Variant** and **Proof Size** rows are the two
+nibbles of a single byte, so the header is `1 + 8 + 4 + 2 + 4`.
 
 `Version` is `compute_shred_version(genesis_hash, hard_forks)`, so it separates not only clusters
 but also forks of one cluster: a shred from before a hard fork does not match a node past it.
@@ -196,7 +203,10 @@ Turbine, and depends on none of them, so it cannot accumulate the entanglement a
 bypass visibility limitations (only `pub` items are usable by the validator code).
 Keeping the cluster's policy inputs (shred version, root, per-slot limits) in a caller-supplied
 struct rather than reading them from a bank is what makes this code testable without the rest of
-the validator present.
+the validator present. What that hands the caller is the obligation to resolve those inputs: two of
+the five are limits for a particular slot rather than for the cluster, so an `AdmissionPolicy` is a
+snapshot good for the slots it was resolved against and not a standing configuration. The
+documentation on the type says so, because the field names cannot.
 
 ### Why typestate
 

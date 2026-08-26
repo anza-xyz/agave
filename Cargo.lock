@@ -10356,6 +10356,8 @@ dependencies = [
  "rand 0.9.4",
  "reed-solomon-erasure",
  "solana-clock",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
  "solana-hash 4.6.0",
  "solana-keypair",
  "solana-ledger",

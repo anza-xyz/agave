@@ -622,35 +622,6 @@ impl<S: ShredState> AnyShred<S> {
         }
     }
 
-    /// Borrows the shred as a typed one, for a caller that needs a kind-specific accessor and not
-    /// ownership. Costs a refcount on the bytes and a header copy.
-    pub fn as_data(&self) -> Option<DataShred<S>> {
-        match self.header {
-            AnyHeader::Data(header) => Some(Shred {
-                bytes: self.bytes.clone(),
-                common: self.common,
-                header,
-                provenance: self.provenance,
-                _state: PhantomData,
-            }),
-            AnyHeader::Code(_) => None,
-        }
-    }
-
-    /// See [`as_data`](Self::as_data).
-    pub fn as_code(&self) -> Option<CodeShred<S>> {
-        match self.header {
-            AnyHeader::Code(header) => Some(Shred {
-                bytes: self.bytes.clone(),
-                common: self.common,
-                header,
-                provenance: self.provenance,
-                _state: PhantomData,
-            }),
-            AnyHeader::Data(_) => None,
-        }
-    }
-
     /// Where this shred came from.
     #[inline]
     pub const fn provenance(&self) -> Provenance {

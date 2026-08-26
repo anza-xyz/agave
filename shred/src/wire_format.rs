@@ -122,6 +122,16 @@ static_assertions::const_assert_eq!(Data::SIZE_OF_HEADERS, 88);
 static_assertions::const_assert_eq!(Code::SIZE_OF_HEADERS, 89);
 static_assertions::const_assert_eq!(SIZE_OF_SHRED_BUFFER, PACKET_DATA_SIZE);
 
+/// A zeroed payload buffer for a shred of kind `K`, allocated at [`SIZE_OF_SHRED_BUFFER`].
+///
+/// Every shred this crate writes starts here, so the write path allocates one size and the spare
+/// bytes past the payload are where [`repair_response`] puts the nonce.
+pub fn payload_buffer<K: ShredLayout>() -> Vec<u8> {
+    let mut payload = Vec::with_capacity(SIZE_OF_SHRED_BUFFER);
+    payload.resize(K::SIZE_OF_PAYLOAD, 0);
+    payload
+}
+
 /// The wire bytes of a repair response: `payload` followed by the nonce of the request it answers.
 ///
 /// The inverse of the split [`read_wire_packet`](crate::ShredView::read_wire_packet) performs on the
@@ -133,16 +143,6 @@ static_assertions::const_assert_eq!(SIZE_OF_SHRED_BUFFER, PACKET_DATA_SIZE);
 /// is the last handle on its buffer converts back to a `BytesMut`, and the four nonce bytes then
 /// fit whatever capacity the buffer has past the payload. A shared payload has to be copied, since
 /// the other holders still see the bytes without a nonce.
-/// A zeroed payload buffer for a shred of kind `K`, allocated at [`SIZE_OF_SHRED_BUFFER`].
-///
-/// Every shred this crate writes starts here, so the write path allocates one size and the spare
-/// bytes past the payload are where [`repair_response`] puts the nonce.
-pub fn payload_buffer<K: ShredLayout>() -> Vec<u8> {
-    let mut payload = Vec::with_capacity(SIZE_OF_SHRED_BUFFER);
-    payload.resize(K::SIZE_OF_PAYLOAD, 0);
-    payload
-}
-
 pub fn repair_response(payload: Bytes, nonce: Nonce) -> Bytes {
     let mut packet = payload.try_into_mut().unwrap_or_else(|payload| {
         let mut copy = BytesMut::with_capacity(payload.len().saturating_add(SIZE_OF_NONCE));
