@@ -17,16 +17,16 @@
 //! both inputs: [`SIZE_OF_BODY`](ShredLayout::SIZE_OF_BODY) and
 //! [`SIZE_OF_BODY_RESIGNED`](ShredLayout::SIZE_OF_BODY_RESIGNED) per kind, four values in all. It
 //! is a length, not a count of useful bytes; see [`data`](crate::shred::Shred::data) for what a
-//! data shred's body actually holds. `README.md` derives all four from the diagram above.
-//!
+//! data shred's body actually holds. `README.md`'s section 7 tabulates all four.
 //!
 //! The wire format should be written down once, declaratively, in the order the bytes appear.
 //! Deriving a single wincode schema for a whole shred is still not possible, because the two layouts
-//! differ in the middle rather than only at the end. Instead, a single [`const fn`](sections)
-//! adds the section sizes up in wire order, and every boundary is derived from it.
+//! differ in the middle rather than only at the end. Instead, a single [`const fn`](sections) adds
+//! the section sizes up in wire order, and every boundary is derived from it.
+//!
 //! The sizes below are read off the wincode schemas of the types that occupy each section, so the
-//! shred's own header definitions are the only place they are stated. The `const_assert_eq!`s at
-//! the bottom pin them, a schema change that moves a boundary is a protocol change & compile error.
+//! shred's own header definitions are the only place they are stated. The `const_assert_eq!`s at the
+//! bottom pin them: a schema change that moves a boundary is a protocol change, and a compile error.
 
 pub use crate::shred::merkle_tree::{MerkleProofEntry as ProofEntry, SIZE_OF_MERKLE_PROOF_ENTRY};
 use {

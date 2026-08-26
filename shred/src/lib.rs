@@ -19,7 +19,7 @@
 //!     max_code_shreds_per_slot: 32_768,
 //! };
 //!
-//! let shred = shred.verify(&policy, &fixtures::leader())?;
+//! let shred = shred.check_policy(&policy)?.verify(&fixtures::leader())?;
 //! assert_eq!(shred.data().len(), 963);
 //!
 //! use solana_shred::provenance::Provenance;
@@ -41,11 +41,12 @@
 //!
 //! Every rule about the bytes (the payload length, the kind the variant byte selects, whether a
 //! repair nonce follows) is applied there, so no check is made twice and no caller can forget one.
+//!
 //! # Building
 //!
-//! The reverse direction is [`FecSet::build`](crate::build::FecSet::build), which is the write
+//! The reverse direction is [`FecSet::build`](crate::shredder::FecSet::build), which is the write
 //! path's whole entry point. It takes an erasure batch rather than a shred, for the reason
-//! [`build`] gives. What comes back is 32 data and 32 code shreds in
+//! [`shredder`] gives. What comes back is 32 data and 32 code shreds in
 //! [`Verified`](crate::state::Verified), stamped
 //! [`Provenance::BlockProduction`](crate::provenance::Provenance::BlockProduction) since their
 //! signature was produced here, plus the root the next batch chains to.
@@ -63,7 +64,6 @@
 //! Deshredding a batch back into ledger entries is not here either, nor is any identifier for a
 //! shred or an erasure set.
 
-pub mod build;
 pub mod error;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod fixtures;
@@ -75,6 +75,7 @@ pub mod provenance;
 pub mod recover;
 pub mod shred;
 pub mod shred_variant;
+pub mod shredder;
 pub mod state;
 pub mod view;
 pub mod wire_format;

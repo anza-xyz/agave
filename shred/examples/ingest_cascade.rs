@@ -9,7 +9,6 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_shred::{
-        build::{BatchPosition, FecSet, FecSetSpec},
         error::{ParseError, Reject},
         fixtures,
         kind::{Data, ShredLayout},
@@ -17,7 +16,8 @@ use {
         recover::recover,
         shred::{AnyShred, CodeShred, DataShred, Shred, parse_repair, parse_turbine},
         shred_variant::ShredKind,
-        state::{Parsed, Verified},
+        shredder::{BatchPosition, FecSet, FecSetSpec},
+        state::{Admissible, Parsed, Verified},
         view::ShredView,
         wire_format::{
             Nonce, SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY,
@@ -232,33 +232,29 @@ fn sigverify_worker(
     leader: &Pubkey,
     node: &Keypair,
 ) {
-    let mut seen = HashSet::new();
+    let mut deduper = HashSet::new();
     for Inbound {
         shred,
         repair_location: location,
     } in incoming
     {
-        // Dedup before anything expensive, and after the parse rather than before it: the shred's
-        // own bytes are the key, because `parse` has already split off any repair nonce and
-        // truncated the buffer to exactly one shred. No ad-hoc slicing, and nothing to keep in sync
-        // with the wire format.
-        if !seen.insert(shred.bytes().clone()) {
-            continue;
-        }
         let verification_result = match shred.kind() {
             ShredKind::Data => {
                 let shred = shred.into_data().expect("the variant byte said data");
-                validate_and_resign(shred, policy, leader, node)
+                validate_and_resign(shred, policy, leader, node, &mut deduper)
             }
             ShredKind::Code => {
                 let shred = shred.into_code().expect("the variant byte said code");
-                validate_and_resign(shred, policy, leader, node)
+                validate_and_resign(shred, policy, leader, node, &mut deduper)
             }
         };
         match verification_result {
-            Ok(shred) => {
+            Ok(Some(shred)) => {
                 let outbound = Outbound { shred, location };
                 outgoing.send(outbound).expect("the receiver outlives us");
+            }
+            Ok(None) => {
+                println!("duplicate dropped before the signature check");
             }
             Err(reason) => {
                 println!("Rejecting invalid shred: {reason}");
@@ -273,16 +269,29 @@ fn validate_and_resign<K: ShredLayout>(
     policy: &AdmissionPolicy,
     leader: &Pubkey,
     node: &Keypair,
-) -> Result<AnyShred<Verified>, Reject> {
-    // The policy checks and the signature check, cheapest first: nothing is hashed until the
-    // headers have passed.
-    let shred = shred.verify(policy, leader)?;
+    seen: &mut HashSet<Bytes>,
+) -> Result<Option<AnyShred<Verified>>, Reject> {
+    // The policy checks first, so nothing is hashed until the headers have passed.
+    let shred = shred.check_policy(policy)?;
+    // Then the deduper, which is what the two halves are separate transitions for.
+    let Some(shred) = dedup(shred, seen) else {
+        return Ok(None);
+    };
+    let shred = shred.verify(leader)?;
     // Retransmit-signing is the one thing done *to* a shred rather than learned about it. Only the
     // variants that reserve room carry a signature; the rest are handed back untouched, so the
     // worker does not branch on the variant bit. The security state does not change either way, so
     // resigned and normal shreds are still one type.
     let shred = shred.resign(node)?;
-    Ok(shred.into())
+    Ok(Some(shred.into()))
+}
+
+/// Mockup: Drops a shred whose bytes this worker has already handled.
+fn dedup<K: ShredLayout>(
+    shred: Shred<K, Admissible>,
+    seen: &mut HashSet<Bytes>,
+) -> Option<Shred<K, Admissible>> {
+    seen.insert(shred.bytes().clone()).then_some(shred)
 }
 
 /// The nonce of the one repair request this node is pretending to have outstanding.

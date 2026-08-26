@@ -10,10 +10,10 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_shred::{
-        build::{BatchPosition, DATA_SHREDS, FecSet, FecSetSpec},
         error::BuildError,
         shred::{AnyShred, DataShred},
         shred_variant::ShredKind,
+        shredder::{BatchPosition, DATA_SHREDS, FecSet, FecSetSpec},
         state::Verified,
     },
     std::collections::HashMap,

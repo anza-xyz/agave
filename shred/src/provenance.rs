@@ -1,19 +1,19 @@
 //! Provenance is what *this node* knows about the origin of the Shred.
 //!
-//! Where the bytes came from is a field, [`Provenance`](crate::provenance::Provenance),
+//! Where the bytes came from is a field, [`Provenance`],
 //! not a type parameter. Provenance for a shred can not be modified.
 //!
 //! Four things can put a shred in [`Verified`](crate::state::Verified), one per provenance:
 //!
 //! ```text
-//! verify(policy, leader)  Received(source)   hash and ed25519
-//! recover(data, code)     Recovered          the batch's root is checked as it is rebuilt
-//! from_blockstore(bytes)  Blockstore         verified before it was ever stored
-//! FecSet::build(..)       BlockProduction    signed here
+//! check_policy() + verify()  Received(source)   hash and ed25519
+//! recover(data, code)        Recovered          the batch's root is checked as it is rebuilt
+//! from_blockstore(bytes)     Blockstore         verified before it was ever stored
+//! FecSet::build(..)          BlockProduction    signed here
 //! ```
 //!
 //! [`resign`](crate::shred::Shred::resign) accepts only
-//! [`Provenance::Received`](crate::provenance::Provenance::Received).
+//! [`Provenance::Received`].
 
 /// Which socket a received shred arrived on.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

@@ -10,7 +10,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
-    solana_shred::build::{BatchPosition, FecSet, FecSetSpec},
+    solana_shred::shredder::{BatchPosition, FecSet, FecSetSpec},
     std::hint::black_box,
 };
 

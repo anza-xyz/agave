@@ -1,4 +1,4 @@
-//! Building an erasure batch.
+//! Building an erasure batch/FEC set (shredding process).
 //!
 //! A shred cannot be built alone. Its Merkle proof comes from the tree over its whole FEC set, and
 //! the signature it carries is the leader's over that tree's root, so the unit of construction is
@@ -73,8 +73,8 @@ pub struct FecSetSpec {
     ///
     /// The two kinds are indexed by separate counters on the wire, but with every FEC set holding
     /// 32 of each the counters advance together from zero, so they never disagree. A shred whose
-    /// index falls outside its own FEC set is rejected by [`verify`](crate::shred::Shred::verify)
-    /// anyway.
+    /// index falls outside its own FEC set is rejected by
+    /// [`check_policy`](crate::shred::Shred::check_policy) anyway.
     pub fec_set_index: u32,
     /// Merkle root of the preceding erasure batch.
     pub chained_merkle_root: Hash,
@@ -462,7 +462,10 @@ mod tests {
                 let shred = parsed
                     .into_data()
                     .expect("a data shred parsed as a code shred");
-                let shred = shred.verify(&policy(&spec), &keypair.pubkey()).unwrap();
+                let shred = shred
+                    .check_policy(&policy(&spec))
+                    .and_then(|shred| shred.verify(&keypair.pubkey()))
+                    .unwrap();
                 assert_eq!(shred.merkle_root().unwrap(), set.merkle_root);
                 assert_eq!(shred.index(), spec.fec_set_index + position as u32);
                 assert_eq!(shred.erasure_shard_index(), Some(position));
@@ -486,7 +489,10 @@ mod tests {
                 let shred = parsed
                     .into_code()
                     .expect("a code shred parsed as a data shred");
-                let shred = shred.verify(&policy(&spec), &keypair.pubkey()).unwrap();
+                let shred = shred
+                    .check_policy(&policy(&spec))
+                    .and_then(|shred| shred.verify(&keypair.pubkey()))
+                    .unwrap();
                 assert_eq!(shred.merkle_root().unwrap(), set.merkle_root);
                 assert_eq!(shred.position(), position as u16);
                 assert_eq!(shred.erasure_shard_index(), Some(DATA_SHREDS + position));

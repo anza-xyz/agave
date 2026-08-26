@@ -1,9 +1,10 @@
 //! The header structs, as read by wincode.
 //!
 //! The leader's signature occupies bytes `0..64` and is deliberately absent from [`CommonHeader`]:
-//! it is 64 of the 83 header bytes, only sigverify needs it, and it can be handed out as a
-//! zero-copy reference into the shred instead of being copied at parse time. Deserialization
-//! therefore starts at [`OFFSET_OF_VARIANT`](crate::wire_format::OFFSET_OF_VARIANT).
+//! it is 64 of the 88 (data) or 89 (code) header bytes, only sigverify needs it, and it can be
+//! handed out as a zero-copy reference into the shred instead of being copied at parse time.
+//! Deserialization therefore starts at
+//! [`OFFSET_OF_VARIANT`](crate::wire_format::OFFSET_OF_VARIANT).
 
 use {
     crate::shred_variant::ShredVariant,

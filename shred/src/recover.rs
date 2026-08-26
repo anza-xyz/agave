@@ -1,9 +1,9 @@
 //! Rebuilding the missing shreds of an erasure batch.
 //!
-//! Recovery is the read path's mirror of [`build`](crate::build), and it runs the same passes in
-//! the same order for the same reason: Reed-Solomon fills the missing erasure shards, then the
-//! batch's Merkle tree is rebuilt over all 64 shards so that each rebuilt shred can be given the
-//! proof that witnesses it.
+//! Recovery is the read path's mirror of [`shredder`](crate::shredder), and it runs the same
+//! passes in the same order for the same reason: Reed-Solomon fills the missing erasure shards,
+//! then the batch's Merkle tree is rebuilt over all 64 shards so that each rebuilt shred can be
+//! given the proof that witnesses it.
 //!
 //! What a recovered shred does not get is a fresh signature. The one the leader produced is over
 //! the batch's Merkle root, which is a property of the whole set rather than of any one shred, so
@@ -14,13 +14,13 @@
 
 use {
     crate::{
-        build::{CODE_SHREDS, DATA_SHREDS, SHARDS, coder},
         error::RecoverError,
         headers::{CodeHeader, CommonHeader},
         kind::{Code, Data, ShredLayout},
         merkle,
         shred::{CodeShred, DataShred, Shred, merkle_tree::MerkleTree},
         shred_variant::ShredVariant,
+        shredder::{CODE_SHREDS, DATA_SHREDS, SHARDS, coder},
         state::Verified,
         view::ShredViewMut,
         wire_format::{

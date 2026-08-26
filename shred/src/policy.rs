@@ -1,5 +1,5 @@
-//! The admission policy: everything the [`verify`](crate::shred::Shred::verify) transition needs to
-//! know about the node's current view of the cluster.
+//! The admission policy: everything the [`check_policy`](crate::shred::Shred::check_policy)
+//! transition needs to know about the node's current view of the cluster.
 //!
 //! It is a snapshot, not a standing configuration: every field is read from the node's state at
 //! some instant, and two of them are functions of the slot being verified rather than of the

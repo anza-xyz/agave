@@ -1,25 +1,22 @@
 //! The validation states a shred passes through.
 //!
-//! A shred arrives as an opaque [`Bytes`](bytes::Bytes) buffer and advances through two states,
+//! A shred arrives as an opaque [`Bytes`](bytes::Bytes) buffer and advances through three states,
 //! each reachable only by calling the transition that establishes it:
 //!
 //! ```text
 //! Bytes
-//!   │  parse_turbine()          length, variant, headers        cheap: no hashing
-//!   │  parse_repair()           the same, plus the nonce
+//!   │  parse_turbine()        length, variant, headers          cheap
+//!   │  parse_repair()         the same, plus the nonce
 //!   ▼  Shred<K, Parsed>
-//!   │  verify(policy, leader)   policy, then Merkle root and    cheap checks first, then
-//!   │                           leader signature                the expensive one
+//!   │  check_policy(policy)   the headers against this node's   cheap
+//!   │                         current view of the cluster
+//!   ▼  Shred<K, Admissible>
+//!   │  verify(leader)         the Merkle root the proof         the expensive stage
+//!   │                         reconstructs, then the signature
 //!   ▼  Shred<K, Verified>
-//!      resign(keypair)          retransmitter signature, state unchanged
+//!      resign(keypair)        retransmitter signature, state unchanged
 //! ```
-//!
-//!
-//! The Kind ([`Data`](crate::kind::Data) or [`Code`](crate::kind::Code)) is likewise a type
-//! parameter, so accessors that only make sense for one kind do not exist on the other, and
-//! [`AnyShred`](crate::shred::AnyShred) is the kind-erased form for the channels that carry both.
-//! See [`kind`] for why, and `AnyShred` itself for where those channels are.
-//!
+
 mod sealed {
     pub trait Sealed {}
 }
@@ -32,6 +29,10 @@ pub trait ShredState: sealed::Sealed {
 
 /// The shred's length and headers are well-formed. Nothing about its content is known.
 pub enum Parsed {}
+
+/// The headers agree with the admission policy this node held, so the shred is worth verifying.
+/// Nothing has been hashed yet, and nothing about the shred's authenticity is known.
+pub enum Admissible {}
 
 /// The leader's signature over the shred's Merkle root verifies, and the headers agreed with the
 /// caller's admission policy on the way.
@@ -47,4 +48,5 @@ macro_rules! impl_state {
 }
 
 impl_state!(Parsed);
+impl_state!(Admissible);
 impl_state!(Verified);

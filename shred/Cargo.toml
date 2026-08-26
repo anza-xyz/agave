@@ -49,7 +49,7 @@ name = "view"
 harness = false
 
 [[bench]]
-name = "build"
+name = "shredder"
 harness = false
 
 [lints]
