@@ -2053,7 +2053,7 @@ fn load_frozen_forks(
                 progress.num_shreds = u64::from(meta.replay_fec_set_index);
             }
             let mut m = Measure::start("process_single_slot");
-            let bank = bank_forks.write().unwrap().insert(bank);
+            let bank = bank_forks.write().unwrap().insert_from_ledger(bank);
             if let Err(error) = process_single_slot(
                 blockstore,
                 &bank,

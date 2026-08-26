@@ -79,6 +79,7 @@ pub struct BankForks {
     root: Slot,
     working_slot: Slot,
     sharable_banks: SharableBanks,
+    highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
 
     /// The status tracker for the Alpenglow migration. Initialized via either
@@ -135,6 +136,7 @@ impl BankForks {
             },
             banks,
             descendants,
+            highest_slot_at_startup: 0,
             scheduler_pool: None,
             migration_status,
         }));
@@ -301,8 +303,12 @@ impl BankForks {
     pub fn insert_with_scheduling_mode(
         &mut self,
         mode: SchedulingMode,
-        bank: Bank,
+        mut bank: Bank,
     ) -> BankWithScheduler {
+        if self.root < self.highest_slot_at_startup {
+            bank.set_check_program_deployment_slot(true);
+        }
+
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
             Self::install_scheduler_into_bank(scheduler_pool, mode, bank)
@@ -342,6 +348,11 @@ impl BankForks {
             scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
         }
         bank_with_scheduler
+    }
+
+    pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
+        self.highest_slot_at_startup = std::cmp::max(self.highest_slot_at_startup, bank.slot());
+        self.insert(bank)
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<BankWithScheduler> {
