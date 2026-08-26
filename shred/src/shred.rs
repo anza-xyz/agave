@@ -260,6 +260,26 @@ impl<K: ShredLayout> Shred<K, Verified> {
         self.bytes = buffer.freeze();
         Ok(self)
     }
+
+    /// Checks `retransmitter`'s signature over this shred's Merkle root.
+    ///
+    /// The read side of [`resign`](Self::resign), and reachable only from [`Verified`]: the
+    /// retransmitter's signature says which peer forwarded these bytes, which is worth nothing
+    /// until the leader's signature says the bytes are the leader's. Who the retransmitter should
+    /// be is the caller's to work out, since it is a function of the slot's leader and this node's
+    /// position in that slot's tree, neither of which is in the shred.
+    pub fn verify_retransmitter(&self, retransmitter: &Pubkey) -> Result<(), Reject> {
+        let signature = self
+            .view()
+            .retransmitter_signature
+            .copied()
+            .ok_or(Reject::MissingRetransmitterSignature)?;
+        let root = self.merkle_root()?;
+        if !signature.verify(retransmitter.as_ref(), root.as_ref()) {
+            return Err(Reject::InvalidRetransmitterSignature);
+        }
+        Ok(())
+    }
 }
 
 /// Accessors available in every state.
@@ -366,38 +386,6 @@ impl<K: ShredLayout, S: ShredState> Shred<K, S> {
         let view = self.view();
         merkle_tree::get_merkle_root(index, merkle::leaf(view.merkle_leaf), view.merkle_proof)
             .map_err(Reject::from)
-    }
-
-    /// Checks `retransmitter`'s signature over this shred's Merkle root.
-    ///
-    /// The read side of [`resign`](Self::resign), and the reason a resigned shred is worth the 64
-    /// bytes it spends: the peer that forwarded it is named by the Turbine tree rather than by the
-    /// packet, so a shred that arrived from the wrong node is rejected before its contents matter.
-    /// Who the retransmitter should be is the caller's to work out, since it is a function of the
-    /// slot's leader and this node's position in that slot's tree, neither of which is in the
-    /// shred.
-    ///
-    /// Available in every state, and separate from [`verify`](Shred::verify), because the two
-    /// signatures answer different questions and not every caller asks both. The leader's signature
-    /// is what makes a shred admissible at all; the retransmitter's is a statement about the hop it
-    /// took to get here, which a repair response does not make and does not need to.
-    ///
-    /// A variant that reserves no room for one is [`Reject::MissingRetransmitterSignature`] rather
-    /// than a pass. Unlike [`resign`](Self::resign), which is asked to sign whatever it is handed
-    /// and forwards what it cannot sign, this is asked a question about a signature, and "there is
-    /// none" is not the answer "it checks out". A caller that only wants the signature when there
-    /// is one can read [`retransmitter_signature`](Self::retransmitter_signature) first.
-    pub fn verify_retransmitter(&self, retransmitter: &Pubkey) -> Result<(), Reject> {
-        let signature = self
-            .view()
-            .retransmitter_signature
-            .copied()
-            .ok_or(Reject::MissingRetransmitterSignature)?;
-        let root = self.merkle_root()?;
-        if !signature.verify(retransmitter.as_ref(), root.as_ref()) {
-            return Err(Reject::InvalidRetransmitterSignature);
-        }
-        Ok(())
     }
 
     /// The shred's bytes, without any trailing repair nonce.
@@ -713,22 +701,6 @@ impl<S: ShredState> AnyShred<S> {
             .map_err(Reject::from)
     }
 
-    /// Checks `retransmitter`'s signature over this shred's Merkle root.
-    ///
-    /// See [`Shred::verify_retransmitter`].
-    pub fn verify_retransmitter(&self, retransmitter: &Pubkey) -> Result<(), Reject> {
-        let signature = self
-            .view()
-            .retransmitter_signature
-            .copied()
-            .ok_or(Reject::MissingRetransmitterSignature)?;
-        let root = self.merkle_root()?;
-        if !signature.verify(retransmitter.as_ref(), root.as_ref()) {
-            return Err(Reject::InvalidRetransmitterSignature);
-        }
-        Ok(())
-    }
-
     /// The shred's bytes, without any trailing repair nonce.
     #[inline]
     pub const fn bytes(&self) -> &Bytes {
@@ -748,6 +720,24 @@ impl<S: ShredState> AnyShred<S> {
     #[inline]
     pub fn into_repair_response(self, nonce: Nonce) -> Bytes {
         wire_format::repair_response(self.bytes, nonce)
+    }
+}
+
+impl AnyShred<Verified> {
+    /// Checks `retransmitter`'s signature over this shred's Merkle root.
+    ///
+    /// See [`Shred::verify_retransmitter`].
+    pub fn verify_retransmitter(&self, retransmitter: &Pubkey) -> Result<(), Reject> {
+        let signature = self
+            .view()
+            .retransmitter_signature
+            .copied()
+            .ok_or(Reject::MissingRetransmitterSignature)?;
+        let root = self.merkle_root()?;
+        if !signature.verify(retransmitter.as_ref(), root.as_ref()) {
+            return Err(Reject::InvalidRetransmitterSignature);
+        }
+        Ok(())
     }
 }
 
