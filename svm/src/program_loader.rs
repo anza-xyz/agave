@@ -192,7 +192,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 /// Returns slot 0 for programs deployed with v1/v2 loaders, since programs deployed
 /// with those loaders do not retain deployment slot information.
 /// Returns an error if the program's account state can not be found or parsed.
-pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
+fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     program: &AccountSharedData,
     loader: ProgramCacheEntryOwner,
