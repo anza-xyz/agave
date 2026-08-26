@@ -1,7 +1,7 @@
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     bincode::serialize,
-    criterion::{Criterion, criterion_group, criterion_main},
+    criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     solana_account::{Account, AccountSharedData, WritableAccount},
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
@@ -292,15 +292,6 @@ impl BenchAuthorize {
             instruction_accounts,
         }
     }
-
-    fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchInitializeAccount {
@@ -355,14 +346,6 @@ impl BenchInitializeAccount {
             transaction_accounts,
             instruction_accounts,
         }
-    }
-    pub fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
     }
 }
 
@@ -1079,14 +1062,46 @@ impl BenchTowerSync {
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_authorize(c: &mut Criterion) {
     let test_setup = BenchAuthorize::new();
     c.bench_function("vote_instruction_authorize", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
