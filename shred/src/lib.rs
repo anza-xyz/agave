@@ -55,14 +55,6 @@
 //! ([`sections`](crate::wire_format::sections)), and every shred the writer produces is read back
 //! through [`ShredView`](crate::view::ShredView) before it is handed out, so the reader's rules are
 //! the writer's test.
-//!
-//! # Status
-//!
-//! A draft: nothing else in the tree depends on it yet. Its output is byte-identical to
-//! `solana-ledger`'s shredder for the batches it can build, which its tests assert directly.
-//! Splitting a slot's data across batches is not here; that is block production's business.
-//! Deshredding a batch back into ledger entries is not here either, nor is any identifier for a
-//! shred or an erasure set.
 
 pub mod error;
 #[cfg(feature = "dev-context-only-utils")]
