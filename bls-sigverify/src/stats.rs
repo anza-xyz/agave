@@ -15,6 +15,18 @@ const SLOTS_INTERVAL: Slot = 10;
 /// Max amount of seconds to wait before triggering reporting of stats.
 const DURATION_INTERVAL: Duration = Duration::from_secs(5);
 
+fn per_second(count: u64, elapsed: Duration) -> u64 {
+    let elapsed_nanos = elapsed.as_nanos();
+    if elapsed_nanos == 0 {
+        return 0;
+    }
+
+    let rate = u128::from(count)
+        .saturating_mul(1_000_000_000)
+        .div_euclid(elapsed_nanos);
+    u64::try_from(rate).unwrap_or(u64::MAX)
+}
+
 /// A struct to control when stats should be reported depending on how many slots or time has passed.
 #[derive(Debug)]
 pub(super) struct Reporting {
@@ -141,7 +153,7 @@ impl SigVerifierStats {
             last_report: _,
         } = self;
 
-        vote_stats.report();
+        vote_stats.report(elapsed);
         cert_stats.report();
         datapoint_info!(
             "bls_sig_verifier_stats",
@@ -443,7 +455,7 @@ impl SigVerifyVoteStats {
         self.vote_verification_stats.merge(vote_verification_stats);
     }
 
-    pub(super) fn report(&self) {
+    pub(super) fn report(&self, elapsed: Duration) {
         let Self {
             votes_to_sig_verify,
             fn_verify_and_send_votes_stats,
@@ -453,9 +465,11 @@ impl SigVerifyVoteStats {
         } = self;
         senders.report();
         vote_verification_stats.report();
+        let votes_per_sec = per_second(votes_to_sig_verify.0, elapsed);
         datapoint_info!(
             "bls_vote_sigverify_stats",
             ("votes_to_sig_verify", votes_to_sig_verify.0, i64),
+            ("votes_to_sig_verify_per_sec", votes_per_sec, i64),
             (
                 "fn_verify_and_send_votes_count",
                 fn_verify_and_send_votes_stats.count(),
@@ -525,6 +539,19 @@ impl Default for VoteSenderStats {
 
 fn new_cert_stats_pool_sender_stats() -> SenderStats {
     SenderStats::new("bls_cert_sigverify_pool_sender_stats")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_per_second() {
+        assert_eq!(per_second(500, Duration::from_secs(5)), 100);
+        assert_eq!(per_second(1, Duration::from_micros(500)), 2_000);
+        assert_eq!(per_second(1, Duration::ZERO), 0);
+        assert_eq!(per_second(u64::MAX, Duration::from_nanos(1)), u64::MAX);
+    }
 }
 
 #[derive(Debug)]
