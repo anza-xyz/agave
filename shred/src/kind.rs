@@ -6,7 +6,7 @@
 
 use {
     crate::{
-        error::Reject,
+        error::{ParseError, Reject},
         headers::{AnyHeader, CodeHeader, CommonHeader, DataHeader},
         policy::{self, AdmissionPolicy, DATA_SHREDS_PER_FEC_BLOCK},
         shred_variant::ShredKind,
@@ -57,6 +57,14 @@ pub trait ShredLayout: sealed::Sealed + 'static {
     /// Returns `None` when the headers are mutually inconsistent.
     fn erasure_shard_index(common: &CommonHeader, header: &Self::Header) -> Option<usize>;
 
+    /// Checks what this kind's header claims about the bytes the layout leaves for it, given that
+    /// `body`.
+    ///
+    /// Runs while the shred is being read, so it holds for every shred that exists, whatever door it
+    /// came through: the wire, the blockstore, erasure recovery or this crate's own writer. That is
+    /// what lets the kind-specific accessors below it be infallible.
+    fn check_header(header: &Self::Header, body: &[u8]) -> Result<(), ParseError>;
+
     /// Applies the admission checks that are specific to this kind.
     fn admit(
         common: &CommonHeader,
@@ -86,6 +94,16 @@ impl ShredLayout for Data {
 
     fn erasure_shard_index(common: &CommonHeader, _header: &DataHeader) -> Option<usize> {
         usize::try_from(common.index.checked_sub(common.fec_set_index)?).ok()
+    }
+
+    /// The `size` field covers the headers as well as the ledger data, and whoever built the shred
+    /// chose it, so it is checked against the layout here rather than trusted by
+    /// [`data`](crate::DataShred::data).
+    fn check_header(header: &DataHeader, body: &[u8]) -> Result<(), ParseError> {
+        match data_len(header, body.len()) {
+            Some(_) => Ok(()),
+            None => Err(ParseError::InvalidDataSize { size: header.size }),
+        }
     }
 
     fn admit(
@@ -125,6 +143,19 @@ impl ShredLayout for Data {
     }
 }
 
+/// Length of the ledger data a data shred's header claims, or `None` if the claim does not describe
+/// a region inside a body of `body_len` bytes.
+///
+/// Shared by [`Data::check_header`], which is where the `None` case is turned into a
+/// [`ParseError`], and [`data`](crate::DataShred::data), which is why that case cannot happen.
+pub(crate) fn data_len(header: &DataHeader, body_len: usize) -> Option<usize> {
+    let len = usize::from(header.size).checked_sub(Data::SIZE_OF_HEADERS)?;
+    if len > body_len {
+        return None;
+    }
+    Some(len)
+}
+
 impl sealed::Sealed for Code {}
 impl ShredLayout for Code {
     type Header = CodeHeader;
@@ -138,6 +169,11 @@ impl ShredLayout for Code {
 
     fn erasure_shard_index(_common: &CommonHeader, header: &CodeHeader) -> Option<usize> {
         usize::from(header.num_data_shreds).checked_add(usize::from(header.position))
+    }
+
+    /// A code shred's body is its erasure codes, which the header claims nothing about.
+    fn check_header(_header: &CodeHeader, _body: &[u8]) -> Result<(), ParseError> {
+        Ok(())
     }
 
     fn admit(
@@ -159,6 +195,20 @@ impl ShredLayout for Code {
             return Err(Reject::MisalignedErasureConfig {
                 num_data_shreds: header.num_data_shreds,
                 num_code_shreds: header.num_code_shreds,
+            });
+        }
+        // `position` is what places this shred's leaf in its FEC set's Merkle tree, so a value that
+        // does not agree with the shred's own index would prove a leaf of a batch this shred does
+        // not belong to. The two counters advance together under the fixed configuration, so the
+        // position is the distance from the FEC set index.
+        let position = u32::from(header.position);
+        let aligned = position < DATA_SHREDS_PER_FEC_BLOCK
+            && common.index.checked_sub(common.fec_set_index) == Some(position);
+        if !aligned {
+            return Err(Reject::MisalignedCodePosition {
+                index: common.index,
+                fec_set_index: common.fec_set_index,
+                position: header.position,
             });
         }
         Ok(())

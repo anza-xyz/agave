@@ -23,7 +23,9 @@ use {
         shred_variant::ShredVariant,
         state::Verified,
         view::ShredViewMut,
-        wire_format::{MERKLE_PROOF_ENTRIES, SIZE_OF_MERKLE_PROOF, SIZE_OF_MERKLE_PROOF_ENTRY},
+        wire_format::{
+            MERKLE_PROOF_ENTRIES, SIZE_OF_MERKLE_PROOF, SIZE_OF_MERKLE_PROOF_ENTRY, payload_buffer,
+        },
     },
     bytes::Bytes,
     solana_hash::Hash,
@@ -199,7 +201,7 @@ fn rebuild(batch: &Batch, index: usize, shard: &[u8]) -> Result<(Vec<u8>, Hash),
         // A data shred's headers are inside its erasure shard, so the shard is everything the
         // rebuilt shred needs except what the batch as a whole carries.
         true => {
-            let mut payload = vec![0u8; Data::SIZE_OF_PAYLOAD];
+            let mut payload = payload_buffer::<Data>();
             let mut view = ShredViewMut::<Data>::new(&mut payload, batch.data_variant())?;
             view.erasure_shard_mut().copy_from_slice(shard);
             let leaf = finish(&mut view, batch);
@@ -224,7 +226,7 @@ fn rebuild(batch: &Batch, index: usize, shard: &[u8]) -> Result<(Vec<u8>, Hash),
                 num_code_shreds: u16::try_from(CODE_SHREDS).expect("32 fits in a u16"),
                 position: u16::try_from(position).expect("a batch has 32 code shreds"),
             };
-            let mut payload = vec![0u8; Code::SIZE_OF_PAYLOAD];
+            let mut payload = payload_buffer::<Code>();
             let mut view = ShredViewMut::<Code>::new(&mut payload, common.variant)?;
             view.write_headers(&common, &header)?;
             view.erasure_shard_mut().copy_from_slice(shard);

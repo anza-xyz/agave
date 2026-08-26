@@ -12,16 +12,16 @@
 
 use {
     crate::{
-        error::{InvalidDataSize, ParseError, Reject},
+        error::{ParseError, Reject},
         headers::{AnyHeader, CommonHeader, ShredFlags},
-        kind::{Code, Data, ShredLayout},
+        kind::{self, Code, Data, ShredLayout},
         merkle,
         policy::{self, AdmissionPolicy},
         provenance::{Provenance, ShredSource},
         shred_variant::{ShredKind, ShredVariant},
         state::{Parsed, ShredState, Verified},
         view::{self, AnyShredView, ShredView, ShredViewMut},
-        wire_format::{Nonce, ProofEntry},
+        wire_format::{self, Nonce, ProofEntry},
     },
     bytes::{Bytes, BytesMut},
     solana_clock::Slot,
@@ -237,15 +237,12 @@ impl<K: ShredLayout> Shred<K, Verified> {
     /// signature intact.
     ///
     /// Reachable only from [`Verified`], so a shred can never be resigned on this node's authority
-    /// before its leader signature was checked. The other half of the rule is a value: a node
-    /// retransmits what a peer sent it, so a shred of any other provenance is rejected with
-    /// [`Reject::NotReceived`]. Shreds this node produced itself go out with the all-zero
-    /// retransmitter signature they were built with.
+    /// before its leader signature was checked. A node retransmits what a peer sent it, so a shred
+    ///  of any other provenance is rejected with [`Reject::NotReceived`].
+    /// Shreds this node produced itself go out with the all-zero retransmitter signature they were
+    /// built with.
     ///
-    /// Fails with [`Reject::NotResignable`] when the variant has no room for a retransmitter
-    /// signature. The shred is dropped in either case rather than handed back: neither a variant
-    /// with nowhere to put a retransmitter signature nor a shred with no upstream to name has any
-    /// business on the retransmit path.
+    /// A variant with no room for a retransmitter signature is handed back untouched.
     ///
     /// The retransmitter signature covers the same Merkle root the leader signed, which is what
     /// lets a downstream node check it without knowing anything about this shred's contents.
@@ -260,8 +257,8 @@ impl<K: ShredLayout> Shred<K, Verified> {
         if !self.provenance.is_received() {
             return Err(Reject::NotReceived);
         }
-        if self.view().retransmitter_signature.is_none() {
-            return Err(Reject::NotResignable);
+        if !self.common.variant.resigned() {
+            return Ok(self);
         }
         let signature = keypair.sign_message(self.merkle_root()?.as_ref());
         // `Bytes` is immutable, so this copies unless we hold the only reference to the buffer.
@@ -382,6 +379,37 @@ impl<K: ShredLayout, S: ShredState> Shred<K, S> {
             .map_err(Reject::from)
     }
 
+    /// Checks `retransmitter`'s signature over this shred's Merkle root.
+    ///
+    /// The read side of [`resign`](Self::resign), and the reason a resigned shred is worth the 64
+    /// bytes it spends: the peer that forwarded it is named by the Turbine tree rather than by the
+    /// packet, so a shred that arrived from the wrong node is rejected before its contents matter.
+    /// Who the retransmitter should be is the caller's to work out, since it is a function of the
+    /// slot's leader and this node's position in that slot's tree, neither of which is in the shred.
+    ///
+    /// Available in every state, and separate from [`verify`](Shred::verify), because the two
+    /// signatures answer different questions and not every caller asks both. The leader's signature
+    /// is what makes a shred admissible at all; the retransmitter's is a statement about the hop it
+    /// took to get here, which a repair response does not make and does not need to.
+    ///
+    /// A variant that reserves no room for one is [`Reject::MissingRetransmitterSignature`] rather
+    /// than a pass. Unlike [`resign`](Self::resign), which is asked to sign whatever it is handed and
+    /// forwards what it cannot sign, this is asked a question about a signature, and "there is none"
+    /// is not the answer "it checks out". A caller that only wants the signature when there is one
+    /// can read [`retransmitter_signature`](Self::retransmitter_signature) first.
+    pub fn verify_retransmitter(&self, retransmitter: &Pubkey) -> Result<(), Reject> {
+        let signature = self
+            .view()
+            .retransmitter_signature
+            .copied()
+            .ok_or(Reject::MissingRetransmitterSignature)?;
+        let root = self.merkle_root()?;
+        if !signature.verify(retransmitter.as_ref(), root.as_ref()) {
+            return Err(Reject::InvalidRetransmitterSignature);
+        }
+        Ok(())
+    }
+
     /// The shred's bytes, without any trailing repair nonce.
     #[inline]
     pub fn bytes(&self) -> &Bytes {
@@ -392,6 +420,20 @@ impl<K: ShredLayout, S: ShredState> Shred<K, S> {
     #[inline]
     pub fn into_bytes(self) -> Bytes {
         self.bytes
+    }
+
+    /// The wire bytes of a repair response carrying this shred: the payload followed by the `nonce`
+    /// of the request it answers.
+    ///
+    /// The counterpart of the nonce [`parse`] splits off on the way in. Any provenance may be served:
+    /// a repair response says "here are the bytes you asked for", so what matters is that the shred
+    /// is the one requested, not how this node came to hold it.
+    ///
+    /// Consumes the shred so the nonce can be appended in place when no one else holds the payload;
+    /// clone it first to keep the shred and pay for a copy instead.
+    #[inline]
+    pub fn into_repair_response(self, nonce: Nonce) -> Bytes {
+        wire_format::repair_response(self.bytes, nonce)
     }
 
     /// Rewrites the state parameter. Private: the transitions above are the only ones whose target
@@ -431,17 +473,16 @@ impl<S: ShredState> Shred<Data, S> {
 
     /// The ledger data carried by this shred, zero padding excluded.
     ///
-    /// The `size` field this relies on covers the headers as well as the data and is chosen by
-    /// whoever built the shred, so it is validated here against the layout rather than at parse
-    /// time.
-    pub fn data(&self) -> Result<&[u8], InvalidDataSize> {
-        let size = usize::from(self.header.size);
+    /// Infallible: the `size` field this relies on covers the headers as well as the data and is
+    /// chosen by whoever built the shred, so it is checked against the layout by
+    /// [`Data::check_header`] while the shred is being read. A shred that exists at all has a
+    /// readable body, whatever door it came through.
+    pub fn data(&self) -> &[u8] {
         let body = self.view().body;
-        let data_len = size
-            .checked_sub(Data::SIZE_OF_HEADERS)
-            .filter(|len| *len <= body.len())
-            .ok_or(InvalidDataSize { size })?;
-        Ok(&body[..data_len])
+        let len = kind::data_len(&self.header, body.len())
+            .expect("the data size was checked against the body when the shred was read");
+        body.get(..len)
+            .expect("the checked data length is within the body")
     }
 }
 
@@ -724,6 +765,22 @@ impl<S: ShredState> AnyShred<S> {
             .map_err(Reject::from)
     }
 
+    /// Checks `retransmitter`'s signature over this shred's Merkle root.
+    ///
+    /// See [`Shred::verify_retransmitter`].
+    pub fn verify_retransmitter(&self, retransmitter: &Pubkey) -> Result<(), Reject> {
+        let signature = self
+            .view()
+            .retransmitter_signature
+            .copied()
+            .ok_or(Reject::MissingRetransmitterSignature)?;
+        let root = self.merkle_root()?;
+        if !signature.verify(retransmitter.as_ref(), root.as_ref()) {
+            return Err(Reject::InvalidRetransmitterSignature);
+        }
+        Ok(())
+    }
+
     /// The shred's bytes, without any trailing repair nonce.
     #[inline]
     pub const fn bytes(&self) -> &Bytes {
@@ -734,6 +791,15 @@ impl<S: ShredState> AnyShred<S> {
     #[inline]
     pub fn into_bytes(self) -> Bytes {
         self.bytes
+    }
+
+    /// The wire bytes of a repair response carrying this shred, followed by the `nonce` of the
+    /// request it answers.
+    ///
+    /// See [`Shred::into_repair_response`].
+    #[inline]
+    pub fn into_repair_response(self, nonce: Nonce) -> Bytes {
+        wire_format::repair_response(self.bytes, nonce)
     }
 }
 
@@ -852,7 +918,7 @@ mod tests {
         let shred = shred
             .verify(&fixture_policy(), &fixtures::leader())
             .unwrap();
-        assert_eq!(shred.data().unwrap().len(), 963);
+        assert_eq!(shred.data().len(), 963);
 
         // The same shred against any other signer.
         let (parsed, _) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
@@ -885,9 +951,9 @@ mod tests {
             assert_eq!(shred.variant(), variant);
             let shred = shred.verify(&policy, &leader).unwrap();
             // The first data shred of a batch carries a full chunk, which is the body's length.
-            assert_eq!(shred.data().unwrap().len(), shred.view().body.len());
+            assert_eq!(shred.data().len(), shred.view().body.len());
             assert_eq!(shred.erasure_shard_index(), Some(0));
-            assert_resignable(shred, variant.resigned());
+            assert_resigns(shred, variant.resigned());
         }
         for (bytes, variant) in [
             (fixtures::CODE_SHRED, ShredVariant::MerkleCode),
@@ -907,15 +973,18 @@ mod tests {
             assert_eq!(shred.position(), 0);
             // Code shards follow the 32 data shards in the batch's Merkle tree.
             assert_eq!(shred.erasure_shard_index(), Some(32));
-            assert_resignable(shred, variant.resigned());
+            assert_resigns(shred, variant.resigned());
         }
     }
 
-    /// A verified shred may be resigned exactly when its variant reserves room for the signature.
-    fn assert_resignable<K: ShredLayout>(shred: Shred<K, Verified>, resignable: bool) {
-        let resigned = shred.resign(&fixtures::leader_keypair());
+    /// Resigning writes a signature exactly when the variant reserves room for one, and hands back
+    /// the untouched shred otherwise.
+    fn assert_resigns<K: ShredLayout>(shred: Shred<K, Verified>, resignable: bool) {
+        let before = shred.bytes().clone();
+        let resigned = shred
+            .resign(&fixtures::leader_keypair())
+            .expect("a received shred is resignable whatever its variant");
         if resignable {
-            let resigned = resigned.expect("a resigned variant reserves room for the signature");
             assert_eq!(
                 resigned.view().retransmitter_signature,
                 Some(
@@ -924,7 +993,12 @@ mod tests {
                 )
             );
         } else {
-            assert_matches!(resigned, Err(Reject::NotResignable));
+            assert_matches!(resigned.view().retransmitter_signature, None);
+            assert_eq!(
+                resigned.bytes(),
+                &before,
+                "a variant with no room for a retransmitter signature is forwarded unchanged",
+            );
         }
     }
 

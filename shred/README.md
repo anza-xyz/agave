@@ -25,7 +25,8 @@ Each shred comprises three main components:
 
 A **repair nonce** may follow the shred in the packet that carries it, marking it as a response to a
 repair request. It is appended after the shred rather than being part of it, so neither signature
-covers it.
+covers it. Reading it splits it off the buffer and hands it back beside the shred; writing it is
+`into_repair_response`, which is the only place it is produced.
 
 ## **1. Header Structure**
 Each shred contains a **header** that includes essential metadata:
@@ -91,7 +92,15 @@ These header fields are **only present** in **Data Shreds**.
 padding that follows the data, and not the trailer. So a data shred's body holds `Size - 88` bytes
 of ledger data, and the remainder of the body is padding, which the erasure coding needs in order
 to give every shard of a batch the same length. It is the one header field the layout does not
-pin, so a reader has to validate it rather than trust it.
+pin, so a reader has to validate it rather than trust it. This crate validates it while reading the
+shred, alongside the boundaries the layout does pin, so `data()` is infallible: every shred that
+exists has a readable body, whichever door it came through.
+
+The two completion bits say what the shred ends, and neither is implied by the layout. A full FEC set
+is 32 data shreds' worth of bytes and entries usually run past it, so the last data shred of a batch
+carries `DATA_COMPLETE_SHRED` only when the caller says the data stops there, and
+`LAST_SHRED_IN_SLOT` (which implies it on the wire) only when the slot ends there. `BatchPosition` is
+how the writer takes that decision.
 
 ---
 
@@ -103,6 +112,11 @@ These header fields are **only present** in **Coding Shreds**.
 | **Num Data Shreds**   | 2    | `uint16` | Data shreds in this FEC set; always 32    |
 | **Num Coding Shreds** | 2    | `uint16` | Coding shreds in this FEC set; always 32  |
 | **Position**          | 2    | `uint16` | This shred's position among them, 0 to 31 |
+
+`Position` places the shred's leaf in its FEC set's Merkle tree, at `Num Data Shreds + Position`, so
+a value that does not agree with the shred's own index would prove a leaf of a batch the shred does
+not belong to. Under the fixed configuration both index counters advance by 32 per batch from equal
+starting points, so admission requires `Position < 32` and `Index - FEC Set Index == Position`.
 
 ---
 ## **5. Body & Trailer Data**
@@ -207,6 +221,28 @@ does carry weight, that a shred is never resigned before its leader signature wa
 error; the second write is idempotent under the same key, so it wastes work rather than forging
 anything.
 
+Checking that signature, `verify_retransmitter`, is deliberately not a state either, and not part of
+`verify`. The two signatures answer different questions: the leader's is what makes a shred
+admissible at all, while the retransmitter's is a statement about the hop the shred took to reach
+this node, which a repair response does not make and does not need to. So the check is available in
+every state, no state records having run it, and who the retransmitter should be stays the caller's to
+work out, since it follows from the slot's leader and this node's position in that slot's Turbine
+tree, neither of which is in the shred. It is stricter than `resign` in one direction: a variant that
+reserves no room for a signature is a rejection rather than a pass, because "there is none" is not
+the answer "it checks out".
+
+A variant with no room for a retransmitter signature is handed back untouched rather than rejected.
+Only the last FEC set of a slot is resigned, so most of what crosses the retransmit path has nothing
+to sign, and forwarding it is what a node is supposed to do. Making that the error case would have
+every caller distinguishing "must not be forwarded" from "needs no signature", off a variant bit it
+already holds.
+
+`resign` copies the payload whenever the shred's `Bytes` is not the sole owner of its whole
+allocation, which a shred sliced out of a shared datagram buffer never is. Resigning in place is not
+available today, and the copy is affordable where it lands: only the last FEC set of a slot is
+resigned, so it is on the order of one percent of what crosses the retransmit path, and the signing
+it accompanies costs far more than the memcpy.
+
 ### Why the shred kind is a type parameter
 
 Many accessors are meaningful for only one of the two kinds. Previously that was a comment plus a
@@ -265,9 +301,10 @@ otherwise the *more* trusted of the two, and the ordering invites the wrong gene
 enough to skip verification is not the same as having something to forward.
 
 An earlier draft made provenance a third type parameter with a marker per origin. It did not earn
-the parameter. `resign` was the only rule that turned on provenance, and it is a runtime check
-either way, because whether a shred is resignable also depends on a wire bit its variant byte
-carries; a type that ruled out three of four origins still could not rule out an unresigned variant.
+the parameter. `resign` was the only rule that turned on provenance, and the origin it turns on is
+decided at runtime anyway: which door the bytes came through is what a packet reader or a recovery
+pass knows, not something the call site can name statically once shreds of mixed origin share a
+collection.
 What the parameter cost was paid on every signature in the crate, plus an `Unspecified` marker and a
 `forget_provenance` widening that existed for the one real path that needs mixed origins in one
 collection: blockstore insert holds shreds that just arrived, shreds already stored and shreds

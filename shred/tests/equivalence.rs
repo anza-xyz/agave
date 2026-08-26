@@ -8,7 +8,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
-    solana_shred::{FecSet, FecSetSpec},
+    solana_shred::{BatchPosition, FecSet, FecSetSpec},
 };
 
 const SLOT: u64 = 1_000;
@@ -25,9 +25,12 @@ fn spec(last_in_slot: bool) -> FecSetSpec {
         reference_tick: REFERENCE_TICK,
         fec_set_index: FEC_SET_INDEX,
         chained_merkle_root: Hash::new_from_array([5u8; 32]),
-        // The last batch of a slot is the resigned one.
-        resigned: last_in_slot,
-        last_in_slot,
+        // The incumbent shredder marks the last data shred of the data it was handed, so the one
+        // batch built here is the batch that ends: the slot, or just this run of entries.
+        batch_position: match last_in_slot {
+            true => BatchPosition::LastInSlot,
+            false => BatchPosition::DataComplete,
+        },
     }
 }
 

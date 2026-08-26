@@ -156,11 +156,14 @@ impl<'a, K: ShredLayout> ShredView<'a, K> {
             None => None,
         };
 
+        let body = section(payload, s.body);
+        K::check_header(&header, body)?;
+
         let view = Self {
             signature,
             common,
             header,
-            body: section(payload, s.body),
+            body,
             chained_merkle_root,
             merkle_proof,
             retransmitter_signature,

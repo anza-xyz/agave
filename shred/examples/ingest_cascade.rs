@@ -9,9 +9,9 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_shred::{
-        AdmissionPolicy, AnyShred, CodeShred, Data, DataShred, FecSet, FecSetSpec, ParseError,
-        Parsed, Reject, Shred, ShredKind, ShredLayout, ShredSource, ShredView, Verified, fixtures,
-        parse, recover,
+        AdmissionPolicy, AnyShred, BatchPosition, CodeShred, Data, DataShred, FecSet, FecSetSpec,
+        ParseError, Parsed, Reject, Shred, ShredKind, ShredLayout, ShredSource, ShredView,
+        Verified, fixtures, parse, recover,
         wire_format::{
             Nonce, SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY,
             SIZE_OF_NONCE,
@@ -179,10 +179,7 @@ fn main() {
             shred.index(),
             shred.provenance(),
             shred.parent_offset(),
-            shred
-                .data()
-                .expect("a rebuilt shred's size field came out of its own shard")
-                .len(),
+            shred.data().len(),
         );
     }
     for shred in &recovered.code {
@@ -278,13 +275,11 @@ fn validate_and_resign<K: ShredLayout>(
     // The policy checks and the signature check, cheapest first: nothing is hashed until the
     // headers have passed.
     let shred = shred.verify(policy, leader)?;
-    // Retransmit-signing is the one thing done *to* a shred rather than learned about it, and only
-    // the variants that reserve room can carry a signature. The security state does not change
-    // either way, so resigned and normal shreds are still one type.
-    let shred = match shred.variant().resigned() {
-        true => shred.resign(node)?,
-        false => shred,
-    };
+    // Retransmit-signing is the one thing done *to* a shred rather than learned about it. Only the
+    // variants that reserve room carry a signature; the rest are handed back untouched, so the
+    // worker does not branch on the variant bit. The security state does not change either way, so
+    // resigned and normal shreds are still one type.
+    let shred = shred.resign(node)?;
     Ok(shred.into())
 }
 
@@ -336,8 +331,7 @@ fn holed_batch() -> HoledBatch {
         reference_tick: 5,
         fec_set_index: 0,
         chained_merkle_root: Hash::new_from_array([3u8; 32]),
-        resigned: false,
-        last_in_slot: false,
+        batch_position: BatchPosition::DataComplete,
     };
     let batch = FecSet::build(&spec, &vec![7u8; spec.capacity()], &Keypair::new())
         .expect("a batch of exactly its own capacity is buildable");
@@ -438,10 +432,7 @@ fn print_wire_layout() {
         DC = shred.flags().data_complete(),
         LIS = shred.flags().last_in_slot(),
         RT = shred.flags().reference_tick(),
-        DATA = shred
-            .data()
-            .expect("the fixture's size field is sane")
-            .len(),
+        DATA = shred.data().len(),
     );
 }
 

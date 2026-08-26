@@ -29,6 +29,15 @@ pub enum ParseError {
         /// The kind found on the wire.
         found: ShredKind,
     },
+    /// A data shred's `size` field does not describe a region inside the shred's body.
+    ///
+    /// The field covers the headers as well as the data, so it must be at least the length of the
+    /// headers and at most that plus the body the layout leaves.
+    #[error("data size {size} does not describe a region inside the shred's body")]
+    InvalidDataSize {
+        /// The size the data header claims.
+        size: u16,
+    },
     /// The headers could not be deserialized.
     #[error(transparent)]
     Read(#[from] wincode::ReadError),
@@ -87,15 +96,30 @@ pub enum Reject {
         /// Number of code shreds claimed.
         num_code_shreds: u16,
     },
+    /// A code shred's position does not agree with its index within its FEC set.
+    #[error(
+        "code shred at index {index} claims position {position} in the FEC set at {fec_set_index}"
+    )]
+    MisalignedCodePosition {
+        /// The shred's index.
+        index: u32,
+        /// The claimed first index of the FEC set.
+        fec_set_index: u32,
+        /// The position the code header claims among the FEC set's code shreds.
+        position: u16,
+    },
     /// The Merkle proof does not reconstruct a root.
     #[error("the Merkle proof does not reconstruct a root")]
     InvalidMerkleProof,
     /// The signature does not verify against the expected signer.
     #[error("the signature does not verify against the expected signer")]
     InvalidSignature,
-    /// A retransmitter signature was requested on a variant that has no room for one.
-    #[error("this shred variant reserves no room for a retransmitter signature")]
-    NotResignable,
+    /// A retransmitter signature was asked for on a shred whose variant reserves no room for one.
+    #[error("this shred's variant carries no retransmitter signature")]
+    MissingRetransmitterSignature,
+    /// The retransmitter signature does not verify against the expected retransmitter.
+    #[error("the retransmitter signature does not verify against the expected retransmitter")]
+    InvalidRetransmitterSignature,
     /// A retransmitter signature was requested for a shred no peer sent this node.
     #[error("only a shred received from a peer can be retransmitter-signed")]
     NotReceived,
@@ -119,14 +143,6 @@ impl From<MerkleError> for Reject {
     fn from(_error: MerkleError) -> Self {
         Self::InvalidMerkleProof
     }
-}
-
-/// A data shred's `size` field does not describe a region inside the shred's body.
-#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-#[error("invalid data size: {size}")]
-pub struct InvalidDataSize {
-    /// The size the data header claims.
-    pub size: usize,
 }
 
 /// Why the missing shreds of an erasure batch could not be rebuilt.

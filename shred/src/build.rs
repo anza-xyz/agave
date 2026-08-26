@@ -29,7 +29,9 @@ use {
         shred_variant::ShredVariant,
         state::Verified,
         view::ShredViewMut,
-        wire_format::{MERKLE_PROOF_ENTRIES, SIZE_OF_MERKLE_PROOF, SIZE_OF_MERKLE_PROOF_ENTRY},
+        wire_format::{
+            MERKLE_PROOF_ENTRIES, SIZE_OF_MERKLE_PROOF, SIZE_OF_MERKLE_PROOF_ENTRY, payload_buffer,
+        },
     },
     bytes::Bytes,
     reed_solomon_erasure::galois_8::ReedSolomon,
@@ -73,13 +75,51 @@ pub struct FecSetSpec {
     pub fec_set_index: u32,
     /// Merkle root of the preceding erasure batch.
     pub chained_merkle_root: Hash,
-    /// Whether to reserve room for a retransmitter signature, which the last batch of a slot does.
+    /// What this batch ends, if anything: a run of entries, the slot, or nothing.
+    pub batch_position: BatchPosition,
+}
+
+/// What an erasure batch ends, which is the caller's to decide.
+///
+/// One field rather than two flags. The completion marker on a batch's last data shred and whether
+/// its shreds reserve room for a retransmitter signature are not independent: only the batch that
+/// ends the slot is resigned, and only it may carry `LAST_SHRED_IN_SLOT`, which on the wire implies
+/// `DATA_COMPLETE_SHRED`. A pair of booleans would admit two combinations the format has no room
+/// for.
+///
+/// Nothing about a full FEC set says the data in it ends there, which is why the plain case exists:
+/// a batch is 32 data shreds' worth of bytes, and entries usually run past it into the next batch.
+/// Marking every batch complete would tell the receiver each one can be replayed on its own.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BatchPosition {
+    /// Nothing: the data continues into the next batch, and no completion marker is written.
+    Interior,
+    /// A run of entries, so the batch's last data shred carries `DATA_COMPLETE_SHRED`.
+    DataComplete,
+    /// The slot, so the batch's last data shred carries `LAST_SHRED_IN_SLOT` and every shred of the
+    /// batch reserves room for a retransmitter signature.
     ///
     /// The room is only reserved, never filled: the retransmitter signature of a shred this node
     /// produced is all zeroes, and stays that way until a node that received the shred signs it.
-    pub resigned: bool,
-    /// Whether this batch ends the slot.
-    pub last_in_slot: bool,
+    LastInSlot,
+}
+
+impl BatchPosition {
+    /// Whether shreds of this batch reserve room for a retransmitter signature, which is what the
+    /// variant byte's resigned bit says.
+    #[inline]
+    pub const fn resigned(self) -> bool {
+        matches!(self, Self::LastInSlot)
+    }
+
+    /// The completion bits this batch's last data shred carries, if any.
+    const fn completion_flags(self) -> u8 {
+        match self {
+            Self::Interior => 0,
+            Self::DataComplete => ShredFlags::DATA_COMPLETE_SHRED,
+            Self::LastInSlot => ShredFlags::LAST_SHRED_IN_SLOT,
+        }
+    }
 }
 
 impl FecSetSpec {
@@ -89,18 +129,18 @@ impl FecSetSpec {
     }
 
     const fn data_capacity_per_shred(&self) -> usize {
-        match self.resigned {
+        match self.batch_position.resigned() {
             true => Data::SIZE_OF_BODY_RESIGNED,
             false => Data::SIZE_OF_BODY,
         }
     }
 
     const fn data_variant(&self) -> ShredVariant {
-        ShredVariant::data(self.resigned)
+        ShredVariant::data(self.batch_position.resigned())
     }
 
     const fn code_variant(&self) -> ShredVariant {
-        ShredVariant::code(self.resigned)
+        ShredVariant::code(self.batch_position.resigned())
     }
 }
 
@@ -221,15 +261,12 @@ fn write_data_shreds(
         .chain(std::iter::repeat(&[][..]))
         .take(DATA_SHREDS);
     for (position, chunk) in chunks.enumerate() {
-        // Every batch is a whole FEC set, so its last data shred always completes one; only the
-        // last batch of a slot also ends the slot.
+        // A batch's last data shred is the only one that can end anything, and what it ends is the
+        // caller's to say: a full FEC set is not evidence that the data stops there.
         let last = position == DATA_SHREDS.saturating_sub(1);
         let mut flags = spec.reference_tick.min(ShredFlags::REFERENCE_TICK_MASK);
         if last {
-            flags |= match spec.last_in_slot {
-                true => ShredFlags::LAST_SHRED_IN_SLOT,
-                false => ShredFlags::DATA_COMPLETE_SHRED,
-            };
+            flags |= spec.batch_position.completion_flags();
         }
         let header = DataHeader {
             parent_offset,
@@ -238,7 +275,7 @@ fn write_data_shreds(
             size: u16::try_from(Data::SIZE_OF_HEADERS.saturating_add(chunk.len()))
                 .expect("a data shred is shorter than u16::MAX"),
         };
-        let mut payload = vec![0u8; Data::SIZE_OF_PAYLOAD];
+        let mut payload = payload_buffer::<Data>();
         let mut view = ShredViewMut::<Data>::new(&mut payload, common.variant)?;
         view.write_headers(&common, &header)?;
         view.body_mut()
@@ -269,7 +306,7 @@ fn write_code_shreds(spec: &FecSetSpec, payloads: &mut Vec<Vec<u8>>) -> Result<(
             num_code_shreds: u16::try_from(CODE_SHREDS).expect("32 fits in a u16"),
             position: u16::try_from(position).expect("a batch has fewer than u16::MAX shards"),
         };
-        let mut payload = vec![0u8; Code::SIZE_OF_PAYLOAD];
+        let mut payload = payload_buffer::<Code>();
         ShredViewMut::<Code>::new(&mut payload, common.variant)?.write_headers(&common, &header)?;
         payloads.push(payload);
         common.index = common
@@ -372,7 +409,7 @@ mod tests {
         Keypair::new_from_array([7u8; 32])
     }
 
-    fn spec(resigned: bool) -> FecSetSpec {
+    fn spec(batch_position: BatchPosition) -> FecSetSpec {
         FecSetSpec {
             slot: 1_000,
             parent_slot: 999,
@@ -380,10 +417,16 @@ mod tests {
             reference_tick: 5,
             fec_set_index: 64,
             chained_merkle_root: Hash::new_from_array([3u8; 32]),
-            resigned,
-            last_in_slot: resigned,
+            batch_position,
         }
     }
+
+    /// The three batch positions, which is also every layout the writer can emit.
+    const POSITIONS: [BatchPosition; 3] = [
+        BatchPosition::Interior,
+        BatchPosition::DataComplete,
+        BatchPosition::LastInSlot,
+    ];
 
     fn policy(spec: &FecSetSpec) -> AdmissionPolicy {
         AdmissionPolicy {
@@ -400,8 +443,8 @@ mod tests {
     fn built_batch_passes_the_read_path() {
         let keypair = keypair();
         let data: Vec<u8> = (0..20_000u32).map(|index| index as u8).collect();
-        for resigned in [false, true] {
-            let spec = spec(resigned);
+        for batch_position in POSITIONS {
+            let spec = spec(batch_position);
             let set = FecSet::build(&spec, &data, &keypair).unwrap();
             assert_eq!(set.data.len(), DATA_SHREDS);
             assert_eq!(set.code.len(), CODE_SHREDS);
@@ -417,7 +460,18 @@ mod tests {
                 assert_eq!(shred.merkle_root().unwrap(), set.merkle_root);
                 assert_eq!(shred.index(), spec.fec_set_index + position as u32);
                 assert_eq!(shred.erasure_shard_index(), Some(position));
-                reassembled.extend_from_slice(shred.data().unwrap());
+                reassembled.extend_from_slice(shred.data());
+                let flags = shred.flags();
+                let last = position == DATA_SHREDS.saturating_sub(1);
+                assert_eq!(
+                    flags.data_complete(),
+                    last && batch_position != BatchPosition::Interior,
+                    "only a batch the caller marked complete ends one, and only at its last shred",
+                );
+                assert_eq!(
+                    flags.last_in_slot(),
+                    last && batch_position == BatchPosition::LastInSlot,
+                );
             }
             assert_eq!(reassembled, data);
 
@@ -439,19 +493,22 @@ mod tests {
     /// received first.
     #[test]
     fn self_produced_shreds_carry_no_retransmitter_signature() {
-        for resigned in [false, true] {
-            let spec = spec(resigned);
+        for batch_position in POSITIONS {
+            let spec = spec(batch_position);
             let set = FecSet::build(&spec, b"entries", &keypair()).unwrap();
             let zeroes = Signature::default();
             for shred in &set.data {
-                assert_eq!(shred.retransmitter_signature(), resigned.then_some(&zeroes));
+                assert_eq!(
+                    shred.retransmitter_signature(),
+                    batch_position.resigned().then_some(&zeroes)
+                );
             }
         }
     }
 
     #[test]
     fn data_beyond_one_batch_is_rejected() {
-        let spec = spec(false);
+        let spec = spec(BatchPosition::Interior);
         let data = vec![0u8; spec.capacity().saturating_add(1)];
         assert_matches::assert_matches!(
             FecSet::build(&spec, &data, &keypair()),

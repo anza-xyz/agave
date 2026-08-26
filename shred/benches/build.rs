@@ -10,7 +10,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
-    solana_shred::{FecSet, FecSetSpec},
+    solana_shred::{BatchPosition, FecSet, FecSetSpec},
     std::hint::black_box,
 };
 
@@ -32,8 +32,7 @@ fn bench_build(c: &mut Criterion) {
         reference_tick: REFERENCE_TICK,
         fec_set_index: FEC_SET_INDEX,
         chained_merkle_root: Hash::new_from_array([5u8; 32]),
-        resigned: false,
-        last_in_slot: false,
+        batch_position: BatchPosition::DataComplete,
     };
     let data: Vec<u8> = (0..spec.capacity()).map(|index| index as u8).collect();
 

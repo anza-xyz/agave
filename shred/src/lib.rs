@@ -23,6 +23,12 @@
 //! hand is proof that verification ran. Skipping it is a compile error rather than a bug: a shred
 //! cannot be resigned on this node's authority before its leader signature was checked.
 //!
+//! The retransmitter signature `resign` writes is checked by
+//! [`verify_retransmitter`](Shred::verify_retransmitter), which is not a transition: it asks about
+//! the hop the shred took to get here, not about whether the shred is admissible, so it is available
+//! in every state and no state records having asked. A repair response makes no such claim and needs
+//! none.
+//!
 //! The policy checks and the signature check are one transition because nothing in the pipeline
 //! stands between them. A sigverify worker takes one shred and runs both, cheapest first, so a state
 //! in between would name a boundary no code stands on. `resign` leaves the state alone for the same
@@ -78,6 +84,8 @@
 //!
 //! Every rule about the bytes (the payload length, the kind the variant byte selects, the optional
 //! trailing repair nonce) is applied by [`ShredView::read_packet`], so no check is made twice.
+//! [`into_repair_response`](Shred::into_repair_response) is the other end of that nonce: the one
+//! place it is written, so the two directions cannot disagree about its encoding.
 //!
 //! No byte offset is stored, and only one ([`OFFSET_OF_VARIANT`](wire_format::OFFSET_OF_VARIANT), needed
 //! to pick a kind before there is anything to walk) is written down. [`ShredView::read`] walks the
@@ -103,12 +111,13 @@
 //! };
 //!
 //! let shred = shred.verify(&policy, &fixtures::leader())?;
-//! assert_eq!(shred.data()?.len(), 963);
+//! assert_eq!(shred.data().len(), 963);
 //!
 //! use solana_shred::Provenance;
 //! assert_eq!(shred.provenance(), Provenance::Received(ShredSource::Turbine));
 //!
-//! // `shred.resign(..)` is reachable only from here, and only for resigned variants.
+//! // `shred.resign(..)` is reachable only from here. This fixture's variant reserves no room for a
+//! // retransmitter signature, so it would hand the shred back untouched.
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -129,8 +138,9 @@
 //!
 //! A draft: nothing else in the tree depends on it yet. Its output is byte-identical to
 //! `solana-ledger`'s shredder for the batches it can build, which its tests assert directly.
-//! Splitting a slot's data across batches is not here (that is block production's business), and
-//! neither is erasure recovery of a batch that arrived incomplete.
+//! Splitting a slot's data across batches is not here; that is block production's business.
+//! Deshredding a batch back into ledger entries is not here either, nor is any identifier for a
+//! shred or an erasure set.
 
 pub mod build;
 pub mod error;
@@ -149,8 +159,8 @@ pub mod view;
 pub mod wire_format;
 
 pub use crate::{
-    build::{FecSet, FecSetSpec},
-    error::{BuildError, InvalidDataSize, ParseError, RecoverError, Reject},
+    build::{BatchPosition, FecSet, FecSetSpec},
+    error::{BuildError, ParseError, RecoverError, Reject},
     headers::{AnyHeader, CodeHeader, CommonHeader, DataHeader, ShredFlags},
     kind::{Code, Data, ShredLayout},
     policy::AdmissionPolicy,

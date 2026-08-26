@@ -36,6 +36,7 @@ use {
         kind::{Code, Data, ShredLayout},
         shred::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH,
     },
+    bytes::{Bytes, BytesMut},
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
     solana_signature::Signature,
@@ -97,6 +98,15 @@ pub const SIZE_OF_CODE_PAYLOAD: usize = PACKET_DATA_SIZE - SIZE_OF_NONCE;
 pub const SIZE_OF_DATA_PAYLOAD: usize =
     SIZE_OF_CODE_PAYLOAD - Code::SIZE_OF_HEADERS + SIZE_OF_SIGNATURE;
 
+/// The size every shred buffer is allocated at, whichever kind it holds.
+///
+/// A code shred is the longer of the two payloads, and a repair response appends a nonce to
+/// whatever it serves, so this is the most any one shred buffer ever has to hold. Allocating both
+/// kinds at the same size gives the shred path a single allocation size, so a freed buffer can be
+/// handed straight back out for the next shred either way, and leaves the nonce room to be written
+/// where the payload already is instead of into a copy of it.
+pub const SIZE_OF_SHRED_BUFFER: usize = SIZE_OF_CODE_PAYLOAD.saturating_add(SIZE_OF_NONCE);
+
 /// Offset of the [`ShredVariant`](crate::ShredVariant) byte, which follows the signature.
 pub const OFFSET_OF_VARIANT: usize = SIZE_OF_SIGNATURE;
 
@@ -110,6 +120,46 @@ static_assertions::const_assert_eq!(SIZE_OF_TRAILER_RESIGNED, 216);
 static_assertions::const_assert_eq!(SIZE_OF_DATA_PAYLOAD, 1203);
 static_assertions::const_assert_eq!(Data::SIZE_OF_HEADERS, 88);
 static_assertions::const_assert_eq!(Code::SIZE_OF_HEADERS, 89);
+static_assertions::const_assert_eq!(SIZE_OF_SHRED_BUFFER, PACKET_DATA_SIZE);
+
+/// The wire bytes of a repair response: `payload` followed by the nonce of the request it answers.
+///
+/// The inverse of the split [`read_wire_packet`](crate::ShredView::read_wire_packet) performs on the
+/// way in, and the only place the nonce is written, so the two directions agree on its encoding by
+/// construction. Neither signature covers the nonce, which is why appending it to a finished shred
+/// is sound.
+///
+/// Takes the payload by value so the nonce can be written into its own allocation: a `Bytes` that
+/// is the last handle on its buffer converts back to a `BytesMut`, and the four nonce bytes then
+/// fit whatever capacity the buffer has past the payload. A shared payload has to be copied, since
+/// the other holders still see the bytes without a nonce.
+/// A zeroed payload buffer for a shred of kind `K`, allocated at [`SIZE_OF_SHRED_BUFFER`].
+///
+/// Every shred this crate writes starts here, so the write path allocates one size and the spare
+/// bytes past the payload are where [`repair_response`] puts the nonce.
+pub fn payload_buffer<K: ShredLayout>() -> Vec<u8> {
+    let mut payload = Vec::with_capacity(SIZE_OF_SHRED_BUFFER);
+    payload.resize(K::SIZE_OF_PAYLOAD, 0);
+    payload
+}
+
+pub fn repair_response(payload: Bytes, nonce: Nonce) -> Bytes {
+    let mut packet = payload.try_into_mut().unwrap_or_else(|payload| {
+        let mut copy = BytesMut::with_capacity(payload.len().saturating_add(SIZE_OF_NONCE));
+        copy.extend_from_slice(&payload);
+        copy
+    });
+    packet.extend_from_slice(&nonce_bytes(nonce));
+    packet.freeze()
+}
+
+/// A repair nonce as it appears on the wire.
+pub fn nonce_bytes(nonce: Nonce) -> [u8; SIZE_OF_NONCE] {
+    let mut bytes = [0u8; SIZE_OF_NONCE];
+    wincode::serialize_into(bytes.as_mut_slice(), &nonce)
+        .expect("a nonce fits the bytes its own schema asks for");
+    bytes
+}
 
 /// A range over shred's bytes.
 // Not a [`Range`], so that [`Sections`] can be `Copy`: these are boundaries, never iterated.
