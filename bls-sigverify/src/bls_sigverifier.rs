@@ -216,7 +216,9 @@ impl SigVerifier {
             }
             self.stats.maybe_report(self.sharable_banks.root().slot());
         }
-        self.stats.do_report(self.sharable_banks.root().slot());
+        let elapsed = self.stats.elapsed_since_last_report();
+        self.stats
+            .do_report(self.sharable_banks.root().slot(), elapsed);
     }
 
     #[cfg(test)]
@@ -408,7 +410,7 @@ impl SigVerifier {
             };
             self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
         }
-        self.stats.num_pkts.add_sample(num_pkts);
+        self.stats.num_pkts += num_pkts;
         ExtractedMsgs {
             certs: cert_groups,
             votes,
