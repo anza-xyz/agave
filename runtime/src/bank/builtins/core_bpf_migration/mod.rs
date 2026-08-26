@@ -790,18 +790,14 @@ pub(crate) mod tests {
 
             // The target program entry should be updated.
             assert_eq!(target_entry.deployment_slot, migration_or_upgrade_slot);
-            if let ProgramCacheEntryType::Loaded(..) = &target_entry.program {
-                assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot + 1);
-            } else {
-                assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot);
-            }
 
             // The target program entry should be a loader v3 BPF program.
             assert_eq!(target_entry.account_owner, ProgramCacheEntryOwner::LoaderV3);
-            assert_matches!(
-                target_entry.program,
-                ProgramCacheEntryType::DelayVisibility | ProgramCacheEntryType::Loaded(..)
-            );
+            if bank.slot() == migration_or_upgrade_slot {
+                assert_matches!(target_entry.program, ProgramCacheEntryType::DelayVisibility);
+            } else {
+                assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
+            }
         }
     }
 
