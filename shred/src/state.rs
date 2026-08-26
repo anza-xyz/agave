@@ -31,7 +31,7 @@ pub trait ShredState: sealed::Sealed {
 pub enum Parsed {}
 
 /// The headers agree with the admission policy this node held, so the shred is worth verifying.
-/// Nothing has been hashed yet, and nothing about the shred's authenticity is known.
+/// Nothing about the shred's authenticity is known.
 pub enum Admissible {}
 
 /// The leader's signature over the shred's Merkle root verifies, and the headers agreed with the

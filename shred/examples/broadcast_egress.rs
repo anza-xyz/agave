@@ -137,8 +137,8 @@ fn main() -> Result<(), BuildError> {
         .data
         .remove(&REPAIRED_INDEX)
         .expect("the shredder wrote every index of the first batch");
-    let shred = DataShred::<Verified>::from_blockstore(bytes)
-        .expect("the blockstore holds what the shredder wrote");
+    let shred =
+        DataShred::from_blockstore(bytes).expect("the blockstore holds what the shredder wrote");
     let payload = shred.bytes().as_ptr();
     let payload_len = shred.bytes().len();
     let response = shred.into_repair_response(0xfeed);

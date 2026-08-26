@@ -202,29 +202,17 @@ impl<K: ShredLayout> Shred<K, Verified> {
     pub(crate) fn assume_recovered(bytes: Bytes) -> Result<Self, ParseError> {
         Self::from_trusted_bytes(bytes, Provenance::Recovered)
     }
-}
 
-impl<K: ShredLayout, S: ShredState> Shred<K, S> {
-    /// Takes bytes read back from the blockstore, in whatever state the caller needs them.
+    /// Takes bytes read back from the blockstore as a verified shred.
     ///
     /// The blockstore only stores shreds whose signature was checked before they were inserted, and
-    /// what it holds is never unwound, so a shred that comes out of it is as verified as it was
+    /// what it holds is never unwound, so a shred that comes out of it is as Verified as it was
     /// going in. The caller vouches that the bytes came from there and nowhere else.
-    ///
-    /// Generic over the state because there is no cascade to walk. The checks the states stand for
-    /// were all passed before the shred was stored, so replaying them on the way out would pay for
-    /// a signature check to learn what is already known. The state is whatever the reading code
-    /// needs, and inference picks it from how the shred is used.
     pub fn from_blockstore(bytes: Bytes) -> Result<Self, ParseError> {
         Self::from_trusted_bytes(bytes, Provenance::Blockstore)
     }
 
-    /// Shared body of the constructors above. Private, so a shred off a socket, which has to earn
-    /// its state by passing the checks, cannot reach it.
-    ///
-    /// The bytes are put through [`ShredView::read_exact`], which is what makes the reader's rules
-    /// the writer's test: a misplaced section surfaces as the [`ParseError`] a receiver would have
-    /// raised.
+    /// Shared body of the constructors above.
     fn from_trusted_bytes(bytes: Bytes, provenance: Provenance) -> Result<Self, ParseError> {
         let (common, header) = {
             let view = ShredView::<K>::read_exact(&bytes)?;
@@ -252,7 +240,6 @@ impl<K: ShredLayout> Shred<K, Verified> {
     ///
     /// The payload is copied whenever this shred's [`Bytes`] is not the sole owner of its whole
     /// allocation.
-    ///
     // The state does not change. A separate `Resigned` state would record something no consumer
     // gates on.
     pub fn resign(mut self, keypair: &Keypair) -> Result<Self, Reject> {

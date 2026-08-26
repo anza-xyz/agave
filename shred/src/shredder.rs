@@ -82,28 +82,15 @@ pub struct FecSetSpec {
     pub batch_position: BatchPosition,
 }
 
-/// What an erasure batch ends, which is the caller's to decide.
-///
-/// One field rather than two flags. The completion marker on a batch's last data shred and whether
-/// its shreds reserve room for a retransmitter signature are not independent: only the batch that
-/// ends the slot is resigned, and only it may carry `LAST_SHRED_IN_SLOT`, which on the wire implies
-/// `DATA_COMPLETE_SHRED`. A pair of booleans would admit two combinations the format has no room
-/// for.
-///
-/// Nothing about a full FEC set says the data in it ends there, which is why the plain case exists:
-/// a batch is 32 data shreds' worth of bytes, and entries usually run past it into the next batch.
-/// Marking every batch complete would tell the receiver each one can be replayed on its own.
+/// Where the erasure batch ends up in the slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BatchPosition {
     /// Nothing: the data continues into the next batch, and no completion marker is written.
     Interior,
-    /// A run of entries, so the batch's last data shred carries `DATA_COMPLETE_SHRED`.
+    /// Terminates the entry batch, last data shred will carry `DATA_COMPLETE_SHRED`.
     DataComplete,
-    /// The slot, so the batch's last data shred carries `LAST_SHRED_IN_SLOT` and every shred of the
-    /// batch reserves room for a retransmitter signature.
-    ///
-    /// The room is only reserved, never filled: the retransmitter signature of a shred this node
-    /// produced is all zeroes, and stays that way until a node that received the shred signs it.
+    /// The last batch in the slot, every shred of the batch reserves room for a retransmitter
+    /// signature and `LAST_IN_SLOT` flag is set. Implies DataComplete.
     LastInSlot,
 }
 
@@ -160,12 +147,6 @@ pub struct FecSet {
 
 impl FecSet {
     /// Flattens the batch into one stream of kind-erased shreds, data shreds first.
-    ///
-    /// Both of the write path's consumers want them this way: blockstore insert runs one pipeline
-    /// for both kinds, and broadcast puts them on the wire. Neither would use the split, and a
-    /// channel that carried [`FecSet`] would only make the receiver undo it.
-    ///
-    /// The Merkle root is dropped, since it belongs to the next batch rather than to these shreds.
     pub fn into_any(self) -> Vec<AnyShred<Verified>> {
         let mut shreds = Vec::with_capacity(self.data.len().saturating_add(self.code.len()));
         shreds.extend(self.data.into_iter().map(AnyShred::from));

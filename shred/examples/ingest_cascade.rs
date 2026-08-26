@@ -146,7 +146,7 @@ fn main() {
     // A shred the blockstore already holds, joining the same batch. It never travels a channel, so
     // its kind was never erased: data and code shreds come out of separate columns, and the reader
     // knows which it asked for.
-    let stored = CodeShred::<Verified>::from_blockstore(fixtures::CODE_SHRED)
+    let stored = CodeShred::from_blockstore(fixtures::CODE_SHRED)
         .expect("the fixture is a well-formed shred");
     println!(
         "stored       kind={:?} slot={} index={} provenance={:?}",

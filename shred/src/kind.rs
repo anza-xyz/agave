@@ -11,26 +11,6 @@
 //! [`AnyShred`](crate::shred::AnyShred) is that form: the same shred with the header field erased
 //! to an enum. Everything else about a shred is either common to both kinds or derived from the
 //! variant byte, so erasing one field is enough, and the two kinds then differ by one discriminant.
-//! Three boundaries need it, named on that type.
-//!
-//! It costs two matches. One in [`view`](crate::shred::Shred::view), which every layout accessor
-//! then reads as a plain field, and one in [`erasure_shard_index`](ShredLayout::erasure_shard_index),
-//! which is the single thing a kind-erased shred cannot derive from the layout, because a code
-//! shred's leaf index is a function of its own header. Neither is on a path where a branch on a hot
-//! cache line competes with a Merkle recompute and an ed25519 verify. The read path pays nothing
-//! extra at all: [`parse_turbine`](crate::shred::parse_turbine) has to read the variant byte anyway,
-//! so the match it forces is the one the erased shred was going to need.
-//!
-//! The alternative is an enum over the two typed shreds, which is what `ledger/src/shred.rs` does
-//! and where its `dispatch!` macro comes from. All ten of that macro's uses are kind-agnostic: each
-//! is a function of the bytes, the common header and the variant. It is not erasing a difference
-//! between the kinds, it is forwarding to two structs that each keep their own copy of the common
-//! part and each reimplement the same layout arithmetic. The duplication is the defect; the macro
-//! only makes it cheap to maintain.
-//!
-//! Callers who know the kind from where the bytes came from, such as a kind-specific blockstore
-//! column, still get a typed entry point, and a kind mismatch there means corruption rather than a
-//! malformed packet. That is returned as an error for the caller to interpret.
 
 use {
     crate::{
