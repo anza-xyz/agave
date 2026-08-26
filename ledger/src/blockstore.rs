@@ -2817,7 +2817,7 @@ impl Blockstore {
 
         merkle_root_metas
             .entry((BlockLocation::Original, erasure_set))
-            .or_insert_with(||WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
+            .or_insert_with(|| WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
 
         if let HashMapEntry::Vacant(entry) =
             just_inserted_shreds.entry((BlockLocation::Original, shred.id()))
@@ -3055,7 +3055,7 @@ impl Blockstore {
         }
         merkle_root_metas
             .entry((location, erasure_set))
-            .or_insert_with(||WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
+            .or_insert_with(|| WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
         just_inserted_shreds.insert((location, shred.id()), shred);
         index_meta_working_set_entry.did_insert_occur = true;
         slot_meta_entry.did_insert_occur = true;
