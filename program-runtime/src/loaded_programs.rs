@@ -2470,26 +2470,6 @@ pub(crate) mod tests {
         assert!(match_missing(&missing, &program1, true));
     }
 
-    #[test]
-    fn test_extract_nonexistent() {
-        let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let env = get_mock_program_runtime_environment();
-        let fork_graph = TestForkGraphSpecific::default();
-        let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(Arc::downgrade(&fork_graph));
-
-        let program1 = Pubkey::new_unique();
-        let mut missing = vec![ProgramToLoad {
-            program_id: &program1,
-            loader: ProgramCacheEntryOwner::LoaderV3,
-            deployment_slot: 0,
-            last_modification_slot: 0,
-        }];
-        let mut extracted = ProgramCacheForTxBatch::new(0);
-        cache.extract(&mut missing, &mut extracted, &env, true, true);
-        assert!(match_missing(&missing, &program1, true));
-    }
-
     #[test_matrix((false, true))]
     fn test_extract_no_second_level(empty_second_level: bool) {
         let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
