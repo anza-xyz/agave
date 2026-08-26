@@ -1,4 +1,11 @@
 //! The variant byte at offset 64, which selects the shred's kind and layout.
+//!
+//! The byte packs the kind, the resigned flag and the proof length into one field with a sparse,
+//! historically-chosen encoding. With the proof length fixed
+//! ([`MERKLE_PROOF_ENTRIES`](crate::wire_format::MERKLE_PROOF_ENTRIES)) only four bytes are valid,
+//! which makes it a plain tagged enum: one table gives the encode and decode directions the same
+//! notion of which bit patterns exist, so they cannot disagree, and no hand-written serialization is
+//! needed.
 
 use {
     crate::error::ParseError,
@@ -27,8 +34,8 @@ pub enum ShredKind {
 ///
 /// The high nibble identifies the kind and whether a retransmitter signature trails the proof; the
 /// low nibble is the number of Merkle proof entries, which is
-/// [`MERKLE_PROOF_ENTRIES`](crate::wire_format::MERKLE_PROOF_ENTRIES) in every shred a leader is allowed
-/// to produce:
+/// [`MERKLE_PROOF_ENTRIES`](crate::wire_format::MERKLE_PROOF_ENTRIES) in every shred a leader is
+/// allowed to produce:
 ///
 /// ```text
 /// 0b0110_0110  0x66  Code

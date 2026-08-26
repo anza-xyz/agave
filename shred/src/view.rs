@@ -49,7 +49,8 @@ pub struct ShredView<'a, K: ShredLayout> {
 ///
 /// Every field but [`header`](Self::header) is identical to [`ShredView`]'s, which is the whole
 /// reason a kind-erased shred is cheap: one match builds this, and every accessor on
-/// [`AnyShred`](crate::AnyShred) that would otherwise need its own match becomes a field read.
+/// [`AnyShred`](crate::shred::AnyShred) that would otherwise need its own match becomes a field
+/// read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AnyShredView<'a> {
     /// The leader's signature over the FEC set's Merkle root.
@@ -90,7 +91,7 @@ impl<'a, K: ShredLayout> From<ShredView<'a, K>> for AnyShredView<'a> {
 
 /// Reads the variant byte without committing to a shred kind.
 ///
-/// This is all a caller needs to pick the `K` that [`ShredView::read`] should be instantiated with.
+/// This is all a caller needs to pick the `K` that [`ShredView`] should be instantiated with.
 pub fn peek_variant(bytes: &[u8]) -> Result<ShredVariant, ParseError> {
     let Some(&byte) = bytes.get(OFFSET_OF_VARIANT) else {
         return Err(ParseError::TooShort {
@@ -111,16 +112,19 @@ impl<'a, K: ShredLayout> ShredView<'a, K> {
         Ok(view)
     }
 
-    /// Reads `bytes` as one shred of kind `K` optionally followed by a repair nonce, which is how a
-    /// shred arrives in the UDP packet.
-    pub fn read_wire_packet(bytes: &'a [u8]) -> Result<(Self, Option<Nonce>), ParseError> {
+    /// Reads `bytes` as one shred of kind `K` followed by the repair nonce, which is how a shred
+    /// arrives in a repair response.
+    ///
+    /// The nonce is not optional. Whether one follows the shred is settled by the socket the packet
+    /// came from. A Turbine packet goes through [`read_exact`](Self::read_exact) instead, which
+    /// rejects the same four bytes it requires here.
+    pub fn read_repair_packet(bytes: &'a [u8]) -> Result<(Self, Nonce), ParseError> {
         let (view, mut trailer) = Self::read_prefix(bytes)?;
-        let nonce = match trailer.len() {
-            0 => None,
-            SIZE_OF_NONCE => Some(read::<Nonce>(&mut trailer)?),
-            len => return Err(ParseError::TrailingBytes(len)),
-        };
-        Ok((view, nonce))
+        match trailer.len() {
+            SIZE_OF_NONCE => Ok((view, read::<Nonce>(&mut trailer)?)),
+            0 => Err(ParseError::MissingNonce),
+            len => Err(ParseError::TrailingBytes(len)),
+        }
     }
 
     /// Reads the shred at the start of `bytes`, returning it and whatever follows it.

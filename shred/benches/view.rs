@@ -6,8 +6,12 @@ use {
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
     rand::{Rng, SeedableRng, rngs::StdRng},
     solana_shred::{
-        AnyShred, Code, CodeHeader, CodeShred, CommonHeader, Data, DataHeader, DataShred, Parsed,
-        ShredFlags, ShredSource, ShredVariant, ShredViewMut, kind::ShredLayout, parse,
+        headers::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
+        kind::{Code, Data, ShredLayout},
+        shred::{AnyShred, CodeShred, DataShred, parse_turbine},
+        shred_variant::ShredVariant,
+        state::Parsed,
+        view::ShredViewMut,
         wire_format::SIZE_OF_NONCE,
     },
     std::hint::black_box,
@@ -77,18 +81,16 @@ fn bench_view(c: &mut Criterion) {
     let data: Vec<_> = random_shreds::<Data>(&common, &header)
         .into_iter()
         .map(|bytes| {
-            DataShred::<Parsed>::parse(bytes, ShredSource::Turbine)
+            DataShred::<Parsed>::parse_turbine(bytes)
                 .expect("random bytes with a valid variant byte parse as a shred")
-                .0
         })
         .collect();
     let (code_common, code_header) = code_headers(ShredVariant::MerkleCode);
     let code: Vec<_> = random_shreds::<Code>(&code_common, &code_header)
         .into_iter()
         .map(|bytes| {
-            CodeShred::<Parsed>::parse(bytes, ShredSource::Turbine)
+            CodeShred::<Parsed>::parse_turbine(bytes)
                 .expect("random bytes with a valid variant byte parse as a shred")
-                .0
         })
         .collect();
 
@@ -161,18 +163,16 @@ fn bench_view_mut(c: &mut Criterion) {
 }
 
 fn bench_parse(c: &mut Criterion) {
-    // Half the packets carry a repair nonce, so the trailer branch is exercised too.
     let (common, header) = data_headers(ShredVariant::MerkleData);
-    let packets: Vec<_> = random_shreds::<Data>(&common, &header)
-        .into_iter()
-        .enumerate()
-        .map(|(index, shred)| match index % 2 {
-            0 => shred,
-            _ => {
-                let mut packet = Vec::from(&shred[..]);
-                packet.extend_from_slice(&[0xau8; SIZE_OF_NONCE]);
-                Bytes::from(packet)
-            }
+    let turbine = random_shreds::<Data>(&common, &header);
+    // A repair response is the same shred with the nonce of the request it answers behind it, and
+    // its own entry point, so both doors are measured.
+    let repair: Vec<_> = turbine
+        .iter()
+        .map(|shred| {
+            let mut packet = Vec::from(&shred[..]);
+            packet.extend_from_slice(&[0xau8; SIZE_OF_NONCE]);
+            Bytes::from(packet)
         })
         .collect();
 
@@ -180,13 +180,18 @@ fn bench_parse(c: &mut Criterion) {
     group.throughput(Throughput::Elements(SHREDS as u64));
     group.bench_function("data", |b| {
         b.iter(|| {
-            for packet in &packets {
+            for packet in &turbine {
                 // Cloning `Bytes` is a refcount bump, so this measures the parse.
-                black_box(DataShred::<Parsed>::parse(
-                    packet.clone(),
-                    ShredSource::Turbine,
-                ))
-                .expect("the packets were built to parse");
+                black_box(DataShred::<Parsed>::parse_turbine(packet.clone()))
+                    .expect("the packets were built to parse");
+            }
+        })
+    });
+    group.bench_function("data/repair", |b| {
+        b.iter(|| {
+            for packet in &repair {
+                black_box(DataShred::<Parsed>::parse_repair(packet.clone()))
+                    .expect("the packets were built to parse");
             }
         })
     });
@@ -194,9 +199,8 @@ fn bench_parse(c: &mut Criterion) {
     // picks the kind and the erasure that follows it.
     group.bench_function("erased", |b| {
         b.iter(|| {
-            for packet in &packets {
-                black_box(parse(packet.clone(), ShredSource::Turbine))
-                    .expect("the packets were built to parse");
+            for packet in &turbine {
+                black_box(parse_turbine(packet.clone())).expect("the packets were built to parse");
             }
         })
     });

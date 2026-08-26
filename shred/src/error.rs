@@ -15,12 +15,15 @@ pub enum ParseError {
         /// Number of bytes the shred kind requires.
         expected: usize,
     },
-    /// The byte at offset 64 is not a valid [`ShredVariant`](crate::ShredVariant).
+    /// The byte at offset 64 is not a valid [`ShredVariant`](crate::shred_variant::ShredVariant).
     #[error("invalid shred variant: {0:#04x}")]
     InvalidVariant(u8),
-    /// The shred is followed by neither nothing nor a 4-byte repair nonce.
+    /// The shred is followed by unexpected bytes.
     #[error("{0} trailing bytes after the shred")]
     TrailingBytes(usize),
+    /// A repair response carried no/incomplete nonce.
+    #[error("repair response carries no nonce")]
+    MissingNonce,
     /// The shred is of the other kind than the one requested.
     #[error("expected a {expected:?} shred, got {found:?}")]
     UnexpectedKind {

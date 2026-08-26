@@ -15,7 +15,7 @@ use {
 ///
 /// This is what makes a kind-erased shred possible: erasing the header field is enough, because
 /// everything else about a shred is either common to both kinds or derived from the variant byte.
-/// See [`AnyShred`](crate::AnyShred).
+/// See [`AnyShred`](crate::shred::AnyShred).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnyHeader {
     /// A data shred's header.

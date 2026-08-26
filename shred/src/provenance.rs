@@ -1,8 +1,19 @@
-//! Provenance is not on the wire: it is what *this node* knows about the origin of the Shred.
+//! Provenance is what *this node* knows about the origin of the Shred.
 //!
-//! It is a value rather than a type parameter, because exactly one rule turns on it, and
-//! that rule is a runtime check either way: only a shred a peer sent may be retransmitter-signed,
-//! and whether the variant has room for that signature is a wire bit.
+//! Where the bytes came from is a field, [`Provenance`](crate::provenance::Provenance),
+//! not a type parameter. Provenance for a shred can not be modified.
+//!
+//! Four things can put a shred in [`Verified`](crate::state::Verified), one per provenance:
+//!
+//! ```text
+//! verify(policy, leader)  Received(source)   hash and ed25519
+//! recover(data, code)     Recovered          the batch's root is checked as it is rebuilt
+//! from_blockstore(bytes)  Blockstore         verified before it was ever stored
+//! FecSet::build(..)       BlockProduction    signed here
+//! ```
+//!
+//! [`resign`](crate::shred::Shred::resign) accepts only
+//! [`Provenance::Received`](crate::provenance::Provenance::Received).
 
 /// Which socket a received shred arrived on.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

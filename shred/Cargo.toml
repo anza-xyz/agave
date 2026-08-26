@@ -11,9 +11,9 @@ edition = { workspace = true }
 publish = false
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
-agave-unstable-api = []
 
 [dependencies]
 bytes = { workspace = true }
@@ -41,7 +41,7 @@ assert_matches = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-ledger = { workspace = true }
-solana-shred = { path = ".", features = ["dev-context-only-utils"] }
+solana-shred = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [[bench]]

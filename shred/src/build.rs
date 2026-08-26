@@ -15,8 +15,10 @@
 //! Merkle proofs         6 entries per shred, from the tree
 //! ```
 //!
-//! Every byte is written through [`ShredViewMut`], so the writer states no offset of its own, and
-//! every finished shred is read back with [`ShredView`](crate::ShredView) before it is handed out.
+//! # Why the write path is shaped around erasure batches
+//!
+//! Single shred cannot be constructed due to the Merkle tree. Making the batch the unit of
+//! construction ensures that all constructed shreds are valid.
 
 use {
     crate::{
@@ -69,9 +71,10 @@ pub struct FecSetSpec {
     /// Index of this batch's first data shred, which is also the FEC set index and the index of
     /// this batch's first code shred.
     ///
-    /// The two kinds are indexed by separate counters on the wire, but with every FEC set holding 32
-    /// of each the counters advance together from zero, so they never disagree. A shred whose index
-    /// falls outside its own FEC set is rejected by [`verify`](crate::Shred::verify) anyway.
+    /// The two kinds are indexed by separate counters on the wire, but with every FEC set holding
+    /// 32 of each the counters advance together from zero, so they never disagree. A shred whose
+    /// index falls outside its own FEC set is rejected by [`verify`](crate::shred::Shred::verify)
+    /// anyway.
     pub fec_set_index: u32,
     /// Merkle root of the preceding erasure batch.
     pub chained_merkle_root: Hash,
@@ -219,6 +222,9 @@ impl FecSet {
 
         // Reading each shred back turns the reader's rules into the writer's test.
         let mut payloads = payloads.into_iter().map(Bytes::from);
+
+        // A built shred is parsed before it is handed out for broadcast, so it is
+        // structurally impossible to produce invalid shreds.
         let data = payloads
             .by_ref()
             .take(DATA_SHREDS)
@@ -341,7 +347,8 @@ pub(crate) fn coder() -> &'static ReedSolomon {
 /// A view over the shard at `index` of the batch, whose kind its position decides.
 ///
 /// The two kinds have different layouts but the same set of sections, so the batch-wide passes
-/// (chaining, hashing, signing) are written once over a view that hides which kind it is looking at.
+/// (chaining, hashing, signing) are written once over a view that hides which kind it is looking
+/// at.
 fn view<'a>(
     spec: &FecSetSpec,
     index: usize,
@@ -400,7 +407,7 @@ impl<'a> AnyShredViewMut<'a> {
 mod tests {
     use {
         super::*,
-        crate::{policy::AdmissionPolicy, provenance::ShredSource, shred::parse},
+        crate::{policy::AdmissionPolicy, shred::parse_turbine},
         solana_signature::Signature,
         solana_signer::Signer,
     };
@@ -451,8 +458,7 @@ mod tests {
 
             let mut reassembled = Vec::new();
             for (position, shred) in set.data.iter().enumerate() {
-                let (parsed, nonce) = parse(shred.bytes().clone(), ShredSource::Turbine).unwrap();
-                assert_eq!(nonce, None);
+                let parsed = parse_turbine(shred.bytes().clone()).unwrap();
                 let shred = parsed
                     .into_data()
                     .expect("a data shred parsed as a code shred");
@@ -476,7 +482,7 @@ mod tests {
             assert_eq!(reassembled, data);
 
             for (position, shred) in set.code.iter().enumerate() {
-                let (parsed, _) = parse(shred.bytes().clone(), ShredSource::Turbine).unwrap();
+                let parsed = parse_turbine(shred.bytes().clone()).unwrap();
                 let shred = parsed
                     .into_code()
                     .expect("a code shred parsed as a data shred");

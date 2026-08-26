@@ -1,8 +1,36 @@
 //! The two shred kinds, and the layout constants that distinguish them.
 //!
-//! The kind is a type parameter of [`Shred`](crate::Shred) rather than a runtime tag, so that
-//! accessors which only make sense for one kind (`parent_offset` on data shreds, `position` on code
-//! shreds) simply do not exist on the other, instead of returning an error at runtime.
+//! The kind is a type parameter of [`Shred`](crate::shred::Shred) rather than a runtime tag, so
+//! that accessors which only make sense for one kind (`parent_offset` on data shreds, `position` on
+//! code shreds) simply do not exist on the other, instead of returning an error at runtime. In
+//! `ledger/src/shred.rs` that was a comment plus a `debug_assert`; here the wrong accessor is not
+//! there to be called, and the layout differences between the kinds are resolved at compile time.
+//!
+//! # Where the kind has to be a runtime tag
+//!
+//! [`AnyShred`](crate::shred::AnyShred) is that form: the same shred with the header field erased
+//! to an enum. Everything else about a shred is either common to both kinds or derived from the
+//! variant byte, so erasing one field is enough, and the two kinds then differ by one discriminant.
+//! Three boundaries need it, named on that type.
+//!
+//! It costs two matches. One in [`view`](crate::shred::Shred::view), which every layout accessor
+//! then reads as a plain field, and one in [`erasure_shard_index`](ShredLayout::erasure_shard_index),
+//! which is the single thing a kind-erased shred cannot derive from the layout, because a code
+//! shred's leaf index is a function of its own header. Neither is on a path where a branch on a hot
+//! cache line competes with a Merkle recompute and an ed25519 verify. The read path pays nothing
+//! extra at all: [`parse_turbine`](crate::shred::parse_turbine) has to read the variant byte anyway,
+//! so the match it forces is the one the erased shred was going to need.
+//!
+//! The alternative is an enum over the two typed shreds, which is what `ledger/src/shred.rs` does
+//! and where its `dispatch!` macro comes from. All ten of that macro's uses are kind-agnostic: each
+//! is a function of the bytes, the common header and the variant. It is not erasing a difference
+//! between the kinds, it is forwarding to two structs that each keep their own copy of the common
+//! part and each reimplement the same layout arithmetic. The duplication is the defect; the macro
+//! only makes it cheap to maintain.
+//!
+//! Callers who know the kind from where the bytes came from, such as a kind-specific blockstore
+//! column, still get a typed entry point, and a kind mismatch there means corruption rather than a
+//! malformed packet. That is returned as an error for the caller to interpret.
 
 use {
     crate::{
@@ -30,7 +58,7 @@ pub trait ShredLayout: sealed::Sealed + 'static {
     /// The header this kind carries after the common header.
     ///
     /// [`Into<AnyHeader>`] is required so that kind-generic code can hand a shred to the
-    /// kind-erased [`AnyShred`](crate::AnyShred) without knowing which kind it holds.
+    /// kind-erased [`AnyShred`](crate::shred::AnyShred) without knowing which kind it holds.
     type Header: Copy
         + Debug
         + Into<AnyHeader>
@@ -60,9 +88,9 @@ pub trait ShredLayout: sealed::Sealed + 'static {
     /// Checks what this kind's header claims about the bytes the layout leaves for it, given that
     /// `body`.
     ///
-    /// Runs while the shred is being read, so it holds for every shred that exists, whatever door it
-    /// came through: the wire, the blockstore, erasure recovery or this crate's own writer. That is
-    /// what lets the kind-specific accessors below it be infallible.
+    /// Runs while the shred is being read, so it holds for every shred that exists, whatever door
+    /// it came through: the wire, the blockstore, erasure recovery or this crate's own writer. That
+    /// is what lets the kind-specific accessors below it be infallible.
     fn check_header(header: &Self::Header, body: &[u8]) -> Result<(), ParseError>;
 
     /// Applies the admission checks that are specific to this kind.
@@ -98,7 +126,7 @@ impl ShredLayout for Data {
 
     /// The `size` field covers the headers as well as the ledger data, and whoever built the shred
     /// chose it, so it is checked against the layout here rather than trusted by
-    /// [`data`](crate::DataShred::data).
+    /// [`data`](crate::shred::DataShred::data).
     fn check_header(header: &DataHeader, body: &[u8]) -> Result<(), ParseError> {
         match data_len(header, body.len()) {
             Some(_) => Ok(()),
@@ -147,7 +175,8 @@ impl ShredLayout for Data {
 /// a region inside a body of `body_len` bytes.
 ///
 /// Shared by [`Data::check_header`], which is where the `None` case is turned into a
-/// [`ParseError`], and [`data`](crate::DataShred::data), which is why that case cannot happen.
+/// [`ParseError`], and [`data`](crate::shred::DataShred::data), which is why that case cannot
+/// happen.
 pub(crate) fn data_len(header: &DataHeader, body_len: usize) -> Option<usize> {
     let len = usize::from(header.size).checked_sub(Data::SIZE_OF_HEADERS)?;
     if len > body_len {

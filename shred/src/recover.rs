@@ -1,13 +1,13 @@
 //! Rebuilding the missing shreds of an erasure batch.
 //!
-//! Recovery is the read path's mirror of [`build`](crate::build), and it runs the same passes in the
-//! same order for the same reason: Reed-Solomon fills the missing erasure shards, then the batch's
-//! Merkle tree is rebuilt over all 64 shards so that each rebuilt shred can be given the proof that
-//! witnesses it.
+//! Recovery is the read path's mirror of [`build`](crate::build), and it runs the same passes in
+//! the same order for the same reason: Reed-Solomon fills the missing erasure shards, then the
+//! batch's Merkle tree is rebuilt over all 64 shards so that each rebuilt shred can be given the
+//! proof that witnesses it.
 //!
-//! What a recovered shred does not get is a fresh signature. The one the leader produced is over the
-//! batch's Merkle root, which is a property of the whole set rather than of any one shred, so it is
-//! copied out of a survivor. That is only sound if the rebuilt batch really is the batch the
+//! What a recovered shred does not get is a fresh signature. The one the leader produced is over
+//! the batch's Merkle root, which is a property of the whole set rather than of any one shred, so
+//! it is copied out of a survivor. That is only sound if the rebuilt batch really is the batch the
 //! survivors came from, which is what the root check at the end establishes: the tree over the
 //! rebuilt shards has to hash to the root the survivors' own proofs reconstruct. A shard from
 //! another batch, or a corrupted one, changes the root and the whole recovery is rejected.
@@ -46,8 +46,9 @@ pub struct Recovery {
 /// The survivors are taken with their provenance forgotten, because that is the shape the batch has
 /// where recovery runs: blockstore insert holds shreds that arrived over the network, shreds read
 /// back from a column and shreds an earlier recovery produced, all of them equally readable and
-/// none of them resignable. What comes back is [`Recovered`], which is its own provenance, so a
-/// caller can tell a rebuilt shred from one the leader actually sent.
+/// none of them resignable. What comes back is
+/// [`Provenance::Recovered`](crate::provenance::Provenance::Recovered), which is its own
+/// provenance, so a caller can tell a rebuilt shred from one the leader actually sent.
 pub fn recover(
     data: &[DataShred<Verified>],
     code: &[CodeShred<Verified>],
@@ -238,8 +239,8 @@ fn rebuild(batch: &Batch, index: usize, shard: &[u8]) -> Result<(Vec<u8>, Hash),
 
 /// Writes what the batch carries identically into a rebuilt shred, and hashes its leaf.
 ///
-/// The retransmitter signature is left as it was allocated, all zeroes: it belongs to whichever node
-/// forwarded the shred, and nothing here forwarded anything.
+/// The retransmitter signature is left as it was allocated, all zeroes: it belongs to whichever
+/// node forwarded the shred, and nothing here forwarded anything.
 fn finish<K: ShredLayout>(view: &mut ShredViewMut<'_, K>, batch: &Batch) -> Hash {
     view.chained_merkle_root_mut()
         .copy_from_slice(batch.chained_merkle_root.as_ref());

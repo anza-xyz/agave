@@ -1,7 +1,8 @@
 //! Shred wire layout.
 //!
-//! Every offset in the shred format is a function of the [`ShredVariant`](crate::ShredVariant) byte.
-//! It defines whether it is a data or code shred, and whether the shred is `resigned`.
+//! Every offset in the shred format is a function of the
+//! [`ShredVariant`](crate::shred_variant::ShredVariant) byte. It defines whether it is a data or
+//! code shred, and whether the shred is `resigned`.
 //!
 //! ```text
 //! +------------+--------+--------+---------+----------+---------+-----------+
@@ -13,18 +14,16 @@
 //! ```
 //!
 //! `(*)` The body is whatever the fixed sections leave, so it is the one length that depends on
-//! both inputs. It is a length, not a count of useful bytes:
+//! both inputs: [`SIZE_OF_BODY`](ShredLayout::SIZE_OF_BODY) and
+//! [`SIZE_OF_BODY_RESIGNED`](ShredLayout::SIZE_OF_BODY_RESIGNED) per kind, four values in all. It
+//! is a length, not a count of useful bytes; see [`data`](crate::shred::Shred::data) for what a
+//! data shred's body actually holds. `README.md` derives all four from the diagram above.
 //!
-//! ```text
-//!         unresigned  resigned
-//!  data       963        899
-//!  code       987        923
-//! ```
 //!
-//! A data shred's body is not always valid data. Only [`size`](crate::DataHeader::size) minus the
-//! headers is data; the rest is zero padding, which the erasure coding needs so that every shard of
-//! a batch is the same length.
-//!
+//! The wire format should be written down once, declaratively, in the order the bytes appear.
+//! Deriving a single wincode schema for a whole shred is still not possible, because the two layouts
+//! differ in the middle rather than only at the end. Instead, a single [`const fn`](sections)
+//! adds the section sizes up in wire order, and every boundary is derived from it.
 //! The sizes below are read off the wincode schemas of the types that occupy each section, so the
 //! shred's own header definitions are the only place they are stated. The `const_assert_eq!`s at
 //! the bottom pin them, a schema change that moves a boundary is a protocol change & compile error.
@@ -107,7 +106,8 @@ pub const SIZE_OF_DATA_PAYLOAD: usize =
 /// where the payload already is instead of into a copy of it.
 pub const SIZE_OF_SHRED_BUFFER: usize = SIZE_OF_CODE_PAYLOAD.saturating_add(SIZE_OF_NONCE);
 
-/// Offset of the [`ShredVariant`](crate::ShredVariant) byte, which follows the signature.
+/// Offset of the [`ShredVariant`](crate::shred_variant::ShredVariant) byte, which follows the
+/// signature.
 pub const OFFSET_OF_VARIANT: usize = SIZE_OF_SIGNATURE;
 
 // this may be a bit excessive, but it is a tripwire in case of breaking changes in wincode
@@ -118,8 +118,15 @@ static_assertions::const_assert_eq!(SIZE_OF_MERKLE_ROOT, 32);
 static_assertions::const_assert_eq!(SIZE_OF_TRAILER, 152);
 static_assertions::const_assert_eq!(SIZE_OF_TRAILER_RESIGNED, 216);
 static_assertions::const_assert_eq!(SIZE_OF_DATA_PAYLOAD, 1203);
+static_assertions::const_assert_eq!(SIZE_OF_CODE_PAYLOAD, 1228);
 static_assertions::const_assert_eq!(Data::SIZE_OF_HEADERS, 88);
 static_assertions::const_assert_eq!(Code::SIZE_OF_HEADERS, 89);
+// The four body sizes README.md's section 7 tabulates. Kept here so the one table this crate does
+// not derive at compile time cannot go stale without the crate failing to build.
+static_assertions::const_assert_eq!(Data::SIZE_OF_BODY, 963);
+static_assertions::const_assert_eq!(Data::SIZE_OF_BODY_RESIGNED, 899);
+static_assertions::const_assert_eq!(Code::SIZE_OF_BODY, 987);
+static_assertions::const_assert_eq!(Code::SIZE_OF_BODY_RESIGNED, 923);
 static_assertions::const_assert_eq!(SIZE_OF_SHRED_BUFFER, PACKET_DATA_SIZE);
 
 /// A zeroed payload buffer for a shred of kind `K`, allocated at [`SIZE_OF_SHRED_BUFFER`].
@@ -134,10 +141,10 @@ pub fn payload_buffer<K: ShredLayout>() -> Vec<u8> {
 
 /// The wire bytes of a repair response: `payload` followed by the nonce of the request it answers.
 ///
-/// The inverse of the split [`read_wire_packet`](crate::ShredView::read_wire_packet) performs on the
-/// way in, and the only place the nonce is written, so the two directions agree on its encoding by
-/// construction. Neither signature covers the nonce, which is why appending it to a finished shred
-/// is sound.
+/// The inverse of the split [`read_repair_packet`](crate::view::ShredView::read_repair_packet)
+/// performs on the way in, and the only place the nonce is written, so the two directions agree on
+/// its encoding by construction. Neither signature covers the nonce, which is why appending it to a
+/// finished shred is sound.
 ///
 /// Takes the payload by value so the nonce can be written into its own allocation: a `Bytes` that
 /// is the last handle on its buffer converts back to a `BytesMut`, and the four nonce bytes then

@@ -2,9 +2,9 @@
 //! accessors each state and kind allows.
 //!
 //! The states and what they mean are in [`state`](crate::state); the sections the accessors read
-//! are in [`view`](crate::view). What lives here is the cascade: [`parse`], `verify` and `resign`
-//! are the only ways to construct a shred, so a state is reachable only through the check that
-//! establishes it.
+//! are in [`view`]. What lives here is the cascade: [`parse_turbine`], [`parse_repair`], `verify`
+//! and `resign` are the only ways to construct a shred, so a state is reachable only through the
+//! check that establishes it.
 //!
 //! [`AnyShred`] lives here too, beside the typed shred rather than in a module of its own: the two
 //! share the private constructor that every door into a state goes through, and keeping them in one
@@ -38,6 +38,13 @@ use {
 /// The file is a symlink to `ledger/src/shred/merkle_tree.rs`, so this is the very tree the cluster
 /// already runs and not a reimplementation of it. It compiles unchanged in both crates because its
 /// module path is the same in both, and because of the [`Error`] alias below.
+///
+/// Tree shape, hash prefixes and proof direction are consensus-critical, and a second
+/// implementation of them, however carefully transcribed, is a second thing that can diverge. A
+/// symlink cannot: it is visibly the same file, the same tests run over it in both crates, and a
+/// change to it is a change to both. What the crate pays for that is this shim — an error alias, a
+/// module path that matches the other crate's, a scoped lint allowance — which is a smaller price
+/// than a copy.
 // The shared file is written under `solana-ledger`'s lint configuration, which allows plain
 // arithmetic; this crate's denies it. Scoped to the one module rather than relaxed crate-wide.
 #[allow(clippy::arithmetic_side_effects)]
@@ -55,8 +62,8 @@ pub use crate::error::MerkleError as Error;
 /// the bytes.
 ///
 /// `S` is an uninhabited marker, so both parameters cost nothing at runtime.
-/// [`Provenance`](crate::Provenance) is the one thing about a shred that is neither on the wire nor
-/// a type: see its documentation for why.
+/// [`Provenance`] is the one thing about a shred that is neither on the wire nor a type: see its
+/// documentation for why.
 pub struct Shred<K: ShredLayout, S: ShredState> {
     bytes: Bytes,
     common: CommonHeader,
@@ -65,64 +72,99 @@ pub struct Shred<K: ShredLayout, S: ShredState> {
     _state: PhantomData<S>,
 }
 
-/// Reads `bytes` as a shred of whichever kind its variant byte selects, splitting off a trailing
-/// repair nonce if one is present.
+/// Reads a Turbine packet as a shred of whichever kind its variant byte selects.
 ///
-/// This is the entry point to the cascade. It checks the length, validates the variant, resolves
-/// the layout and deserializes the headers: no hashing and no signature work, so it is cheap
-/// enough to run on every packet that arrives.
+/// This and [`parse_repair`] are the entry points to the cascade. They check the length, validate
+/// the variant, resolve the layout and deserialize the headers: no hashing and no signature work,
+/// so they are cheap enough to run on every packet that arrives. Nothing may follow the shred here,
+/// since only a repair response carries a nonce.
 ///
 /// What comes back is kind-erased, because the variant byte is the only thing that says which kind
 /// the bytes are and reading it is what this function is for. A caller's next move is
 /// [`AnyShred::into_data`] or [`AnyShred::into_code`], which moves the kind into the type for every
 /// stage that follows, so the match the variant byte forces is the only one the read path pays.
 ///
-/// Wire bytes are the one thing only a received shred has, so `source` is where a provenance of
-/// [`Provenance::Received`] enters and the only place it can.
-pub fn parse(
-    bytes: Bytes,
-    source: ShredSource,
-) -> Result<(AnyShred<Parsed>, Option<Nonce>), ParseError> {
+/// Wire bytes are the one thing only a received shred has, so this and [`parse_repair`] are where a
+/// provenance of [`Provenance::Received`] enters and the only places it can.
+pub fn parse_turbine(bytes: Bytes) -> Result<AnyShred<Parsed>, ParseError> {
+    match view::peek_variant(&bytes)?.shred_kind() {
+        ShredKind::Data => Ok(Shred::<Data, Parsed>::parse_turbine(bytes)?.into()),
+        ShredKind::Code => Ok(Shred::<Code, Parsed>::parse_turbine(bytes)?.into()),
+    }
+}
+
+/// Reads a repair response as a shred of whichever kind its variant byte selects, plus the nonce of
+/// the request it answers.
+///
+/// Two entry points rather than one with a source argument, because the source is not a hint about
+/// the bytes: which socket the packet came off decides whether a nonce follows the shred, and it is
+/// known before a byte is read. So the nonce is returned rather than an [`Option`] of one, and a
+/// response that ends with the shred is [`ParseError::MissingNonce`] rather than a shred nothing
+/// can tie to a request.
+///
+/// See [`parse_turbine`] for what the two share.
+pub fn parse_repair(bytes: Bytes) -> Result<(AnyShred<Parsed>, Nonce), ParseError> {
     match view::peek_variant(&bytes)?.shred_kind() {
         ShredKind::Data => {
-            let (shred, nonce) = Shred::<Data, Parsed>::parse(bytes, source)?;
+            let (shred, nonce) = Shred::<Data, Parsed>::parse_repair(bytes)?;
             Ok((shred.into(), nonce))
         }
         ShredKind::Code => {
-            let (shred, nonce) = Shred::<Code, Parsed>::parse(bytes, source)?;
+            let (shred, nonce) = Shred::<Code, Parsed>::parse_repair(bytes)?;
             Ok((shred.into(), nonce))
         }
     }
 }
 
 impl<K: ShredLayout> Shred<K, Parsed> {
-    /// Reads `bytes` as a shred of this specific kind, followed by an optional repair nonce.
+    /// Reads `bytes` as a Turbine packet carrying a shred of this specific kind.
     ///
-    /// Every check the bytes have to pass is [`ShredView::read_packet`]'s; all this adds is keeping
-    /// the header scalars and dropping the nonce from the buffer. Fails with
-    /// [`ParseError::UnexpectedKind`] if the variant byte selects the other kind, which is what a
-    /// caller that knew the kind in advance (from a kind-specific blockstore column, say) sees when
-    /// that expectation was wrong.
-    pub fn parse(
-        mut bytes: Bytes,
-        source: ShredSource,
-    ) -> Result<(Self, Option<Nonce>), ParseError> {
-        // The view borrows from `bytes`, so it has to go out of scope before the buffer is trimmed.
+    /// Every check the bytes have to pass is [`ShredView::read_exact`]'s; all this adds is keeping
+    /// the header scalars. Fails with [`ParseError::UnexpectedKind`] if the variant byte selects
+    /// the other kind, which is what a caller that knew the kind in advance (from a kind-specific
+    /// blockstore column, say) sees when that expectation was wrong.
+    pub fn parse_turbine(bytes: Bytes) -> Result<Self, ParseError> {
+        // The view borrows from `bytes`, so it has to go out of scope before the buffer is moved.
+        let (common, header) = {
+            let view = ShredView::<K>::read_exact(&bytes)?;
+            (view.common, view.header)
+        };
+        Ok(Self::received(bytes, common, header, ShredSource::Turbine))
+    }
+
+    /// Reads `bytes` as a repair response carrying a shred of this specific kind, plus the nonce of
+    /// the request it answers.
+    ///
+    /// See [`parse_turbine`](Self::parse_turbine), and [`parse_repair`] for why the nonce is not
+    /// optional.
+    pub fn parse_repair(mut bytes: Bytes) -> Result<(Self, Nonce), ParseError> {
         let (common, header, nonce) = {
-            let (view, nonce) = ShredView::<K>::read_wire_packet(&bytes)?;
+            let (view, nonce) = ShredView::<K>::read_repair_packet(&bytes)?;
             (view.common, view.header, nonce)
         };
-        // Drop any repair nonce, which shortens the buffer without copying it. From here on the
-        // bytes are exactly one shred, which is what `view()` relies on.
+        // Drop the nonce, which shortens the buffer without copying it. From here on the bytes are
+        // exactly one shred, which is what `view()` relies on.
         bytes.truncate(K::SIZE_OF_PAYLOAD);
-        let shred = Self {
+        Ok((
+            Self::received(bytes, common, header, ShredSource::Repair),
+            nonce,
+        ))
+    }
+
+    /// Shared tail of the two parses: the headers are read, the bytes are exactly one shred.
+    fn received(
+        bytes: Bytes,
+        common: CommonHeader,
+        header: K::Header,
+        source: ShredSource,
+    ) -> Self {
+        Self {
             bytes,
             common,
             header,
             provenance: Provenance::Received(source),
             _state: PhantomData,
-        };
-        Ok((shred, nonce))
+        }
     }
 
     /// Checks the headers against `policy`, then the leader's signature over the Merkle root this
@@ -131,13 +173,13 @@ impl<K: ShredLayout> Shred<K, Parsed> {
     /// The two are one transition because nothing in the pipeline stands between them: a sigverify
     /// worker takes one shred off the queue and runs both. The order still matters and is kept,
     /// cheap first. The policy checks are the right cluster, a plausible slot, an index within the
-    /// per-slot limit, FEC set alignment and the kind-specific checks in [`ShredLayout::admit`], none
-    /// of which hash anything, so a shred they reject never reaches the one hash of the leaf, the
-    /// six to climb the proof, and the ed25519 verification.
+    /// per-slot limit, FEC set alignment and the kind-specific checks in [`ShredLayout::admit`],
+    /// none of which hash anything, so a shred they reject never reaches the one hash of the leaf,
+    /// the six to climb the proof, and the ed25519 verification.
     ///
-    /// Only shreds that arrived over the network reach here: [`parse`] is the only way to a
-    /// [`Parsed`] shred that was not read out of a store. The other provenances establish their
-    /// signature by construction, each through its own constructor.
+    /// Only shreds that arrived over the network reach here: [`parse_turbine`] and [`parse_repair`]
+    /// are the only ways to a [`Parsed`] shred that was not read out of a store. The other
+    /// provenances establish their signature by construction, each through its own constructor.
     pub fn verify(
         self,
         policy: &AdmissionPolicy,
@@ -188,9 +230,9 @@ impl<K: ShredLayout> Shred<K, Verified> {
     /// Takes bytes erasure recovery rebuilt as a verified shred.
     ///
     /// What the leader signed is the Merkle root of the whole FEC set, and
-    /// [`recover`](crate::recover) only hands bytes here once the tree over the rebuilt batch hashes
-    /// to the root the surviving shreds carry. The signature copied into these bytes is therefore
-    /// the leader's over them, checked the same way a received shred's was.
+    /// [`recover`](crate::recover::recover) only hands bytes here once the tree over the rebuilt
+    /// batch hashes to the root the surviving shreds carry. The signature copied into these bytes
+    /// is therefore the leader's over them, checked the same way a received shred's was.
     pub(crate) fn assume_recovered(bytes: Bytes) -> Result<Self, ParseError> {
         Self::from_trusted_bytes(bytes, Provenance::Recovered)
     }
@@ -242,15 +284,25 @@ impl<K: ShredLayout> Shred<K, Verified> {
     /// Shreds this node produced itself go out with the all-zero retransmitter signature they were
     /// built with.
     ///
-    /// A variant with no room for a retransmitter signature is handed back untouched.
+    /// A variant with no room for a retransmitter signature is handed back untouched rather than
+    /// rejected. Only the last FEC set of a slot is resigned, so most of what crosses the retransmit
+    /// path has nothing to sign, and forwarding it is what a node is supposed to do. Making that the
+    /// error case would have every caller distinguishing "must not be forwarded" from "needs no
+    /// signature", off a variant bit it already holds.
+    ///
+    /// The payload is copied whenever this shred's [`Bytes`] is not the sole owner of its whole
+    /// allocation, which a shred sliced out of a shared datagram buffer never is. Signing in place
+    /// is not available today, and the copy is affordable where it lands: on the order of one
+    /// percent of what crosses the retransmit path is resigned at all, and the signing it
+    /// accompanies costs far more than the memcpy.
     ///
     /// The retransmitter signature covers the same Merkle root the leader signed, which is what
     /// lets a downstream node check it without knowing anything about this shred's contents.
     ///
     /// The state does not change. A separate `Resigned` state would record something no consumer
     /// gates on, and the insert path, which takes verified shreds of several provenances, does not
-    /// care whether any of them was retransmit-signed. What does carry weight, that a shred is never
-    /// resigned before its leader signature was checked, is held by this method living on
+    /// care whether any of them was retransmit-signed. What does carry weight, that a shred is
+    /// never resigned before its leader signature was checked, is held by this method living on
     /// [`Verified`]. The cost is that resigning twice is a logic bug rather than a compile error;
     /// the second write is idempotent under the same key, so it wastes work and forges nothing.
     pub fn resign(mut self, keypair: &Keypair) -> Result<Self, Reject> {
@@ -385,7 +437,8 @@ impl<K: ShredLayout, S: ShredState> Shred<K, S> {
     /// bytes it spends: the peer that forwarded it is named by the Turbine tree rather than by the
     /// packet, so a shred that arrived from the wrong node is rejected before its contents matter.
     /// Who the retransmitter should be is the caller's to work out, since it is a function of the
-    /// slot's leader and this node's position in that slot's tree, neither of which is in the shred.
+    /// slot's leader and this node's position in that slot's tree, neither of which is in the
+    /// shred.
     ///
     /// Available in every state, and separate from [`verify`](Shred::verify), because the two
     /// signatures answer different questions and not every caller asks both. The leader's signature
@@ -393,10 +446,10 @@ impl<K: ShredLayout, S: ShredState> Shred<K, S> {
     /// took to get here, which a repair response does not make and does not need to.
     ///
     /// A variant that reserves no room for one is [`Reject::MissingRetransmitterSignature`] rather
-    /// than a pass. Unlike [`resign`](Self::resign), which is asked to sign whatever it is handed and
-    /// forwards what it cannot sign, this is asked a question about a signature, and "there is none"
-    /// is not the answer "it checks out". A caller that only wants the signature when there is one
-    /// can read [`retransmitter_signature`](Self::retransmitter_signature) first.
+    /// than a pass. Unlike [`resign`](Self::resign), which is asked to sign whatever it is handed
+    /// and forwards what it cannot sign, this is asked a question about a signature, and "there is
+    /// none" is not the answer "it checks out". A caller that only wants the signature when there
+    /// is one can read [`retransmitter_signature`](Self::retransmitter_signature) first.
     pub fn verify_retransmitter(&self, retransmitter: &Pubkey) -> Result<(), Reject> {
         let signature = self
             .view()
@@ -425,9 +478,9 @@ impl<K: ShredLayout, S: ShredState> Shred<K, S> {
     /// The wire bytes of a repair response carrying this shred: the payload followed by the `nonce`
     /// of the request it answers.
     ///
-    /// The counterpart of the nonce [`parse`] splits off on the way in. Any provenance may be served:
-    /// a repair response says "here are the bytes you asked for", so what matters is that the shred
-    /// is the one requested, not how this node came to hold it.
+    /// The counterpart of the nonce [`parse_repair`] splits off on the way in. Any provenance may
+    /// be served: a repair response says "here are the bytes you asked for", so what matters is
+    /// that the shred is the one requested, not how this node came to hold it.
     ///
     /// Consumes the shred so the nonce can be appended in place when no one else holds the payload;
     /// clone it first to keep the shred and pay for a copy instead.
@@ -831,8 +884,7 @@ mod tests {
 
     #[test]
     fn parse_fixture_matches_expected_sections() {
-        let (parsed, nonce) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
-        assert_matches!(nonce, None);
+        let parsed = parse_turbine(fixtures::DATA_SHRED).unwrap();
         let shred = parsed
             .into_data()
             .expect("the fixture is a data shred, not a code shred");
@@ -882,7 +934,7 @@ mod tests {
 
     #[test]
     fn cascade_reaches_verified() {
-        let (parsed, _) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
+        let parsed = parse_turbine(fixtures::DATA_SHRED).unwrap();
         let shred = parsed
             .into_data()
             .expect("the fixture is a data shred, not a code shred");
@@ -892,7 +944,7 @@ mod tests {
         assert_eq!(shred.data().len(), 963);
 
         // The same shred against any other signer.
-        let (parsed, _) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
+        let parsed = parse_turbine(fixtures::DATA_SHRED).unwrap();
         let shred = parsed
             .into_data()
             .expect("the fixture is a data shred, not a code shred");
@@ -915,7 +967,7 @@ mod tests {
                 ShredVariant::MerkleDataResigned,
             ),
         ] {
-            let (parsed, _) = parse(bytes, ShredSource::Turbine).unwrap();
+            let parsed = parse_turbine(bytes).unwrap();
             let shred = parsed
                 .into_data()
                 .unwrap_or_else(|_| panic!("{variant:?} is a data shred, not a code shred"));
@@ -933,7 +985,7 @@ mod tests {
                 ShredVariant::MerkleCodeResigned,
             ),
         ] {
-            let (parsed, _) = parse(bytes, ShredSource::Turbine).unwrap();
+            let parsed = parse_turbine(bytes).unwrap();
             let shred = parsed
                 .into_code()
                 .unwrap_or_else(|_| panic!("{variant:?} is a code shred, not a data shred"));
@@ -978,7 +1030,7 @@ mod tests {
         let shred = fixtures::DATA_SHRED;
         for len in 0..shred.len() {
             assert_matches!(
-                parse(shred.slice(..len), ShredSource::Turbine),
+                parse_turbine(shred.slice(..len)),
                 Err(ParseError::TooShort { .. }),
                 "a {len}-byte prefix of a 1203-byte shred must be rejected as too short"
             );
@@ -994,23 +1046,35 @@ mod tests {
         let mut bytes = fixtures::DATA_SHRED.to_vec();
         bytes[OFFSET_OF_VARIANT] = byte;
         assert_matches!(
-            parse(Bytes::from(bytes), ShredSource::Turbine),
+            parse_turbine(Bytes::from(bytes)),
             Err(ParseError::InvalidVariant(found)) if found == byte
         );
     }
 
     #[test]
-    fn trailing_repair_nonce_is_split_off() {
+    fn repair_nonce_is_split_off() {
         let mut bytes = fixtures::DATA_SHRED.to_vec();
         bytes.extend_from_slice(&0x0a0b_0c0du32.to_le_bytes());
-        let (_, nonce) = parse(Bytes::from(bytes.clone()), ShredSource::Repair).unwrap();
-        assert_eq!(nonce, Some(0x0a0b_0c0d));
+        let (_, nonce) = parse_repair(Bytes::from(bytes.clone())).unwrap();
+        assert_eq!(nonce, 0x0a0b_0c0d);
+
+        // The same bytes are a malformed Turbine packet: only a repair response carries a nonce.
+        assert_matches!(
+            parse_turbine(Bytes::from(bytes.clone())),
+            Err(ParseError::TrailingBytes(4))
+        );
 
         // Anything else trailing the shred is neither a nonce nor padding we should accept.
         bytes.push(0);
         assert_matches!(
-            parse(Bytes::from(bytes), ShredSource::Turbine),
+            parse_repair(Bytes::from(bytes)),
             Err(ParseError::TrailingBytes(5))
+        );
+
+        // A repair response has to carry the nonce it is a response to.
+        assert_matches!(
+            parse_repair(fixtures::DATA_SHRED),
+            Err(ParseError::MissingNonce)
         );
     }
 
@@ -1031,7 +1095,7 @@ mod tests {
         Reject::BadParentOffset { slot: fixtures::FIXTURE_SLOT, parent_offset: 1 }
     )]
     fn admit_rejects_out_of_policy(policy: AdmissionPolicy, expected: Reject) {
-        let (parsed, _) = parse(fixtures::DATA_SHRED, ShredSource::Turbine).unwrap();
+        let parsed = parse_turbine(fixtures::DATA_SHRED).unwrap();
         let shred = parsed
             .into_data()
             .expect("the fixture is a data shred, not a code shred");
@@ -1044,7 +1108,7 @@ mod tests {
     #[test]
     fn parsing_as_the_wrong_kind_is_rejected() {
         assert_matches!(
-            Shred::<Code, Parsed>::parse(fixtures::DATA_SHRED, ShredSource::Turbine),
+            Shred::<Code, Parsed>::parse_turbine(fixtures::DATA_SHRED),
             Err(ParseError::UnexpectedKind {
                 expected: ShredKind::Code,
                 found: ShredKind::Data,

@@ -9,9 +9,16 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_shred::{
-        AdmissionPolicy, AnyShred, BatchPosition, CodeShred, Data, DataShred, FecSet, FecSetSpec,
-        ParseError, Parsed, Reject, Shred, ShredKind, ShredLayout, ShredSource, ShredView,
-        Verified, fixtures, parse, recover,
+        build::{BatchPosition, FecSet, FecSetSpec},
+        error::{ParseError, Reject},
+        fixtures,
+        kind::{Data, ShredLayout},
+        policy::AdmissionPolicy,
+        recover::recover,
+        shred::{AnyShred, CodeShred, DataShred, Shred, parse_repair, parse_turbine},
+        shred_variant::ShredKind,
+        state::{Parsed, Verified},
+        view::ShredView,
         wire_format::{
             Nonce, SIZE_OF_COMMON_HEADER, SIZE_OF_DATA_HEADER, SIZE_OF_MERKLE_PROOF_ENTRY,
             SIZE_OF_NONCE,
@@ -41,13 +48,8 @@ impl fmt::Debug for BlockLocation {
 
 /// A shred on its way from a socket reader to a sigverify worker.
 struct Inbound {
-    /// The reader parses, because it has to read the trailing nonce anyway and a parse is cheap. So what
-    /// crosses this channel is a shred rather than a buffer, and the worker never sees the wire format.
     shred: AnyShred<Parsed>,
     /// What the nonce resolved to, for a repair response; `None` for a Turbine shred.
-    ///
-    /// Which socket the shred came off is in its provenance; where the repaired block goes is not,
-    /// because it is a blockstore column rather than anything about the bytes.
     repair_location: Option<BlockLocation>,
 }
 
@@ -63,9 +65,9 @@ enum Dropped {
     /// Not a shred: too short, or a variant byte that decodes to nothing.
     #[error("malformed: {0}")]
     Malformed(#[from] ParseError),
-    /// A repair response carrying a nonce this node never asked for, or none at all.
-    #[error("unsolicited repair response, nonce={0:?}")]
-    Unsolicited(Option<Nonce>),
+    /// A repair response carrying a nonce this node never asked for.
+    #[error("unsolicited repair response, nonce={0}")]
+    Unsolicited(Nonce),
 }
 
 fn main() {
@@ -297,25 +299,24 @@ fn read_packet(
     from_repair: bool,
     outstanding: &mut HashSet<Nonce>,
 ) -> Result<Inbound, Dropped> {
-    let source = match from_repair {
-        true => ShredSource::Repair,
-        false => ShredSource::Turbine,
-    };
-    let (shred, nonce) = parse(packet, source).map_err(Dropped::Malformed)?;
+    // Which socket the packet came off decides which parse it gets: only a repair response has a
+    // nonce behind the shred, and that is settled before a byte is read.
     if !from_repair {
+        let shred = parse_turbine(packet).map_err(Dropped::Malformed)?;
         return Ok(Inbound {
             shred,
             repair_location: None,
         });
     }
-    // A repair response has to carry a nonce, and it has to be one still outstanding. Consuming it
-    // is what keeps one response from answering the same request twice.
-    match nonce.filter(|nonce| outstanding.remove(nonce)) {
-        Some(request_id) => Ok(Inbound {
+    let (shred, nonce) = parse_repair(packet).map_err(Dropped::Malformed)?;
+    // The nonce has to be one still outstanding. Consuming it is what keeps one response from
+    // answering the same request twice.
+    match outstanding.remove(&nonce) {
+        true => Ok(Inbound {
             shred,
-            repair_location: Some(BlockLocation { request_id }),
+            repair_location: Some(BlockLocation { request_id: nonce }),
         }),
-        None => Err(Dropped::Unsolicited(nonce)),
+        false => Err(Dropped::Unsolicited(nonce)),
     }
 }
 
@@ -408,14 +409,12 @@ fn with_nonce(shred: Bytes, nonce: Nonce) -> Bytes {
 /// Parses one fixture and prints its sections, to show what the worker's first stage reads.
 fn print_wire_layout() {
     println!("off the wire: {} bytes", fixtures::DATA_SHRED.len());
-    let (parsed, nonce) = parse(fixtures::DATA_SHRED, ShredSource::Turbine)
-        .expect("the fixture is a well-formed shred");
+    let parsed = parse_turbine(fixtures::DATA_SHRED).expect("the fixture is a well-formed shred");
     let common = *parsed.common();
     println!(
-        "parsed {:?}  resigned={}  repair_nonce={:?}  provenance={:?}",
+        "parsed {:?}  resigned={}  provenance={:?}",
         common.variant.shred_kind(),
         common.variant.resigned(),
-        nonce,
         parsed.provenance(),
     );
     println!(

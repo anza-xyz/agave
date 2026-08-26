@@ -10,8 +10,11 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_shred::{
-        AnyShred, BatchPosition, BuildError, DataShred, FecSet, FecSetSpec, ShredKind, Verified,
-        build::DATA_SHREDS,
+        build::{BatchPosition, DATA_SHREDS, FecSet, FecSetSpec},
+        error::BuildError,
+        shred::{AnyShred, DataShred},
+        shred_variant::ShredKind,
+        state::Verified,
     },
     std::collections::HashMap,
 };
@@ -57,7 +60,7 @@ fn shred(entries: &[u8], keypair: &Keypair) -> Result<Vec<FecSet>, BuildError> {
     };
     let mut batches = Vec::new();
     let mut chained_merkle_root = PARENT_MERKLE_ROOT;
-    let mut fec_set_index = 0;
+    let mut fec_set_index: u32 = 0;
     let mut rest = entries;
     loop {
         // Every shred of the slot's last batch reserves room for a retransmitter signature, so that

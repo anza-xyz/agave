@@ -1,11 +1,9 @@
-//! The admission policy: everything the [`verify`](crate::Shred::verify) transition needs to know
-//! about the node's current view of the cluster.
+//! The admission policy: everything the [`verify`](crate::shred::Shred::verify) transition needs to
+//! know about the node's current view of the cluster.
 //!
-//! Deliberately plain data. Resolving these values is the caller's job.
-//!
-//! It is a snapshot, not a standing configuration: every field is read from the node's state at some
-//! instant, and two of them are functions of the slot being verified rather than of the cluster. See
-//! [`AdmissionPolicy`] for what that means for a caller holding one across a batch of shreds.
+//! It is a snapshot, not a standing configuration: every field is read from the node's state at
+//! some instant, and two of them are functions of the slot being verified rather than of the
+//! cluster.
 
 use solana_clock::Slot;
 
@@ -13,23 +11,6 @@ use solana_clock::Slot;
 pub const DATA_SHREDS_PER_FEC_BLOCK: u32 = 32;
 
 /// Bounds a shred's headers must fall within to be worth verifying.
-///
-/// Only the first three fields describe the cluster. The two index limits are properties of the
-/// *slot* a shred belongs to: the cluster's values for them may change at a feature activation, so
-/// what a shred in one slot may claim is not necessarily what a shred in the next may. They are
-/// named `per_slot` for the quantity they bound, not for a promise that one value covers every slot.
-///
-/// So a policy is only good for the slots it was resolved against. A caller verifying a batch of
-/// shreds drawn from more than one slot, which a packet batch off the socket routinely is, must take
-/// the limits for each shred's own slot rather than resolve one policy and reuse it. In the
-/// incumbent that is `Bank::max_data_shreds_per_slot_for_slot(slot)` and its code counterpart, as
-/// opposed to the slot-independent `DEFAULT_MAX_*_SHREDS_PER_SLOT` constants, which are the right
-/// answer only for a caller that has no bank to ask, such as the shredder deciding what it may
-/// produce.
-///
-/// The two limits are equal and slot-independent as the cluster runs today, so reusing one policy is
-/// currently correct by accident. It is the sort of thing that stops being true in a release that
-/// changes neither this crate nor its callers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AdmissionPolicy {
     /// The only shred version this node accepts, derived from the genesis hash and hard forks.
