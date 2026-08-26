@@ -18,6 +18,7 @@
 /programs/bpf_loader/ @anza-xyz/svm
 /programs/compute-budget/ @anza-xyz/svm
 /programs/sbf/ @anza-xyz/svm
+/programs/sbf/Cargo.lock
 /programs/system/ @anza-xyz/svm
 /runtime-transaction/ @anza-xyz/tx-metadata
 /svm-callback/ @anza-xyz/svm
