@@ -557,14 +557,6 @@ impl BenchVoteSwitch {
             instruction_accounts,
         }
     }
-    fn run(&self) {
-        let _accounts = process_deprecated_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchAuthorizeChecked {
@@ -635,14 +627,6 @@ impl BenchAuthorizeChecked {
             instruction_accounts,
         }
     }
-    fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchUpdateVoteState {
@@ -687,15 +671,6 @@ impl BenchUpdateVoteState {
             transaction_accounts,
             instruction_accounts,
         }
-    }
-
-    fn run(&self) {
-        let _accounts = process_deprecated_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
     }
 }
 
@@ -1165,28 +1140,92 @@ fn bench_update_commission(c: &mut Criterion) {
 fn bench_vote_switch(c: &mut Criterion) {
     let test_setup = BenchVoteSwitch::new();
     c.bench_function("vote_vote_switch", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_authorize_checked(c: &mut Criterion) {
     let test_setup = BenchAuthorizeChecked::new();
     c.bench_function("vote_authorize_checked", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_update_vote_state(c: &mut Criterion) {
     let test_setup = BenchUpdateVoteState::new(false);
     c.bench_function("vote_update_vote_state", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_update_vote_state_switch(c: &mut Criterion) {
     let test_setup = BenchUpdateVoteState::new(true);
     c.bench_function("vote_update_vote_state_switch", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
