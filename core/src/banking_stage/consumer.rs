@@ -318,8 +318,39 @@ impl Consumer {
             })
             .collect();
 
+        // This guard allows bank retirement to wait for load/execution-side effects before shared
+        // state for the slot is purged.
+        let tx_execution_guard = bank.try_enter_transaction_execution();
+        let Some(tx_execution_guard) = tx_execution_guard else {
+            // This bank is being quiesced! Early exit.
+            retryable_transaction_indexes.extend(
+                batch
+                    .lock_results()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, result)| {
+                        result.is_ok().then_some(RetryableIndex {
+                            index,
+                            immediately_retryable: true,
+                        })
+                    }),
+            );
+            retryable_transaction_indexes.sort_unstable();
+            retryable_transaction_indexes.dedup();
+            return ExecuteAndCommitTransactionsOutput {
+                transaction_counts: LeaderProcessedTransactionCounts {
+                    attempted_processing_count: batch.sanitized_transactions().len() as u64,
+                    ..LeaderProcessedTransactionCounts::default()
+                },
+                retryable_transaction_indexes,
+                commit_transactions_result: Err(PohRecorderError::MaxHeightReached),
+                execute_and_commit_timings,
+                error_counters,
+            };
+        };
+
         let (load_and_execute_transactions_output, load_execute_us) =
-            measure_us!(bank.load_and_execute_transactions(
+            measure_us!(tx_execution_guard.load_and_execute_transactions(
                 batch,
                 bank.max_processing_age(),
                 &mut execute_and_commit_timings.execute_timings,
@@ -368,8 +399,12 @@ impl Consumer {
             processed_transactions
         });
 
+        // Handoff from the execution guard to the traditional freeze lock before recording. A
+        // normal freeze only waits for this record/commit section, while bank retirement first
+        // waits for execution guards and then for this lock.
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
+        drop(tx_execution_guard);
 
         let reserved_bytes =
             bank.entry_bytes_budget()
