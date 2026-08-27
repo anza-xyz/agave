@@ -189,11 +189,8 @@ impl OptimisticallyConfirmedBankTracker {
         }
     }
 
-    // Delivers the actual OptimisticallyConfirmed notification for a frozen,
-    // confirmed bank: gossip notify, slot-status send, and prioritization-fee
-    // finalize. Unlike `notify_or_defer`, this does not compare against
-    // `last_notified_confirmed_slot` -- callers must decide whether this slot
-    // is still eligible to be notified.
+    // Unlike `notify_or_defer`, does not check against
+    // `last_notified_confirmed_slot` -- callers must decide eligibility.
     fn notify_confirmed_slot(
         subscriptions: &RpcSubscriptions,
         slot: Slot,
@@ -427,13 +424,8 @@ impl OptimisticallyConfirmedBankTracker {
                             prioritization_fee_cache,
                         );
                     } else {
-                        // A later slot's OptimisticallyConfirmed notification
-                        // already advanced last_notified_confirmed_slot past
-                        // this slot while this bank was still unfrozen (and
-                        // therefore ineligible for the threshold walk above).
-                        // Deliver this deferred notification explicitly, since
-                        // notify_or_defer_confirmed_banks would otherwise emit
-                        // nothing for it and permanently drop it.
+                        // Overtaken by a later slot; the threshold walk would
+                        // emit nothing, so notify directly.
                         Self::notify_confirmed_slot(
                             subscriptions,
                             frozen_slot,
