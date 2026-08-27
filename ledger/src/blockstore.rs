@@ -139,15 +139,6 @@ type UpdateParentShredParentKey = (BlockLocation, Slot, u32);
 type UpdateParentShredParentCache =
     LruCache<UpdateParentShredParentKey, /* parent used for shred filtering */ Slot>;
 
-struct UpdateParentTransactions {
-    transactions: Vec<VersionedTransaction>,
-    signature_indexes: HashMap<Signature, u32>,
-}
-
-// Request-scoped cache of transactions after an UpdateParent marker. `None` caches slots that do
-// not contain an UpdateParent marker.
-type UpdateParentTransactionsCache = HashMap<Slot, Option<UpdateParentTransactions>>;
-
 struct SignalUpdates {
     should_signal: bool,
     newly_completed_slots_with_last_index: Vec<(u64, u64)>,
@@ -4522,7 +4513,6 @@ impl Blockstore {
         &self,
         signature: Signature,
         confirmed_unrooted_slots: &HashSet<Slot>,
-        update_parent_transactions_cache: &mut UpdateParentTransactionsCache,
     ) -> Result<(Option<(Slot, TransactionStatusMeta)>, u64)> {
         let mut counter = 0;
         let (lock, _) = self.ensure_lowest_cleanup_slot();
@@ -4541,16 +4531,6 @@ impl Blockstore {
             if !self.is_root(slot) && !confirmed_unrooted_slots.contains(&slot) {
                 continue;
             }
-
-            if self
-                .get_transactions_if_update_parent(slot, update_parent_transactions_cache)?
-                .is_some_and(|transactions| {
-                    !transactions.signature_indexes.contains_key(&signature)
-                })
-            {
-                continue;
-            }
-
             let status = self
                 .transaction_status_cf
                 .get_protobuf((signature, slot))?
@@ -4571,39 +4551,14 @@ impl Blockstore {
         self.get_transaction_status(signature, &HashSet::default())
     }
 
-    /// Returns rooted transaction statuses in the same order as the provided signatures.
-    pub fn get_rooted_transaction_statuses(
-        &self,
-        signatures: &[Signature],
-    ) -> Result<Vec<Option<(Slot, TransactionStatusMeta)>>> {
-        let confirmed_unrooted_slots = HashSet::default();
-        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
-        signatures
-            .iter()
-            .map(|signature| {
-                self.get_transaction_status_with_counter(
-                    *signature,
-                    &confirmed_unrooted_slots,
-                    &mut update_parent_transactions_cache,
-                )
-                .map(|(status, _)| status)
-            })
-            .collect()
-    }
-
     /// Returns a transaction status
     pub fn get_transaction_status(
         &self,
         signature: Signature,
         confirmed_unrooted_slots: &HashSet<Slot>,
     ) -> Result<Option<(Slot, TransactionStatusMeta)>> {
-        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
-        self.get_transaction_status_with_counter(
-            signature,
-            confirmed_unrooted_slots,
-            &mut update_parent_transactions_cache,
-        )
-        .map(|(status, _)| status)
+        self.get_transaction_status_with_counter(signature, confirmed_unrooted_slots)
+            .map(|(status, _)| status)
     }
 
     /// Returns a complete transaction if it was processed in a root
@@ -4633,32 +4588,12 @@ impl Blockstore {
         signature: Signature,
         confirmed_unrooted_slots: &HashSet<Slot>,
     ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
-        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
-        if let Some((slot, meta)) = self
-            .get_transaction_status_with_counter(
-                signature,
-                confirmed_unrooted_slots,
-                &mut update_parent_transactions_cache,
-            )?
-            .0
+        if let Some((slot, meta)) =
+            self.get_transaction_status(signature, confirmed_unrooted_slots)?
         {
-            let (transaction, index) = if let Some(update_parent_transactions) =
-                self.get_transactions_if_update_parent(slot, &mut update_parent_transactions_cache)?
-            {
-                let index = *update_parent_transactions
-                    .signature_indexes
-                    .get(&signature)
-                    .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?;
-                let transaction = update_parent_transactions
-                    .transactions
-                    .get(index as usize)
-                    .cloned()
-                    .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?;
-                (transaction, index)
-            } else {
-                self.find_transaction_in_slot(slot, signature)?
-                    .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?
-            };
+            let (transaction, index) = self
+                .find_transaction_in_slot(slot, signature)?
+                .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?; // Should not happen
 
             let block_time = self.get_block_time(slot)?;
             Ok(Some(ConfirmedTransactionWithStatusMeta {
@@ -4705,68 +4640,6 @@ impl Blockstore {
             .map(|(index, transaction)| (transaction, index as u32)))
     }
 
-    fn get_transactions_if_update_parent<'a>(
-        &self,
-        slot: Slot,
-        cache: &'a mut UpdateParentTransactionsCache,
-    ) -> Result<Option<&'a UpdateParentTransactions>> {
-        if let HashMapEntry::Vacant(entry) = cache.entry(slot) {
-            let update_parent_transactions = match self.meta(slot)? {
-                Some(slot_meta) if slot_meta.has_update_parent() => {
-                    let transactions: Vec<_> = self
-                        .get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?
-                        .into_iter()
-                        .flat_map(|entry| entry.transactions)
-                        .collect();
-
-                    let mut signature_indexes = HashMap::with_capacity(transactions.len());
-                    for (index, transaction) in transactions.iter().enumerate() {
-                        let Some(signature) = transaction.signatures.first() else {
-                            continue;
-                        };
-                        let index = u32::try_from(index)
-                            .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
-                        signature_indexes.entry(*signature).or_insert(index);
-                    }
-
-                    Some(UpdateParentTransactions {
-                        transactions,
-                        signature_indexes,
-                    })
-                }
-                _ => None,
-            };
-
-            entry.insert(update_parent_transactions);
-        }
-
-        Ok(cache.get(&slot).and_then(Option::as_ref))
-    }
-
-    fn address_signature_matches_transaction(
-        &self,
-        address: &Pubkey,
-        slot: Slot,
-        transaction_index: u32,
-        signature: Signature,
-        transactions: &[VersionedTransaction],
-    ) -> Result<bool> {
-        let Some(transaction) = transactions.get(transaction_index as usize) else {
-            return Ok(false);
-        };
-        if transaction.signatures.first() != Some(&signature) {
-            return Ok(false);
-        }
-        if transaction.message.static_account_keys().contains(address) {
-            return Ok(true);
-        }
-        let Some(status) = self.read_transaction_status((signature, slot))? else {
-            return Ok(false);
-        };
-        Ok(status.loaded_addresses.writable.contains(address)
-            || status.loaded_addresses.readonly.contains(address))
-    }
-
     // Returns all signatures for an address in a particular slot, regardless of whether that slot
     // has been rooted. The transactions will be ordered by their occurrence in the block
     fn find_address_signatures_for_slot(
@@ -4779,9 +4652,6 @@ impl Blockstore {
         if slot < lowest_available_slot {
             return Ok(signatures);
         }
-        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
-        let update_parent_transactions =
-            self.get_transactions_if_update_parent(slot, &mut update_parent_transactions_cache)?;
         let index_iterator = self.address_signatures_cf.iter(IteratorMode::From(
             (
                 pubkey,
@@ -4794,17 +4664,6 @@ impl Blockstore {
         for ((address, transaction_slot, transaction_index, signature), _) in index_iterator {
             if transaction_slot > slot || address != pubkey {
                 break;
-            }
-            if let Some(update_parent_transactions) = update_parent_transactions
-                && !self.address_signature_matches_transaction(
-                    &pubkey,
-                    transaction_slot,
-                    transaction_index,
-                    signature,
-                    &update_parent_transactions.transactions,
-                )?
-            {
-                continue;
             }
             signatures.push((transaction_slot, signature, transaction_index));
         }
@@ -4928,8 +4787,6 @@ impl Blockstore {
             (address, slot, 0, Signature::default()),
             IteratorDirection::Reverse,
         ))?;
-        let mut transactions_slot = None;
-        let mut update_parent_transactions_cache = UpdateParentTransactionsCache::default();
 
         // Iterate until limit is reached
         while address_signatures.len() < limit {
@@ -4939,28 +4796,6 @@ impl Blockstore {
                 }
                 if key_address == address {
                     if self.is_root(slot) || confirmed_unrooted_slots.contains(&slot) {
-                        // Address-signature records are grouped by slot. Once this reverse iterator
-                        // moves to an older slot it cannot revisit the previous one, so retaining
-                        // transactions for more than the current slot only increases request memory.
-                        if transactions_slot != Some(slot) {
-                            transactions_slot = Some(slot);
-                            update_parent_transactions_cache.clear();
-                        }
-                        if let Some(update_parent_transactions) = self
-                            .get_transactions_if_update_parent(
-                                slot,
-                                &mut update_parent_transactions_cache,
-                            )?
-                            && !self.address_signature_matches_transaction(
-                                &address,
-                                slot,
-                                transaction_index,
-                                signature,
-                                &update_parent_transactions.transactions,
-                            )?
-                        {
-                            continue;
-                        }
                         address_signatures.push((slot, signature, transaction_index));
                     }
                     continue;
