@@ -3863,6 +3863,26 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     // for the partition.
     assert!(partition_node_stake < our_node_stake && partition_node_stake < good_node_stake);
 
+    let validator_keys: Vec<_> = iter::repeat_with(ValidatorKeys::new)
+        .take(node_stakes.len())
+        .collect();
+    // Restrict repair to the leader and good node, which both hold the duplicate-confirmed version.
+    let good_block_repair_validators = HashSet::from([
+        validator_keys[0].node_keypair.pubkey(), // Bad leader stores the original version.
+        validator_keys[2].node_keypair.pubkey(), // Good node receives the original version.
+    ]);
+    let validator_test_configs = validator_keys
+        .into_iter()
+        .map(|validator_keys| ValidatorTestConfig {
+            validator_keys,
+            validator_config: ValidatorConfig {
+                repair_validators: Some(good_block_repair_validators.clone()),
+                ..ValidatorConfig::default_for_test()
+            },
+            in_genesis: true,
+        })
+        .collect();
+
     let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
 
     // 1) Set up the cluster
@@ -3872,7 +3892,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
             duplicate_slot_sender: Some(duplicate_slot_sender),
         }),
         node_stakes,
-        None,
+        Some(validator_test_configs),
         None,
     );
 
