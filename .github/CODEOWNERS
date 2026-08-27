@@ -18,7 +18,10 @@
 /programs/bpf_loader/ @anza-xyz/svm
 /programs/compute-budget/ @anza-xyz/svm
 /programs/sbf/ @anza-xyz/svm
+# Last matching pattern takes precedence in CODEOWNERS; clear the owner from
+# the Cargo.lock and Cargo.toml file to avoid required @anza-xyz/svm review
 /programs/sbf/Cargo.lock
+/programs/sbf/Cargo.toml
 /programs/system/ @anza-xyz/svm
 /runtime-transaction/ @anza-xyz/tx-metadata
 /svm-callback/ @anza-xyz/svm
@@ -29,6 +32,14 @@
 /svm-timings/ @anza-xyz/svm
 /svm-type-overrides/ @anza-xyz/svm
 /svm/ @anza-xyz/svm
+# Last matching pattern takes precedence in CODEOWNERS; clear the owner from
+# the Cargo.lock and Cargo.toml file to avoid required @anza-xyz/svm review
+/svm/tests/example-programs/clock-sysvar/Cargo.toml
+/svm/tests/example-programs/complex-transfer/Cargo.toml
+/svm/tests/example-programs/hello-solana/Cargo.toml
+/svm/tests/example-programs/simple-transfer/Cargo.toml
+/svm/tests/example-programs/transfer-from-account/Cargo.toml
+/svm/tests/example-programs/write-to-account/Cargo.toml
 /syscalls/ @anza-xyz/svm
 /tls-utils/ @anza-xyz/networking
 /transaction-context/ @anza-xyz/svm
