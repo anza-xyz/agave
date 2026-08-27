@@ -117,6 +117,7 @@ fn program_cache_execution(threads: usize) {
                     .program_runtime_environment_for_epoch(processor.epoch.saturating_add(1));
                 processor.prepare_one_program_for_upcoming_feature_set(
                     &account_loader,
+                    false,
                     &upcoming_environment,
                     &program,
                     &ProgramStatistics::default(),
