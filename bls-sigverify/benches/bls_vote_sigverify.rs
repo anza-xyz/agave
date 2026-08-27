@@ -134,7 +134,7 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
                 |(votes, prepared_hash_map, max_validators)| {
                     let res = verify_individual_votes(
                         max_validators,
-                        black_box(votes),
+                        black_box(&votes),
                         black_box(prepared_hash_map),
                         &thread_pool,
                     );
