@@ -189,6 +189,31 @@ impl OptimisticallyConfirmedBankTracker {
         }
     }
 
+    // Delivers the actual OptimisticallyConfirmed notification for a frozen,
+    // confirmed bank: gossip notify, slot-status send, and prioritization-fee
+    // finalize. Unlike `notify_or_defer`, this does not compare against
+    // `last_notified_confirmed_slot` -- callers must decide whether this slot
+    // is still eligible to be notified.
+    fn notify_confirmed_slot(
+        subscriptions: &RpcSubscriptions,
+        slot: Slot,
+        bank_id: BankId,
+        slot_notification_subscribers: &Option<Arc<RwLock<Vec<SlotNotificationSender>>>>,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
+    ) {
+        debug!("notifying via notify_gossip_subscribers for slot {slot:?}");
+        subscriptions.notify_gossip_subscribers(slot);
+        Self::notify_slot_status(
+            slot_notification_subscribers,
+            SlotNotification::OptimisticallyConfirmed(slot, bank_id),
+        );
+
+        // finalize block's minimum prioritization fee cache for this bank
+        if let Some(prioritization_fee_cache) = prioritization_fee_cache {
+            prioritization_fee_cache.finalize_priority_fee(slot, bank_id);
+        }
+    }
+
     fn notify_or_defer(
         subscriptions: &RpcSubscriptions,
         bank_forks: &RwLock<BankForks>,
@@ -201,21 +226,14 @@ impl OptimisticallyConfirmedBankTracker {
     ) {
         if bank.is_frozen() {
             if bank.slot() > *last_notified_confirmed_slot {
-                debug!(
-                    "notify_or_defer notifying via notify_gossip_subscribers for slot {:?}",
-                    bank.slot()
-                );
-                subscriptions.notify_gossip_subscribers(bank.slot());
-                *last_notified_confirmed_slot = bank.slot();
-                Self::notify_slot_status(
+                Self::notify_confirmed_slot(
+                    subscriptions,
+                    bank.slot(),
+                    bank.bank_id(),
                     slot_notification_subscribers,
-                    SlotNotification::OptimisticallyConfirmed(bank.slot(), bank.bank_id()),
+                    prioritization_fee_cache,
                 );
-
-                // finalize block's minimum prioritization fee cache for this bank
-                if let Some(prioritization_fee_cache) = prioritization_fee_cache {
-                    prioritization_fee_cache.finalize_priority_fee(bank.slot(), bank.bank_id());
-                }
+                *last_notified_confirmed_slot = bank.slot();
             }
         } else if let Some((slot, hash)) = pending_confirmation
             && bank.slot() == slot
@@ -396,17 +414,34 @@ impl OptimisticallyConfirmedBankTracker {
                          {frozen_slot:?}"
                     );
 
-                    Self::notify_or_defer_confirmed_banks(
-                        subscriptions,
-                        bank_forks,
-                        bank.clone(),
-                        *last_notified_confirmed_slot,
-                        None,
-                        last_notified_confirmed_slot,
-                        pending_optimistically_confirmed_banks,
-                        slot_notification_subscribers,
-                        prioritization_fee_cache,
-                    );
+                    if frozen_slot > *last_notified_confirmed_slot {
+                        Self::notify_or_defer_confirmed_banks(
+                            subscriptions,
+                            bank_forks,
+                            bank.clone(),
+                            *last_notified_confirmed_slot,
+                            None,
+                            last_notified_confirmed_slot,
+                            pending_optimistically_confirmed_banks,
+                            slot_notification_subscribers,
+                            prioritization_fee_cache,
+                        );
+                    } else {
+                        // A later slot's OptimisticallyConfirmed notification
+                        // already advanced last_notified_confirmed_slot past
+                        // this slot while this bank was still unfrozen (and
+                        // therefore ineligible for the threshold walk above).
+                        // Deliver this deferred notification explicitly, since
+                        // notify_or_defer_confirmed_banks would otherwise emit
+                        // nothing for it and permanently drop it.
+                        Self::notify_confirmed_slot(
+                            subscriptions,
+                            frozen_slot,
+                            bank.bank_id(),
+                            slot_notification_subscribers,
+                            prioritization_fee_cache,
+                        );
+                    }
                     if frozen_slot > *highest_confirmed_slot {
                         *highest_confirmed_slot = frozen_slot;
                     }
@@ -872,5 +907,128 @@ mod tests {
         dependency_tracker.mark_this_and_all_previous_work_processed(work_id_2);
 
         handle.join().unwrap();
+    }
+
+    // Regression test for https://github.com/anza-xyz/agave/issues/14893:
+    // a deferred OptimisticallyConfirmed notification must still be
+    // delivered when it freezes after a later slot's confirmation has
+    // already advanced last_notified_confirmed_slot past it.
+    #[test]
+    fn test_deferred_confirmed_notification_survives_overtake() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        // Two children of bank0 on sibling forks: bank1 stays unfrozen while
+        // bank2 freezes, modeling OC(1) arriving while bank1 is unfrozen and
+        // OC(2) arriving after bank2 has already frozen.
+        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        bank_forks.write().unwrap().insert(bank1);
+        let bank2 = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
+        bank_forks.write().unwrap().insert(bank2);
+        let bank2 = bank_forks.read().unwrap().get(2).unwrap();
+        bank2.freeze();
+        let bank1_pending_hash = Hash::new_unique();
+
+        let optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>> =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
+        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
+            exit,
+            max_complete_transaction_status_slot,
+            bank_forks.clone(),
+            block_commitment_cache,
+            optimistically_confirmed_bank.clone(),
+        ));
+
+        let (sender, receiver) = bounded(16);
+        let slot_notification_subscribers = Some(Arc::new(RwLock::new(vec![sender])));
+        let mut pending_optimistically_confirmed_banks = PendingOptimisticallyConfirmedBanks::new();
+        let mut last_notified_confirmed_slot: Slot = 0;
+        let mut highest_confirmed_slot: Slot = 0;
+        let mut newest_root_slot: Slot = 0;
+
+        // OC(1) while bank1 is unfrozen: the notification parks in pending.
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::OptimisticallyConfirmed(1, bank1_pending_hash),
+                None, /* no dependency work */
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending_optimistically_confirmed_banks,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &slot_notification_subscribers,
+            None,
+            &None, // No dependency tracker
+        );
+        assert!(pending_optimistically_confirmed_banks.contains(&(1, bank1_pending_hash)));
+        assert_eq!(last_notified_confirmed_slot, 0);
+
+        // OC(2) with bank2 already frozen: direct notify advances
+        // last_notified_confirmed_slot past the still-parked slot 1.
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::OptimisticallyConfirmed(2, bank2.hash()),
+                None, /* no dependency work */
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending_optimistically_confirmed_banks,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &slot_notification_subscribers,
+            None,
+            &None, // No dependency tracker
+        );
+        assert_eq!(last_notified_confirmed_slot, 2);
+
+        // Drain notifications emitted so far.
+        while receiver.try_recv().is_ok() {}
+
+        // bank1 finally freezes; its deferred confirmed notification must
+        // still be delivered even though last_notified_confirmed_slot is
+        // already ahead of it.
+        let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+        bank1.freeze();
+        assert!(pending_optimistically_confirmed_banks.remove(&(1, bank1_pending_hash)));
+        pending_optimistically_confirmed_banks.insert((1, bank1.hash()));
+
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::Frozen(bank1.clone()),
+                None, /* no dependency work */
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending_optimistically_confirmed_banks,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &slot_notification_subscribers,
+            None,
+            &None, // No dependency tracker
+        );
+
+        assert!(!pending_optimistically_confirmed_banks.contains(&(1, bank1.hash())));
+        let mut notifications = Vec::new();
+        while let Ok(n) = receiver.recv_timeout(Duration::from_millis(100)) {
+            notifications.push(n);
+        }
+        assert!(
+            notifications
+                .iter()
+                .any(|n| matches!(n, SlotNotification::OptimisticallyConfirmed(1, _))),
+            "parked confirmed notification for the overtaken slot must still be \
+             delivered; got {notifications:?}"
+        );
     }
 }
