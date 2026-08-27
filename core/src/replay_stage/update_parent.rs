@@ -24,8 +24,11 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, leader_schedule_utils::leader_slot_index,
-        transaction_execution::TransactionStatusSender, vote_sender_types::ReplayVoteSender,
+        bank::Bank,
+        bank_forks::BankForks,
+        leader_schedule_utils::leader_slot_index,
+        transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
+        vote_sender_types::ReplayVoteSender,
     },
     std::sync::{Arc, RwLock},
 };
@@ -122,7 +125,7 @@ fn try_restart_slot_from_update_parent(
     slot: Slot,
     replay_vote_sender: &ReplayVoteSender,
     migration_status: &MigrationStatus,
-    source: &str,
+    source: TransactionHistoryPurgeSource,
     entry_notification_sender: Option<&EntryNotifierSender>,
     transaction_status_sender: Option<&TransactionStatusSender>,
 ) -> bool {
@@ -187,7 +190,8 @@ fn try_restart_slot_from_update_parent(
     // Clear and let generate_new_bank_forks restart from replay_fec_set_index.
     info!(
         "{my_pubkey}: restarting slot {slot} from replay_fec_set_index {replay_fec_set_index} via \
-         {source} (was at {current_num_shreds} shreds)",
+         {} (was at {current_num_shreds} shreds)",
+        source.as_str(),
     );
     let cleared_bank_id = bank.map(|bank| {
         send_invalid_bank(&bank, replay_vote_sender);
@@ -196,7 +200,7 @@ fn try_restart_slot_from_update_parent(
     ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
     if let Some(transaction_status_sender) = transaction_status_sender {
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(slot)
+            .send_purge_transaction_history_for_slot(slot, source, None)
             .expect("TransactionStatusService failed to purge UpdateParent transaction history");
     }
     if let Some(cleared_bank_id) = cleared_bank_id {
@@ -272,7 +276,7 @@ pub(super) fn process_soft_dead_slots(
                 slot,
                 replay_vote_sender,
                 migration_status,
-                "soft-dead scan",
+                TransactionHistoryPurgeSource::SoftDeadSlot,
                 entry_notification_sender,
                 transaction_status_sender,
             );
@@ -335,7 +339,7 @@ pub(super) fn handle_update_parent_interrupts(
             signal.slot,
             replay_vote_sender,
             migration_status,
-            "UpdateParent signal",
+            TransactionHistoryPurgeSource::UpdateParentSignal,
             entry_notification_sender,
             transaction_status_sender,
         );
@@ -429,7 +433,11 @@ pub(super) fn handle_abandoned_bank(
         .as_ref()
     {
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(bank_slot)
+            .send_purge_transaction_history_for_slot(
+                bank_slot,
+                TransactionHistoryPurgeSource::AbandonedBank,
+                None,
+            )
             .expect("TransactionStatusService failed to purge UpdateParent transaction history")
     }
 

@@ -49,9 +49,34 @@ pub enum TransactionStatusMessage {
     Freeze(Arc<Bank>),
     PurgeTransactionHistory {
         slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        /// Exclusive transaction boundary for locally produced UpdateParent
+        /// slots. `None` means the persisted UpdateParent marker determines
+        /// the boundary.
+        num_transactions_before_update_parent: Option<usize>,
         requested_at: Instant,
         done_sender: crossbeam_channel::Sender<()>,
     },
+}
+
+/// The validator path that requested transaction-history cleanup for a slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionHistoryPurgeSource {
+    LeaderWindow,
+    SoftDeadSlot,
+    UpdateParentSignal,
+    AbandonedBank,
+}
+
+impl TransactionHistoryPurgeSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LeaderWindow => "leader_window",
+            Self::SoftDeadSlot => "soft_dead_slot",
+            Self::UpdateParentSignal => "update_parent_signal",
+            Self::AbandonedBank => "abandoned_bank",
+        }
+    }
 }
 
 pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
@@ -285,13 +310,20 @@ impl TransactionStatusSender {
 
     /// Requests removal of transaction history for `slot` and waits until the
     /// TransactionStatusService has finished processing the request.
-    pub fn send_purge_transaction_history_for_slot(&self, slot: Slot) -> Result<(), String> {
+    pub fn send_purge_transaction_history_for_slot(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        num_transactions_before_update_parent: Option<usize>,
+    ) -> Result<(), String> {
         let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
         let requested_at = Instant::now();
 
         self.sender
             .send(TransactionStatusMessage::PurgeTransactionHistory {
                 slot,
+                source,
+                num_transactions_before_update_parent,
                 requested_at,
                 done_sender,
             })

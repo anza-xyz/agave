@@ -274,13 +274,18 @@ impl TransactionStatusService {
             }
             TransactionStatusMessage::PurgeTransactionHistory {
                 slot,
+                source,
+                num_transactions_before_update_parent,
                 requested_at,
                 done_sender,
             } => {
                 let queue_wait_us = requested_at.elapsed().as_micros();
                 let purge_result = if enable_rpc_transaction_history {
                     blockstore
-                        .purge_transaction_history_for_slot(slot)
+                        .purge_transaction_history_for_slot_exact(
+                            slot,
+                            num_transactions_before_update_parent,
+                        )
                         .map(Some)
                 } else {
                     Ok(None)
@@ -296,16 +301,44 @@ impl TransactionStatusService {
 
                 datapoint_info!(
                     "transaction-status-service-purge-transaction-history",
+                    "source" => source.as_str(),
                     ("slot", slot, i64),
+                    (
+                        "explicit_transaction_boundary",
+                        num_transactions_before_update_parent.is_some(),
+                        bool
+                    ),
+                    (
+                        "expected_transactions",
+                        num_transactions_before_update_parent
+                            .and_then(|count| i64::try_from(count).ok())
+                            .unwrap_or(-1),
+                        i64
+                    ),
                     (
                         "rpc_transaction_history_enabled",
                         enable_rpc_transaction_history,
                         bool
                     ),
                     ("queue_wait_us", queue_wait_us, i64),
-                    ("rows_scanned", stats.rows_scanned, i64),
-                    ("rows_deleted", stats.rows_deleted, i64),
-                    ("scan_us", stats.scan_us, i64),
+                    ("transactions_processed", stats.transactions_processed, i64),
+                    ("deletion_keys_staged", stats.deletion_keys_staged(), i64),
+                    (
+                        "transaction_status_deletion_keys_staged",
+                        stats.transaction_status_deletion_keys_staged,
+                        i64
+                    ),
+                    (
+                        "transaction_memos_deletion_keys_staged",
+                        stats.transaction_memos_deletion_keys_staged,
+                        i64
+                    ),
+                    (
+                        "address_signatures_deletion_keys_staged",
+                        stats.address_signatures_deletion_keys_staged,
+                        i64
+                    ),
+                    ("prepare_deletions_us", stats.prepare_deletions_us, i64),
                     ("write_batch_us", stats.write_batch_us, i64),
                     ("request_elapsed_us", request_elapsed_us, i64),
                     ("success", success, bool),
@@ -398,17 +431,21 @@ pub(crate) mod tests {
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
         solana_clock::{BankId, Slot},
+        solana_entry::entry::next_entry_mut,
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
+        solana_ledger::{
+            blockstore::entries_to_test_shreds, genesis_utils::create_genesis_config,
+            get_tmp_ledger_path_auto_delete,
+        },
         solana_message::SimpleAddressLoader,
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, TransactionBalancesSet},
-            transaction_execution::TransactionStatusSender,
+            transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
         },
         solana_signature::Signature,
         solana_signer::Signer,
@@ -760,8 +797,17 @@ pub(crate) mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let slot = 42;
-        let signature = Signature::from([42; 64]);
+        let payer = Keypair::new();
         let address = Pubkey::new_unique();
+        let transaction = system_transaction::transfer(&payer, &address, 1, Hash::new_unique());
+        let signature = transaction.signatures[0];
+        let entry = next_entry_mut(&mut Hash::default(), 1, vec![transaction]);
+        blockstore
+            .insert_shreds(
+                entries_to_test_shreds(&[entry], slot, slot - 1, true, 0),
+                true,
+            )
+            .unwrap();
 
         blockstore
             .write_transaction_status(
@@ -789,7 +835,11 @@ pub(crate) mod tests {
         );
 
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(slot)
+            .send_purge_transaction_history_for_slot(
+                slot,
+                TransactionHistoryPurgeSource::UpdateParentSignal,
+                Some(1),
+            )
             .unwrap();
 
         assert!(
