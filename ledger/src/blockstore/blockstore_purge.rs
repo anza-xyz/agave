@@ -10,17 +10,29 @@ pub struct PurgeStats {
     delete_file_in_range: u64,
 }
 
-/// Work performed while removing one slot from the transaction-history columns.
+/// Work performed while removing transaction history before an UpdateParent boundary.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TransactionHistoryPurgeStats {
-    /// Number of rows inspected across all transaction-history columns.
-    pub rows_scanned: u64,
-    /// Number of rows removed across all transaction-history columns.
-    pub rows_deleted: u64,
-    /// Time spent scanning all transaction-history columns.
-    pub scan_us: u64,
+    /// Number of ledger transactions used to reconstruct transaction-history keys.
+    pub transactions_processed: u64,
+    /// Number of deletion keys staged for the transaction-status column.
+    pub transaction_status_deletion_keys_staged: u64,
+    /// Number of deletion keys staged for the transaction-memos column.
+    pub transaction_memos_deletion_keys_staged: u64,
+    /// Number of deletion keys staged for the address-signatures column.
+    pub address_signatures_deletion_keys_staged: u64,
+    /// Time spent reading ledger components and reconstructing deletion keys.
+    pub prepare_deletions_us: u64,
     /// Time spent committing the deletions to Blockstore.
     pub write_batch_us: u64,
+}
+
+impl TransactionHistoryPurgeStats {
+    pub fn deletion_keys_staged(&self) -> u64 {
+        self.transaction_status_deletion_keys_staged
+            .saturating_add(self.transaction_memos_deletion_keys_staged)
+            .saturating_add(self.address_signatures_deletion_keys_staged)
+    }
 }
 
 impl PurgeStats {
@@ -459,51 +471,107 @@ impl Blockstore {
         Ok(transaction_status_empty && address_signatures_empty)
     }
 
-    /// Removes all transaction history associated with `slot`.
+    /// Removes transaction history written before an UpdateParent boundary.
     ///
-    /// The transaction-status, transaction-memo, and address-signature columns
-    /// are not ordered by slot, so each column must be scanned in full. Matching
-    /// entries are deleted together in a single write batch. Callers must ensure
-    /// that no more transaction-history writes for `slot` can be submitted before
-    /// calling this method.
-    pub fn purge_transaction_history_for_slot(
+    /// The local producer supplies the exact number of transactions before its
+    /// UpdateParent marker. Replayers pass `None` and derive the boundary from
+    /// the persisted marker. All deletes are staged and the boundary is
+    /// validated before the write batch is committed.
+    pub fn purge_transaction_history_for_slot_exact(
         &self,
         slot: Slot,
+        num_transactions_before_update_parent: Option<usize>,
     ) -> Result<TransactionHistoryPurgeStats> {
+        if num_transactions_before_update_parent == Some(0) {
+            return Ok(TransactionHistoryPurgeStats::default());
+        }
+
         let mut write_batch = self.get_write_batch();
         let mut stats = TransactionHistoryPurgeStats::default();
+        let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
+        let (slot_components, _, _) =
+            self.get_slot_component_views_with_shred_info(slot, 0, true)?;
+        let mut transaction_index = 0usize;
+        let mut found_update_parent = false;
 
-        let mut scan_timer = Measure::start("transaction_history_scan");
-        for (index, _) in self.transaction_status_cf.iter(IteratorMode::Start)? {
-            stats.rows_scanned += 1;
-            if index.1 == slot {
-                stats.rows_deleted += 1;
-                self.transaction_status_cf
-                    .delete_in_batch(&mut write_batch, index);
+        'components: for component in slot_components {
+            if num_transactions_before_update_parent == Some(transaction_index) {
+                break;
+            }
+
+            match component {
+                ParsedBlockComponent::EntryBatch(entries) => {
+                    for transaction in entries.into_iter().flat_map(|entry| entry.transactions) {
+                        if num_transactions_before_update_parent == Some(transaction_index) {
+                            break 'components;
+                        }
+
+                        if let Some(&signature) = transaction.signatures().first() {
+                            let meta = self
+                                .read_transaction_status((signature, slot))?
+                                .ok_or(BlockstoreError::MissingTransactionMetadata)?;
+                            let loaded_addresses = meta.loaded_addresses;
+                            let account_keys = AccountKeys::new(
+                                transaction.static_account_keys(),
+                                Some(&loaded_addresses),
+                            );
+                            let transaction_index_u32 = u32::try_from(transaction_index)
+                                .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
+
+                            self.transaction_status_cf
+                                .delete_in_batch(&mut write_batch, (signature, slot));
+                            stats.transaction_status_deletion_keys_staged = stats
+                                .transaction_status_deletion_keys_staged
+                                .saturating_add(1);
+
+                            self.transaction_memos_cf
+                                .delete_in_batch(&mut write_batch, (signature, slot));
+                            stats.transaction_memos_deletion_keys_staged = stats
+                                .transaction_memos_deletion_keys_staged
+                                .saturating_add(1);
+
+                            for pubkey in account_keys.iter() {
+                                self.address_signatures_cf.delete_in_batch(
+                                    &mut write_batch,
+                                    (*pubkey, slot, transaction_index_u32, signature),
+                                );
+                                stats.address_signatures_deletion_keys_staged = stats
+                                    .address_signatures_deletion_keys_staged
+                                    .saturating_add(1);
+                            }
+                        }
+                        transaction_index = transaction_index
+                            .checked_add(1)
+                            .ok_or(BlockstoreError::TransactionIndexOverflow)?;
+                        stats.transactions_processed =
+                            stats.transactions_processed.saturating_add(1);
+                    }
+                }
+                ParsedBlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
+                    found_update_parent = true;
+                    break;
+                }
+                ParsedBlockComponent::BlockMarker(_) => {}
             }
         }
+        prepare_deletions_timer.stop();
+        stats.prepare_deletions_us = prepare_deletions_timer.as_us();
 
-        for (index, _) in self.transaction_memos_cf.iter(IteratorMode::Start)? {
-            stats.rows_scanned += 1;
-            if index.1 == slot {
-                stats.rows_deleted += 1;
-                self.transaction_memos_cf
-                    .delete_in_batch(&mut write_batch, index);
+        match num_transactions_before_update_parent {
+            Some(expected) if transaction_index != expected => {
+                return Err(BlockstoreError::TransactionHistoryPurgeBoundaryMismatch {
+                    slot,
+                    expected,
+                    found: transaction_index,
+                });
             }
+            None if !found_update_parent => {
+                return Err(BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(slot));
+            }
+            _ => {}
         }
 
-        for (index, _) in self.address_signatures_cf.iter(IteratorMode::Start)? {
-            stats.rows_scanned += 1;
-            if index.1 == slot {
-                stats.rows_deleted += 1;
-                self.address_signatures_cf
-                    .delete_in_batch(&mut write_batch, index);
-            }
-        }
-        scan_timer.stop();
-        stats.scan_us = scan_timer.as_us();
-
-        let mut write_batch_timer = Measure::start("write_batch");
+        let mut write_batch_timer = Measure::start("write_transaction_history_purge_batch");
         let write_result = self.write_batch(write_batch);
         write_batch_timer.stop();
         stats.write_batch_us = write_batch_timer.as_us();
@@ -627,6 +695,7 @@ pub mod tests {
         crate::{
             blockstore::tests::{
                 insert_complete_update_parent_slot, make_slot_entries_with_transactions,
+                write_transaction_statuses_for_entries,
             },
             get_tmp_ledger_path_auto_delete,
         },
@@ -1136,72 +1205,161 @@ pub mod tests {
     }
 
     #[test]
-    fn test_purge_transaction_history_for_slot() {
+    fn test_purge_transaction_history_exact_uses_explicit_boundary() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let purged_slot = 42;
-        let retained_slot = purged_slot + 1;
-        let signature = Signature::new_unique();
-        let address = Pubkey::new_unique();
-
-        for slot in [purged_slot, retained_slot] {
+        let slot = 42;
+        let entries = make_slot_entries_with_transactions(1);
+        let address = entries[0].transactions[0].message.static_account_keys()[0];
+        let shreds = entries_to_test_shreds(&entries, slot, slot - 1, true, 0);
+        blockstore.insert_shreds(shreds, true).unwrap();
+        let signatures = write_transaction_statuses_for_entries(&blockstore, slot, &entries);
+        for signature in &signatures {
             blockstore
-                .write_transaction_status(
-                    slot,
-                    signature,
-                    std::iter::once((&address, true)),
-                    TransactionStatusMeta::default(),
-                    0,
-                )
+                .write_transaction_memos(signature, slot, "memo".to_string())
                 .unwrap();
+        }
+
+        let error = blockstore
+            .purge_transaction_history_for_slot_exact(slot, None)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(error_slot)
+                if error_slot == slot
+        ));
+
+        let expected = signatures.len() + 1;
+        let error = blockstore
+            .purge_transaction_history_for_slot_exact(slot, Some(expected))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BlockstoreError::TransactionHistoryPurgeBoundaryMismatch {
+                slot: error_slot,
+                expected: error_expected,
+                found,
+            } if error_slot == slot
+                && error_expected == expected
+                && found == signatures.len()
+        ));
+
+        let signature = signatures[0];
+        assert!(
             blockstore
-                .write_transaction_memos(&signature, slot, format!("memo for slot {slot}"))
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, slot)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((address, slot, 0, signature))
+                .unwrap()
+                .is_some()
+        );
+
+        let stats = blockstore
+            .purge_transaction_history_for_slot_exact(slot, Some(signatures.len()))
+            .unwrap();
+        assert_eq!(stats.transactions_processed, signatures.len() as u64);
+        assert_eq!(
+            stats.transaction_status_deletion_keys_staged,
+            signatures.len() as u64
+        );
+        assert_eq!(
+            stats.transaction_memos_deletion_keys_staged,
+            signatures.len() as u64
+        );
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, slot)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((address, slot, 0, signature))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_purge_transaction_history_exact_uses_update_parent_marker() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let slot = 104;
+        let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+        for signature in fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&fixture.post_update_signatures)
+        {
+            blockstore
+                .write_transaction_memos(signature, slot, "memo".to_string())
                 .unwrap();
         }
 
         let stats = blockstore
-            .purge_transaction_history_for_slot(purged_slot)
+            .purge_transaction_history_for_slot_exact(slot, None)
             .unwrap();
+        assert_eq!(
+            stats.transactions_processed,
+            fixture.pre_update_signatures.len() as u64
+        );
 
-        assert_eq!(stats.rows_scanned, 6);
-        assert_eq!(stats.rows_deleted, 3);
-
+        let pre_update_signature = fixture.pre_update_signatures[0];
         assert!(
             blockstore
-                .read_transaction_status((signature, purged_slot))
+                .read_transaction_status((pre_update_signature, slot))
                 .unwrap()
                 .is_none()
         );
         assert!(
             blockstore
-                .read_transaction_memos(signature, purged_slot)
+                .read_transaction_memos(pre_update_signature, slot)
                 .unwrap()
                 .is_none()
         );
         assert!(
             blockstore
                 .address_signatures_cf
-                .get((address, purged_slot, 0, signature))
+                .get((fixture.pre_update_address, slot, 0, pre_update_signature))
                 .unwrap()
                 .is_none()
         );
 
+        let post_update_signature = fixture.post_update_signatures[0];
         assert!(
             blockstore
-                .read_transaction_status((signature, retained_slot))
+                .read_transaction_status((post_update_signature, slot))
                 .unwrap()
                 .is_some()
         );
-        assert_eq!(
+        assert!(
             blockstore
-                .read_transaction_memos(signature, retained_slot)
-                .unwrap(),
-            Some(format!("memo for slot {retained_slot}"))
+                .read_transaction_memos(post_update_signature, slot)
+                .unwrap()
+                .is_some()
         );
         assert!(
             blockstore
                 .address_signatures_cf
-                .get((address, retained_slot, 0, signature))
+                .get((fixture.post_update_address, slot, 0, post_update_signature,))
                 .unwrap()
                 .is_some()
         );

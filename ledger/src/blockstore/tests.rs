@@ -7253,7 +7253,7 @@ fn transaction_signatures(entries: &[Entry]) -> Vec<Signature> {
         .collect()
 }
 
-fn write_transaction_statuses_for_entries(
+pub(crate) fn write_transaction_statuses_for_entries(
     blockstore: &Blockstore,
     slot: Slot,
     entries: &[Entry],
@@ -7301,9 +7301,9 @@ fn write_transaction_statuses_for_entries(
 pub(crate) struct UpdateParentSlotFixture {
     previous_blockhash: String,
     post_update_blockhash: String,
-    pre_update_address: Pubkey,
+    pub(crate) pre_update_address: Pubkey,
     pub(crate) post_update_address: Pubkey,
-    pre_update_signatures: Vec<Signature>,
+    pub(crate) pre_update_signatures: Vec<Signature>,
     pub(crate) post_update_signatures: Vec<Signature>,
     post_update_starting_transaction_indexes: Vec<usize>,
     post_update_num_entries: usize,

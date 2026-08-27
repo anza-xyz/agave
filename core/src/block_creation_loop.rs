@@ -46,7 +46,7 @@ use {
         bank_forks_controller::{BankForksController, BankForksControllerError},
         block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
-        transaction_execution::TransactionStatusSender,
+        transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
         validated_block_finalization::ValidatedBlockFinalizationCert,
         validated_reward_certificate::ValidatedRewardCert,
     },
@@ -1027,7 +1027,11 @@ fn handle_parent_ready(
 
     if let Some(transaction_status_sender) = &ctx.transaction_status_sender {
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(slot)
+            .send_purge_transaction_history_for_slot(
+                slot,
+                TransactionHistoryPurgeSource::LeaderWindow,
+                Some(accumulated_txs.len()),
+            )
             .expect("TransactionStatusService failed to purge UpdateParent transaction history");
     }
 
@@ -1549,12 +1553,18 @@ mod tests {
         Arc::new(TestBankForksController { bank_forks })
     }
 
-    fn transaction_history_purge_responder()
-    -> (TransactionStatusSender, std::thread::JoinHandle<Slot>) {
+    fn transaction_history_purge_responder() -> (
+        TransactionStatusSender,
+        std::thread::JoinHandle<(Slot, TransactionHistoryPurgeSource, Option<usize>)>,
+    ) {
         let (sender, receiver) = bounded(1);
         let response_thread = std::thread::spawn(move || {
             let TransactionStatusMessage::PurgeTransactionHistory {
-                slot, done_sender, ..
+                slot,
+                source,
+                num_transactions_before_update_parent,
+                done_sender,
+                ..
             } = receiver
                 .recv_timeout(std::time::Duration::from_secs(1))
                 .unwrap()
@@ -1562,7 +1572,7 @@ mod tests {
                 panic!("expected transaction-history purge request");
             };
             done_sender.send(()).unwrap();
-            slot
+            (slot, source, num_transactions_before_update_parent)
         });
         (
             TransactionStatusSender {
@@ -2088,7 +2098,14 @@ mod tests {
         .unwrap()
         .expect("sad handover should recreate the leader bank");
 
-        assert_eq!(purge_response_thread.join().unwrap(), leader_slot);
+        assert_eq!(
+            purge_response_thread.join().unwrap(),
+            (
+                leader_slot,
+                TransactionHistoryPurgeSource::LeaderWindow,
+                Some(2),
+            )
+        );
 
         assert_eq!(new_bank.slot(), leader_slot);
         assert_eq!(new_bank.parent_slot(), new_parent_slot);
