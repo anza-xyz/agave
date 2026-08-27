@@ -1687,47 +1687,35 @@ impl JsonRpcRequestProcessor {
         }
 
         let bank = self.bank(Some(CommitmentConfig::processed()));
-        let mut statuses: Vec<_> = signatures
-            .iter()
-            .map(|signature| self.get_transaction_status(*signature, &bank))
-            .collect();
+        let mut statuses: Vec<Option<TransactionStatus>> = vec![];
 
-        if search_transaction_history {
-            let missing_signatures: Vec<_> = signatures
-                .iter()
-                .enumerate()
-                .filter_map(|(index, signature)| {
-                    statuses[index].is_none().then_some((index, *signature))
-                })
-                .collect();
-            let rooted_signatures: Vec<_> = missing_signatures
-                .iter()
-                .map(|(_, signature)| *signature)
-                .collect();
-            let rooted_statuses = self
-                .blockstore
-                .get_rooted_transaction_statuses(&rooted_signatures)
-                .map_err(|_| Error::internal_error())?;
-            let highest_super_majority_root = self
-                .block_commitment_cache
-                .read()
-                .unwrap()
-                .highest_super_majority_root();
-
-            for ((index, signature), rooted_status) in
-                missing_signatures.into_iter().zip(rooted_statuses)
-            {
-                statuses[index] = if let Some((slot, status_meta)) = rooted_status
-                    .filter(|(slot, _status_meta)| *slot <= highest_super_majority_root)
-                {
-                    let err = status_meta.status.clone().err();
-                    Some(TransactionStatus {
-                        slot,
-                        status: status_meta.status,
-                        confirmations: None,
-                        err,
-                        confirmation_status: Some(TransactionConfirmationStatus::Finalized),
+        for signature in signatures {
+            let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
+                Some(status)
+            } else if search_transaction_history {
+                if let Some(status) = self
+                    .blockstore
+                    .get_rooted_transaction_status(signature)
+                    .map_err(|_| Error::internal_error())?
+                    .filter(|(slot, _status_meta)| {
+                        slot <= &self
+                            .block_commitment_cache
+                            .read()
+                            .unwrap()
+                            .highest_super_majority_root()
                     })
+                    .map(|(slot, status_meta)| {
+                        let err = status_meta.status.clone().err();
+                        TransactionStatus {
+                            slot,
+                            status: status_meta.status,
+                            confirmations: None,
+                            err,
+                            confirmation_status: Some(TransactionConfirmationStatus::Finalized),
+                        }
+                    })
+                {
+                    Some(status)
                 } else if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                     bigtable_ledger_storage
                         .get_signature_status(&signature)
@@ -1736,8 +1724,11 @@ impl JsonRpcRequestProcessor {
                         .unwrap_or(None)
                 } else {
                     None
-                };
-            }
+                }
+            } else {
+                None
+            };
+            statuses.push(status);
         }
         Ok(new_response(&bank, statuses))
     }
