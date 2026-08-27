@@ -679,8 +679,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 } else {
                                     continue;
                                 };
-                                entry_to_return
-                                    .update_access_slot(loaded_programs_for_tx_batch.slot);
+                                entry.update_access_slot(loaded_programs_for_tx_batch.slot);
                                 if increment_usage_counter {
                                     entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                                 }
@@ -2772,6 +2771,83 @@ pub(crate) mod tests {
             extracted.entries.get(&program_id).unwrap(),
             &on_other_env
         ));
+    }
+
+    #[test_matrix((false, true))]
+    fn test_extract_usage_counter(increment_usage_counter: bool) {
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+        let entry = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(env.clone()),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(200);
+        cache.extract(
+            &mut search_for,
+            &mut extracted,
+            &env,
+            increment_usage_counter,
+            true,
+        );
+
+        // The access slot moves either way, the usage counter only when asked.
+        assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), 200);
+        assert_eq!(
+            entry.stats.uses.load(Ordering::Relaxed),
+            u64::from(increment_usage_counter)
+        );
+    }
+
+    #[test]
+    fn test_extract_usage_counter_delayed_visibility() {
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+        let entry = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(env.clone()),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+
+        // Extract at the deployment slot itself, which is inside the delay
+        // visibility window, so a `DelayVisibility` tombstone stands in for
+        // the entry.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+        cache.extract(&mut search_for, &mut extracted, &env, true, true);
+
+        let tombstone = extracted.entries.get(&program_id).unwrap();
+        assert!(matches!(
+            tombstone.program,
+            ProgramCacheEntryType::DelayVisibility
+        ));
+        assert!(!Arc::ptr_eq(tombstone, &entry));
+
+        // The access slot lands on the entry the tombstone stands in for. The
+        // tombstone's own is never touched, and is dropped with the batch.
+        assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), 100);
+        assert_eq!(tombstone.latest_access_slot.load(Ordering::Relaxed), 0);
+
+        // The usage counter reaches the entry either way, through the
+        // statistics the two share.
+        assert!(Arc::ptr_eq(&tombstone.stats, &entry.stats));
+        assert_eq!(entry.stats.uses.load(Ordering::Relaxed), 1);
     }
 
     #[test]
