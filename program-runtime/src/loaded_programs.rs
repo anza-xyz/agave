@@ -615,6 +615,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         debug_assert!(self.fork_graph.is_some());
         let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
+        let entries_in_batch = loaded_programs_for_tx_batch.entries.len();
         let mut cooperative_loading_task = None;
         match &self.index {
             IndexImplementation::V1 {
@@ -707,13 +708,13 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
         drop(locked_fork_graph);
         if count_hits_and_misses {
-            self.stats
-                .misses
-                .fetch_add(search_for.len() as u64, Ordering::Relaxed);
-            self.stats.hits.fetch_add(
-                loaded_programs_for_tx_batch.entries.len() as u64,
-                Ordering::Relaxed,
-            );
+            let misses = search_for.len() as u64;
+            let hits = loaded_programs_for_tx_batch
+                .entries
+                .len()
+                .saturating_sub(entries_in_batch) as u64;
+            self.stats.misses.fetch_add(misses, Ordering::Relaxed);
+            self.stats.hits.fetch_add(hits, Ordering::Relaxed);
         }
         cooperative_loading_task
     }
@@ -2851,6 +2852,85 @@ pub(crate) mod tests {
         // statistics the two share.
         assert!(Arc::ptr_eq(&tombstone.stats, &entry.stats));
         assert_eq!(entry.stats.uses.load(Ordering::Relaxed), 1);
+    }
+
+    #[test_matrix((false, true))]
+    fn test_extract_hits_and_misses(count_hits_and_misses: bool) {
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let found = Pubkey::new_unique();
+        let missing = Pubkey::new_unique();
+        cache.assign_program(
+            &env,
+            found,
+            100,
+            new_test_entry_with_owner(
+                100,
+                ProgramCacheEntryOwner::LoaderV3,
+                new_loaded_entry(env.clone()),
+            ),
+        );
+
+        let mut search_for = vec![
+            ProgramToLoad {
+                program_id: &found,
+                loader: ProgramCacheEntryOwner::LoaderV3,
+                deployment_slot: 100,
+                last_modification_slot: 0,
+            },
+            ProgramToLoad {
+                program_id: &missing,
+                loader: ProgramCacheEntryOwner::LoaderV3,
+                deployment_slot: 0,
+                last_modification_slot: 0,
+            },
+        ];
+        let mut extracted = ProgramCacheForTxBatch::new(200);
+        cache.extract(
+            &mut search_for,
+            &mut extracted,
+            &env,
+            true,
+            count_hits_and_misses,
+        );
+
+        let expected = u64::from(count_hits_and_misses);
+        assert_eq!(cache.stats.hits.load(Ordering::Relaxed), expected);
+        assert_eq!(cache.stats.misses.load(Ordering::Relaxed), expected);
+    }
+
+    #[test]
+    fn test_extract_hits_count_only_this_call() {
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+        cache.assign_program(
+            &env,
+            program_id,
+            100,
+            new_test_entry_with_owner(
+                100,
+                ProgramCacheEntryOwner::LoaderV3,
+                new_loaded_entry(env.clone()),
+            ),
+        );
+
+        // Anything already in the batch, such as the builtins it is seeded
+        // with.
+        let mut extracted = ProgramCacheForTxBatch::new(200);
+        extracted.replenish(Pubkey::new_unique(), new_test_builtin_entry(0));
+
+        // One entry is found, and only that one is counted. The entry seeded
+        // above is still in the batch, but it was not found by this call.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            last_modification_slot: 0,
+        }];
+        cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert_eq!(extracted.entries.len(), 2);
+        assert_eq!(cache.stats.hits.load(Ordering::Relaxed), 1);
     }
 
     #[test]
