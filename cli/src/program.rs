@@ -63,7 +63,7 @@ use {
         elf::{ElfError, Executable, get_sbpf_version},
         error::EbpfError,
         program::SBPFVersion,
-        verifier::RequisiteVerifier,
+        verifier::{LocalVerifier, RequisiteVerifier},
         vm::Config,
     },
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
@@ -3060,6 +3060,11 @@ fn verify_elf(
 
     executable
         .verify::<RequisiteVerifier>()
+        .map_err(|err| explain_elf_error(&err, program_data, config))?;
+
+    // A local verifier to catch SBPFv3 errors
+    executable
+        .verify::<LocalVerifier>()
         .map_err(|err| explain_elf_error(&err, program_data, config).into())
 }
 
