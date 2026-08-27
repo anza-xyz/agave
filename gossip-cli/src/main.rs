@@ -7,11 +7,13 @@ use {
         value_t_or_exit, values_t,
     },
     log::{info, warn},
+    serde_json::{Map, Value, json},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::{keypair_of, pubkeys_of},
         input_validators::{is_keypair_or_ask_keyword, is_port, is_pubkey},
     },
+    solana_gossip::contact_info::socket_tag_name,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     std::{
@@ -153,6 +155,16 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                         .value_name("SECONDS")
                         .takes_value(true)
                         .help("Maximum time to wait in seconds [default: wait forever]"),
+                )
+                .arg(
+                    Arg::with_name("dump")
+                        .long("dump")
+                        .value_name("PATH")
+                        .takes_value(true)
+                        .help(
+                            "Dump every discovered ContactInfo to PATH as JSON lines (- for \
+                             stdout)",
+                        ),
                 ),
         )
 }
@@ -247,6 +259,36 @@ fn process_spy_results(
     }
 }
 
+fn dump_contact_infos(path: &str, nodes: &[ContactInfo]) -> std::io::Result<()> {
+    let mut out = String::new();
+    for node in nodes {
+        let sockets: Map<String, Value> = node
+            .iter_sockets()
+            .map(|(tag, addr)| {
+                let name = socket_tag_name(tag)
+                    .map_or_else(|| format!("unknown_{tag}"), ToString::to_string);
+                (name, Value::from(addr.to_string()))
+            })
+            .collect();
+        let entry = json!({
+            "pubkey": node.pubkey().to_string(),
+            "wallclock": node.wallclock(),
+            "outset": node.outset(),
+            "shred_version": node.shred_version(),
+            "version": node.version().to_string(),
+            "sockets": sockets,
+        });
+        out.push_str(&entry.to_string());
+        out.push('\n');
+    }
+    if path == "-" {
+        print!("{out}");
+        Ok(())
+    } else {
+        std::fs::write(path, out)
+    }
+}
+
 /// Check entrypoints until one returns a valid non-zero shred version
 fn get_entrypoint_shred_version(entrypoint_addrs: &[SocketAddr]) -> Option<u16> {
     entrypoint_addrs.iter().find_map(|entrypoint_addr| {
@@ -291,7 +333,7 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
 
     let discover_timeout = Duration::from_secs(timeout.unwrap_or(u64::MAX));
     #[allow(deprecated)]
-    let (_all_peers, validators) = discover_peers(
+    let (all_peers, validators) = discover_peers(
         identity_keypair,
         &entrypoint_addrs,
         num_nodes,
@@ -302,6 +344,10 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         shred_version,
         socket_addr_space,
     )?;
+
+    if let Some(path) = matches.value_of("dump") {
+        dump_contact_infos(path, &all_peers)?;
+    }
 
     process_spy_results(
         timeout,
