@@ -2136,7 +2136,8 @@ mod test {
             config: v1::TransactionConfig::empty()
                 .with_priority_fee(5_000)
                 .with_compute_unit_limit(30_000)
-                .with_loaded_accounts_data_size_limit(200_000),
+                .with_loaded_accounts_data_size_limit(200_000)
+                .with_heap_size(65_536),
             lifetime_specifier: Hash::new_unique(),
             account_keys: account_keys(),
             instructions: instructions(),
