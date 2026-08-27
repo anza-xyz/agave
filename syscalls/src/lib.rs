@@ -173,7 +173,7 @@ impl From<CpiError> for SyscallError {
 
 type Error = Box<dyn std::error::Error>;
 
-trait HasherImpl {
+pub trait HasherImpl {
     const NAME: &'static str;
     type Output: AsRef<[u8]>;
 
@@ -185,10 +185,10 @@ trait HasherImpl {
     fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64;
 }
 
-struct Sha256Hasher(Hasher);
-struct Blake3Hasher(blake3::Hasher);
-struct Keccak256Hasher(keccak::Hasher);
-struct Sha512Hasher(sha512::Hasher);
+pub struct Sha256Hasher(Hasher);
+pub struct Blake3Hasher(blake3::Hasher);
+pub struct Keccak256Hasher(keccak::Hasher);
+pub struct Sha512Hasher(sha512::Hasher);
 
 impl HasherImpl for Sha256Hasher {
     const NAME: &'static str = "Sha256";
