@@ -57,6 +57,17 @@ pub enum BlockstoreError {
     MissingTransactionMetadata,
     #[error("transaction-index overflow")]
     TransactionIndexOverflow,
+    #[error(
+        "transaction-history purge for slot {slot} found {found} transactions before the purge \
+         boundary, expected {expected}"
+    )]
+    TransactionHistoryPurgeBoundaryMismatch {
+        slot: Slot,
+        expected: usize,
+        found: usize,
+    },
+    #[error("transaction-history purge for slot {0} did not find an UpdateParent marker")]
+    TransactionHistoryPurgeUpdateParentNotFound(Slot),
     #[error("invalid erasure config")]
     InvalidErasureConfig,
     #[error("last shred index missing slot {0}")]
