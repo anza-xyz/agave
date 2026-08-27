@@ -6,7 +6,7 @@ use {
             parent_ready_tracker::{ParentReady, ParentReadyTracker},
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
-            vote_pool::VotePool,
+            vote_pool::VotePools,
         },
         consensus_pool_service::{PoolMessage, PoolVote},
         event::VotorEvent,
@@ -64,7 +64,7 @@ fn get_rank_map(bank: &Bank, slot: Slot) -> Result<&BLSPubkeyToRankMap, AddVoteE
 pub(crate) struct ConsensusPool {
     cluster_info: Arc<ClusterInfo>,
     // Vote pools to do bean counting for votes.
-    vote_pools: BTreeMap<Slot, VotePool>,
+    vote_pools: VotePools,
     /// Completed certificates
     completed_certificates: BTreeMap<CertificateType, Arc<Certificate>>,
     /// Set of certs that the pool has generated itself.  Used to inform the bls sigverifier so it
@@ -100,12 +100,13 @@ impl ConsensusPool {
         migration_status: Arc<MigrationStatus>,
         initial_parent_ready: ParentReady,
     ) -> Self {
+        let root_slot = root.slot();
         let parent_ready_tracker =
-            ParentReadyTracker::new(cluster_info.clone(), root.slot(), initial_parent_ready);
+            ParentReadyTracker::new(cluster_info.clone(), root_slot, initial_parent_ready);
 
         Self {
             cluster_info,
-            vote_pools: BTreeMap::new(),
+            vote_pools: VotePools::new(root_slot),
             completed_certificates: BTreeMap::new(),
             highest_finalized_slot_cert: None,
             parent_ready_tracker,
@@ -124,10 +125,7 @@ impl ConsensusPool {
         msg: &PoolVote,
     ) -> Result<(u64, Option<Certificate>), AddVoteError> {
         let slot = msg.vote().slot();
-        let pool = self
-            .vote_pools
-            .entry(slot)
-            .or_insert_with(|| VotePool::new(rank_map.len()));
+        let pool = self.vote_pools.get_vote_pool(slot, rank_map.len());
         pool.add_pool_vote(rank_map.total_stake(), msg, &self.completed_certificates)
             .map_err(AddVoteError::VotePoolAddVote)
     }
@@ -526,7 +524,7 @@ impl ConsensusPool {
         self.completed_certificates
             .retain(|c, _| c.slot() >= root_slot);
         self.generated_cert_types.prune(root_slot);
-        self.vote_pools = self.vote_pools.split_off(&root_slot);
+        self.vote_pools.prune(root_slot);
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
         self.parent_ready_tracker.set_root(root_slot);
         self.pending_safe_to_notar

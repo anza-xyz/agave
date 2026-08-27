@@ -13,6 +13,7 @@ use {
         certificate::{Certificate, CertificateType},
         vote::Vote,
     },
+    solana_clock::Slot,
     std::{
         collections::{BTreeMap, HashMap},
         num::NonZero,
@@ -26,10 +27,10 @@ pub(super) struct VotePool {
 }
 
 impl VotePool {
-    pub(super) fn new(max_validators: usize) -> Self {
+    fn new(max_validators: usize, accumulators: HashMap<Vote, AggregateAccumulator>) -> Self {
         Self {
             max_validators,
-            accumulators: HashMap::new(),
+            accumulators,
         }
     }
 
@@ -161,5 +162,69 @@ impl VotePool {
             .expect("the accumulator was created above");
         let cert = self.try_produce_cert(total_stake, vote, completed_certs, acc)?;
         Ok((stake, cert))
+    }
+}
+
+enum MaybeVotePool {
+    None(HashMap<Vote, AggregateAccumulator>),
+    Some(VotePool),
+}
+
+const NUM_VOTE_POOLS: usize = 128;
+
+/// Stores a set of `VotePool`s in an array to minimise allocations.
+pub(super) struct VotePools {
+    /// Consensus pool's view of the current root slot.
+    root_slot: Slot,
+    /// Offset into the array below where the `VotePool` for root_slot would be stored.
+    offset: usize,
+    /// Array of `VotePool` to minimise allocations.
+    pools: [MaybeVotePool; NUM_VOTE_POOLS],
+}
+
+impl VotePools {
+    /// Creates a new `VotePools`.
+    pub(super) fn new(root_slot: Slot) -> Self {
+        let pools = std::array::from_fn(|_| MaybeVotePool::None(HashMap::new()));
+        Self {
+            root_slot,
+            offset: 0,
+            pools,
+        }
+    }
+
+    /// Returns a `VotePool` responsible for the given `slot`.
+    pub(super) fn get_vote_pool(&mut self, slot: Slot, max_validators: usize) -> &mut VotePool {
+        let diff = slot.checked_sub(self.root_slot).unwrap() as usize;
+        assert!(diff < NUM_VOTE_POOLS);
+        let ind = self.offset.saturating_add(diff).rem_euclid(NUM_VOTE_POOLS);
+        let entry = &mut self.pools[ind];
+        if let MaybeVotePool::None(accumulators) = entry {
+            let pool = VotePool::new(max_validators, std::mem::take(accumulators));
+            *entry = MaybeVotePool::Some(pool);
+        }
+        let MaybeVotePool::Some(pool) = entry else {
+            unreachable!("a vote pool was inserted above")
+        };
+        pool
+    }
+
+    /// Prunes the `VotePool`s that are no longer needed.
+    pub(super) fn prune(&mut self, root_slot: Slot) {
+        let diff = root_slot.checked_sub(self.root_slot).unwrap();
+        let num_pools_to_prune = diff.min(NUM_VOTE_POOLS as Slot) as usize;
+        for pool_offset in 0..num_pools_to_prune {
+            let ind = (self.offset.saturating_add(pool_offset)).rem_euclid(NUM_VOTE_POOLS);
+            let entry = &mut self.pools[ind];
+            if let MaybeVotePool::Some(pool) = entry {
+                pool.accumulators.clear();
+                *entry = MaybeVotePool::None(std::mem::take(&mut pool.accumulators));
+            }
+        }
+        self.root_slot = root_slot;
+        self.offset = (self
+            .offset
+            .saturating_add(diff.rem_euclid(NUM_VOTE_POOLS as Slot) as usize))
+        .rem_euclid(NUM_VOTE_POOLS);
     }
 }
