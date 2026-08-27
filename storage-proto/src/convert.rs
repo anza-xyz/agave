@@ -1363,6 +1363,34 @@ impl From<entries::Entry> for EntrySummary {
 mod test {
     use {super::*, enum_iterator::all};
 
+    fn header() -> MessageHeader {
+        MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 1,
+        }
+    }
+
+    fn account_keys() -> Vec<Pubkey> {
+        vec![
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ]
+    }
+
+    fn instructions() -> Vec<CompiledInstruction> {
+        vec![CompiledInstruction {
+            program_id_index: 2,
+            accounts: vec![0, 1],
+            data: vec![1, 2, 3, 4],
+        }]
+    }
+
+    fn round_trip(message: VersionedMessage) -> VersionedMessage {
+        VersionedMessage::from(generated::Message::from(message))
+    }
+
     #[test]
     fn test_reward_type_encode() {
         let mut reward = Reward {
@@ -2069,42 +2097,6 @@ mod test {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod message_conversion_tests {
-    use {
-        super::*,
-        solana_message::{compiled_instruction::CompiledInstruction, v1},
-    };
-
-    fn header() -> MessageHeader {
-        MessageHeader {
-            num_required_signatures: 1,
-            num_readonly_signed_accounts: 0,
-            num_readonly_unsigned_accounts: 1,
-        }
-    }
-
-    fn account_keys() -> Vec<Pubkey> {
-        vec![
-            Pubkey::new_unique(),
-            Pubkey::new_unique(),
-            Pubkey::new_unique(),
-        ]
-    }
-
-    fn instructions() -> Vec<CompiledInstruction> {
-        vec![CompiledInstruction {
-            program_id_index: 2,
-            accounts: vec![0, 1],
-            data: vec![1, 2, 3, 4],
-        }]
-    }
-
-    fn round_trip(message: VersionedMessage) -> VersionedMessage {
-        VersionedMessage::from(generated::Message::from(message))
     }
 
     #[test]
