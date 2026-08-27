@@ -983,9 +983,12 @@ pub(crate) mod tests {
         solana_clock::Slot,
         solana_pubkey::Pubkey,
         solana_sbpf::{elf::Executable, program::BuiltinProgram},
-        solana_svm_type_overrides::sync::{
-            Arc, RwLock,
-            atomic::{AtomicU64, Ordering},
+        solana_svm_type_overrides::{
+            sync::{
+                Arc, RwLock,
+                atomic::{AtomicU64, Ordering},
+            },
+            thread,
         },
         std::{fs::File, io::Read, ops::ControlFlow},
         test_case::{test_case, test_matrix},
@@ -2772,6 +2775,154 @@ pub(crate) mod tests {
             extracted.entries.get(&program_id).unwrap(),
             &on_other_env
         ));
+    }
+
+    #[test]
+    fn test_extract_cooperative_loading_task() {
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let program_ids = [Pubkey::new_unique(), Pubkey::new_unique()];
+
+        // Both are missing, but only the first one becomes a task.
+        let mut search_for = program_ids
+            .iter()
+            .map(|program_id| ProgramToLoad {
+                program_id,
+                loader: ProgramCacheEntryOwner::LoaderV3,
+                deployment_slot: 0,
+                last_modification_slot: 0,
+            })
+            .collect();
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+        let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert_eq!(search_for.len(), 2);
+        assert_eq!(task, program_ids.first().copied());
+        match &cache.index {
+            IndexImplementation::V1 {
+                loading_entries, ..
+            } => {
+                let loading_entries = loading_entries.lock().unwrap();
+                assert_eq!(loading_entries.len(), 1);
+                assert_eq!(
+                    loading_entries.get(program_ids.first().unwrap()),
+                    Some(&(100, thread::current().id()))
+                );
+            }
+        }
+
+        // Asking again for the one which is already loading returns nothing.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: program_ids.first().unwrap(),
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 0,
+            last_modification_slot: 0,
+        }];
+        let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert_eq!(search_for.len(), 1);
+        assert_eq!(task, None);
+
+        // Submitting the finished task notifies whoever is waiting on one.
+        let cookie = cache.loading_task_waiter.cookie();
+        let loaded = new_test_entry_with_owner(
+            50,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(env.clone()),
+        );
+        cache.finish_cooperative_loading_task(
+            &env,
+            100,
+            *program_ids.first().unwrap(),
+            50,
+            Arc::clone(&loaded),
+        );
+        assert_ne!(cache.loading_task_waiter.wait(cookie), cookie);
+
+        // It is no longer loading, and extracting it now finds it.
+        match &cache.index {
+            IndexImplementation::V1 {
+                loading_entries, ..
+            } => assert!(loading_entries.lock().unwrap().is_empty()),
+        }
+        let mut search_for = vec![ProgramToLoad {
+            program_id: program_ids.first().unwrap(),
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 50,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+        let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert!(search_for.is_empty());
+        assert_eq!(task, None);
+        assert!(Arc::ptr_eq(
+            extracted.entries.get(program_ids.first().unwrap()).unwrap(),
+            &loaded
+        ));
+    }
+
+    #[test]
+    fn test_extract_cooperative_loading_task_ordering() {
+        let (cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let program_ids = [Pubkey::new_unique(), Pubkey::new_unique()];
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+
+        // The first one reached becomes the task.
+        let mut search_for = program_ids
+            .iter()
+            .map(|program_id| ProgramToLoad {
+                program_id,
+                loader: ProgramCacheEntryOwner::LoaderV3,
+                deployment_slot: 0,
+                last_modification_slot: 0,
+            })
+            .collect();
+        let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert_eq!(task, program_ids.first().copied());
+
+        // Asking again in the reverse order reaches the one which is not
+        // loading yet first, so that one becomes a task of its own.
+        let mut search_for = program_ids
+            .iter()
+            .rev()
+            .map(|program_id| ProgramToLoad {
+                program_id,
+                loader: ProgramCacheEntryOwner::LoaderV3,
+                deployment_slot: 0,
+                last_modification_slot: 0,
+            })
+            .collect();
+        let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert_eq!(task, program_ids.get(1).copied());
+
+        // Both are loading now, by this thread and for this slot.
+        match &cache.index {
+            IndexImplementation::V1 {
+                loading_entries, ..
+            } => {
+                let loading_entries = loading_entries.lock().unwrap();
+                assert_eq!(loading_entries.len(), 2);
+                for program_id in &program_ids {
+                    assert_eq!(
+                        loading_entries.get(program_id),
+                        Some(&(100, thread::current().id()))
+                    );
+                }
+            }
+        }
+
+        // Neither of them can become a task again.
+        let mut search_for = program_ids
+            .iter()
+            .map(|program_id| ProgramToLoad {
+                program_id,
+                loader: ProgramCacheEntryOwner::LoaderV3,
+                deployment_slot: 0,
+                last_modification_slot: 0,
+            })
+            .collect();
+        let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert_eq!(search_for.len(), 2);
+        assert_eq!(task, None);
     }
 
     #[test]
