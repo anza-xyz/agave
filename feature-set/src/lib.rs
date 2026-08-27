@@ -2634,7 +2634,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             remove_inactive_stakes::id(),
-            "Remove inactive stakes from stake delegations",
+            "SIMD-0599: Remove inactive stakes from stake delegations",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
