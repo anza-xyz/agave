@@ -1,6 +1,6 @@
 # Ingest
 
-A packet off a socket to a shred in an insert batch, which is 
+A packet off a socket to a shred in an insert batch, which is
 what `examples/ingest_cascade.rs` reproduces.
 
 ```mermaid
