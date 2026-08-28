@@ -471,9 +471,9 @@ impl Blockstore {
         Ok(transaction_status_empty && address_signatures_empty)
     }
 
-    /// Removes transaction history written before a persisted UpdateParent
-    /// marker. All deletes are staged and the marker is validated before the
-    /// write batch is committed.
+    /// Removes transaction history written before the UpdateParent boundary
+    /// recorded in SlotMeta. All deletes are staged before the write batch is
+    /// committed.
     pub fn purge_transaction_history_for_slot_exact(
         &self,
         slot: Slot,
@@ -481,19 +481,25 @@ impl Blockstore {
         let mut write_batch = self.get_write_batch();
         let mut stats = TransactionHistoryPurgeStats::default();
         let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
-        let (slot_components, _, _) =
-            self.get_slot_component_views_with_shred_info(slot, 0, true)?;
+
+        let (mut completed_ranges, slot_meta) = self.get_completed_ranges(slot, 0)?;
+        let slot_meta =
+            slot_meta.ok_or(BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(slot))?;
+        if !slot_meta.has_update_parent() {
+            return Err(BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(slot));
+        }
+        completed_ranges.retain(|range| range.end <= slot_meta.replay_fec_set_index);
+        let slot_components =
+            self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
         let mut transaction_index = 0usize;
-        let mut found_update_parent = false;
 
         for component in slot_components {
             match component {
                 ParsedBlockComponent::EntryBatch(entries) => {
                     for transaction in entries.into_iter().flat_map(|entry| entry.transactions) {
-                        if let Some(&signature) = transaction.signatures().first() {
-                            let meta = self
-                                .read_transaction_status((signature, slot))?
-                                .ok_or(BlockstoreError::MissingTransactionMetadata)?;
+                        if let Some(&signature) = transaction.signatures().first()
+                            && let Some(meta) = self.read_transaction_status((signature, slot))?
+                        {
                             let loaded_addresses = meta.loaded_addresses;
                             let account_keys = AccountKeys::new(
                                 transaction.static_account_keys(),
@@ -531,19 +537,11 @@ impl Blockstore {
                             stats.transactions_processed.saturating_add(1);
                     }
                 }
-                ParsedBlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
-                    found_update_parent = true;
-                    break;
-                }
                 ParsedBlockComponent::BlockMarker(_) => {}
             }
         }
         prepare_deletions_timer.stop();
         stats.prepare_deletions_us = prepare_deletions_timer.as_us();
-
-        if !found_update_parent {
-            return Err(BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(slot));
-        }
 
         let mut write_batch_timer = Measure::start("write_transaction_history_purge_batch");
         let write_result = self.write_batch(write_batch);
