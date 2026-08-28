@@ -50,6 +50,7 @@ protobuf-src = { workspace = true }
 
 [dev-dependencies]
 enum-iterator = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }
 test-case = { workspace = true }
 
 [lints]
