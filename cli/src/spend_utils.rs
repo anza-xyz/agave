@@ -408,43 +408,40 @@ mod tests {
 
     #[tokio::test]
     async fn test_rent_exempt_spend_reserves_pending_delegator_rewards() {
-        let rent_exempt_minimum = 26_858_640;
-        let pending_delegator_rewards = 5_000_000;
-        let withdrawable = 1_000_000;
+        const RENT_EXEMPT_MINIMUM: u64 = 27_000_000;
+        const PENDING_DELEGATOR_REWARDS: u64 = 5_000_000;
+        const WITHDRAWABLE: u64 = 1_000_000;
+        const RESERVED_BALANCE: u64 = RENT_EXEMPT_MINIMUM + PENDING_DELEGATOR_REWARDS;
+        const BALANCE: u64 = RESERVED_BALANCE + WITHDRAWABLE;
+        const BALANCE_WITHOUT_PENDING_REWARDS: u64 = RENT_EXEMPT_MINIMUM + WITHDRAWABLE;
 
         // Without pending rewards, everything in excess of the rent-exempt
         // minimum is withdrawable.
         assert_eq!(
             resolve_rent_exempt_spend(
-                vote_account(rent_exempt_minimum + withdrawable, 0),
-                rent_exempt_minimum,
+                vote_account(BALANCE_WITHOUT_PENDING_REWARDS, 0),
+                RENT_EXEMPT_MINIMUM,
             )
             .await,
-            withdrawable
+            WITHDRAWABLE
         );
 
         // Pending delegator rewards are reserved as well, matching the balance
         // the vote program requires the account to retain.
         assert_eq!(
             resolve_rent_exempt_spend(
-                vote_account(
-                    rent_exempt_minimum + pending_delegator_rewards + withdrawable,
-                    pending_delegator_rewards,
-                ),
-                rent_exempt_minimum,
+                vote_account(BALANCE, PENDING_DELEGATOR_REWARDS),
+                RENT_EXEMPT_MINIMUM,
             )
             .await,
-            withdrawable
+            WITHDRAWABLE
         );
 
         // Nothing is withdrawable when the balance only covers the reserves.
         assert_eq!(
             resolve_rent_exempt_spend(
-                vote_account(
-                    rent_exempt_minimum + pending_delegator_rewards,
-                    pending_delegator_rewards,
-                ),
-                rent_exempt_minimum,
+                vote_account(RESERVED_BALANCE, PENDING_DELEGATOR_REWARDS),
+                RENT_EXEMPT_MINIMUM,
             )
             .await,
             0
