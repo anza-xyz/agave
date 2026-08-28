@@ -54,6 +54,20 @@ impl<'account> VoteStateViewMut<'account> {
             .copy_from_slice(&new_pending_delegator_rewards.to_le_bytes());
         Some(())
     }
+
+    /// Reset pending delegator rewards, used during vote account sweep at epoch
+    /// rollover
+    pub fn reset_pending_delegator_rewards(&mut self) -> u64 {
+        // Size is checked at creation, so this is safe
+        let pending_delegator_rewards = u64::from_le_bytes(
+            self.data[PENDING_DELEGATOR_REWARDS_START_OFFSET..PENDING_DELEGATOR_REWARDS_END_OFFSET]
+                .try_into()
+                .unwrap(),
+        );
+        self.data[PENDING_DELEGATOR_REWARDS_START_OFFSET..PENDING_DELEGATOR_REWARDS_END_OFFSET]
+            .copy_from_slice(&0u64.to_le_bytes());
+        pending_delegator_rewards
+    }
 }
 
 #[cfg(test)]
@@ -135,5 +149,30 @@ mod tests {
             view.increment_pending_delegator_rewards_checked(1)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn reset_pending_delegator_rewards() {
+        let target_vote_state = VoteStateV4::default();
+        let versioned = VoteStateVersions::new_v4(target_vote_state);
+        let mut bytes = vec![0; VoteStateV4::size_of()];
+        VoteStateV4::serialize(&versioned, &mut bytes).unwrap();
+
+        let expected_pending_delegator_rewards = u64::MAX;
+        let mut view = VoteStateViewMut::new_v4(&mut bytes).unwrap();
+        view.increment_pending_delegator_rewards_checked(expected_pending_delegator_rewards)
+            .unwrap();
+
+        let pending_delegator_rewards = view.reset_pending_delegator_rewards();
+        assert_eq!(
+            expected_pending_delegator_rewards,
+            pending_delegator_rewards
+        );
+
+        let vote_state = VoteStateVersions::deserialize(&bytes).unwrap();
+        let VoteStateVersions::V4(v4) = vote_state else {
+            panic!("Not vote state v4");
+        };
+        assert_eq!(v4.pending_delegator_rewards, 0);
     }
 }
