@@ -686,9 +686,12 @@ fn convert_datagram_to_vote_message(
     let bank = bank_forks.read().unwrap().root_bank();
     let rank_map = bank.get_rank_map(vote_msg.vote.slot())?;
     let (rank, sender_entry) = rank_map.get_ranked_entry_for_node(&sender)?;
+    let Ok(signature) = vote_msg.signature.try_into() else {
+        return None;
+    };
     Some(VoteMessage {
         vote: vote_msg.vote,
-        signature: vote_msg.signature,
+        signature,
         rank,
         stake: sender_entry.stake,
     })

@@ -30,6 +30,7 @@ use {
     solana_bls_signatures::{
         BlsError, PreparedHashedMessage, PubkeyProjective, SignatureProjective,
         pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine, VerifySignature},
+        signature::SignatureAffine,
     },
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
@@ -99,11 +100,12 @@ impl UnverifiedVotePayload {
         max_validators: usize,
         prepared_hashed_message: &PreparedHashedMessage,
     ) -> Result<VerifiedVotePayload, BlsError> {
+        let signature = SignatureAffine::try_from(self.vote_message.signature)?;
         self.sender_bls_pubkey
-            .verify_signature_prepared(&self.vote_message.signature, prepared_hashed_message)?;
+            .verify_signature_prepared(&signature, prepared_hashed_message)?;
         let vote_msg = VoteMessage {
             vote: self.vote_message.vote,
-            signature: self.vote_message.signature,
+            signature,
             rank: self.rank,
             stake: self.stake,
         };

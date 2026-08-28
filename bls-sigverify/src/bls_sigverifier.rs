@@ -719,7 +719,7 @@ mod tests {
     ) -> VoteMessage {
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
         let payload = get_vote_payload_to_sign(vote, shred_version);
-        let signature: Signature = bls_keypair.sign(&payload).into();
+        let signature = bls_keypair.sign(&payload).into();
         VoteMessage {
             vote,
             signature,
@@ -958,10 +958,13 @@ mod tests {
         expect_no_receive(&ctx.pool_receiver);
 
         // Send a packet with invalid rank
+        let vote = Vote::new_finalization_vote(5);
+        let payload = get_vote_payload_to_sign(vote, ctx.verifier.cluster_info.my_shred_version());
+        let signature = ctx.validator_keypairs[0].bls_keypair.sign(&payload).into();
         let messages_invalid_rank = [(
             ConsensusMessage::Vote(VoteMessage {
                 vote: Vote::new_finalization_vote(5),
-                signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                signature,
                 rank: 1000, // Invalid rank
                 stake: NonZero::new(123).unwrap(),
             }),
@@ -1109,7 +1112,7 @@ mod tests {
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
-            let signature: Signature = bls_keypair.sign(&vote_payload).into();
+            let signature = bls_keypair.sign(&vote_payload).into();
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
                 vote,
                 signature,
@@ -1591,7 +1594,7 @@ mod tests {
         let vote_payload =
             get_vote_payload_to_sign(vote, ctx.verifier.cluster_info.my_shred_version());
         let bls_keypair = &ctx.validator_keypairs[0].bls_keypair;
-        let signature: Signature = bls_keypair.sign(&vote_payload).into();
+        let signature = bls_keypair.sign(&vote_payload).into();
 
         let consensus_message = ConsensusMessage::Vote(VoteMessage {
             vote,
@@ -1671,7 +1674,7 @@ mod tests {
         let vote_payload =
             get_vote_payload_to_sign(vote, sig_verifier.cluster_info.my_shred_version());
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
-        let signature: Signature = bls_keypair.sign(&vote_payload).into();
+        let signature = bls_keypair.sign(&vote_payload).into();
         let consensus_message_vote = ConsensusMessage::Vote(VoteMessage {
             vote,
             signature,

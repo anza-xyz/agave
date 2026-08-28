@@ -746,7 +746,7 @@ mod tests {
                 .unwrap()
                 .stake;
             let payload = get_vote_payload_to_sign(vote, self.pool.cluster_info.my_shred_version());
-            let signature: BLSSignature = bls_keypair.sign(&payload).into();
+            let signature = bls_keypair.sign(&payload).into();
             VoteMessage {
                 vote,
                 signature,
@@ -804,7 +804,7 @@ mod tests {
             .unwrap()
             .stake;
         let payload = get_vote_payload_to_sign(*vote, shred_version);
-        let signature: BLSSignature = bls_keypair.sign(&payload).into();
+        let signature = bls_keypair.sign(&payload).into();
         let msg = VoteMessage {
             vote: *vote,
             signature,
