@@ -27,7 +27,9 @@ use {
         bank::Bank,
         bank_forks::BankForks,
         leader_schedule_utils::leader_slot_index,
-        transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
+        },
         vote_sender_types::ReplayVoteSender,
     },
     std::sync::{Arc, RwLock},
@@ -200,7 +202,11 @@ fn try_restart_slot_from_update_parent(
     ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
     if let Some(transaction_status_sender) = transaction_status_sender {
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(slot, source, None)
+            .send_purge_transaction_history_for_slot(
+                slot,
+                source,
+                TransactionHistoryPurgeInput::PersistedUpdateParent,
+            )
             .expect("TransactionStatusService failed to purge UpdateParent transaction history");
     }
     if let Some(cleared_bank_id) = cleared_bank_id {
@@ -436,7 +442,7 @@ pub(super) fn handle_abandoned_bank(
             .send_purge_transaction_history_for_slot(
                 bank_slot,
                 TransactionHistoryPurgeSource::AbandonedBank,
-                None,
+                TransactionHistoryPurgeInput::PersistedUpdateParent,
             )
             .expect("TransactionStatusService failed to purge UpdateParent transaction history")
     }

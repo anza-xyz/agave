@@ -63,7 +63,9 @@ use {
         block_component_processor::BlockComponentProcessorError,
         commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
         genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
-        transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusMessage},
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusMessage,
+        },
     },
     solana_sha256_hasher::hash,
     solana_shred_version::compute_shred_version,
@@ -193,14 +195,14 @@ fn post_migration_status_for_tests() -> MigrationStatus {
 
 fn transaction_history_purge_responder() -> (
     TransactionStatusSender,
-    std::thread::JoinHandle<(Slot, TransactionHistoryPurgeSource, Option<usize>)>,
+    std::thread::JoinHandle<(Slot, TransactionHistoryPurgeSource)>,
 ) {
     let (sender, receiver) = bounded(1);
     let response_thread = std::thread::spawn(move || {
         let TransactionStatusMessage::PurgeTransactionHistory {
             slot,
             source,
-            num_transactions_before_update_parent,
+            purge_input,
             done_sender,
             ..
         } = receiver
@@ -209,8 +211,12 @@ fn transaction_history_purge_responder() -> (
         else {
             panic!("expected transaction-history purge request");
         };
+        assert!(matches!(
+            purge_input,
+            TransactionHistoryPurgeInput::PersistedUpdateParent
+        ));
         done_sender.send(()).unwrap();
-        (slot, source, num_transactions_before_update_parent)
+        (slot, source)
     });
     (
         TransactionStatusSender {
@@ -1522,7 +1528,7 @@ fn test_abandon_invalidates() {
 
     assert_eq!(
         purge_response_thread.join().unwrap(),
-        (slot, TransactionHistoryPurgeSource::AbandonedBank, None)
+        (slot, TransactionHistoryPurgeSource::AbandonedBank)
     );
     assert!(progress.get(&slot).is_none());
     assert!(bank_forks.read().unwrap().get(slot).is_none());
@@ -3284,7 +3290,7 @@ fn test_update_parent_restart() {
 
     assert_eq!(
         purge_response_thread.join().unwrap(),
-        (4, TransactionHistoryPurgeSource::UpdateParentSignal, None)
+        (4, TransactionHistoryPurgeSource::UpdateParentSignal)
     );
 
     assert!(progress.get(&4).is_none()); // cleared: 5 < 32
@@ -3849,7 +3855,7 @@ fn test_soft_dead_restarts() {
 
     assert_eq!(
         purge_response_thread.join().unwrap(),
-        (slot, TransactionHistoryPurgeSource::SoftDeadSlot, None)
+        (slot, TransactionHistoryPurgeSource::SoftDeadSlot)
     );
     assert!(!blockstore.is_dead(slot));
     assert!(progress.get(&slot).is_none());
