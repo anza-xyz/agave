@@ -116,7 +116,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let num_ages_to_distribute_scans = Age::MAX - storage.ages_to_stay_in_cache;
 
         let map_internal = if let Some(num_initial_accounts) = num_initial_accounts {
-            let capacity_per_bin = num_initial_accounts / storage.bins;
+            // Never reserve past the memory threshold: entries above it get evicted to disk, so the
+            // extra capacity would be memory the index limit is meant to bound.
+            let capacity_per_bin = (num_initial_accounts / storage.bins).min(
+                storage
+                    .threshold_entries_per_bin
+                    .as_ref()
+                    .map_or(usize::MAX, |thresholds| thresholds.target_entries),
+            );
             RwLock::new(HashMap::with_capacity_and_hasher(
                 capacity_per_bin,
                 ahash::RandomState::default(),
@@ -2320,6 +2327,37 @@ mod tests {
                 assert_eq!(total_capacity, 0);
             }
         }
+    }
+
+    /// A pre-allocation larger than the memory threshold must not reserve past it, otherwise we
+    /// would allocate memory that the index limit is meant to bound.
+    #[test]
+    fn test_new_with_num_initial_accounts_clamped_to_threshold() {
+        let num_bins = 1;
+        // A limit small enough that the clamped capacity is cheap to actually allocate
+        let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
+            + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
+        let config = AccountsIndexConfig {
+            bins: Some(num_bins),
+            index_limit: IndexLimit::Threshold(IndexLimitThreshold {
+                num_bytes: (2048 * bytes_per_entry) as u64,
+                num_entries_overhead: 300,
+                num_entries_to_evict: 200,
+            }),
+            ..ACCOUNTS_INDEX_CONFIG_FOR_TESTING
+        };
+        let holder = Arc::new(BucketMapHolder::new(num_bins, &config, 1));
+        let target_entries = holder
+            .threshold_entries_per_bin
+            .as_ref()
+            .unwrap()
+            .target_entries;
+
+        let index = InMemAccountsIndex::<u64, u64>::new(&holder, 0, Some(target_entries * 100));
+        let capacity = index.map_internal.read().unwrap().capacity();
+        assert!(capacity >= target_entries, "{capacity} < {target_entries}");
+        // one hashmap growth step of slack above the target, no more
+        assert!(capacity < target_entries * 2, "{capacity}");
     }
 
     /// Ensure `write_startup_info()` populates the in-mem index,
