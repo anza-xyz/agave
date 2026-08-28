@@ -23,6 +23,8 @@ pub(crate) struct RewardsMetrics {
     pub(crate) store_stake_accounts_us: AtomicU64,
     pub(crate) store_commission_accounts_us: AtomicU64,
     pub(crate) load_and_reward_commission_accounts_us: u64,
+    pub(crate) load_and_sweep_vote_accounts_us: u64,
+    pub(crate) store_vote_accounts_us: u64,
 }
 
 pub(crate) struct NewBankTimings {
@@ -110,6 +112,16 @@ pub(crate) fn report_new_epoch_metrics(
         (
             "load_and_reward_commission_accounts_us",
             metrics.load_and_reward_commission_accounts_us,
+            i64
+        ),
+        (
+            "load_and_sweep_vote_accounts_us",
+            metrics.load_and_sweep_vote_accounts_us,
+            i64
+        ),
+        (
+            "store_vote_accounts_us",
+            metrics.store_vote_accounts_us,
             i64
         ),
     );
