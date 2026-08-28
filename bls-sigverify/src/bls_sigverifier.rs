@@ -187,7 +187,7 @@ impl SigVerifier {
     fn run(mut self, exit: Arc<AtomicBool>) {
         let mut datagrams_buffer = Vec::new();
         while !exit.load(Ordering::Relaxed) {
-            const SOFT_RECEIVE_CAP: usize = 5000;
+            const SOFT_RECEIVE_CAP: usize = 10_000;
             datagrams_buffer.clear();
             let Ok(certificates) = recv_inputs(
                 &self.channels.packet_receiver,
