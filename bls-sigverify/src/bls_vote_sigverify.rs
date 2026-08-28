@@ -49,7 +49,7 @@ use {
 struct ProcessedVotes {
     reward_msg: Vec<VoteAggregate>,
     repair_msg: HashMap<Pubkey, Vec<Slot>>,
-    vote_aggregates_for_pool: Vec<VoteAggregate>,
+    vote_aggregates_for_pool: Vec<Vec<VoteAggregate>>,
     metrics_msg: Vec<ConsensusMetricsEvent>,
 }
 
@@ -292,7 +292,7 @@ fn process_verified_votes(
     ProcessedVotes {
         reward_msg: votes_for_reward,
         repair_msg: msgs_for_repair,
-        vote_aggregates_for_pool,
+        vote_aggregates_for_pool: vec![vote_aggregates_for_pool],
         metrics_msg: votes_for_metrics,
     }
 }
@@ -303,12 +303,14 @@ fn send_msgs(
     processed_votes: ProcessedVotes,
 ) -> Result<VoteSenderStats, SigVerifyVoteError> {
     let mut sender_stats = VoteSenderStats::default();
-    send_sig_verified_batch_to_pool(
-        my_pubkey,
-        SigVerifiedBatch::Votes(processed_votes.vote_aggregates_for_pool),
-        &channels.channel_to_pool,
-        &mut sender_stats,
-    )?;
+    for votes in processed_votes.vote_aggregates_for_pool {
+        send_sig_verified_batch_to_pool(
+            my_pubkey,
+            SigVerifiedBatch::Votes(votes),
+            &channels.channel_to_pool,
+            &mut sender_stats,
+        )?;
+    }
     send_votes_to_repair(
         my_pubkey,
         processed_votes.repair_msg,
