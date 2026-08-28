@@ -22,7 +22,7 @@ use {
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     std::{borrow::Cow, sync::Arc, time::Instant},
@@ -50,13 +50,21 @@ pub enum TransactionStatusMessage {
     PurgeTransactionHistory {
         slot: Slot,
         source: TransactionHistoryPurgeSource,
-        /// Exclusive transaction boundary for locally produced UpdateParent
-        /// slots. `None` means the persisted UpdateParent marker determines
-        /// the boundary.
-        num_transactions_before_update_parent: Option<usize>,
+        purge_input: TransactionHistoryPurgeInput,
         requested_at: Instant,
         done_sender: crossbeam_channel::Sender<()>,
     },
+}
+
+/// Data used to reconstruct the transaction-history keys removed by a purge.
+#[derive(Debug)]
+pub enum TransactionHistoryPurgeInput {
+    /// Replay paths derive the transaction boundary from the UpdateParent
+    /// marker already persisted in Blockstore.
+    PersistedUpdateParent,
+    /// BCL supplies the ordered transactions recorded before its locally
+    /// produced UpdateParent marker.
+    Transactions(Arc<Vec<VersionedTransaction>>),
 }
 
 /// The validator path that requested transaction-history cleanup for a slot.
@@ -314,7 +322,7 @@ impl TransactionStatusSender {
         &self,
         slot: Slot,
         source: TransactionHistoryPurgeSource,
-        num_transactions_before_update_parent: Option<usize>,
+        purge_input: TransactionHistoryPurgeInput,
     ) -> Result<(), String> {
         let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
         let requested_at = Instant::now();
@@ -323,7 +331,7 @@ impl TransactionStatusSender {
             .send(TransactionStatusMessage::PurgeTransactionHistory {
                 slot,
                 source,
-                num_transactions_before_update_parent,
+                purge_input,
                 requested_at,
                 done_sender,
             })

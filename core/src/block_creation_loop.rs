@@ -46,7 +46,9 @@ use {
         bank_forks_controller::{BankForksController, BankForksControllerError},
         block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
-        transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
+        },
         validated_block_finalization::ValidatedBlockFinalizationCert,
         validated_reward_certificate::ValidatedRewardCert,
     },
@@ -1024,13 +1026,14 @@ fn handle_parent_ready(
         .clear_bank(slot)
         .map_err(|_| PohRecorderError::ResetBankError(old_parent_slot, new_parent_slot))?;
     ctx.poh_recorder.write().unwrap().clear_bank(true);
+    let accumulated_txs = Arc::new(accumulated_txs);
 
     if let Some(transaction_status_sender) = &ctx.transaction_status_sender {
         transaction_status_sender
             .send_purge_transaction_history_for_slot(
                 slot,
                 TransactionHistoryPurgeSource::LeaderWindow,
-                Some(accumulated_txs.len()),
+                TransactionHistoryPurgeInput::Transactions(Arc::clone(&accumulated_txs)),
             )
             .expect("TransactionStatusService failed to purge UpdateParent transaction history");
     }
@@ -1061,9 +1064,9 @@ fn handle_parent_ready(
 
     // Re-inject accumulated transactions back to banking stage for rescheduling
     let packets: Vec<BytesPacket> = accumulated_txs
-        .into_iter()
+        .iter()
         .filter_map(|tx| {
-            let serialized = wincode::serialize(&tx)
+            let serialized = wincode::serialize(tx)
                 .inspect_err(|e| {
                     error!(
                         "failed to serialize transaction for rescheduling - this should never \
@@ -1555,14 +1558,18 @@ mod tests {
 
     fn transaction_history_purge_responder() -> (
         TransactionStatusSender,
-        std::thread::JoinHandle<(Slot, TransactionHistoryPurgeSource, Option<usize>)>,
+        std::thread::JoinHandle<(
+            Slot,
+            TransactionHistoryPurgeSource,
+            TransactionHistoryPurgeInput,
+        )>,
     ) {
         let (sender, receiver) = bounded(1);
         let response_thread = std::thread::spawn(move || {
             let TransactionStatusMessage::PurgeTransactionHistory {
                 slot,
                 source,
-                num_transactions_before_update_parent,
+                purge_input,
                 done_sender,
                 ..
             } = receiver
@@ -1572,7 +1579,7 @@ mod tests {
                 panic!("expected transaction-history purge request");
             };
             done_sender.send(()).unwrap();
-            (slot, source, num_transactions_before_update_parent)
+            (slot, source, purge_input)
         });
         (
             TransactionStatusSender {
@@ -2098,13 +2105,15 @@ mod tests {
         .unwrap()
         .expect("sad handover should recreate the leader bank");
 
+        let (purge_slot, purge_source, purge_input) = purge_response_thread.join().unwrap();
+        assert_eq!(purge_slot, leader_slot);
+        assert_eq!(purge_source, TransactionHistoryPurgeSource::LeaderWindow);
+        let TransactionHistoryPurgeInput::Transactions(purge_transactions) = purge_input else {
+            panic!("expected BCL transactions in purge request");
+        };
         assert_eq!(
-            purge_response_thread.join().unwrap(),
-            (
-                leader_slot,
-                TransactionHistoryPurgeSource::LeaderWindow,
-                Some(2),
-            )
+            purge_transactions.as_slice(),
+            &[accumulated_tx.clone(), drained_tx.clone()]
         );
 
         assert_eq!(new_bank.slot(), leader_slot);
