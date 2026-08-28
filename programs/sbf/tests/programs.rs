@@ -4375,12 +4375,7 @@ fn test_cpi_invalid_account_info_pointers() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    let feature_set = Arc::make_mut(&mut bank.feature_set);
-    // by default test banks have all features enabled, so we only need to
-    // disable when needed
-    feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-    feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    let bank = Bank::new_for_tests(&genesis_config);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let account_keypair = Keypair::new();
@@ -4421,10 +4416,6 @@ fn test_cpi_invalid_account_info_pointers() {
             TEST_CPI_INVALID_LAMPORTS_POINTER,
             TEST_CPI_INVALID_OWNER_POINTER,
             TEST_CPI_INVALID_DATA_POINTER,
-            #[cfg(feature = "sbf_rust")]
-            TEST_CPI_INVALID_LAMPORTS_RC,
-            #[cfg(feature = "sbf_rust")]
-            TEST_CPI_INVALID_DATA_RC,
         ] {
             let account = AccountSharedData::new(42, 5, invoke_program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
@@ -4442,6 +4433,86 @@ fn test_cpi_invalid_account_info_pointers() {
                 logs.iter().any(|log| log.contains("Invalid pointer")),
                 "{logs:?}"
             );
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_cpi_invalid_account_info_rc() {
+    agave_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(100_123_456_789);
+    let account_keypair = Keypair::new();
+
+    for virtual_address_space_adjustments in [false, true] {
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        let feature_set = Arc::make_mut(&mut bank.feature_set);
+        // by default test banks have all features enabled, so we only need to
+        // disable when needed
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+        }
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+        let mint_pubkey = mint_keypair.pubkey();
+        let mut account_metas = vec![
+            AccountMeta::new(mint_pubkey, true),
+            AccountMeta::new(account_keypair.pubkey(), false),
+        ];
+
+        let mut program_ids: Vec<Pubkey> = Vec::with_capacity(2);
+
+        #[cfg(feature = "sbf_rust")]
+        {
+            let invoke_program_id = create_program(
+                &bank,
+                &bpf_loader_upgradeable::id(),
+                "solana_sbf_rust_invoke",
+            );
+            account_metas.push(AccountMeta::new_readonly(invoke_program_id, false));
+            program_ids.push(invoke_program_id);
+        }
+
+        let mut bank_client = BankClient::new_shared(bank.clone());
+        let bank = bank_client
+            .advance_slot(1, &bank_forks, SlotLeader::default())
+            .unwrap();
+
+        for invoke_program_id in &program_ids {
+            for ix in [TEST_CPI_INVALID_LAMPORTS_RC, TEST_CPI_INVALID_DATA_RC] {
+                let account = AccountSharedData::new(42, 5, invoke_program_id);
+                bank.store_account(&account_keypair.pubkey(), &account);
+                let instruction = Instruction::new_with_bytes(
+                    *invoke_program_id,
+                    &[ix, 42, 42, 42],
+                    account_metas.clone(),
+                );
+
+                let message = Message::new(&[instruction], Some(&mint_pubkey));
+                let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+                let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+                if virtual_address_space_adjustments {
+                    assert_eq!(
+                        result.unwrap_err(),
+                        TransactionError::InstructionError(
+                            0,
+                            InstructionError::ExternalAccountDataModified,
+                        ),
+                    );
+                } else {
+                    assert!(result.is_err(), "{result:?}");
+                    assert!(
+                        logs.iter().any(|log| log.contains("Invalid pointer")),
+                        "{logs:?}"
+                    );
+                }
+            }
         }
     }
 }
