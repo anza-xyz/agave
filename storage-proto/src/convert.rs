@@ -414,6 +414,25 @@ impl From<generated::Message> for VersionedMessage {
             .map(Hash::new_from_array)
             .unwrap();
         let instructions = value.instructions.into_iter().map(|ix| ix.into()).collect();
+
+        // `config` is written only for V1 messages, whose lifetime specifier travels in
+        // `recent_blockhash` and which have no address table lookups. It has to be checked before
+        // `versioned`, which is true for V0 *and* V1 and so cannot tell them apart on its own.
+        if let Some(config) = value.config {
+            return Self::V1(v1::Message {
+                header,
+                config: v1::TransactionConfig {
+                    priority_fee: config.priority_fee,
+                    compute_unit_limit: config.compute_unit_limit,
+                    loaded_accounts_data_size_limit: config.loaded_accounts_data_size_limit,
+                    heap_size: config.heap_size,
+                },
+                lifetime_specifier: recent_blockhash,
+                account_keys,
+                instructions,
+            });
+        }
+
         let address_table_lookups = value
             .address_table_lookups
             .into_iter()
@@ -1344,6 +1363,34 @@ impl From<entries::Entry> for EntrySummary {
 mod test {
     use {super::*, enum_iterator::all};
 
+    fn header() -> MessageHeader {
+        MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 1,
+        }
+    }
+
+    fn account_keys() -> Vec<Pubkey> {
+        vec![
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ]
+    }
+
+    fn instructions() -> Vec<CompiledInstruction> {
+        vec![CompiledInstruction {
+            program_id_index: 2,
+            accounts: vec![0, 1],
+            data: vec![1, 2, 3, 4],
+        }]
+    }
+
+    fn round_trip(message: VersionedMessage) -> VersionedMessage {
+        VersionedMessage::from(generated::Message::from(message))
+    }
+
     #[test]
     fn test_reward_type_encode() {
         let mut reward = Reward {
@@ -2050,5 +2097,65 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test]
+    fn legacy_message_round_trips() {
+        let message = VersionedMessage::Legacy(LegacyMessage {
+            header: header(),
+            account_keys: account_keys(),
+            recent_blockhash: Hash::new_unique(),
+            instructions: instructions(),
+        });
+        assert_eq!(round_trip(message.clone()), message);
+    }
+
+    #[test]
+    fn v0_message_round_trips() {
+        let message = VersionedMessage::V0(v0::Message {
+            header: header(),
+            account_keys: account_keys(),
+            recent_blockhash: Hash::new_unique(),
+            instructions: instructions(),
+            address_table_lookups: vec![MessageAddressTableLookup {
+                account_key: Pubkey::new_unique(),
+                writable_indexes: vec![1, 2],
+                readonly_indexes: vec![3],
+            }],
+        });
+        assert_eq!(round_trip(message.clone()), message);
+    }
+
+    /// `versioned` is true for V0 and V1 alike, so a V1 message is only recognisable by the
+    /// presence of `config`. Reading it back as V0 would silently drop the compute-budget request
+    /// and misreport the version.
+    #[test]
+    fn v1_message_round_trips() {
+        let message = VersionedMessage::V1(v1::Message {
+            header: header(),
+            config: v1::TransactionConfig::empty()
+                .with_priority_fee(5_000)
+                .with_compute_unit_limit(30_000)
+                .with_loaded_accounts_data_size_limit(200_000)
+                .with_heap_size(65_536),
+            lifetime_specifier: Hash::new_unique(),
+            account_keys: account_keys(),
+            instructions: instructions(),
+        });
+        assert_eq!(round_trip(message.clone()), message);
+    }
+
+    /// A V1 message may request nothing at all — an empty config mask is legal, and must still be
+    /// distinguishable from V0.
+    #[test]
+    fn v1_message_with_empty_config_round_trips() {
+        let message = VersionedMessage::V1(v1::Message {
+            header: header(),
+            config: v1::TransactionConfig::empty(),
+            lifetime_specifier: Hash::new_unique(),
+            account_keys: account_keys(),
+            instructions: instructions(),
+        });
+        assert_eq!(round_trip(message.clone()), message);
     }
 }
