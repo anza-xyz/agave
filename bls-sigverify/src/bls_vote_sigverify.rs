@@ -50,7 +50,7 @@ struct ProcessedVotes {
     reward_msg: Vec<Vec<VoteAggregate>>,
     repair_msg: HashMap<Pubkey, Vec<Slot>>,
     vote_aggregates_for_pool: Vec<Vec<VoteAggregate>>,
-    metrics_msg: Vec<ConsensusMetricsEvent>,
+    metrics_msg: Vec<Vec<ConsensusMetricsEvent>>,
 }
 
 impl ProcessedVotes {
@@ -293,7 +293,7 @@ fn process_verified_votes(
         reward_msg: vec![votes_for_reward],
         repair_msg: msgs_for_repair,
         vote_aggregates_for_pool: vec![vote_aggregates_for_pool],
-        metrics_msg: votes_for_metrics,
+        metrics_msg: vec![votes_for_metrics],
     }
 }
 
@@ -325,12 +325,14 @@ fn send_msgs(
             &mut sender_stats,
         );
     }
-    send_votes_to_metrics(
-        my_pubkey,
-        processed_votes.metrics_msg,
-        &channels.channel_to_metrics,
-        &mut sender_stats,
-    );
+    for votes in processed_votes.metrics_msg {
+        send_votes_to_metrics(
+            my_pubkey,
+            votes,
+            &channels.channel_to_metrics,
+            &mut sender_stats,
+        );
+    }
     Ok(sender_stats)
 }
 
