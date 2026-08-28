@@ -264,6 +264,15 @@ mod tests {
         )
         .unwrap();
 
+        // The account count lands in the bank fields, where it is used to size the index
+        let (bank_fields, _) =
+            crate::serde_snapshot::fields_from_stream(&mut std::io::BufReader::new(&buf[..]))
+                .unwrap();
+        assert_eq!(
+            bank_fields.num_accounts,
+            Some(bank.rc.accounts.accounts_db.accounts_index.num_accounts() as u64),
+        );
+
         // Deserialize
         let rdr = Cursor::new(&buf[..]);
         let mut reader = std::io::BufReader::new(&buf[rdr.position() as usize..]);

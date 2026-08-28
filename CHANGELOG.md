@@ -14,6 +14,12 @@ Release channels have their own copy of this changelog:
 * [stable - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
 
 <a name="edge-channel"></a>
+## 4.4.0-Unreleased
+### Validator
+#### Changes
+* Snapshots now record the bank's account count, which is used to pre-allocate the accounts index
+  at startup. `--accounts-index-initial-accounts-count` still overrides it.
+
 ## 4.3.0-Unreleased
 ### RPC
 #### Breaking

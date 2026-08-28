@@ -239,7 +239,8 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             versioned_epoch_stakes: vec![], // populated from ExtraFieldsToDeserialize
             accounts_lt_hash: AccountsLtHash(LT_HASH_CANARY), // populated from ExtraFieldsToDeserialize
             bank_hash_stats: BankHashStats::default(),        // populated from AccountsDbFields
-            block_id: None, // populated from ExtraFieldsToDeserialize
+            block_id: None,     // populated from ExtraFieldsToDeserialize
+            num_accounts: None, // populated from ExtraFieldsToDeserialize
         }
     }
 }
@@ -528,7 +529,7 @@ impl DeserializableBankSnapshot {
             versioned_epoch_stakes,
             accounts_lt_hash,
             block_id,
-            num_accounts: _,
+            num_accounts,
         } = extra_fields;
 
         bank_fields.fee_rate_governor = bank_fields
@@ -539,6 +540,7 @@ impl DeserializableBankSnapshot {
             .expect("snapshot must have accounts_lt_hash")
             .into();
         bank_fields.block_id = block_id;
+        bank_fields.num_accounts = num_accounts;
 
         Ok((bank_fields, accounts_db))
     }
@@ -892,11 +894,19 @@ pub(crate) fn reconstruct_bank_from_fields(
     leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
+    mut accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Bank, ReconstructedBankInfo), SnapshotError> {
     let mut bank_fields = bank_fields.collapse_into();
+    // Size the index up front from the snapshot's account count, unless it was configured explicitly
+    if let Some(num_accounts) = bank_fields.num_accounts {
+        let index_config = accounts_db_config.index.get_or_insert_default();
+        if index_config.num_initial_accounts.is_none() {
+            info!("Sizing accounts index for {num_accounts} accounts, per the snapshot");
+            index_config.num_initial_accounts = Some(num_accounts as usize);
+        }
+    }
     // Epoch stakes take several seconds to reconstruct, do it in parallel with loading accountsdb
     let deserializable_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
     let epoch_stakes_handle = thread::Builder::new()

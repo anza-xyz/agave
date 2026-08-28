@@ -516,6 +516,7 @@ pub enum VATHealthError {
         accounts_lt_hash(pub),
         bank_hash_stats(pub),
         block_id(pub),
+        num_accounts(pub),
     )
 )]
 pub struct BankFieldsToDeserialize {
@@ -549,6 +550,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) accounts_lt_hash: AccountsLtHash,
     pub(crate) bank_hash_stats: BankHashStats,
     pub(crate) block_id: Option<Hash>, // Option wrapper can be removed in version after v4.1
+    pub(crate) num_accounts: Option<u64>,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -589,6 +591,7 @@ impl Default for BankFieldsToDeserialize {
             accounts_lt_hash: AccountsLtHash(LtHash::identity()),
             bank_hash_stats: BankHashStats::default(),
             block_id: Option::<Hash>::default(),
+            num_accounts: Option::<u64>::default(),
         }
     }
 }
