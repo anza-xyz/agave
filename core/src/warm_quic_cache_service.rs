@@ -38,6 +38,7 @@ impl WarmQuicCacheService {
         if let Some(connection_cache) = cache
             && let Some(Some(addr)) =
                 cluster_info.lookup_contact_info(leader_pubkey, contact_info_selector)
+            && cluster_info.socket_addr_space().check(&addr)
         {
             let conn = connection_cache.get_connection(&addr);
             if let Err(err) = conn.send_data(&[]) {

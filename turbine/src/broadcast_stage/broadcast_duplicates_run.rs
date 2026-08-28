@@ -424,6 +424,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                                 let tvu = cluster_info.lookup_contact_info(pubkey, |node| {
                                     node.tvu(Protocol::UDP)
                                 })??;
+                                if !socket_addr_space.check(&tvu) {
+                                    return None;
+                                }
                                 Some((shred.payload(), tvu))
                             })
                             .collect(),

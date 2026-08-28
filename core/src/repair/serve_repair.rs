@@ -726,6 +726,7 @@ impl RepairPeers {
         weight_source: RepairPeerWeightSource,
         peers: &[ContactInfo],
         weights: &[u64],
+        socket_addr_space: &SocketAddrSpace,
     ) -> Result<Self> {
         if peers.len() != weights.len() {
             return Err(Error::from(WeightedError::InvalidWeight));
@@ -734,9 +735,13 @@ impl RepairPeers {
             .iter()
             .zip(weights)
             .filter_map(|(peer, &weight)| {
+                let serve_repair = peer.serve_repair(Protocol::UDP)?;
+                if !socket_addr_space.check(&serve_repair) {
+                    return None;
+                }
                 let node = Node {
                     pubkey: *peer.pubkey(),
-                    serve_repair: peer.serve_repair(Protocol::UDP)?,
+                    serve_repair,
                 };
                 Some((node, weight))
             })
@@ -893,8 +898,13 @@ impl ServeRepair {
         peers_cache.pop(&slot);
         let repair_peers = self.repair_peers(repair_validators, slot, &identity_keypair.pubkey());
         let weights = self.repair_peer_weights(slot, cluster_slots, &repair_peers, weight_source);
-        let repair_peers =
-            RepairPeers::new(Instant::now(), weight_source, &repair_peers, &weights)?;
+        let repair_peers = RepairPeers::new(
+            Instant::now(),
+            weight_source,
+            &repair_peers,
+            &weights,
+            self.cluster_info.socket_addr_space(),
+        )?;
         peers_cache.put(slot, repair_peers);
         Ok(peers_cache.get(&slot).unwrap())
     }
@@ -1790,6 +1800,9 @@ impl ServeRepair {
             .map(|i| index[i])
             .filter_map(|i| {
                 let addr = repair_peers[i].serve_repair(repair_protocol)?;
+                if !self.cluster_info.socket_addr_space().check(&addr) {
+                    return None;
+                }
                 Some((*repair_peers[i].pubkey(), addr))
             })
             .take(get_ancestor_hash_repair_sample_size())
@@ -1812,10 +1825,11 @@ impl ServeRepair {
         let (weights, index) = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
         let k = WeightedIndex::new(weights).ok()?.sample(&mut rand::rng());
         let n = index[k];
-        Some((
-            *repair_peers[n].pubkey(),
-            repair_peers[n].serve_repair(Protocol::UDP)?,
-        ))
+        let addr = repair_peers[n].serve_repair(Protocol::UDP)?;
+        if !self.cluster_info.socket_addr_space().check(&addr) {
+            return None;
+        }
+        Some((*repair_peers[n].pubkey(), addr))
     }
 
     pub(crate) fn map_repair_request(
@@ -2045,6 +2059,43 @@ mod tests {
     ) -> usize {
         requests.retain(|request| is_well_formed_repair_request(&PacketRef::from(request), stats));
         requests.len()
+    }
+
+    #[test]
+    fn test_repair_peers_respect_socket_addr_space() {
+        let private_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 8000));
+        let public_addr = SocketAddr::from(([8, 8, 8, 8], 8001));
+        let mut private_peer = ContactInfo::new(Pubkey::new_unique(), 0, 0);
+        private_peer
+            .set_serve_repair(Protocol::UDP, private_addr)
+            .unwrap();
+        let mut public_peer = ContactInfo::new(Pubkey::new_unique(), 0, 0);
+        public_peer
+            .set_serve_repair(Protocol::UDP, public_addr)
+            .unwrap();
+        let peers = [private_peer, public_peer];
+        let weights = [1, 1];
+
+        let filtered = RepairPeers::new(
+            Instant::now(),
+            RepairPeerWeightSource::ClusterSlots,
+            &peers,
+            &weights,
+            &SocketAddrSpace::Global,
+        )
+        .unwrap();
+        assert_eq!(filtered.peers.len(), 1);
+        assert_eq!(filtered.peers[0].serve_repair, public_addr);
+
+        let unrestricted = RepairPeers::new(
+            Instant::now(),
+            RepairPeerWeightSource::ClusterSlots,
+            &peers,
+            &weights,
+            &SocketAddrSpace::Unspecified,
+        )
+        .unwrap();
+        assert_eq!(unrestricted.peers.len(), 2);
     }
 
     #[test]

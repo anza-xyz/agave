@@ -1081,8 +1081,10 @@ impl RepairService {
             .iter()
             .filter_map(|(pubkey, stake)| {
                 let peer_repair_addr = cluster_info
-                    .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
-                if let Some(Some(peer_repair_addr)) = peer_repair_addr {
+                    .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP))
+                    .flatten()
+                    .filter(|addr| cluster_info.socket_addr_space().check(addr));
+                if let Some(peer_repair_addr) = peer_repair_addr {
                     trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
                     Some((
                         *pubkey,
@@ -1126,9 +1128,11 @@ impl RepairService {
 
         // Check validity of passed in peer.
         if let Some(pubkey) = pubkey {
-            let peer_repair_addr =
-                cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
-            if let Some(Some(peer_repair_addr)) = peer_repair_addr {
+            let peer_repair_addr = cluster_info
+                .lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP))
+                .flatten()
+                .filter(|addr| cluster_info.socket_addr_space().check(addr));
+            if let Some(peer_repair_addr) = peer_repair_addr {
                 trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
                 repair_peers.push((pubkey, peer_repair_addr));
             }

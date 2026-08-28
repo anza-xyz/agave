@@ -24,7 +24,9 @@ pub(crate) fn upcoming_leader_tpu_vote_sockets(
         .into_iter()
         .dedup()
         .filter_map(|leader_pubkey| {
-            cluster_info.lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(protocol))?
+            cluster_info
+                .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(protocol))?
+                .filter(|addr| cluster_info.socket_addr_space().check(addr))
         })
         // dedup again since leaders could potentially share the same tpu vote socket
         .dedup()

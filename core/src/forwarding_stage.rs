@@ -119,6 +119,7 @@ impl ForwardAddressGetter {
         leaders.extend(leader_pubkeys.iter().filter_map(|leader_pubkey| {
             self.cluster_info
                 .lookup_contact_info(leader_pubkey, |node| node.tpu_forwards(Protocol::QUIC))?
+                .filter(|addr| self.cluster_info.socket_addr_space().check(addr))
         }));
     }
 
@@ -136,6 +137,7 @@ impl ForwardAddressGetter {
         leader_pubkeys.into_iter().find_map(|leader_pubkey| {
             self.cluster_info
                 .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(Protocol::UDP))?
+                .filter(|addr| self.cluster_info.socket_addr_space().check(addr))
         })
     }
 }
@@ -787,13 +789,27 @@ mod tests {
         super::*,
         crossbeam_channel::bounded,
         packet::PacketFlags,
+        solana_gossip::{contact_info::ContactInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_ledger::{
+            blockstore::Blockstore, get_tmp_ledger_path_auto_delete,
+            leader_schedule_cache::LeaderScheduleCache,
+        },
+        solana_net_utils::socket_addr_space::SocketAddrSpace,
         solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
+        solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
-        solana_runtime::genesis_utils::create_genesis_config,
+        solana_runtime::genesis_utils::{
+            bootstrap_validator_stake_lamports, create_genesis_config,
+            create_genesis_config_with_leader,
+        },
+        solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        std::sync::{Arc, Mutex},
+        std::{
+            net::Ipv4Addr,
+            sync::{Arc, Mutex, atomic::AtomicBool},
+        },
     };
 
     #[derive(Clone)]
@@ -839,6 +855,89 @@ mod tests {
         let mut packet = Packet::from_data(None, &transaction).unwrap();
         packet.meta_mut().flags = packet_flags;
         packet
+    }
+
+    fn new_forward_address_getter(
+        leader: &Keypair,
+        tpu_vote: SocketAddr,
+        tpu_forwards: SocketAddr,
+        socket_addr_space: SocketAddrSpace,
+    ) -> ForwardAddressGetter {
+        let genesis_config = create_genesis_config_with_leader(
+            1_000_000_000,
+            &leader.pubkey(),
+            bootstrap_validator_stake_lamports(),
+        )
+        .genesis_config;
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
+            0,
+            bank.last_blockhash(),
+            bank.clone(),
+            None,
+            bank.ticks_per_slot(),
+            blockstore,
+            &leader_schedule_cache,
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+
+        let identity = Arc::new(Keypair::new());
+        let cluster_info = Arc::new(ClusterInfo::new(
+            Node::new_localhost_with_pubkey(&identity.pubkey()).info,
+            identity,
+            socket_addr_space,
+        ));
+        let mut leader_info = ContactInfo::new(leader.pubkey(), 0, 0);
+        leader_info.set_tpu_vote(Protocol::UDP, tpu_vote).unwrap();
+        leader_info
+            .set_tpu_forwards(Protocol::QUIC, tpu_forwards)
+            .unwrap();
+        cluster_info.insert_info(leader_info);
+
+        ForwardAddressGetter::new(cluster_info, Arc::new(RwLock::new(poh_recorder)))
+    }
+
+    #[test]
+    fn test_forwarding_addresses_respect_socket_addr_space() {
+        let leader = Keypair::new();
+        let tpu_vote = SocketAddr::from((Ipv4Addr::LOCALHOST, 8005));
+        let tpu_forwards = SocketAddr::from(([10, 0, 0, 1], 8006));
+        let global_address_getter =
+            new_forward_address_getter(&leader, tpu_vote, tpu_forwards, SocketAddrSpace::Global);
+
+        assert!(
+            !global_address_getter
+                .cluster_info
+                .socket_addr_space()
+                .check(&tpu_vote)
+        );
+        assert!(
+            !global_address_getter
+                .cluster_info
+                .socket_addr_space()
+                .check(&tpu_forwards)
+        );
+        assert_eq!(global_address_getter.next_vote_forwarding_address(), None);
+        let mut leaders = Vec::new();
+        global_address_getter.non_vote_forwarding_addresses(3, &mut leaders);
+        assert!(leaders.is_empty());
+
+        let unrestricted_address_getter = new_forward_address_getter(
+            &leader,
+            tpu_vote,
+            tpu_forwards,
+            SocketAddrSpace::Unspecified,
+        );
+        assert_eq!(
+            unrestricted_address_getter.next_vote_forwarding_address(),
+            Some(tpu_vote)
+        );
+        unrestricted_address_getter.non_vote_forwarding_addresses(3, &mut leaders);
+        assert_eq!(leaders, vec![tpu_forwards; 3]);
     }
 
     #[test]
