@@ -111,6 +111,59 @@ pub struct ReplicaAccountInfoV3<'a> {
     pub txn: Option<&'a SanitizedTransaction>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
+/// Information about an account being updated
+/// (extended with the index of the transaction doing this update)
+pub struct ReplicaAccountInfoV4<'a> {
+    /// The Pubkey for the account
+    pub pubkey: &'a [u8],
+
+    /// The lamports for the account
+    pub lamports: u64,
+
+    /// The Pubkey of the owner program account
+    pub owner: &'a [u8],
+
+    /// This account's data contains a loaded program (and is now read-only)
+    pub executable: bool,
+
+    /// The epoch at which this account will next owe rent
+    pub rent_epoch: u64,
+
+    /// The data held in this account.
+    pub data: &'a [u8],
+
+    /// A global monotonically increasing atomic number, which can be used
+    /// to tell the order of the account update. For example, when an
+    /// account is updated in the same slot multiple times, the update
+    /// with higher write_version should supersede the one with lower
+    /// write_version.
+    pub write_version: u64,
+
+    /// Reference to transaction causing this account modification
+    pub txn: Option<&'a SanitizedTransaction>,
+
+    /// Index of `txn` within its block, using the same numbering as
+    /// `ReplicaTransactionInfoV2::index`: only *processed* transactions are
+    /// counted, so an account update and the notification for the transaction
+    /// that caused it agree on the index.
+    ///
+    /// `Some` for account writes caused by a transaction, whenever the index is
+    /// knowable. `None` in these cases:
+    /// - snapshot-restore notifications (`is_startup == true`), which have no
+    ///   causing transaction;
+    /// - account writes not attributable to a transaction, in replayed and
+    ///   produced blocks alike — sysvar updates, rent, epoch rewards and
+    ///   similar. These already report `txn: None`;
+    /// - blocks produced by this node while transaction indexes aren't being
+    ///   tracked. Tracking requires a `TransactionStatusSender`, i.e. RPC
+    ///   transaction history or a geyser transaction notifier. Block
+    ///   verification computes indexes unconditionally, so a replayed
+    ///   transaction's writes always carry one.
+    pub txn_index: Option<usize>,
+}
+
 /// A wrapper to future-proof ReplicaAccountInfo handling.
 /// If there were a change to the structure of ReplicaAccountInfo,
 /// there would be new enum entry for the newer version, forcing
@@ -120,6 +173,7 @@ pub enum ReplicaAccountInfoVersions<'a> {
     V0_0_1(&'a ReplicaAccountInfo<'a>),
     V0_0_2(&'a ReplicaAccountInfoV2<'a>),
     V0_0_3(&'a ReplicaAccountInfoV3<'a>),
+    V0_0_4(&'a ReplicaAccountInfoV4<'a>),
 }
 
 /// Information about a transaction

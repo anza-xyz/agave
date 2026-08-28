@@ -16,6 +16,17 @@ use {
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
 };
 
+/// What `collect_accounts_to_store` returns: the accounts to store, plus the
+/// geyser side-channel data gathered alongside them. Each optional vec, when
+/// present, has one entry per collected account in the same order as the
+/// accounts. The transactions vec is present when geyser is active; the index
+/// vec additionally requires the caller to have supplied indexes.
+pub type CollectedAccountsToStore<'a> = (
+    Vec<(&'a Pubkey, &'a AccountSharedData)>,
+    Option<Vec<&'a SanitizedTransaction>>,
+    Option<Vec<Option<usize>>>,
+);
+
 // Used to approximate how many accounts will be calculated for storage so that
 // vectors are allocated with an appropriate capacity. Doesn't account for some
 // optimization edge cases where some write locked accounts have skip storage.
@@ -51,19 +62,36 @@ fn max_number_of_accounts_to_collect(
 // if it's provided.
 // If geyser is not used, `txs_refs` should be `None`, since the work would
 // be useless.
+/// `txn_indexes`, if provided, holds each transaction's index within the block,
+/// positionally aligned with `txs` — one entry per transaction, including
+/// unprocessed ones. The returned index vec is aligned with the returned
+/// accounts instead: each collected account carries the index of the transaction
+/// that touched it, so geyser can report it per account update.
 pub fn collect_accounts_to_store<'a, T: SVMMessage>(
     txs: &'a [T],
     txs_refs: &'a Option<Vec<impl Borrow<SanitizedTransaction>>>,
     processing_results: &'a [TransactionProcessingResult],
-) -> (
-    Vec<(&'a Pubkey, &'a AccountSharedData)>,
-    Option<Vec<&'a SanitizedTransaction>>,
-) {
+    txn_indexes: Option<&[usize]>,
+) -> CollectedAccountsToStore<'a> {
+    // The lookup below tolerates a short slice by reporting no index, which is
+    // right for callers that legitimately know nothing. It would also silently
+    // mislabel a caller that passed indexes for only the committed subset — the
+    // numbering the status batch uses — so pin the contract here.
+    debug_assert!(
+        txn_indexes.is_none_or(|indexes| indexes.len() == txs.len()),
+        "txn_indexes must be positionally aligned with txs, one entry per transaction including \
+         unprocessed ones",
+    );
+
     let collect_capacity = max_number_of_accounts_to_collect(txs, processing_results);
     let mut accounts = Vec::with_capacity(collect_capacity);
     let mut transactions = txs_refs
         .is_some()
         .then(|| Vec::with_capacity(collect_capacity));
+    // Needs geyser active *and* indexes to report. Without indexes every entry
+    // would be `None`, which the notifier already infers from an absent vec.
+    let mut collected_txn_indexes =
+        (txs_refs.is_some() && txn_indexes.is_some()).then(|| Vec::with_capacity(collect_capacity));
     for (index, (processing_result, transaction)) in processing_results.iter().zip(txs).enumerate()
     {
         let Some(processed_tx) = processing_result.processed_transaction() else {
@@ -72,14 +100,17 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
         };
 
         let transaction_ref = txs_refs.as_ref().map(|txs_refs| txs_refs[index].borrow());
+        let txn_index = txn_indexes.and_then(|indexes| indexes.get(index).copied());
         match processed_tx {
             ProcessedTransaction::Executed(executed_tx) => {
                 if executed_tx.execution_details.status.is_ok() {
                     collect_accounts_for_successful_tx(
                         &mut accounts,
                         &mut transactions,
+                        &mut collected_txn_indexes,
                         transaction,
                         transaction_ref,
+                        txn_index,
                         &executed_tx.loaded_transaction.accounts,
                         &executed_tx.loaded_transaction.touched_flags,
                     );
@@ -87,7 +118,9 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                     collect_accounts_for_failed_tx(
                         &mut accounts,
                         &mut transactions,
+                        &mut collected_txn_indexes,
                         transaction_ref,
+                        txn_index,
                         &executed_tx.loaded_transaction.rollback_accounts,
                     );
                 }
@@ -96,21 +129,25 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                 collect_accounts_for_failed_tx(
                     &mut accounts,
                     &mut transactions,
+                    &mut collected_txn_indexes,
                     transaction_ref,
+                    txn_index,
                     &fees_only_tx.rollback_accounts,
                 );
             }
             ProcessedTransaction::NoOp(_) => (),
         }
     }
-    (accounts, transactions)
+    (accounts, transactions, collected_txn_indexes)
 }
 
 fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
     collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
+    collected_account_txn_indexes: &mut Option<Vec<Option<usize>>>,
     transaction: &'a T,
     transaction_ref: Option<&'a SanitizedTransaction>,
+    txn_index: Option<usize>,
     transaction_accounts: &'a [KeyedAccountSharedData],
     touched_flags: &[bool],
 ) {
@@ -137,6 +174,9 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
             collected_account_transactions
                 .push(transaction_ref.expect("transaction ref must exist if collecting"));
         }
+        if let Some(collected_account_txn_indexes) = collected_account_txn_indexes {
+            collected_account_txn_indexes.push(txn_index);
+        }
     }
 }
 
@@ -144,7 +184,9 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
 fn collect_accounts_for_failed_tx<'a>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
     collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
+    collected_account_txn_indexes: &mut Option<Vec<Option<usize>>>,
     transaction_ref: Option<&'a SanitizedTransaction>,
+    txn_index: Option<usize>,
     rollback_accounts: &'a RollbackAccounts,
 ) {
     for (address, account) in rollback_accounts {
@@ -152,6 +194,9 @@ fn collect_accounts_for_failed_tx<'a>(
         if let Some(collected_account_transactions) = collected_account_transactions {
             collected_account_transactions
                 .push(transaction_ref.expect("transaction ref must exist if collecting"));
+        }
+        if let Some(collected_account_txn_indexes) = collected_account_txn_indexes {
+            collected_account_txn_indexes.push(txn_index);
         }
     }
 }
@@ -299,8 +344,8 @@ mod tests {
 
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
-            let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+            let (collected_accounts, transactions, _txn_indexes) =
+                collect_accounts_to_store(&txs, &transaction_refs, &processing_results, None);
             assert_eq!(collected_accounts.len(), 2);
             assert!(
                 collected_accounts
@@ -322,6 +367,153 @@ mod tests {
                 assert!(transactions.is_none());
             }
         }
+    }
+
+    /// A transaction contributing several accounts must have its index repeated
+    /// once per collected account, so the notifier's per-account lookup lines up.
+    #[test]
+    fn test_collect_accounts_to_store_txn_indexes_align_with_accounts() {
+        let keypair0 = Keypair::new();
+        let keypair1 = Keypair::new();
+        let (key_a, key_b) = (solana_pubkey::new_rand(), solana_pubkey::new_rand());
+
+        // tx0: fee payer plus two writable instruction accounts -> 3 accounts.
+        let message0 = Message::new_with_compiled_instructions(
+            1, // num_required_signatures
+            0, // num_readonly_signed_accounts
+            1, // num_readonly_unsigned_accounts -> only the program is readonly
+            vec![keypair0.pubkey(), key_a, key_b, native_loader::id()],
+            Hash::default(),
+            vec![CompiledInstruction::new(3, &(), vec![1, 2])],
+        );
+        let transaction_accounts0 = vec![
+            (
+                message0.account_keys[0],
+                AccountSharedData::new(100, 0, &Pubkey::default()),
+            ),
+            (
+                message0.account_keys[1],
+                AccountSharedData::new(1, 0, &Pubkey::default()),
+            ),
+            (
+                message0.account_keys[2],
+                AccountSharedData::new(2, 0, &Pubkey::default()),
+            ),
+            (
+                message0.account_keys[3],
+                AccountSharedData::new(3, 0, &Pubkey::default()),
+            ),
+        ];
+        let tx0 = new_sanitized_tx(&[&keypair0], message0, Hash::default());
+
+        // tx1: fee payer only -> 1 account.
+        let message1 = Message::new_with_compiled_instructions(
+            1,
+            0,
+            1,
+            vec![keypair1.pubkey(), native_loader::id()],
+            Hash::default(),
+            vec![CompiledInstruction::new(1, &(), vec![])],
+        );
+        let transaction_accounts1 = vec![
+            (
+                message1.account_keys[0],
+                AccountSharedData::new(200, 0, &Pubkey::default()),
+            ),
+            (
+                message1.account_keys[1],
+                AccountSharedData::new(4, 0, &Pubkey::default()),
+            ),
+        ];
+        let tx1 = new_sanitized_tx(&[&keypair1], message1, Hash::default());
+
+        let build_results = || {
+            let loaded0 = LoadedTransaction {
+                accounts: transaction_accounts0.clone(),
+                touched_flags: touched_flags_for_test(
+                    transaction_accounts0.len(),
+                    transaction_accounts0.len(),
+                ),
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::default(),
+                compute_budget: SVMTransactionExecutionBudget::default(),
+                loaded_accounts_data_size: 0,
+            };
+            let loaded1 = LoadedTransaction {
+                accounts: transaction_accounts1.clone(),
+                touched_flags: touched_flags_for_test(
+                    transaction_accounts1.len(),
+                    transaction_accounts1.len(),
+                ),
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::default(),
+                compute_budget: SVMTransactionExecutionBudget::default(),
+                loaded_accounts_data_size: 0,
+            };
+            vec![
+                new_executed_processing_result(Ok(()), loaded0),
+                new_executed_processing_result(Ok(()), loaded1),
+            ]
+        };
+
+        let txs = vec![tx0, tx1];
+        let transaction_refs = Some(txs.iter().collect::<Vec<_>>());
+
+        // Indexes provided: each account carries its own transaction's index.
+        let processing_results = build_results();
+        let (collected_accounts, _transactions, txn_indexes) =
+            collect_accounts_to_store(&txs, &transaction_refs, &processing_results, Some(&[4, 7]));
+        assert_eq!(collected_accounts.len(), 4);
+        assert_eq!(
+            txn_indexes.unwrap(),
+            vec![Some(4), Some(4), Some(4), Some(7)]
+        );
+
+        // No indexes provided: nothing collected, rather than a vec of `None`.
+        let processing_results = build_results();
+        let (_collected_accounts, _transactions, txn_indexes) =
+            collect_accounts_to_store(&txs, &transaction_refs, &processing_results, None);
+        assert!(txn_indexes.is_none());
+
+        // Geyser inactive: nothing is collected either.
+        let processing_results = build_results();
+        let no_refs: Option<Vec<&SanitizedTransaction>> = None;
+        let (_collected_accounts, _transactions, txn_indexes) =
+            collect_accounts_to_store(&txs, &no_refs, &processing_results, Some(&[4, 7]));
+        assert!(txn_indexes.is_none());
+    }
+
+    /// A transaction that only rolls back (fees-only) still labels the rollback
+    /// accounts it contributes.
+    #[test]
+    fn test_collect_accounts_to_store_txn_indexes_for_fees_only_tx() {
+        let from = keypair_from_seed(&[1; 32]).unwrap();
+        let from_address = from.pubkey();
+        let to_address = Pubkey::new_unique();
+
+        let instructions = vec![system_instruction::transfer(&from_address, &to_address, 42)];
+        let message = Message::new(&instructions, Some(&from_address));
+        let tx = new_sanitized_tx(&[&from], message, Hash::new_unique());
+
+        let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
+        let txs = vec![tx];
+        let processing_results = vec![Ok(ProcessedTransaction::FeesOnly(Box::new(
+            FeesOnlyTransaction {
+                load_error: TransactionError::InvalidProgramForExecution,
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::FeePayerOnly {
+                    fee_payer: (from_address, from_account_pre),
+                },
+                loaded_accounts_data_size: 0,
+            },
+        )))];
+
+        let transaction_refs = Some(txs.iter().collect::<Vec<_>>());
+        let (collected_accounts, _transactions, txn_indexes) =
+            collect_accounts_to_store(&txs, &transaction_refs, &processing_results, Some(&[11]));
+
+        assert_eq!(collected_accounts.len(), 1);
+        assert_eq!(txn_indexes.unwrap(), vec![Some(11)]);
     }
 
     #[test]
@@ -370,8 +562,8 @@ mod tests {
         let processing_results = vec![new_executed_processing_result(Ok(()), loaded)];
 
         let transaction_refs: Option<Vec<&SanitizedTransaction>> = None;
-        let (collected_accounts, _transactions) =
-            collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+        let (collected_accounts, _transactions, _txn_indexes) =
+            collect_accounts_to_store(&txs, &transaction_refs, &processing_results, None);
 
         // Only the fee payer and the touched writable account are stored; the
         // untouched writable account and the readonly program are skipped.
@@ -430,8 +622,8 @@ mod tests {
 
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
-            let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+            let (collected_accounts, transactions, _txn_indexes) =
+                collect_accounts_to_store(&txs, &transaction_refs, &processing_results, None);
             assert_eq!(collected_accounts.len(), 1);
             assert_eq!(
                 collected_accounts
@@ -526,8 +718,8 @@ mod tests {
 
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
-            let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+            let (collected_accounts, transactions, _txn_indexes) =
+                collect_accounts_to_store(&txs, &transaction_refs, &processing_results, None);
             assert_eq!(collected_accounts.len(), 2);
             assert_eq!(
                 collected_accounts
@@ -637,8 +829,8 @@ mod tests {
 
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
-            let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+            let (collected_accounts, transactions, _txn_indexes) =
+                collect_accounts_to_store(&txs, &transaction_refs, &processing_results, None);
             assert_eq!(collected_accounts.len(), 1);
             let collected_nonce_account = collected_accounts
                 .iter()
@@ -696,8 +888,8 @@ mod tests {
 
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
-            let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+            let (collected_accounts, transactions, _txn_indexes) =
+                collect_accounts_to_store(&txs, &transaction_refs, &processing_results, None);
             assert_eq!(collected_accounts.len(), 1);
             assert_eq!(
                 collected_accounts
