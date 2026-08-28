@@ -2726,14 +2726,22 @@ fn maybe_warp_slot(
         // `RwLock<BankForks>` (deadlock with an exclusive lock).
         let warp_bank = Bank::warp_from_parent(root_bank, SlotLeader::default(), warp_slot);
 
-        let mut bank_forks = bank_forks.write().unwrap();
-        bank_forks.insert(warp_bank);
-        // The bank must have a block id set to take a snapshot.
-        // Also must be set before calling set_root() just incase the warp slot triggers a
-        // snapshot request based on the snapshot config inside snapshot_controller.
-        let warp_bank = bank_forks.get(warp_slot).unwrap();
-        Bank::calculate_and_set_block_id_for_dcou(&warp_bank);
-        bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
+        {
+            let mut bank_forks = bank_forks.write().unwrap();
+            bank_forks.insert(warp_bank);
+            // The bank must have a block id set to take a snapshot.
+            // Also must be set before calling set_root() just incase the warp slot triggers a
+            // snapshot request based on the snapshot config inside snapshot_controller.
+            let warp_bank = bank_forks.get(warp_slot).unwrap();
+            Bank::calculate_and_set_block_id_for_dcou(&warp_bank);
+        }
+        BankForks::set_root_from_shared(
+            bank_forks,
+            warp_slot,
+            Some(snapshot_controller),
+            Some(warp_slot),
+        );
+        let warp_bank = bank_forks.read().unwrap().get(warp_slot).unwrap();
         leader_schedule_cache.set_root(&warp_bank);
 
         let snapshot_config = SnapshotConfig {
@@ -2752,7 +2760,6 @@ fn maybe_warp_slot(
             full_snapshot_archive_info.path().display()
         );
 
-        drop(bank_forks);
         // Process blockstore after warping bank forks to make sure tower and
         // bank forks are in sync.
         process_blockstore.process()?;

@@ -52,7 +52,7 @@ use {
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
     solana_accounts_db::contains::Contains,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -2291,49 +2291,18 @@ impl ReplayStage {
         let slot_descendants = slot_descendants.unwrap();
         Self::purge_ancestors_descendants(slot_to_purge, &slot_descendants, ancestors, descendants);
 
-        let banks_to_remove: Vec<_> = {
-            let bank_forks = bank_forks.read().unwrap();
-            slot_descendants
-                .iter()
-                .chain(std::iter::once(&slot_to_purge))
-                .filter_map(|slot| bank_forks.get_with_scheduler(*slot))
-                .collect()
-        };
-        for bank in banks_to_remove {
-            let _ = bank.wait_for_completed_scheduler();
-        }
-
         // Grab the Slot and BankId's of the banks we need to purge, then clear the banks
         // from BankForks
-        let (slots_to_purge, removed_banks): (Vec<(Slot, BankId)>, Vec<BankWithScheduler>) = {
-            let mut w_bank_forks = bank_forks.write().unwrap();
-            w_bank_forks.dump_slots(
-                slot_descendants
-                    .iter()
-                    .chain(std::iter::once(&slot_to_purge)),
-                true,
-            )
-        };
-
-        // Clear the accounts for these slots so that any ongoing RPC scans fail.
-        // These have to be atomically cleared together in the same batch, in order
-        // to prevent RPC from seeing inconsistent results in scans.
-        root_bank.remove_unrooted_slots(&slots_to_purge);
-
-        // Once the slots above have been purged, now it's safe to remove the banks from
-        // BankForks, allowing the Bank::drop() purging to run and not race with the
-        // `remove_unrooted_slots()` call.
-        drop(removed_banks);
+        let slots_to_purge = BankForks::dump_slots(
+            bank_forks,
+            slot_descendants
+                .iter()
+                .copied()
+                .chain(std::iter::once(slot_to_purge)),
+            true,
+        );
 
         for (slot, slot_id) in slots_to_purge {
-            // Clear the slot signatures from status cache for this slot.
-            // TODO: What about RPC queries that had already cloned the Bank for this slot
-            // and are looking up the signature for this slot?
-            root_bank.clear_slot_signatures(slot);
-
-            // Remove cached entries of the programs that were deployed in this slot.
-            root_bank.prune_program_cache_by_deployment_slot(slot);
-
             if let Some(bank_hash) = blockstore.get_bank_hash(slot) {
                 // If a descendant was successfully replayed and chained from a duplicate it must
                 // also be a duplicate. In this case we *need* to repair it, so we clear from
@@ -2569,8 +2538,7 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     ) {
-        let (slots_to_purge, banks_to_clear) =
-            bank_forks.read().unwrap().slots_to_clear(slots_to_clear);
+        let slots_to_purge = bank_forks.read().unwrap().slots_to_clear(slots_to_clear);
         if slots_to_purge.is_empty() {
             return;
         }
@@ -2587,51 +2555,8 @@ impl ReplayStage {
             }
         }
 
-        // Wait for any in progress execution
-        for bank in banks_to_clear.iter() {
-            let _ = bank.wait_for_completed_scheduler();
-        }
-        let bank_slots_to_clear = banks_to_clear
-            .iter()
-            .map(|bank| bank.slot())
-            .collect::<BTreeSet<_>>();
-
-        // Only dump banks that are still present. `slots_to_purge` can also contain slots that
-        // were already removed, but whose shared cache entries still need to be cleared before the
-        // slots are revived.
-        let (root_bank, slot_bank_ids_to_purge, removed_banks) = {
-            let mut w_bank_forks = bank_forks.write().unwrap();
-
-            let root_bank = w_bank_forks.root_bank();
-            let bank_slots_to_clear = bank_slots_to_clear
-                .into_iter()
-                .filter(|slot| w_bank_forks.get(*slot).is_some())
-                .collect::<BTreeSet<_>>();
-            let (slot_bank_ids_to_purge, removed_banks) =
-                w_bank_forks.dump_slots(bank_slots_to_clear.iter(), false);
-            (root_bank, slot_bank_ids_to_purge, removed_banks)
-        };
-
-        // Clear the accounts for these slots so that any ongoing RPC scans fail.
-        // These have to be atomically cleared together in the same batch, in order
-        // to prevent RPC from seeing inconsistent results in scans.
-        if !slot_bank_ids_to_purge.is_empty() {
-            root_bank.remove_unrooted_slots(&slot_bank_ids_to_purge);
-        }
-
-        // Once the slots above have been purged, now it's safe to remove the banks from
-        // BankForks, allowing the Bank::drop() purging to run and not race with the
-        // `remove_unrooted_slots()` call.
-        drop(banks_to_clear);
-        drop(removed_banks);
-
-        // Clear the shared caches even for requested slots whose banks were already removed.
-        // Those slots can be revived by an Alpenglow switch, and stale entries from the old block
-        // version must not affect replay of the new version.
-        for slot in slots_to_purge {
-            root_bank.clear_slot_signatures(slot);
-            root_bank.prune_program_cache_by_deployment_slot(slot);
-        }
+        // `dump_slots` also clears shared cache entries for slots whose banks were already removed.
+        let _ = BankForks::dump_slots(bank_forks, slots_to_purge, false);
     }
 
     fn recycle_async_verification(

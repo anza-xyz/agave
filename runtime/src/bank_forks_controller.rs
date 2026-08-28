@@ -345,16 +345,7 @@ mod tests {
                         slot,
                         response_sender,
                     } => {
-                        let bank_to_clear =
-                            replay_bank_forks.read().unwrap().get_with_scheduler(slot);
-                        if let Some(bank) = bank_to_clear {
-                            let _ = bank.wait_for_completed_scheduler();
-                        }
-
-                        {
-                            let mut bank_forks = replay_bank_forks.write().unwrap();
-                            bank_forks.clear_bank(slot, false);
-                        }
+                        BankForks::clear_bank(&replay_bank_forks, slot, false);
                         response_sender.send(()).unwrap();
                     }
                 }

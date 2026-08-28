@@ -345,9 +345,8 @@ impl SchedulerStatus {
 /// Very thin wrapper around Arc<Bank>
 ///
 /// It brings type-safety against accidental mixing of bank and scheduler with different slots,
-/// which is a pretty dangerous condition. Also, it guarantees to call wait_for_termination() via
-/// ::drop() by DropBankService, which receives Vec<BankWithScheduler> from BankForks::set_root()'s
-/// pruning, mostly matching to Arc<Bank>'s lifetime by piggybacking on the pruning.
+/// which is a pretty dangerous condition. BankForks normally completes the scheduler before
+/// removing the bank; dropping this wrapper also waits for termination as a fallback.
 ///
 /// Semantically, a scheduler is tightly coupled with a particular bank. But scheduler wasn't put
 /// into Bank fields to avoid circular-references (a scheduler needs to refer to its accompanied

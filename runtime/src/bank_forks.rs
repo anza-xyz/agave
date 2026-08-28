@@ -1,5 +1,7 @@
 //! The `bank_forks` module implements BankForks a DAG of checkpointed Banks
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         bank::{Bank, SquashTiming, bank_hash_details},
@@ -94,6 +96,76 @@ impl Index<u64> for BankForks {
 }
 
 impl BankForks {
+    /// Completes the bank's scheduler without holding a `BankForks` lock, removes the bank under
+    /// the write lock, and cleans its runtime state.
+    pub fn remove(bank_forks: &RwLock<Self>, slot: Slot) -> Option<BankWithScheduler> {
+        Self::remove_and_clean_bank(bank_forks, slot, false)
+    }
+
+    /// Completes the bank's scheduler without holding a `BankForks` lock, clears the bank under the
+    /// write lock, and cleans its runtime state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the bank is not present in bank forks.
+    pub fn clear_bank(bank_forks: &RwLock<Self>, slot: Slot, write_bank_hash_details: bool) {
+        Self::remove_and_clean_bank(bank_forks, slot, write_bank_hash_details)
+            .unwrap_or_else(|| panic!("bank at slot {slot} does not exist"));
+    }
+
+    /// Completes the selected banks' schedulers without holding a `BankForks` lock, removes the
+    /// banks under the write lock, and cleans their runtime state before dropping them.
+    pub fn dump_slots(
+        bank_forks: &RwLock<Self>,
+        slots: impl IntoIterator<Item = Slot>,
+        write_bank_hash_details: bool,
+    ) -> Vec<(Slot, BankId)> {
+        let requested_slots = slots.into_iter().collect::<BTreeSet<_>>();
+        let (root_bank, banks) = {
+            let bank_forks = bank_forks.read().unwrap();
+            let banks = requested_slots
+                .iter()
+                .filter_map(|slot| bank_forks.get_with_scheduler(*slot))
+                .collect::<Vec<_>>();
+            (bank_forks.root_bank(), banks)
+        };
+        for bank in &banks {
+            let _ = bank.wait_for_completed_scheduler();
+        }
+        let removed_banks = bank_forks
+            .write()
+            .unwrap()
+            .dump_slots_inner(banks.iter().map(|bank| bank.slot()));
+        Self::write_bank_hash_details(&removed_banks, write_bank_hash_details);
+        Self::clean_removed_banks(&root_bank, &removed_banks, requested_slots)
+    }
+
+    /// Completes schedulers for every bank the root update will remove, then updates BankForks
+    /// under the write lock.
+    pub fn set_root_from_shared(
+        bank_forks: &RwLock<Self>,
+        root: Slot,
+        snapshot_controller: Option<&SnapshotController>,
+        highest_super_majority_root: Option<Slot>,
+    ) -> Vec<BankWithScheduler> {
+        let banks = {
+            let bank_forks = bank_forks.read().unwrap();
+            bank_forks
+                .get_non_rooted(root, highest_super_majority_root)
+                .map(BankWithScheduler::clone_with_scheduler)
+                .collect::<Vec<_>>()
+        };
+        for bank in banks {
+            let _ = bank.wait_for_completed_scheduler();
+        }
+        bank_forks.read().unwrap().prune_program_cache(root);
+        bank_forks.write().unwrap().set_root_inner(
+            root,
+            snapshot_controller,
+            highest_super_majority_root,
+        )
+    }
+
     pub fn new_rw_arc(root_bank: Bank) -> Arc<RwLock<Self>> {
         let root_bank = Arc::new(root_bank);
         let root_slot = root_bank.slot();
@@ -193,25 +265,18 @@ impl BankForks {
     /// a bank if it's descendant(s) are still in BankForks.
     ///
     /// Returns the supplied unrooted slots and all descendants that are still present in bank
-    /// forks as `slots_to_purge`, plus the subset that still has a bank as `banks_to_clear`.
-    pub fn slots_to_clear(
-        &self,
-        slots: impl IntoIterator<Item = Slot>,
-    ) -> (BTreeSet<Slot>, Vec<BankWithScheduler>) {
+    /// forks.
+    pub fn slots_to_clear(&self, slots: impl IntoIterator<Item = Slot>) -> BTreeSet<Slot> {
         let root = self.root();
-        let mut slots_to_purge = BTreeSet::new();
-        let mut bank_slots_to_clear = BTreeSet::new();
+        let mut slots_to_clear = BTreeSet::new();
 
         for slot in slots {
             if slot <= root {
                 continue;
             }
-            slots_to_purge.insert(slot);
-            if self.banks.contains_key(&slot) {
-                bank_slots_to_clear.insert(slot);
-            }
+            slots_to_clear.insert(slot);
             if let Some(slot_descendants) = self.descendants.get(&slot) {
-                bank_slots_to_clear.extend(
+                slots_to_clear.extend(
                     slot_descendants
                         .iter()
                         .copied()
@@ -220,15 +285,7 @@ impl BankForks {
             }
         }
 
-        slots_to_purge.extend(&bank_slots_to_clear);
-        let banks_to_clear = bank_slots_to_clear
-            .into_iter()
-            .map(|slot| {
-                self.get_with_scheduler(slot)
-                    .expect("bank slot was present while collecting slots to clear")
-            })
-            .collect();
-        (slots_to_purge, banks_to_clear)
+        slots_to_clear
     }
 
     pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
@@ -344,7 +401,7 @@ impl BankForks {
         bank_with_scheduler
     }
 
-    pub fn remove(&mut self, slot: Slot) -> Option<BankWithScheduler> {
+    fn remove_inner(&mut self, slot: Slot) -> Option<BankWithScheduler> {
         let bank = self.banks.remove(&slot)?;
         for parent in bank.proper_ancestors() {
             let Entry::Occupied(mut entry) = self.descendants.entry(parent) else {
@@ -400,51 +457,71 @@ impl BankForks {
         self.banks[&self.highest_slot()].clone_with_scheduler()
     }
 
-    /// Clears associated banks from BankForks.
-    pub fn dump_slots<'a, I>(
-        &mut self,
-        slots: I,
+    fn remove_and_clean_bank(
+        bank_forks: &RwLock<Self>,
+        slot: Slot,
         write_bank_hash_details: bool,
-    ) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
-    where
-        I: Iterator<Item = &'a Slot>,
-    {
-        slots
-            .map(|slot| {
-                // Clear the banks from BankForks
-                let bank = self
-                    .remove(*slot)
-                    .expect("BankForks should not have been purged yet");
-                if write_bank_hash_details {
-                    bank_hash_details::write_bank_hash_details_file(&bank)
-                        .map_err(|err| {
-                            warn!("Unable to write bank hash details file: {err}");
-                        })
-                        .ok();
-                }
-                ((*slot, bank.bank_id()), bank)
-            })
-            .unzip()
+    ) -> Option<BankWithScheduler> {
+        let (root_bank, bank) = {
+            let bank_forks = bank_forks.read().unwrap();
+            (bank_forks.root_bank(), bank_forks.get_with_scheduler(slot)?)
+        };
+        let _ = bank.wait_for_completed_scheduler();
+        let removed_bank = bank_forks.write().unwrap().remove_inner(slot)?;
+        Self::write_bank_hash_details(std::slice::from_ref(&removed_bank), write_bank_hash_details);
+        Self::clean_removed_banks(
+            &root_bank,
+            std::slice::from_ref(&removed_bank),
+            std::iter::once(slot),
+        );
+        Some(removed_bank)
     }
 
-    /// Clears a bank from bank forks. Panics if the bank is not present in bank forks.
-    ///
-    /// Callers must quiesce any scheduler for this bank before calling this
-    /// method. ReplayStage does that outside the `BankForks` write lock before
-    /// servicing clear-bank controller commands.
-    pub fn clear_bank(&mut self, slot: Slot, write_bank_hash_details: bool) {
-        let (slots_to_purge, removed_banks) =
-            self.dump_slots(std::iter::once(&slot), write_bank_hash_details);
+    fn dump_slots_inner(
+        &mut self,
+        slots: impl IntoIterator<Item = Slot>,
+    ) -> Vec<BankWithScheduler> {
+        slots
+            .into_iter()
+            .map(|slot| {
+                self.remove_inner(slot)
+                    .expect("BankForks should not have been purged yet")
+            })
+            .collect()
+    }
 
-        let root_bank = self.root_bank();
+    fn write_bank_hash_details(banks: &[BankWithScheduler], write_bank_hash_details: bool) {
+        if !write_bank_hash_details {
+            return;
+        }
+        for bank in banks {
+            bank_hash_details::write_bank_hash_details_file(bank)
+                .map_err(|err| warn!("Unable to write bank hash details file: {err}"))
+                .ok();
+        }
+    }
 
-        root_bank.remove_unrooted_slots(&slots_to_purge);
-        drop(removed_banks);
-
-        for (slot, _) in slots_to_purge {
+    fn clean_removed_banks(
+        root_bank: &Bank,
+        removed_banks: &[BankWithScheduler],
+        slots_to_clean: impl IntoIterator<Item = Slot>,
+    ) -> Vec<(Slot, BankId)> {
+        let slots_to_purge = removed_banks
+            .iter()
+            .map(|bank| (bank.slot(), bank.bank_id()))
+            .collect::<Vec<_>>();
+        if !slots_to_purge.is_empty() {
+            // Invalidate scans and purge all removed slots atomically. `removed_banks` keeps the
+            // banks alive until this cleanup finishes so `Bank::drop()` cannot race with it.
+            root_bank.remove_unrooted_slots(&slots_to_purge);
+        }
+        // Also clear shared cache entries for requested slots that were already absent. These
+        // slots can be revived, and stale entries from the old bank must not affect replay.
+        for slot in slots_to_clean {
             root_bank.clear_slot_signatures(slot);
             root_bank.prune_program_cache_by_deployment_slot(slot);
         }
+        slots_to_purge
     }
 
     fn do_set_root_return_metrics(
@@ -540,13 +617,14 @@ impl BankForks {
         )
     }
 
-    pub fn prune_program_cache(&self, root: Slot) {
+    #[cfg_attr(any(test, feature = "dev-context-only-utils"), qualifiers(pub))]
+    fn prune_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
             root_bank.prune_program_cache(self);
         }
     }
 
-    pub fn set_root(
+    fn set_root_inner(
         &mut self,
         root: Slot,
         snapshot_controller: Option<&SnapshotController>,
@@ -629,6 +707,24 @@ impl BankForks {
         removed_banks
     }
 
+    /// Test-only convenience for updating the root without concurrent scheduler activity.
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn set_root(
+        &mut self,
+        root: Slot,
+        snapshot_controller: Option<&SnapshotController>,
+        highest_super_majority_root: Option<Slot>,
+    ) -> Vec<BankWithScheduler> {
+        let banks_to_remove = self
+            .get_non_rooted(root, highest_super_majority_root)
+            .map(BankWithScheduler::clone_with_scheduler)
+            .collect::<Vec<_>>();
+        for bank in banks_to_remove {
+            let _ = bank.wait_for_completed_scheduler();
+        }
+        self.set_root_inner(root, snapshot_controller, highest_super_majority_root)
+    }
+
     pub fn root(&self) -> Slot {
         self.root
     }
@@ -693,13 +789,17 @@ impl BankForks {
         let mut prune_slots_time = Measure::start("prune_slots");
         let prune_slots: Vec<_> = self
             .get_non_rooted(root, highest_super_majority_root)
+            .map(|bank| bank.slot())
             .collect();
         prune_slots_time.stop();
 
         let mut prune_remove_time = Measure::start("prune_slots");
         let removed_banks = prune_slots
             .into_iter()
-            .filter_map(|slot| self.remove(slot))
+            .map(|slot| {
+                self.remove_inner(slot)
+                    .expect("bank should still be present")
+            })
             .collect();
         prune_remove_time.stop();
 
@@ -710,18 +810,20 @@ impl BankForks {
         )
     }
 
-    pub fn get_non_rooted(
+    /// Returns banks that will be pruned by a root update.
+    fn get_non_rooted(
         &self,
         root: Slot,
         highest_super_majority_root: Option<Slot>,
-    ) -> impl Iterator<Item = Slot> + '_ {
+    ) -> impl Iterator<Item = &BankWithScheduler> + '_ {
         let highest_super_majority_root = highest_super_majority_root.unwrap_or(root);
-        self.banks.keys().copied().filter(move |slot| {
-            let keep = *slot == root
-                || self.descendants[&root].contains(slot)
-                || (*slot < root
-                    && *slot >= highest_super_majority_root
-                    && self.descendants[slot].contains(&root));
+        self.banks.values().filter(move |bank| {
+            let slot = bank.slot();
+            let keep = slot == root
+                || self.descendants[&root].contains(&slot)
+                || (slot < root
+                    && slot >= highest_super_majority_root
+                    && self.descendants[&slot].contains(&root));
             !keep
         })
     }
@@ -947,13 +1049,7 @@ mod tests {
         let clear_bank_forks = bank_forks.clone();
         let (finish_done_sender, finish_done_receiver) = bounded(1);
         let finish_thread = thread::spawn(move || {
-            let bank_to_clear = clear_bank_forks
-                .read()
-                .unwrap()
-                .get_with_scheduler(1)
-                .unwrap();
-            let _ = bank_to_clear.wait_for_completed_scheduler();
-            clear_bank_forks.write().unwrap().clear_bank(1, false);
+            BankForks::clear_bank(&clear_bank_forks, 1, false);
             finish_done_sender.send(()).unwrap();
         });
 
@@ -1172,43 +1268,16 @@ mod tests {
         );
 
         let slots = |slots: &[Slot]| {
-            let (slots_to_purge, banks_to_clear) = bank_forks
+            bank_forks
                 .read()
                 .unwrap()
-                .slots_to_clear(slots.iter().copied());
-            let bank_slots_to_clear = banks_to_clear
-                .iter()
-                .map(|bank| bank.slot())
-                .collect::<BTreeSet<_>>();
-            assert_eq!(banks_to_clear.len(), bank_slots_to_clear.len());
-            (slots_to_purge, bank_slots_to_clear)
+                .slots_to_clear(slots.iter().copied())
         };
-        assert_eq!(
-            slots(&[2]),
-            ([2, 4].into_iter().collect(), [2, 4].into_iter().collect())
-        );
-        assert_eq!(
-            slots(&[1]),
-            (
-                [1, 2, 3, 4].into_iter().collect(),
-                [1, 2, 3, 4].into_iter().collect(),
-            )
-        );
-        assert_eq!(
-            slots(&[0]),
-            (BTreeSet::<Slot>::new(), BTreeSet::<Slot>::new())
-        );
-        assert_eq!(
-            slots(&[6]),
-            ([6].into_iter().collect(), BTreeSet::<Slot>::new())
-        );
-        assert_eq!(
-            slots(&[1, 2, 2, 3]),
-            (
-                [1, 2, 3, 4].into_iter().collect(),
-                [1, 2, 3, 4].into_iter().collect(),
-            )
-        );
+        assert_eq!(slots(&[2]), [2, 4].into_iter().collect());
+        assert_eq!(slots(&[1]), [1, 2, 3, 4].into_iter().collect());
+        assert_eq!(slots(&[0]), BTreeSet::<Slot>::new());
+        assert_eq!(slots(&[6]), [6].into_iter().collect());
+        assert_eq!(slots(&[1, 2, 2, 3]), [1, 2, 3, 4].into_iter().collect());
     }
 
     #[test]

@@ -1793,8 +1793,8 @@ fn cleanup_outdated_tower_bft_startup_banks(
 
 /// Clean up failed startup slots and restart processing from the given genesis slot
 ///
-/// `first_alpenglow_bank` and any current `pending_slots` banks are removed from runtime caches,
-/// and their dead statuses are reset.
+/// `first_alpenglow_bank` has already been removed from runtime caches by `BankForks::remove`.
+/// Current `pending_slots` banks are removed from runtime caches, and all dead statuses are reset.
 /// `pending_slots` is the current child blocks left to be processed. We clear and update
 /// this with the children of `genesis_slot` instead.
 fn cleanup_and_populate_pending_from_alpenglow_genesis(
@@ -1809,16 +1809,17 @@ fn cleanup_and_populate_pending_from_alpenglow_genesis(
 ) -> result::Result<(), BlockstoreProcessorError> {
     // The frontier is now out of date, as all banks were created as TowerBFT banks.
     // Cleanup all the banks in the frontier and recreate them as Alpenglow banks.
-    let slots_to_cleanup =
-        std::iter::once((first_alpenglow_bank.slot(), first_alpenglow_bank.bank_id()))
-            .chain(
-                pending_slots
-                    .iter()
-                    .map(|(_, bank, _)| (bank.slot(), bank.bank_id())),
-            )
-            .collect::<Vec<_>>();
+    // The failed bank was removed and cleaned by `BankForks::remove()`. The pending banks were
+    // never inserted into BankForks, so clean their runtime state here before dropping them.
+    let slots_to_cleanup = pending_slots
+        .iter()
+        .map(|(_, bank, _)| (bank.slot(), bank.bank_id()))
+        .collect::<Vec<_>>();
     let root_bank = bank_forks.read().unwrap().root_bank();
-    cleanup_outdated_tower_bft_startup_banks(&root_bank, blockstore, &slots_to_cleanup);
+    if !slots_to_cleanup.is_empty() {
+        cleanup_outdated_tower_bft_startup_banks(&root_bank, blockstore, &slots_to_cleanup);
+    }
+    reset_dead_if_primary_access(blockstore, first_alpenglow_bank.slot());
 
     let genesis_slot_meta = blockstore
         .meta(genesis_slot)
@@ -2066,7 +2067,7 @@ fn load_frozen_forks(
                 timing,
                 &migration_status,
             ) {
-                assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
+                BankForks::remove(bank_forks, bank.slot()).unwrap();
                 if error.is_alpenglow_migration_transition() {
                     assert!(migration_status.is_ready_to_enable());
                     // This was the first Alpenglow block. Enable Alpenglow and replay it with
@@ -2171,11 +2172,7 @@ fn load_frozen_forks(
                 root = new_root_bank.slot();
 
                 leader_schedule_cache.set_root(new_root_bank);
-                new_root_bank.prune_program_cache(&bank_forks.read().unwrap());
-                let _ = bank_forks
-                    .write()
-                    .unwrap()
-                    .set_root(root, snapshot_controller, None);
+                BankForks::set_root_from_shared(bank_forks, root, snapshot_controller, None);
                 m.stop();
                 set_root_us += m.as_us();
 
@@ -6076,11 +6073,7 @@ pub mod tests {
         let first_alpenglow_key = Pubkey::new_unique();
         let pending_key = Pubkey::new_unique();
 
-        let first_alpenglow_bank = Arc::new(Bank::new_from_parent(
-            bank0.clone(),
-            SlotLeader::default(),
-            1,
-        ));
+        let first_alpenglow_bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
         first_alpenglow_bank
             .store_account(&first_alpenglow_key, &AccountSharedData::new(1, 0, &owner));
         assert!(
@@ -6088,8 +6081,13 @@ pub mod tests {
                 .get_account(&first_alpenglow_key)
                 .is_some()
         );
-        let first_alpenglow_bank =
-            BankWithScheduler::new_without_scheduler(first_alpenglow_bank.clone());
+        bank_forks.write().unwrap().insert(first_alpenglow_bank);
+        let first_alpenglow_bank = BankForks::remove(&bank_forks, 1).unwrap();
+        assert!(
+            first_alpenglow_bank
+                .get_account(&first_alpenglow_key)
+                .is_none()
+        );
 
         let pending_bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 2);
         pending_bank.store_account(&pending_key, &AccountSharedData::new(1, 0, &owner));

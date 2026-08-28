@@ -2713,12 +2713,9 @@ mod tests {
 
         // child_bank inserted after pool so it gets a scheduler
         Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, SlotLeader::default(), 1);
-        let mut bank_forks = bank_forks.write().unwrap();
-        let mut child_bank = bank_forks.get_with_scheduler(1).unwrap();
+        let child_bank = bank_forks.read().unwrap().get_with_scheduler(1).unwrap();
         assert!(child_bank.has_installed_scheduler());
-        bank_forks.remove(child_bank.slot());
-        child_bank.drop_scheduler();
-        assert!(!child_bank.has_installed_scheduler());
+        let _removed_bank = BankForks::remove(&bank_forks, child_bank.slot()).unwrap();
     }
 
     fn setup_dummy_fork_graph(bank: Bank) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
