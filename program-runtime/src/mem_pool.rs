@@ -177,6 +177,27 @@ mod test {
     }
 
     #[test]
+    fn test_heap_shrink_then_grow_stays_zeroed() {
+        let mut pool = VmMemoryPool::new();
+        let big = MAX_HEAP_FRAME_BYTES;
+        let small = MIN_HEAP_FRAME_BYTES;
+
+        let mut heap = pool.get_heap(big);
+        heap.as_slice_mut().fill(0xaa);
+        assert!(pool.put_heap(heap, big as usize));
+
+        let mut heap = pool.get_heap(small);
+        heap.as_slice_mut()
+            .get_mut(..small as usize)
+            .unwrap()
+            .fill(0xbb);
+        assert!(pool.put_heap(heap, small as usize));
+
+        let heap = pool.get_heap(big);
+        assert!(heap.as_slice().iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
     fn test_pool() {
         let mut pool = Pool::<Item, 2>::new([Item(0, 1), Item(1, 1)]);
         assert_eq!(pool.get(), Some(Item(1, 1)));
