@@ -676,7 +676,7 @@ impl ConsensusPoolService {
             if new_finalized_slot.is_some() {
                 finalized_slot = new_finalized_slot;
             }
-            if msgs_received >= MAX_MESSAGES_PER_RECEIVE {
+            if msgs_received >= 10_000 {
                 stats.consensus_message_batch_receive_limit_reached += 1;
                 break;
             }
