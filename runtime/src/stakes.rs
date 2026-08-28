@@ -899,6 +899,7 @@ pub(crate) mod tests {
         solana_stake_interface::{self as stake, state::StakeStateV2},
         solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
         solana_vote_program::vote_state,
+        test_case::test_case,
     };
 
     impl Stakes<Delegation> {
@@ -1340,5 +1341,46 @@ pub(crate) mod tests {
             assert!(vote_accounts.get(&vote_pubkey).is_some());
             assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey), 0);
         }
+    }
+
+    #[test_case(4, u64::MAX, true; "activating")]
+    #[test_case(0, u64::MAX, true; "active")]
+    #[test_case(0, 4, true; "deactivating")]
+    #[test_case(0, 3, true; "new_deactivated")]
+    #[test_case(0, 2, false; "old_deactivated")]
+    #[test_case(4, 4, false; "active/deactive")]
+    fn test_inert_delegation_is_removed_from_cache(
+        activation_epoch: Epoch,
+        deactivation_epoch: Epoch,
+        expect_cached: bool,
+    ) {
+        let stakes_cache = StakesCache::new(Stakes {
+            epoch: 4,
+            ..Stakes::default()
+        });
+        let rent = Rent::default();
+
+        let ((vote_pubkey, vote_account), (stake_pubkey, mut stake_account)) =
+            create_staked_node_accounts(10, &rent);
+        let StakeStateV2::Stake(meta, mut stake, flags) = stake_account.state().unwrap() else {
+            panic!("expected a delegated stake account");
+        };
+        stake.delegation.activation_epoch = activation_epoch;
+        stake.delegation.deactivation_epoch = deactivation_epoch;
+        stake_account
+            .set_state(&StakeStateV2::Stake(meta, stake, flags))
+            .unwrap();
+
+        stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true, true);
+        // Force insert the inactive stake in the cache
+        stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true, false);
+        // Update with `remove_inactive_stakes = true` removes it
+        stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true, true);
+
+        let stakes = stakes_cache.stakes();
+        assert_eq!(
+            stakes.stake_delegations().contains_key(&stake_pubkey),
+            expect_cached
+        );
     }
 }
