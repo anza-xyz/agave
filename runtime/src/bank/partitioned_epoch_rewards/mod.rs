@@ -192,7 +192,7 @@ pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHash
 /// Helper struct to give the amounts distributed to commission accounts or
 /// burned in different manners
 #[derive(Debug, Default)]
-pub(super) struct RewardCommissionLamportAmounts {
+pub(super) struct RewardLamportAmounts {
     /// Lamports distributed across all commission collectors, except the
     /// incinerator.
     ///
@@ -207,29 +207,47 @@ pub(super) struct RewardCommissionLamportAmounts {
     pub(super) distributed_to_incinerator_lamports: u64,
     /// lamports burned from undistributed commissions
     pub(super) burned_lamports: u64,
+    /// Pending delegator reward lamports swept from vote accounts
+    pub(super) block_rewards: u64,
 }
 
 #[derive(Debug, Default)]
-pub(super) struct RewardCommissionAccounts {
+pub(super) struct EpochBoundaryAccounts {
     /// accounts with rewards to be stored
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
+    /// vote accounts whose pending delegator rewards were swept, to be stored
+    pub(super) swept_vote_accounts: Vec<(Pubkey, AccountSharedData)>,
     /// amounts distributed to those accounts, and burned after calculation
-    pub(super) amounts: RewardCommissionLamportAmounts,
+    pub(super) amounts: RewardLamportAmounts,
 }
 
-/// Wrapper struct to implement StorableAccounts for RewardCommissionAccounts
-pub(super) struct RewardCommissionAccountsStorable<'a> {
+/// Wrapper struct to implement StorableAccounts for EpochBoundaryAccounts
+pub(super) struct EpochBoundaryAccountsStorable<'a> {
     pub slot: Slot,
-    pub reward_commission_accounts: &'a RewardCommissionAccounts,
+    pub epoch_boundary_accounts: &'a EpochBoundaryAccounts,
 }
 
-impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
+impl<'a> EpochBoundaryAccountsStorable<'a> {
+    fn get_unchecked(&self, index: usize) -> (&Pubkey, &AccountSharedData) {
+        let num_accounts_with_rewards = self.epoch_boundary_accounts.accounts_with_rewards.len();
+        if index >= num_accounts_with_rewards {
+            let (pubkey, account) = &self.epoch_boundary_accounts.swept_vote_accounts
+                [index - num_accounts_with_rewards];
+            (pubkey, account)
+        } else {
+            let (pubkey, _, account) = &self.epoch_boundary_accounts.accounts_with_rewards[index];
+            (pubkey, account)
+        }
+    }
+}
+
+impl<'a> StorableAccounts<'a> for EpochBoundaryAccountsStorable<'a> {
     fn account<Ret>(
         &self,
         index: usize,
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
-        let (pubkey, _, account) = &self.reward_commission_accounts.accounts_with_rewards[index];
+        let (pubkey, account) = self.get_unchecked(index);
         callback((pubkey, account).into())
     }
 
@@ -238,26 +256,20 @@ impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
         index: usize,
         mut callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
     ) -> Ret {
-        let (pubkey, _, account) = &self.reward_commission_accounts.accounts_with_rewards[index];
+        let (pubkey, account) = self.get_unchecked(index);
         callback(pubkey, account)
     }
 
     fn is_zero_lamport(&self, index: usize) -> bool {
-        self.reward_commission_accounts.accounts_with_rewards[index]
-            .2
-            .lamports()
-            == 0
+        self.get_unchecked(index).1.lamports() == 0
     }
 
     fn data_len(&self, index: usize) -> usize {
-        self.reward_commission_accounts.accounts_with_rewards[index]
-            .2
-            .data()
-            .len()
+        self.get_unchecked(index).1.data().len()
     }
 
     fn pubkey(&self, index: usize) -> &Pubkey {
-        &self.reward_commission_accounts.accounts_with_rewards[index].0
+        self.get_unchecked(index).0
     }
 
     fn slot(&self, _index: usize) -> Slot {
@@ -269,7 +281,8 @@ impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
     }
 
     fn len(&self) -> usize {
-        self.reward_commission_accounts.accounts_with_rewards.len()
+        self.epoch_boundary_accounts.accounts_with_rewards.len()
+            + self.epoch_boundary_accounts.swept_vote_accounts.len()
     }
 }
 
