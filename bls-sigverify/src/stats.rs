@@ -346,6 +346,9 @@ pub(super) struct VoteVerificationStats {
     pub(super) fn_verify_votes_optimistic_stats: WelfordStats,
     /// Stats for [`verify_individual_votes`].
     pub(super) fn_verify_individual_votes_stats: WelfordStats,
+    pub(super) fn_verify_small_batch_votes_stats: WelfordStats,
+    pub(super) small_batch_verification_succeeded: Saturating<u64>,
+    pub(super) small_batch_verification_failed: Saturating<u64>,
 }
 
 impl VoteVerificationStats {
@@ -358,6 +361,9 @@ impl VoteVerificationStats {
             banning_validator,
             fn_verify_votes_optimistic_stats,
             fn_verify_individual_votes_stats,
+            fn_verify_small_batch_votes_stats: fn_verify_small_batch_vote_stats,
+            small_batch_verification_succeeded,
+            small_batch_verification_failed,
         } = other;
         self.optimistic_verification_succeeded += optimistic_verification_succeeded;
         self.optimistic_verification_failed += optimistic_verification_failed;
@@ -368,6 +374,10 @@ impl VoteVerificationStats {
             .merge(fn_verify_votes_optimistic_stats);
         self.fn_verify_individual_votes_stats
             .merge(fn_verify_individual_votes_stats);
+        self.fn_verify_small_batch_votes_stats
+            .merge(fn_verify_small_batch_vote_stats);
+        self.small_batch_verification_succeeded += small_batch_verification_succeeded;
+        self.small_batch_verification_failed += small_batch_verification_failed;
     }
 
     pub(super) fn report(&self) {
@@ -379,6 +389,9 @@ impl VoteVerificationStats {
             banning_validator,
             fn_verify_votes_optimistic_stats,
             fn_verify_individual_votes_stats,
+            fn_verify_small_batch_votes_stats,
+            small_batch_verification_succeeded,
+            small_batch_verification_failed,
         } = self;
         datapoint_info!(
             "bls_vote_sigverify_verification_stats",
@@ -401,6 +414,16 @@ impl VoteVerificationStats {
             ("num_individual_verified", num_individual_verified.0, i64),
             ("banning_validator", banning_validator.0, i64),
             (
+                "small_batch_verification_succeeded",
+                small_batch_verification_succeeded.0,
+                i64
+            ),
+            (
+                "small_batch_verification_failed",
+                small_batch_verification_failed.0,
+                i64
+            ),
+            (
                 "fn_verify_votes_optimistic_count",
                 fn_verify_votes_optimistic_stats.count(),
                 i64
@@ -418,6 +441,21 @@ impl VoteVerificationStats {
             (
                 "fn_verify_individual_votes_mean",
                 fn_verify_individual_votes_stats.mean().unwrap_or(0),
+                i64
+            ),
+            (
+                "fn_verify_small_batch_vote_mean",
+                fn_verify_small_batch_votes_stats.mean().unwrap_or(0),
+                i64
+            ),
+            (
+                "fn_verify_small_batch_vote_count",
+                fn_verify_small_batch_votes_stats.count(),
+                i64
+            ),
+            (
+                "fn_verify_small_batch_vote_mean",
+                fn_verify_small_batch_votes_stats.mean().unwrap_or(0),
                 i64
             ),
         );
