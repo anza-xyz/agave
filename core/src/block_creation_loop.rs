@@ -792,16 +792,25 @@ fn record_and_complete_block(
         bank.slot()
     );
 
+    let reward_certs = ctx
+        .reward_certs_requestor
+        .recv_reward_certs(ctx.my_pubkey, reward_cert_request)
+        .map_err(|()| PohRecorderError::ChannelDisconnected)?;
+
+    // Root advancement can retire and purge this Bank concurrently with block completion. Hold
+    // execution token through remaining mutations.
+    let Some(_completion_guard) = bank.try_enter_transaction_execution() else {
+        // Bank is being retired!
+        w_poh_recorder.clear_bank(true);
+        return Err(PohRecorderError::WindowMovedOn(bank_slot));
+    };
+
     let max_tick_height = bank.max_tick_height();
     // Set the tick height for the bank to max_tick_height - 1, so that PohRecorder::flush_cache()
     // will properly increment the tick_height to max_tick_height.
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
-        let reward_certs = ctx
-            .reward_certs_requestor
-            .recv_reward_certs(ctx.my_pubkey, reward_cert_request)
-            .map_err(|()| PohRecorderError::ChannelDisconnected)?;
         let RewardRespSucc {
             skip,
             notar,
@@ -828,7 +837,6 @@ fn record_and_complete_block(
         footer
     };
 
-    drop(bank);
     // Write the single tick for this slot
     w_poh_recorder.tick_alpenglow(max_tick_height, footer)?;
     Ok(())
@@ -897,7 +905,7 @@ fn abort_working_bank(ctx: &mut LeaderContext, slot: Slot) -> Result<(), BankFor
     let reset_bank = bank
         .parent()
         .unwrap_or_else(|| ctx.bank_forks.read().unwrap().root_bank());
-    bank.wait_for_inflight_commits();
+    bank.quiesce_transaction_execution();
     ctx.bank_forks_controller.clear_bank(slot)?;
     reset_poh_recorder(&reset_bank, ctx);
     Ok(())
@@ -981,7 +989,7 @@ fn handle_parent_ready(
             new_parent_slot,
         ))?;
     let cleared_bank_id = bank.bank_id();
-    bank.wait_for_inflight_commits();
+    bank.quiesce_transaction_execution();
     let entry_bytes_consumed = bank.entry_bytes_budget().consumed();
     ctx.bank_forks_controller
         .clear_bank(slot)

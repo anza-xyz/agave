@@ -186,6 +186,8 @@ fn test_scheduler_waited_by_drop_bank_service() {
     drop_bank_service.join().unwrap();
     info!("finally joined the drop bank service!");
 
-    // the scheduler used by the pruned_bank have been returned now.
-    assert_eq!(pool_raw.pooled_scheduler_count(), 1);
+    // Quiescing the pruned bank prevents the stalled transaction from entering
+    // execution.  CommitCancelled aborts the scheduler, so it is retired instead
+    // of being returned to the reusable pool.
+    assert_eq!(pool_raw.pooled_scheduler_count(), 0);
 }
