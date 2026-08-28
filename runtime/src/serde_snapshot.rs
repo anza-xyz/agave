@@ -452,6 +452,9 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<Option<Hash>>")]
     block_id: Option<Hash>,
+    #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u64>>")]
+    num_accounts: Option<u64>,
 }
 
 /// Extra fields that are serialized at the end of snapshots.
@@ -466,7 +469,7 @@ struct ExtraFieldsToDeserialize {
     // Write-only type (its deserialize counterpart is `ExtraFieldsToDeserialize`), so the abi digest
     // only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
-        abi_digest = "A1hmQvmrkwy33dXMpHXTweArYefPfWtsmwXK6EbNV4K6",
+        abi_digest = "CwLyerwxcFq1fHJm9SbrLZzJQJsbaiQTEz2Vv7PeAAFj",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "no"
     )
@@ -480,6 +483,7 @@ pub struct ExtraFieldsToSerialize {
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
     pub block_id: Option<Hash>,
+    pub num_accounts: Option<u64>,
 }
 
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads
@@ -491,7 +495,7 @@ pub struct ExtraFieldsToSerialize {
     feature = "frozen-abi",
     derive(Deserialize, Serialize, SchemaWrite, StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
+        abi_digest = "A7bEzKHTmpgkwPQd3pb7PJ3fJ5ivaqdgmkgg7bbwFG3b",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "wire_only"
     )
@@ -524,6 +528,7 @@ impl DeserializableBankSnapshot {
             versioned_epoch_stakes,
             accounts_lt_hash,
             block_id,
+            num_accounts: _,
         } = extra_fields;
 
         bank_fields.fee_rate_governor = bank_fields
@@ -635,6 +640,7 @@ where
     let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
     let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
     let block_id = Some(bank_fields.block_id);
+    let num_accounts = Some(bank_fields.num_accounts);
     serialize_bank_snapshot_into_wincode(
         stream,
         bank_fields,
@@ -647,6 +653,7 @@ where
             versioned_epoch_stakes,
             accounts_lt_hash,
             block_id,
+            num_accounts,
         },
     )
 }
@@ -689,7 +696,7 @@ struct SerializableBankSnapshot<E> {
 // roundtrip.
 #[cfg(all(test, feature = "frozen-abi"))]
 #[frozen_abi(
-    abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
+    abi_digest = "A7bEzKHTmpgkwPQd3pb7PJ3fJ5ivaqdgmkgg7bbwFG3b",
     abi_serializer = ["bincode", "wincode"],
     test_roundtrip = "no"
 )]

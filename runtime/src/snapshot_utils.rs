@@ -528,6 +528,7 @@ pub fn serialize_snapshot(
                 versioned_epoch_stakes,
                 accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
                 block_id: Some(bank_fields.block_id),
+                num_accounts: Some(bank_fields.num_accounts),
             };
             serde_snapshot::serialize_bank_snapshot_into_wincode(
                 stream,

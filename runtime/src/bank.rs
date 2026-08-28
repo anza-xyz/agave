@@ -630,6 +630,7 @@ pub struct BankFieldsToSerialize {
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: AccountsLtHash,
     pub block_id: Hash,
+    pub num_accounts: u64,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -791,6 +792,7 @@ impl BankFieldsToSerialize {
             versioned_epoch_stakes: HashMap::default(),
             accounts_lt_hash: AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS])),
             block_id: Hash::default(),
+            num_accounts: u64::default(),
         }
     }
 }
@@ -2307,6 +2309,7 @@ impl Bank {
             versioned_epoch_stakes: self.epoch_stakes.clone(),
             accounts_lt_hash: self.accounts_lt_hash.lock().unwrap().clone(),
             block_id: self.block_id().expect("block id must be set"),
+            num_accounts: self.rc.accounts.accounts_db.accounts_index.num_accounts() as u64,
         }
     }
 

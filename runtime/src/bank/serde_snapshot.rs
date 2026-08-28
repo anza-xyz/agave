@@ -128,6 +128,7 @@ mod tests {
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
             let block_id = Some(bank_fields.block_id);
+            let num_accounts = Some(bank_fields.num_accounts);
             serde_snapshot::serialize_bank_snapshot_into(
                 &mut writer,
                 bank_fields,
@@ -140,6 +141,7 @@ mod tests {
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                     block_id,
+                    num_accounts,
                 },
             )
             .unwrap();
@@ -153,6 +155,7 @@ mod tests {
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
             let block_id = Some(bank_fields.block_id);
+            let num_accounts = Some(bank_fields.num_accounts);
             serde_snapshot::serialize_bank_snapshot_into_wincode(
                 &mut buf_wincode,
                 bank_fields,
@@ -165,6 +168,7 @@ mod tests {
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                     block_id,
+                    num_accounts,
                 },
             )
             .unwrap();
