@@ -47,7 +47,7 @@ use {
 #[derive(Default)]
 struct ProcessedVotes {
     reward_msg: Vec<VoteAggregate>,
-    repair_msg: HashMap<Pubkey, Vec<Slot>>,
+    repair_msg: HashMap<Slot, Vec<Pubkey>>,
     vote_aggregates_for_pool: Vec<VoteAggregate>,
     metrics_msg: Vec<ConsensusMetricsEvent>,
 }
@@ -233,14 +233,15 @@ pub(super) fn verify_and_send_votes(
 /// be sent to repair.
 fn inspect_for_repair(
     vote: &VerifiedVotePayload,
-    msgs_for_repair: &mut HashMap<Pubkey, Vec<Slot>>,
+    msgs_for_repair: &mut HashMap<Slot, Vec<Pubkey>>,
 ) {
     let vote_slot = vote.vote_aggregate.vote().slot();
     match vote.vote_aggregate.vote() {
         Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
-            for pubkey in &vote.sender_vote_account_pubkeys {
-                msgs_for_repair.entry(*pubkey).or_default().push(vote_slot);
-            }
+            msgs_for_repair
+                .entry(vote_slot)
+                .or_default()
+                .extend(&vote.sender_vote_account_pubkeys);
         }
         Vote::Skip(_) | Vote::SkipFallback(_) | Vote::Genesis(_) => (),
     }

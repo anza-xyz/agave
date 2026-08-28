@@ -845,13 +845,11 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
-        let received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
+        let mut received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
+        assert_eq!(received_verified_votes1.len(), 1);
         assert_eq!(
-            received_verified_votes1,
-            (
-                ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey(),
-                vec![5]
-            )
+            received_verified_votes1.remove(&5).unwrap(),
+            vec![ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey()]
         );
 
         let vote_rank2 = 3;
@@ -877,13 +875,11 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
-        let received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
+        let mut received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
+        assert_eq!(received_verified_votes2.len(), 1);
         assert_eq!(
-            received_verified_votes2,
-            (
-                ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey(),
-                vec![6]
-            )
+            received_verified_votes2.remove(&6).unwrap(),
+            vec![ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey()]
         );
 
         let vote_rank3 = 9;
@@ -908,13 +904,11 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
-        let received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
+        let mut received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
+        assert_eq!(received_verified_votes3.len(), 1);
         assert_eq!(
-            received_verified_votes3,
-            (
-                ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey(),
-                vec![7]
-            )
+            received_verified_votes3.remove(&7).unwrap(),
+            vec![ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey()]
         );
     }
 
@@ -2097,14 +2091,15 @@ mod tests {
         assert_eq!(ctx.verifier.stats.cert_too_far_in_future.0, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
+        let mut map = ctx.repair_receiver.try_recv().unwrap();
+        assert_eq!(map.len(), 1);
         assert_eq!(
-            ctx.repair_receiver.try_recv().unwrap(),
-            (
+            map.remove(&max_vote_slot).unwrap(),
+            vec![
                 ctx.validator_keypairs[accepted_vote_rank]
                     .vote_keypair
                     .pubkey(),
-                vec![max_vote_slot],
-            )
+            ]
         );
         expect_no_receive(&ctx.repair_receiver);
     }

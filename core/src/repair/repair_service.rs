@@ -704,17 +704,19 @@ impl RepairService {
 
         // Add new votes to the weighting heuristic
         let mut get_votes_us = Measure::start("get_votes_us");
-        let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
-        verified_voter_slots_receiver
-            .try_iter()
-            .for_each(|(vote_pubkey, vote_slots)| {
-                for slot in vote_slots {
-                    slot_to_vote_pubkeys
-                        .entry(slot)
-                        .or_default()
-                        .push(vote_pubkey);
+        let mut slot_to_vote_pubkeys = HashMap::new();
+        verified_voter_slots_receiver.try_iter().for_each(|map| {
+            for (slot, mut pubkeys) in map {
+                match slot_to_vote_pubkeys.entry(slot) {
+                    Entry::Vacant(e) => {
+                        e.insert(pubkeys);
+                    }
+                    Entry::Occupied(e) => {
+                        e.into_mut().append(&mut pubkeys);
+                    }
                 }
-            });
+            }
+        });
         get_votes_us.stop();
 
         let mut add_voters_us = Measure::start("add_voters_us");
