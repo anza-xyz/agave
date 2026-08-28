@@ -696,6 +696,89 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
     );
 }
 
+/// A scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
+/// instead of scanning to completion.
+/// Removing some *other* bank must not abort the scan.
+#[test_case(1, Err(ScanError::SlotRemoved { slot: 1, bank_id: 1 }), 1; "abort_bank_aborts_scan")]
+#[test_case(2, Ok(()), 10; "abort_other_bank_no_effect")]
+fn test_remove_unrooted_slots_aborts_ongoing_scan(
+    removed_bank_id: BankId,
+    expected_result: Result<(), ScanError>,
+    expected_visits: usize,
+) {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let slot = 1;
+    let bank_id = 1;
+    let num_accounts = 10;
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
+    let accounts: Vec<_> = pubkeys.iter().map(|pubkey| (pubkey, &account)).collect();
+    db.store_for_tests((slot, accounts.as_slice()));
+
+    let mut visited = 0;
+    let result = db.scan_accounts(
+        &Ancestors::from(vec![slot, 0]),
+        bank_id,
+        |scan_result| {
+            if scan_result.is_some() {
+                visited += 1;
+                if visited == 1 {
+                    // dump the fork mid-scan, as ReplayStage does for a duplicate fork
+                    db.remove_unrooted_slots(&[(slot, removed_bank_id)]);
+                }
+            }
+        },
+        &ScanConfig::default(),
+    );
+    assert_eq!(result, expected_result);
+    assert_eq!(visited, expected_visits);
+}
+
+/// An index scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
+/// instead of scanning to completion.
+#[test]
+fn test_index_scan_accounts_aborts_when_bank_removed() {
+    let db = AccountsDb {
+        account_indexes: program_id_index_enabled(),
+        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
+    };
+    let slot = 1;
+    let bank_id = 1;
+    let num_accounts = 10;
+    let owner = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &owner);
+    let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
+    let accounts: Vec<_> = pubkeys.iter().map(|pubkey| (pubkey, &account)).collect();
+    db.store_for_tests((slot, accounts.as_slice()));
+    db.add_root_and_flush_write_cache(slot);
+    // all of them are reachable through the secondary index, so a scan that doesn't abort
+    // visits every one
+    assert_eq!(
+        db.accounts_index
+            .get_index_key_size(&AccountIndex::ProgramId, &owner),
+        Some(num_accounts as usize)
+    );
+
+    let mut visited = 0;
+    let result = db.index_scan_accounts(
+        &Ancestors::from(vec![slot]),
+        bank_id,
+        IndexKey::ProgramId(owner),
+        |scan_result| {
+            if scan_result.is_some() {
+                visited += 1;
+                if visited == 1 {
+                    db.scan_tracker.mark_banks_removed([bank_id]);
+                }
+            }
+        },
+        &ScanConfig::default(),
+    );
+    assert_eq!(result, Err(ScanError::SlotRemoved { slot, bank_id }));
+    // Guarantee that the abort occurred without visiting all pubkeys
+    assert_eq!(visited, 1);
+}
+
 /// A pubkey deferred to clean by `remove_unrooted_slots` can be stored again, rooted and flushed
 /// before the next clean handles it. The key is alive in the primary index at that point and no
 /// longer in the write cache, clean must not purge its secondary index entry.

@@ -2628,7 +2628,7 @@ impl AccountsDb {
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
+        let mut scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
             .ok_or(ScanError::SlotRemoved {
                 slot: ancestors.max_slot(),
                 bank_id,
@@ -2650,7 +2650,7 @@ impl AccountsDb {
         let cached_pubkeys = self.accounts_cache.cached_pubkeys();
         let mut cached_versions = ahash::HashMap::with_capacity(cached_pubkeys.len());
         for pubkey in cached_pubkeys {
-            if config.is_aborted() {
+            if config.is_aborted() || scan_guard.is_bank_removed() {
                 break;
             }
 
@@ -2689,13 +2689,13 @@ impl AccountsDb {
                 });
                 scan_func(account_slot)
             },
-            || config.is_aborted(),
+            || config.is_aborted() || scan_guard.is_bank_removed(),
         );
 
         // Step 3: Call scan_func on cache-only entries — pubkeys that exist in the cache but not
         // in the accounts index at all.
         for (pubkey, (cached_account, slot)) in cached_versions {
-            if config.is_aborted() {
+            if config.is_aborted() || scan_guard.is_bank_removed() {
                 break;
             }
             scan_func(Some((&pubkey, cached_account.account.clone(), slot)));
@@ -2735,7 +2735,7 @@ impl AccountsDb {
         }
 
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
+        let mut scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
             .ok_or(ScanError::SlotRemoved {
                 slot: ancestors.max_slot(),
                 bank_id,
@@ -2752,7 +2752,7 @@ impl AccountsDb {
         };
 
         for pubkey in self.accounts_index.get_index_key_pubkeys(&index_key) {
-            if config.is_aborted() {
+            if config.is_aborted() || scan_guard.is_bank_removed() {
                 break;
             }
             if let Some((account, slot)) = self.do_load(
@@ -3551,14 +3551,13 @@ impl AccountsDb {
         );
 
         // Mark down these slots are about to be purged so that new attempts to scan these
-        // banks fail, and any ongoing scans over these slots will detect that they should abort
-        // their results
-        {
-            let mut locked_removed_bank_ids = self.scan_tracker.removed_bank_ids.lock().unwrap();
-            for (_slot, remove_bank_id) in remove_slots.iter() {
-                locked_removed_bank_ids.insert(*remove_bank_id);
-            }
-        }
+        // banks fail, and any ongoing scans over these slots abort promptly, releasing the
+        // bank references their callers hold
+        self.scan_tracker.mark_banks_removed(
+            remove_slots
+                .iter()
+                .map(|(_slot, remove_bank_id)| *remove_bank_id),
+        );
 
         let remove_unrooted_purge_stats = PurgeStats::default();
         self.purge_slots_from_cache(

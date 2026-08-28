@@ -350,7 +350,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         ancestors: &Ancestors,
         max_root: Slot,
         mut func: F,
-        should_abort: impl Fn() -> bool,
+        mut should_abort: impl FnMut() -> bool,
     ) where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
