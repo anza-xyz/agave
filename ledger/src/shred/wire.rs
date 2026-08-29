@@ -291,7 +291,7 @@ pub fn resign_packet(packet: &mut PacketRefMut, keypair: &Keypair) -> Result<(),
         // `Bytes` are immutable. Therefore, to resign the shred from
         // `BytesPacket`, we need to copy the packet's buffer, then modify that
         // copy and assign it to the packet.
-        // We resign only the last FEC set in the block. For 50mbps coming to
+        // We resign only the trailing 1-2 FEC set(s) in the block. For 50mbps coming to
         // turbine, only around 2mbps are resigned. For now, we accept the
         // necessity of copying that minority of packets.
         PacketRefMut::Bytes(packet) => {
@@ -403,6 +403,32 @@ mod tests {
         test_case::test_matrix,
     };
 
+    // The leader resigns the trailing FEC set(s) of the last shreds in a slot.
+    // Returns, per shred, whether it belongs to one of them.
+    fn resigned_shreds(shreds: &[Shred], is_last_in_slot: bool) -> Vec<bool> {
+        let resigned: Vec<bool> = shreds
+            .iter()
+            .map(|shred| {
+                matches!(
+                    shred.common_header().shred_variant,
+                    ShredVariant::MerkleData { resigned: true, .. }
+                        | ShredVariant::MerkleCode { resigned: true, .. }
+                )
+            })
+            .collect();
+        assert_eq!(resigned.iter().any(|&resigned| resigned), is_last_in_slot);
+        assert!(
+            resigned.is_sorted(),
+            "resigned shreds are a suffix of the slot"
+        );
+        assert_eq!(
+            resigned.iter().filter(|&&resigned| resigned).count() % SHREDS_PER_FEC_BLOCK,
+            0,
+            "shreds are resigned in whole FEC sets"
+        );
+        resigned
+    }
+
     fn make_dummy_signature<R: Rng>(rng: &mut R) -> Signature {
         let mut signature = [0u8; 64];
         rng.fill(&mut signature[..]);
@@ -419,14 +445,12 @@ mod tests {
         let data_size = 1200 * rng.random_range(32..64);
         let mut shreds =
             make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
-        // enumerate the shreds so that I have index of each shred
-        let shreds_len = shreds.len();
-        for (index, shred) in shreds.iter_mut().enumerate() {
+        let resigned = resigned_shreds(&shreds, is_last_in_slot);
+        for (shred, resigned) in shreds.iter_mut().zip(resigned) {
             let keypair = Keypair::new();
             let signature = make_dummy_signature(&mut rng);
             let nonce = repaired.then(|| rng.random::<Nonce>());
-            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
-            if is_last_in_slot && is_last_batch {
+            if resigned {
                 shred.set_retransmitter_signature(&signature).unwrap();
 
                 let packet = &mut shred.payload().to_packet(nonce);
@@ -477,11 +501,10 @@ mod tests {
         let data_size = 1200 * rng.random_range(32..64);
         let mut shreds =
             make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
-        let shreds_len = shreds.len();
-        for (index, shred) in shreds.iter_mut().enumerate() {
+        let resigned = resigned_shreds(&shreds, is_last_in_slot);
+        for (shred, &resigned) in shreds.iter_mut().zip(&resigned) {
             let signature = make_dummy_signature(&mut rng);
-            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
-            if is_last_in_slot && is_last_batch {
+            if resigned {
                 shred.set_retransmitter_signature(&signature).unwrap();
             } else {
                 assert_matches!(
@@ -491,9 +514,8 @@ mod tests {
             }
         }
 
-        for (index, shred) in shreds.iter().enumerate() {
+        for (shred, &resigned) in shreds.iter().zip(&resigned) {
             let nonce = repaired.then(|| rng.random::<Nonce>());
-            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
             let mut packet = shred.payload().to_packet(nonce);
             if repaired {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
@@ -546,11 +568,8 @@ mod tests {
                 get_chained_merkle_root(bytes).unwrap(),
                 shred.chained_merkle_root().unwrap(),
             );
-            assert_eq!(
-                is_retransmitter_signed_variant(bytes).unwrap(),
-                is_last_in_slot && is_last_batch,
-            );
-            if is_last_in_slot && is_last_batch {
+            assert_eq!(is_retransmitter_signed_variant(bytes).unwrap(), resigned);
+            if resigned {
                 assert_eq!(
                     get_retransmitter_signature_offset(bytes).unwrap(),
                     shred.retransmitter_signature_offset().unwrap(),
