@@ -7,14 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
-Release channels have their own copy of this changelog:
-* [edge - v4.3](#edge-channel)
-* [alpha - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
-* [beta - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
-* [stable - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
-
-<a name="edge-channel"></a>
-## 4.3.0-Unreleased
+## 4.3.0
 ### RPC
 #### Breaking
 * Failing to successfully establish a Bigtable connection will now result in a
