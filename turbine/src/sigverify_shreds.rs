@@ -227,7 +227,6 @@ struct ShredSigverifyWorkers {
     result_receiver: Receiver<WorkerResult>,
     worker_handles: Vec<JoinHandle<()>>,
     stats: Arc<SigverifyWorkerStats>,
-    deduper: Arc<Deduper<2, [u8]>>,
 }
 
 impl Drop for ShredSigverifyWorkers {
@@ -247,6 +246,7 @@ impl ShredSigverifyWorkers {
     fn new(
         num_workers: NonZeroUsize,
         cache: Arc<RwLock<LruCache>>,
+        deduper: Arc<Deduper<2, [u8]>>,
         cluster_info: Arc<ClusterInfo>,
         bank_forks: Arc<RwLock<BankForks>>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -255,9 +255,6 @@ impl ShredSigverifyWorkers {
         let (job_sender, job_receiver) = bounded::<BatchJob>(SIGVERIFY_SHRED_BATCH_SIZE);
         let (result_sender, result_receiver) = bounded::<WorkerResult>(SIGVERIFY_SHRED_BATCH_SIZE);
         let stats = Arc::new(SigverifyWorkerStats::default());
-
-        let mut rng = rand::rng();
-        let deduper = Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS));
 
         // Keep cheap lock-free handles to the current root and working banks.
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
@@ -268,7 +265,7 @@ impl ShredSigverifyWorkers {
             sharable_banks,
             leader_schedule_cache,
             cluster_nodes_cache,
-            deduper: deduper.clone(),
+            deduper,
             stats: stats.clone(),
         };
 
@@ -311,7 +308,6 @@ impl ShredSigverifyWorkers {
             result_receiver,
             worker_handles,
             stats,
-            deduper,
         }
     }
 
@@ -369,6 +365,11 @@ pub fn spawn_shred_sigverify(
 
     let cache = Arc::new(RwLock::new(LruCache::new(SIGVERIFY_LRU_CACHE_CAPACITY)));
 
+    let deduper = {
+        let mut rng = rand::rng();
+        Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS))
+    };
+
     let cluster_nodes_cache = Arc::new(ClusterNodesCache::<RetransmitStage>::new(
         CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
         CLUSTER_NODES_CACHE_TTL,
@@ -377,6 +378,7 @@ pub fn spawn_shred_sigverify(
     let workers = ShredSigverifyWorkers::new(
         num_sigverify_threads,
         cache,
+        deduper.clone(),
         cluster_info.clone(),
         bank_forks.clone(),
         leader_schedule_cache.clone(),
@@ -388,11 +390,7 @@ pub fn spawn_shred_sigverify(
         let mut shred_buffer = Vec::with_capacity(SIGVERIFY_SHRED_BATCH_SIZE);
 
         loop {
-            if workers.deduper.maybe_reset(
-                &mut rng,
-                DEDUPER_FALSE_POSITIVE_RATE,
-                DEDUPER_RESET_CYCLE,
-            ) {
+            if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, DEDUPER_RESET_CYCLE) {
                 stats.num_deduper_saturations += 1;
             }
 
@@ -425,7 +423,6 @@ pub fn spawn_shred_sigverify(
         .spawn(run_shred_sigverify)
         .unwrap()
 }
-
 fn run_shred_sigverify(
     workers: &ShredSigverifyWorkers,
     keypair: &Arc<Keypair>,
@@ -851,6 +848,11 @@ mod tests {
         cache: Arc<RwLock<LruCache>>,
         num_workers: usize,
     ) -> ShredSigverifyWorkers {
+        let deduper = {
+            let mut rng = rand::rng();
+            Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS))
+        };
+
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -859,13 +861,13 @@ mod tests {
         ShredSigverifyWorkers::new(
             NonZeroUsize::new(num_workers).unwrap(),
             cache,
+            deduper,
             cluster_info,
             bank_forks,
             leader_schedule_cache,
             cluster_nodes_cache,
         )
     }
-
     #[test]
     #[should_panic(expected = "shred sigverify worker panicked")]
     fn test_sigverify_worker_panic_is_propagated() {
