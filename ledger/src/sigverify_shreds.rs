@@ -106,19 +106,19 @@ mod tests {
     }
 
     fn verify_batches(
-        batches: &[PacketBatch],
+        batches: &mut [PacketBatch],
         slot_leaders: &SlotPubkeys,
         cache: &RwLock<LruCache>,
-    ) -> Vec<Vec<u8>> {
-        batches
-            .iter()
-            .map(|batch| {
-                batch
-                    .iter()
-                    .map(|packet| u8::from(verify_shred_cpu(packet, slot_leaders, cache)))
-                    .collect()
-            })
-            .collect()
+    ) {
+        for batch in batches {
+            for mut packet in batch.iter_mut() {
+                if !packet.meta().discard()
+                    && !verify_shred_cpu(packet.as_ref(), slot_leaders, cache)
+                {
+                    packet.meta_mut().set_discard(true);
+                }
+            }
+        }
     }
 
     fn run_test_sigverify_shred_cpu(slot: Slot) {
@@ -276,15 +276,17 @@ mod tests {
             .chain(once((Slot::MAX, Pubkey::default())))
             .collect();
         let mut packets = make_packets(&mut rng, &shreds);
-        assert_eq!(
-            verify_batches(&packets, &pubkeys, &cache),
+
+        verify_batches(&mut packets, &pubkeys, &cache);
+        assert!(
             packets
                 .iter()
-                .map(|batch| vec![1u8; batch.len()])
-                .collect::<Vec<_>>()
+                .flatten()
+                .all(|packet| !packet.meta().discard())
         );
+
         // Invalidate signatures for a random number of packets.
-        let out: Vec<_> = packets
+        let expected_discards = packets
             .iter_mut()
             .map(|packets| {
                 let PacketBatch::Pinned(packets) = packets else {
@@ -297,13 +299,24 @@ mod tests {
                         if !coin_flip {
                             shred::layout::corrupt_packet(&mut rng, packet, &keypairs);
                         }
-                        u8::from(coin_flip)
+                        !coin_flip
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<bool>>()
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        assert_eq!(verify_batches(&packets, &pubkeys, &cache), out);
+        verify_batches(&mut packets, &pubkeys, &cache);
+        assert!(
+            packets
+                .iter()
+                .zip(expected_discards.iter())
+                .all(|(batch, expected)| {
+                    batch
+                        .iter()
+                        .zip(expected)
+                        .all(|(packet, should_discard)| packet.meta().discard() == *should_discard)
+                })
+        );
     }
 
     #[test_case(true)]
@@ -329,23 +342,30 @@ mod tests {
                 .collect()
         };
         let mut packets = make_packets(&mut rng, &shreds);
+
         // Assert that initially all signatures are invalid.
-        assert_eq!(
-            verify_batches(&packets, &pubkeys, &cache),
+        verify_batches(&mut packets, &pubkeys, &cache);
+        assert!(
             packets
                 .iter()
-                .map(|batch| vec![0u8; batch.len()])
-                .collect::<Vec<_>>()
+                .flatten()
+                .all(|packet| packet.meta().discard())
         );
+
+        packets.iter_mut().for_each(|batch| {
+            batch
+                .iter_mut()
+                .for_each(|mut packet| packet.meta_mut().set_discard(false));
+        });
 
         // Sign and verify shred signatures.
         sign_shreds(&keypair, &mut packets);
-        assert_eq!(
-            verify_batches(&packets, &pubkeys, &cache),
+        verify_batches(&mut packets, &pubkeys, &cache);
+        assert!(
             packets
                 .iter()
-                .map(|batch| vec![1u8; batch.len()])
-                .collect::<Vec<_>>()
+                .flatten()
+                .all(|packet| !packet.meta().discard())
         );
     }
 }
