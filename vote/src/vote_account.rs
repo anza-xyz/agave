@@ -221,6 +221,8 @@ impl VoteAccounts {
             let vote_state_view = vote_account.vote_state_view();
             let has_bls = vote_state_view.bls_pubkey_compressed().is_some();
             let has_stake = *stake != 0u64;
+            // Pending delegator rewards are deducted at the start of the epoch,
+            // so this operation reflects the actual expected balance
             let has_balance = vote_account
                 .lamports()
                 .saturating_sub(vote_state_view.pending_delegator_rewards())
