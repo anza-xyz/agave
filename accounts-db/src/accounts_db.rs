@@ -637,7 +637,7 @@ pub enum PopulateReadCache {
 pub enum LoadedAccountAccessor {
     // StoredAccountInfo can't be held directly here due to its lifetime dependency on
     // AccountStorageEntry
-    Stored(Option<(Arc<AccountStorageEntry>, usize)>),
+    Stored(Option<(Arc<AccountStorageEntry>, Offset)>),
 }
 
 impl LoadedAccountAccessor {

@@ -13,7 +13,6 @@ pub use meta::StoredAccountMeta;
 use meta::StoredAccountMeta;
 use {
     crate::{
-        account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{OpenFileForArchive, StoredAccountsInfo},
         storable_accounts::StorableAccounts,
@@ -64,6 +63,17 @@ const _: () = assert!(
 
 pub const MAXIMUM_APPEND_VEC_FILE_SIZE: u64 = 16 * 1024 * 1024 * 1024; // 16 GiB
 
+// append vec entries are 8-byte aligned
+const APPEND_VEC_OFFSET_ALIGNMENT: u32 = 1 << APPEND_VEC_OFFSET_ALIGNMENT_LOG2;
+const APPEND_VEC_OFFSET_ALIGNMENT_LOG2: u32 = 3;
+const _: () = assert!(APPEND_VEC_OFFSET_ALIGNMENT == 8);
+
+// given a 16 GiB max append vec size, this is the max logical offset
+const MAX_LOGICAL_OFFSET: LogicalOffset = (1 << 31) - 1;
+
+type LogicalOffset = u32;
+type FileOffset = u64;
+
 pub type Result<T> = std::result::Result<T, AppendVecError>;
 
 /// An enum for AppendVec related errors.
@@ -106,7 +116,7 @@ impl<'a> ValidSlice<'a> {
 #[derive(Debug)]
 struct AccountOffsets {
     /// offset to the end of the &[u8] data
-    offset_to_end_of_data: usize,
+    offset_to_end_of_data: FileOffset,
 }
 
 /// Validates and serializes appends (when `append_guard` is called) such that only
@@ -381,12 +391,12 @@ impl AppendVec {
                 matches = false;
                 return;
             }
-            last_offset = account.offset() + account.stored_size();
+            last_offset = account.offset() + account.stored_size() as FileOffset;
             num_accounts += 1;
         })?;
         let aligned_current_len = u64_align!(self.current_len.load(Ordering::Acquire));
 
-        if !matches || last_offset != aligned_current_len {
+        if !matches || last_offset != aligned_current_len as FileOffset {
             return Err(AppendVecError::IncorrectLayout(self.path.clone()));
         }
 
@@ -407,41 +417,41 @@ impl AppendVec {
             .map(|subslice| (subslice, u64_align!(end)))
     }
 
-    /// Copy `len` bytes from `src` to the first 64-byte boundary after position `offset` of
+    /// Copy `len` bytes from `src` to the first 8-byte boundary after position `offset` of
     /// the internal buffer. Then update `offset` to the first byte after the copied data.
-    fn append_ptr(&self, offset: &mut usize, src: *const u8, len: usize) -> io::Result<()> {
-        let pos = u64_align!(*offset);
+    fn append_ptr(&self, offset: &mut FileOffset, src: *const u8, len: usize) -> io::Result<()> {
+        let pos = align_offset(*offset);
         // Safety: caller should ensure the passed pointer and length are valid.
         let data = unsafe { slice::from_raw_parts(src, len) };
-        write_buffer_to_file(&self.file, data, pos as u64)?;
-        *offset = pos + len;
+        write_buffer_to_file(&self.file, data, pos)?;
+        *offset = pos + len as FileOffset;
         Ok(())
     }
 
-    /// Copy each value in `vals`, in order, to the first 64-byte boundary after position `offset`.
+    /// Copy each value in `vals`, in order, to the first 8-byte boundary after position `offset`.
     /// If there is sufficient space, then update `offset` and the internal `current_len` to the
     /// first byte after the copied data and return the starting position of the copied data.
     /// Otherwise return None and leave `offset` unchanged.
     fn append_ptrs_locked(
         &self,
-        offset: &mut usize,
+        offset: &mut FileOffset,
         vals: &[(*const u8, usize)],
-    ) -> io::Result<Option<usize>> {
+    ) -> io::Result<Option<FileOffset>> {
         let mut end = *offset;
         for val in vals {
-            end = u64_align!(end);
-            end += val.1;
+            end = align_offset(end);
+            end += val.1 as FileOffset;
         }
 
-        if (self.file_size as usize) < end {
+        if self.file_size < end {
             return Ok(None);
         }
 
-        let pos = u64_align!(*offset);
+        let pos = align_offset(*offset);
         for val in vals {
             self.append_ptr(offset, val.0, val.1)?
         }
-        self.current_len.store(*offset, Ordering::Release);
+        self.current_len.store(*offset as usize, Ordering::Release);
         Ok(Some(pos))
     }
 
@@ -465,7 +475,7 @@ impl AppendVec {
     /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
     pub fn get_stored_account_without_data_callback<Ret>(
         &self,
-        offset: usize,
+        offset: FileOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
     ) -> Option<Ret> {
         self.get_stored_account_no_data_callback(offset, |stored_account| {
@@ -490,7 +500,7 @@ impl AppendVec {
     /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
-        offset: usize,
+        offset: FileOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> Option<Ret> {
         self.get_stored_account_meta_callback(offset, |stored_account_meta| {
@@ -513,18 +523,15 @@ impl AppendVec {
     /// implementation details, and thus potentially can read less and be faster.
     fn get_stored_account_meta_callback<Ret>(
         &self,
-        offset: usize,
+        offset: FileOffset,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
     ) -> Option<Ret> {
         // 4096 was just picked to be a single page size
         let mut buf = [MaybeUninit::<u8>::uninit(); PAGE_SIZE];
         // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-        let bytes_read = read_into_buffer(
-            &self.file,
-            self.len() as FileSize,
-            offset as FileSize,
-            unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len()) },
-        )
+        let bytes_read = read_into_buffer(&self.file, self.len() as FileSize, offset, unsafe {
+            slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
+        })
         .ok()?;
         // SAFETY: we only read the initialized portion.
         let valid_bytes =
@@ -556,7 +563,7 @@ impl AppendVec {
             let bytes_read = read_into_buffer(
                 &self.file,
                 self.len() as FileSize,
-                (offset + next) as FileSize,
+                offset + next as FileOffset,
                 unsafe {
                     slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, data_len as usize)
                 },
@@ -584,17 +591,14 @@ impl AppendVec {
     /// Returns None if the record is invalid.
     fn get_stored_account_no_data_callback<Ret>(
         &self,
-        offset: usize,
+        offset: FileOffset,
         mut callback: impl for<'local> FnMut(StoredAccountNoData<'local>) -> Ret,
     ) -> Option<Ret> {
         let mut buf = [MaybeUninit::<u8>::uninit(); STORE_META_OVERHEAD];
         // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-        let bytes_read = read_into_buffer(
-            &self.file,
-            self.len() as FileSize,
-            offset as FileSize,
-            unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len()) },
-        )
+        let bytes_read = read_into_buffer(&self.file, self.len() as FileSize, offset, unsafe {
+            slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
+        })
         .ok()?;
         // SAFETY: we only read the initialized portion.
         let valid_bytes =
@@ -610,7 +614,7 @@ impl AppendVec {
         );
         let unaligned_stored_size =
             Self::calculate_unaligned_stored_size_checked(meta.data_len as usize)?;
-        if offset.checked_add(unaligned_stored_size)? > self.len() {
+        if offset.checked_add(unaligned_stored_size as FileOffset)? > self.len() as FileOffset {
             return None;
         }
 
@@ -624,14 +628,11 @@ impl AppendVec {
     /// return an `AccountSharedData` for an account at `offset`.
     /// This fn can efficiently return exactly what is needed by a caller.
     /// This is on the critical path of tx processing for accounts not in the read or write caches.
-    pub fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
+    pub fn get_account_shared_data(&self, offset: FileOffset) -> Option<AccountSharedData> {
         let mut buf = MaybeUninit::<[u8; PAGE_SIZE]>::uninit();
-        let bytes_read = read_into_buffer(
-            &self.file,
-            self.len() as FileSize,
-            offset as FileSize,
-            unsafe { &mut *buf.as_mut_ptr() },
-        )
+        let bytes_read = read_into_buffer(&self.file, self.len() as FileSize, offset, unsafe {
+            &mut *buf.as_mut_ptr()
+        })
         .ok()?;
         // SAFETY: we only read the initialized portion.
         let valid_bytes =
@@ -664,7 +665,7 @@ impl AppendVec {
             let bytes_read = read_into_buffer(
                 &self.file,
                 self.len() as FileSize,
-                (offset + next) as FileSize,
+                offset + next as FileOffset,
                 unsafe {
                     slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len as usize)
                 },
@@ -689,7 +690,7 @@ impl AppendVec {
     #[cfg(test)]
     pub fn get_account_test(
         &self,
-        offset: usize,
+        offset: FileOffset,
     ) -> Option<(Pubkey, solana_account::AccountSharedData)> {
         let data_len = self.get_account_data_lens(&[offset]);
         let sizes: usize = data_len
@@ -729,11 +730,11 @@ impl AppendVec {
     /// With these helpers, we can skip over reading some of the data depending on what the caller wants.
     ///
     /// *Safety* - The caller must ensure that the `stored_meta.data_len` won't overflow the calculation.
-    fn next_account_offset(start_offset: usize, stored_meta: &StoredMeta) -> AccountOffsets {
+    fn next_account_offset(start_offset: FileOffset, stored_meta: &StoredMeta) -> AccountOffsets {
         let stored_size_unaligned = STORE_META_OVERHEAD
             .checked_add(stored_meta.data_len as usize)
             .expect("stored size cannot overflow");
-        let offset_to_end_of_data = start_offset + stored_size_unaligned;
+        let offset_to_end_of_data = start_offset + stored_size_unaligned as FileOffset;
 
         AccountOffsets {
             offset_to_end_of_data,
@@ -743,13 +744,13 @@ impl AppendVec {
     /// Iterate over all accounts and call `callback` with each account.
     ///
     /// `callback` parameters:
-    /// * Offset: the offset within the file of this account
+    /// * FileOffset: the offset within the file of this account
     /// * StoredAccountInfoWithoutData: the account itself, without account data
     ///
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
+        mut callback: impl for<'local> FnMut(FileOffset, StoredAccountInfoWithoutData<'local>),
     ) -> Result<()> {
         self.scan_stored_accounts_no_data(|stored_account| {
             let offset = stored_account.offset();
@@ -768,7 +769,7 @@ impl AppendVec {
     /// Iterate over all accounts and call `callback` with each account.
     ///
     /// `callback` parameters:
-    /// * Offset: the offset within the file of this account
+    /// * FileOffset: the offset within the file of this account
     /// * StoredAccountInfo: the account itself, with account data
     ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
@@ -776,7 +777,7 @@ impl AppendVec {
     pub(crate) fn scan_accounts<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+        mut callback: impl for<'local> FnMut(FileOffset, StoredAccountInfo<'local>),
     ) -> Result<()> {
         self.scan_accounts_stored_meta(reader, |stored_account_meta| {
             let offset = stored_account_meta.offset();
@@ -805,7 +806,7 @@ impl AppendVec {
 
         let mut min_buf_len = STORE_META_OVERHEAD;
         loop {
-            let offset = reader.get_file_offset() as usize;
+            let offset = reader.get_file_offset();
             let bytes = match reader.fill_buf_required(min_buf_len) {
                 Ok([]) => break,
                 Ok(bytes) => ValidSlice::new(bytes),
@@ -877,7 +878,7 @@ impl AppendVec {
     /// Returns the account data size for each account in `offsets`.
     pub(crate) fn get_account_data_lens<'a>(
         &self,
-        offsets: impl IntoIterator<Item = &'a Offset, IntoIter: ExactSizeIterator>,
+        offsets: impl IntoIterator<Item = &'a FileOffset, IntoIter: ExactSizeIterator>,
     ) -> Vec<usize> {
         // self.len() is an atomic load, so only do it once
         let self_len = self.len();
@@ -886,18 +887,15 @@ impl AppendVec {
         let mut buffer = [MaybeUninit::<u8>::uninit(); mem::size_of::<StoredMeta>()];
         for &offset in offsets {
             // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-            let Some(bytes_read) = read_into_buffer(
-                &self.file,
-                self_len as FileSize,
-                offset as FileSize,
-                unsafe {
+            let Some(bytes_read) =
+                read_into_buffer(&self.file, self_len as FileSize, offset, unsafe {
                     slice::from_raw_parts_mut(
                         buffer.as_mut_ptr() as *mut u8,
                         mem::size_of::<StoredMeta>(),
                     )
-                },
-            )
-            .ok() else {
+                })
+                .ok()
+            else {
                 break;
             };
             // SAFETY: we only read the initialized portion.
@@ -908,7 +906,7 @@ impl AppendVec {
                 break;
             };
             let next = Self::next_account_offset(offset, stored_meta);
-            if next.offset_to_end_of_data > self_len {
+            if next.offset_to_end_of_data > self_len as FileOffset {
                 // data doesn't fit, so don't include
                 break;
             }
@@ -939,7 +937,7 @@ impl AppendVec {
         const REQUIRED_READ_LEN: usize =
             mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
         loop {
-            let offset = reader.get_file_offset() as usize;
+            let offset = reader.get_file_offset();
             let bytes = match reader.fill_buf_required(REQUIRED_READ_LEN) {
                 Ok([]) => break,
                 Ok(bytes) => ValidSlice::new(bytes),
@@ -957,7 +955,7 @@ impl AppendVec {
             else {
                 break;
             };
-            if offset + unaligned_stored_size > self_len {
+            if offset + unaligned_stored_size as FileOffset > self_len as FileOffset {
                 break;
             }
             let stored_size = u64_align!(unaligned_stored_size);
@@ -983,7 +981,7 @@ impl AppendVec {
         accounts: &impl StorableAccounts<'a>,
     ) -> Option<StoredAccountsInfo> {
         let _lock = self.read_write_state.append_guard();
-        let mut offset = self.len();
+        let mut offset = self.len() as FileOffset;
         let len = accounts.len();
         // Here we have `len` number of accounts.  The +1 extra capacity
         // is for storing the aligned offset of the last-plus-one entry,
@@ -1043,8 +1041,11 @@ impl AppendVec {
             // where the *next* entry will begin to be stored.
             // This is used to compute the size of the last stored account; make sure to remove
             // it afterwards!
-            offsets.push(u64_align!(offset));
-            let size = offsets.windows(2).map(|offset| offset[1] - offset[0]).sum();
+            offsets.push(align_offset(offset));
+            let size = offsets
+                .windows(2)
+                .map(|offset| (offset[1] - offset[0]) as usize)
+                .sum();
             offsets.pop();
 
             StoredAccountsInfo { offsets, size }
@@ -1069,6 +1070,29 @@ pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> 
         MIN_CAPACITY,
         MAX_CAPACITY,
     )
+}
+
+/// Returns FileOffset from logical `offset`.
+pub(crate) fn file_offset_from_logical(logical_offset: LogicalOffset) -> FileOffset {
+    FileOffset::from(logical_offset) << APPEND_VEC_OFFSET_ALIGNMENT_LOG2
+}
+
+/// Returns LogicalOffset from file `offset`.
+pub(crate) fn logical_offset_from_file(file_offset: FileOffset) -> Option<LogicalOffset> {
+    if !file_offset.is_multiple_of(FileOffset::from(APPEND_VEC_OFFSET_ALIGNMENT)) {
+        return None;
+    }
+    let logical_offset = file_offset >> APPEND_VEC_OFFSET_ALIGNMENT_LOG2;
+    if logical_offset > MAX_LOGICAL_OFFSET as FileOffset {
+        return None;
+    }
+    Some(logical_offset as LogicalOffset)
+}
+
+/// Returns `x` aligned to the next APPEND_VEC_OFFSET_ALIGNMENT, for use as a file offset.
+#[inline]
+fn align_offset(x: FileOffset) -> FileOffset {
+    x.next_multiple_of(FileOffset::from(APPEND_VEC_OFFSET_ALIGNMENT))
 }
 
 /// The per-account hash, stored in the AppendVec.
@@ -1101,7 +1125,7 @@ mod tests {
     };
 
     impl AppendVec {
-        fn append_account_test(&self, data: &(Pubkey, AccountSharedData)) -> Option<usize> {
+        fn append_account_test(&self, data: &(Pubkey, AccountSharedData)) -> Option<FileOffset> {
             let slot_ignored = Slot::MAX;
             let accounts = [(&data.0, &data.1)];
             let slice = &accounts[..];
@@ -1193,7 +1217,7 @@ mod tests {
 
     /// truncate `av` and make sure that we fail to get an account. This verifies that the eof
     /// code is working correctly.
-    fn truncate_and_test(av: AppendVec, index: usize) {
+    fn truncate_and_test(av: AppendVec, index: FileOffset) {
         // truncate the hash, 1 byte at a time
         let hash_size = std::mem::size_of::<ObsoleteAccountHash>();
         for _ in 0..hash_size {
@@ -1363,7 +1387,7 @@ mod tests {
         // Rewrite the append vec on disk to mark account at num_new_accounts as
         // useless. This will also "hide" any accounts later in the file.
         let stored_meta_offset = stored_accounts_info.offsets[num_new_accounts];
-        let account_meta_offset = stored_meta_offset + mem::size_of::<StoredMeta>();
+        let account_meta_offset = stored_meta_offset + mem::size_of::<StoredMeta>() as FileOffset;
         let new_stored_meta = StoredMeta {
             write_version_obsolete: 0,
             data_len: 0,
@@ -1377,8 +1401,7 @@ mod tests {
         };
         {
             let mut file = OpenOptions::new().write(true).open(&path).unwrap();
-            file.seek(SeekFrom::Start(stored_meta_offset as u64))
-                .unwrap();
+            file.seek(SeekFrom::Start(stored_meta_offset)).unwrap();
             let stored_meta_bytes: &[u8] = unsafe {
                 slice::from_raw_parts(
                     ptr::from_ref(&new_stored_meta).cast(),
@@ -1386,8 +1409,7 @@ mod tests {
                 )
             };
             file.write_all(stored_meta_bytes).unwrap();
-            file.seek(SeekFrom::Start(account_meta_offset as u64))
-                .unwrap();
+            file.seek(SeekFrom::Start(account_meta_offset)).unwrap();
             let account_meta_bytes: &[u8] = unsafe {
                 slice::from_raw_parts(
                     ptr::from_ref(&new_account_meta).cast(),
@@ -1806,7 +1828,7 @@ mod tests {
     /// `check_fn` performs the check for the scan.
     fn test_scan_helper(
         modify_fn: impl Fn(&PathBuf, usize) -> usize,
-        check_fn: impl Fn(&AppendVec, &[Pubkey], &[usize], &[AccountSharedData]),
+        check_fn: impl Fn(&AppendVec, &[Pubkey], &[FileOffset], &[AccountSharedData]),
     ) {
         const NUM_ACCOUNTS: usize = 37;
         let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
@@ -2152,5 +2174,20 @@ mod tests {
         assert!(av1.flush().is_ok());
         // and now should not be dirty
         assert!(!*av1.is_dirty.get_mut());
+    }
+
+    /// Test converting between FileOffset and LogicalOffset.
+    #[test]
+    fn test_logical_file_offset_conversion() {
+        assert_eq!(file_offset_from_logical(0), 0);
+        assert_eq!(file_offset_from_logical(1), 8);
+        assert_eq!(logical_offset_from_file(0), Some(0));
+        assert_eq!(logical_offset_from_file(8), Some(1));
+        assert_eq!(logical_offset_from_file(1), None);
+        assert_eq!(
+            logical_offset_from_file(MAXIMUM_APPEND_VEC_FILE_SIZE - 8),
+            Some(MAX_LOGICAL_OFFSET),
+        );
+        assert_eq!(logical_offset_from_file(MAXIMUM_APPEND_VEC_FILE_SIZE), None);
     }
 }

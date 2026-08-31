@@ -136,7 +136,7 @@ impl AccountStorageEntry {
             .map(|(offset, data_len)| {
                 self.accounts
                     .calculate_stored_size(data_len)
-                    .min(self.accounts.len() - offset)
+                    .min(self.accounts.len() - offset as usize)
             })
             .sum();
         obsolete_bytes

@@ -152,11 +152,11 @@ impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'_, R> {
 
         while total_read < buf_len {
             let next_excluded_account = self.sorted_excluded_accounts.last();
-            let file_offset = self.reader.get_file_offset() as usize;
+            let file_offset = self.reader.get_file_offset();
             if let Some(&(excluded_start, excluded_size)) = next_excluded_account
                 && file_offset == excluded_start
             {
-                let skip_len = excluded_size.min(self.num_total_bytes - excluded_start);
+                let skip_len = excluded_size.min(self.num_total_bytes - excluded_start as usize);
                 self.reader.consume_or_skip(skip_len);
                 self.sorted_excluded_accounts.pop();
                 continue;
@@ -167,9 +167,9 @@ impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'_, R> {
 
             // Cannot read beyond the next excluded account or the end of the file
             let bytes_to_read_from_file = if let Some((excluded_start, _)) = next_excluded_account {
-                excluded_start.saturating_sub(file_offset)
+                excluded_start.saturating_sub(file_offset) as usize
             } else {
-                self.num_total_bytes.saturating_sub(file_offset)
+                self.num_total_bytes.saturating_sub(file_offset as usize)
             };
 
             let bytes_to_read = bytes_left_in_buffer.min(bytes_to_read_from_file);
