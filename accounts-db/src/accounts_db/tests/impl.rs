@@ -564,8 +564,8 @@ fn test_flush_does_not_write_through_when_write_through_disabled() {
 }
 
 /// The dead-slot purge path removes only the purged slot's index entries, so a pubkey with
-/// a surviving dirty single-ref entry at another slot must be written through when the purge
-/// drops its last cached slot.
+/// a surviving dirty single-ref entry at another slot must be written through once the purge
+/// drops its last cached slot. The write-through is deferred to the clean thread.
 #[test]
 fn test_purge_unrooted_slot_writes_through_surviving_entry() {
     let db = AccountsDb::new_for_tests_with_config(
@@ -614,16 +614,18 @@ fn test_purge_unrooted_slot_writes_through_surviving_entry() {
 
     // Purge the unrooted slot 1 from the cache. `purge_slot_cache` removes only the slot-1
     // entry, leaving the slot-0 entry as a single-ref dirty entry; the pubkey leaves the cache
-    // entirely, so the purge path's write-through fires on that surviving entry exactly once.
+    // entirely, so its write-through is deferred to clean; nothing is written yet.
     db.remove_unrooted_slots(&[(1, 1)]);
     assert!(
-        !is_dirty_in_mem(&pubkey),
-        "should be clean after purge writes through the surviving entry"
+        is_dirty_in_mem(&pubkey),
+        "still dirty until clean writes it through"
     );
-    assert_eq!(
-        immediate_disk_writes(),
-        baseline_writes + 1,
-        "purge path must write through the surviving single-ref entry exactly once"
+
+    // Clean writes through the surviving entry exactly once.
+    db.clean_accounts_for_tests();
+    assert!(
+        !is_dirty_in_mem(&pubkey),
+        "should be clean after clean writes through the surviving entry"
     );
 }
 
@@ -682,14 +684,136 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
         Some(1)
     );
 
-    // Dropping the unrooted slot must reclaim the secondary entry, not leak it.
+    // Dropping the unrooted slot defers the key to clean, and the following clean must reclaim
+    // the secondary entry, not leak it.
     db.remove_unrooted_slots(&[(slot, bank_id)]);
     assert!(!db.accounts_cache.contains_pubkey(&pubkey));
+    db.clean_accounts_for_tests();
     assert_eq!(
         db.accounts_index
             .get_index_key_size(&AccountIndex::ProgramId, &owner),
         None
     );
+}
+
+/// A scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
+/// instead of scanning to completion.
+/// Removing some *other* bank must not abort the scan.
+#[test_case(1, Err(ScanError::SlotRemoved { slot: 1, bank_id: 1 }), 1; "abort_bank_aborts_scan")]
+#[test_case(2, Ok(()), 10; "abort_other_bank_no_effect")]
+fn test_remove_unrooted_slots_aborts_ongoing_scan(
+    removed_bank_id: BankId,
+    expected_result: Result<(), ScanError>,
+    expected_visits: usize,
+) {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let slot = 1;
+    let bank_id = 1;
+    let num_accounts = 10;
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
+    let accounts: Vec<_> = pubkeys.iter().map(|pubkey| (pubkey, &account)).collect();
+    db.store_for_tests((slot, accounts.as_slice()));
+
+    let mut visited = 0;
+    let result = db.scan_accounts(
+        &Ancestors::from(vec![slot, 0]),
+        bank_id,
+        |scan_result| {
+            if scan_result.is_some() {
+                visited += 1;
+                if visited == 1 {
+                    // dump the fork mid-scan, as ReplayStage does for a duplicate fork
+                    db.remove_unrooted_slots(&[(slot, removed_bank_id)]);
+                }
+            }
+        },
+        &ScanConfig::default(),
+    );
+    assert_eq!(result, expected_result);
+    assert_eq!(visited, expected_visits);
+}
+
+/// An index scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
+/// instead of scanning to completion.
+#[test]
+fn test_index_scan_accounts_aborts_when_bank_removed() {
+    let db = AccountsDb {
+        account_indexes: program_id_index_enabled(),
+        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
+    };
+    let slot = 1;
+    let bank_id = 1;
+    let num_accounts = 10;
+    let owner = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &owner);
+    let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
+    let accounts: Vec<_> = pubkeys.iter().map(|pubkey| (pubkey, &account)).collect();
+    db.store_for_tests((slot, accounts.as_slice()));
+    db.add_root_and_flush_write_cache(slot);
+    // all of them are reachable through the secondary index, so a scan that doesn't abort
+    // visits every one
+    assert_eq!(
+        db.accounts_index
+            .get_index_key_size(&AccountIndex::ProgramId, &owner),
+        Some(num_accounts as usize)
+    );
+
+    let mut visited = 0;
+    let result = db.index_scan_accounts(
+        &Ancestors::from(vec![slot]),
+        bank_id,
+        IndexKey::ProgramId(owner),
+        |scan_result| {
+            if scan_result.is_some() {
+                visited += 1;
+                if visited == 1 {
+                    db.scan_tracker.mark_banks_removed([bank_id]);
+                }
+            }
+        },
+        &ScanConfig::default(),
+    );
+    assert_eq!(result, Err(ScanError::SlotRemoved { slot, bank_id }));
+    // Guarantee that the abort occurred without visiting all pubkeys
+    assert_eq!(visited, 1);
+}
+
+/// A pubkey deferred to clean by `remove_unrooted_slots` can be stored again, rooted and flushed
+/// before the next clean handles it. The key is alive in the primary index at that point and no
+/// longer in the write cache, clean must not purge its secondary index entry.
+#[test]
+fn test_purged_pubkey_restored_before_clean_keeps_secondary_index() {
+    let db = AccountsDb {
+        account_indexes: program_id_index_enabled(),
+        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
+    };
+
+    let owner = Pubkey::new_unique();
+    let pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &owner);
+
+    // Store the pubkey in an unrooted slot, then purge that slot. The pubkey is deferred to
+    // clean, and has no primary index entry at all.
+    db.store_for_tests((1, &[(&pubkey, &account)][..]));
+    db.remove_unrooted_slots(&[(1, 1)]);
+    assert!(!db.accounts_index.contains(&pubkey));
+
+    // Store the pubkey again and flush it to storage, which creates an entry in the accounts index
+    db.store_for_tests((2, &[(&pubkey, &account)][..]));
+    db.add_root_and_flush_write_cache(2);
+    assert!(!db.accounts_cache.contains_pubkey(&pubkey));
+
+    db.clean_accounts_for_tests();
+
+    // Assert that the pubkey is still in the secondary index
+    assert_eq!(
+        db.accounts_index
+            .get_index_key_pubkeys(&IndexKey::ProgramId(owner)),
+        vec![pubkey],
+        "clean purged the secondary index entry of a key that was stored again"
+    );
+    db.assert_load_account(2, pubkey, 1);
 }
 
 // Test that removing a rooted storage works correctly. This is behaviour specific to
@@ -1869,9 +1993,10 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
 
     accounts.purge_slots_from_cache(iter::once(&cache_slot), &PurgeStats::default());
 
-    // The pubkey has been removed from both the index and the write cache. Ensure it is
-    // removed from the secondary index as well.
+    // The pubkey has been removed from both the index and the write cache. The purge only
+    // deferred it, so the following clean must remove it from the secondary index as well.
     assert!(!accounts.accounts_cache.contains_pubkey(&pubkey));
+    accounts.clean_accounts_for_tests();
     assert_eq!(
         accounts
             .accounts_index

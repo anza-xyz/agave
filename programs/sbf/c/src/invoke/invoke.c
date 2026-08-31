@@ -39,8 +39,7 @@ static const uint8_t TEST_CPI_INVALID_KEY_POINTER = 35;
 static const uint8_t TEST_CPI_INVALID_OWNER_POINTER = 36;
 static const uint8_t TEST_CPI_INVALID_LAMPORTS_POINTER = 37;
 static const uint8_t TEST_CPI_INVALID_DATA_POINTER = 38;
-static const uint8_t TEST_WRITE_ACCOUNT = 40;
-static const uint8_t TEST_ACCOUNT_INFO_IN_ACCOUNT = 43;
+static const uint8_t TEST_WRITE_ACCOUNT = 43;
 static const uint8_t TEST_NESTED_INVOKE_SIMD_0268_OK = 46;
 static const uint8_t TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP = 47;
 static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK = 48;
@@ -872,29 +871,6 @@ extern uint64_t entrypoint(const uint8_t *input) {
     uint64_t offset = *((uint64_t*)(params.data + 2));
 
     accounts[target_account_index].data[offset] = params.data[10];
-    break;
-  }
-  case TEST_ACCOUNT_INFO_IN_ACCOUNT:
-  {
-    sol_log("Test TEST_ACCOUNT_INFO_IN_ACCOUNT");
-
-    uint8_t data[] = { TEST_WRITE_ACCOUNT, 1,  1, 0, 0, 0, 0, 0, 0, 0,  1 };
-
-    void *account_info_acc = accounts[1].data + 32;
-
-    sol_memcpy(account_info_acc, accounts, sizeof(accounts[0]) * params.ka_num);
-
-    SolAccountMeta arguments[] = {
-        {accounts[INVOKED_PROGRAM_INDEX].key, false, false},
-        {accounts[ARGUMENT_INDEX].key, true, false},
-        {accounts[MINT_INDEX].key, false, false},
-    };
-
-    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
-                                        arguments, SOL_ARRAY_SIZE(arguments),
-                                        data, SOL_ARRAY_SIZE(data)};
-
-    sol_invoke(&instruction, account_info_acc, params.ka_num);
     break;
   }
   case TEST_CU_USAGE_MINIMUM:

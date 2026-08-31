@@ -15,6 +15,18 @@ const SLOTS_INTERVAL: Slot = 10;
 /// Max amount of seconds to wait before triggering reporting of stats.
 const DURATION_INTERVAL: Duration = Duration::from_secs(5);
 
+fn per_second(count: u64, elapsed: Duration) -> u64 {
+    let elapsed_nanos = elapsed.as_nanos();
+    if elapsed_nanos == 0 {
+        return 0;
+    }
+
+    let rate = u128::from(count)
+        .saturating_mul(1_000_000_000)
+        .div_euclid(elapsed_nanos);
+    u64::try_from(rate).unwrap_or(u64::MAX)
+}
+
 /// A struct to control when stats should be reported depending on how many slots or time has passed.
 #[derive(Debug)]
 pub(super) struct Reporting {
@@ -32,10 +44,11 @@ impl Reporting {
         }
     }
 
-    /// Returns `true` if reporting should be done else `false`.
-    fn should_report(&self, root_slot: Slot) -> bool {
-        root_slot >= self.slot.saturating_add(SLOTS_INTERVAL)
-            || self.time.elapsed() > DURATION_INTERVAL
+    /// Returns `Some(duration since last report)` if reporting should be done else `None`.
+    fn should_report(&self, root_slot: Slot) -> Option<Duration> {
+        let elapsed = self.time.elapsed();
+        (root_slot >= self.slot.saturating_add(SLOTS_INTERVAL) || elapsed > DURATION_INTERVAL)
+            .then_some(elapsed)
     }
 }
 
@@ -51,7 +64,7 @@ pub(super) struct SigVerifierStats {
     /// Stats on how long [`extract_and_filter_msgs`] took.
     pub(super) extract_filter_msgs_us: WelfordStats,
     /// Number of packets received.
-    pub(super) num_pkts: WelfordStats,
+    pub(super) num_pkts: Saturating<u64>,
     /// Number of times we failed to deserialize a packet.
     pub(super) num_malformed_pkts: Saturating<u64>,
     /// Number of votes discarded due to an invalid rank.
@@ -82,7 +95,7 @@ impl SigVerifierStats {
             vote_stats: SigVerifyVoteStats::default(),
             cert_stats: SigVerifyCertStats::default(),
             extract_filter_msgs_us: WelfordStats::default(),
-            num_pkts: WelfordStats::default(),
+            num_pkts: Saturating(0),
             discard_vote_invalid_rank: Saturating(0),
             num_malformed_pkts: Saturating(0),
             discard_vote_no_epoch_stakes: Saturating(0),
@@ -100,18 +113,26 @@ impl SigVerifierStats {
         }
     }
 
+    pub(super) fn elapsed_since_last_report(&self) -> Duration {
+        self.last_report.time.elapsed()
+    }
+
     /// Reports stats if they have not been reported in some time.
     ///
     /// Also resets all stats.
     pub(super) fn maybe_report(&mut self, root_slot: Slot) {
-        if self.last_report.should_report(root_slot) {
-            self.do_report(root_slot);
-            *self = SigVerifierStats::new(root_slot);
+        if let Some(elapsed) = self.last_report.should_report(root_slot) {
+            let mut stats = SigVerifierStats::new(root_slot);
+            std::mem::swap(self, &mut stats);
+            stats.do_report(root_slot, elapsed);
         }
     }
 
     /// Reports stats regardless of when they were last reported.
-    pub(super) fn do_report(&mut self, root_slot: Slot) {
+    ///
+    /// `root_slot` should be the current root slot and is reported.
+    /// `elapsed` should be the time since last report and is reported.
+    pub(super) fn do_report(self, root_slot: Slot, elapsed: Duration) {
         let Self {
             vote_stats,
             cert_stats,
@@ -133,11 +154,12 @@ impl SigVerifierStats {
             last_report: _,
         } = self;
 
-        vote_stats.report();
+        vote_stats.report(elapsed);
         cert_stats.report();
         datapoint_info!(
             "bls_sig_verifier_stats",
             ("root_slot", root_slot, i64),
+            ("elapsed_ms", elapsed.as_millis(), i64),
             (
                 "extract_and_verify_us_count",
                 extract_filter_msgs_us.count(),
@@ -195,9 +217,7 @@ impl SigVerifierStats {
             ),
             ("num_keep_vote_failed", num_keep_vote_failed.0, i64),
             ("vote_pool_duplicate", vote_pool_duplicate.0, i64),
-            ("num_pkts_max", num_pkts.maximum().unwrap_or(0), i64),
-            ("num_pkts_mean", num_pkts.mean().unwrap_or(0), i64),
-            ("num_pkts_count", num_pkts.count(), i64),
+            ("num_pkts", num_pkts.0, i64),
         );
     }
 }
@@ -250,7 +270,7 @@ impl SigVerifyCertStats {
             .merge(fn_verify_and_send_certs_stats);
     }
 
-    pub(super) fn report(&self) {
+    pub(super) fn report(self) {
         let Self {
             certs_to_sig_verify,
             sig_verified_certs,
@@ -349,7 +369,7 @@ impl VoteVerificationStats {
             .merge(fn_verify_individual_votes_stats);
     }
 
-    pub(super) fn report(&self) {
+    pub(super) fn report(self) {
         let Self {
             optimistic_verification_succeeded,
             optimistic_verification_failed,
@@ -375,6 +395,11 @@ impl VoteVerificationStats {
             (
                 "optimistic_batch_mean",
                 optimistic_batch.mean().unwrap_or(0),
+                i64
+            ),
+            (
+                "optimistic_batch_max",
+                optimistic_batch.maximum().unwrap_or(0),
                 i64
             ),
             ("num_individual_verified", num_individual_verified.0, i64),
@@ -434,7 +459,7 @@ impl SigVerifyVoteStats {
         self.vote_verification_stats.merge(vote_verification_stats);
     }
 
-    pub(super) fn report(&self) {
+    pub(super) fn report(self, elapsed: Duration) {
         let Self {
             votes_to_sig_verify,
             fn_verify_and_send_votes_stats,
@@ -444,9 +469,11 @@ impl SigVerifyVoteStats {
         } = self;
         senders.report();
         vote_verification_stats.report();
+        let votes_per_sec = per_second(votes_to_sig_verify.0, elapsed);
         datapoint_info!(
             "bls_vote_sigverify_stats",
             ("votes_to_sig_verify", votes_to_sig_verify.0, i64),
+            ("votes_to_sig_verify_per_sec", votes_per_sec, i64),
             (
                 "fn_verify_and_send_votes_count",
                 fn_verify_and_send_votes_stats.count(),
@@ -489,7 +516,7 @@ impl VoteSenderStats {
         self.repair_sender.merge(repair_sender);
     }
 
-    pub(super) fn report(&self) {
+    pub(super) fn report(self) {
         let Self {
             metrics_sender,
             rewards_sender,
@@ -544,7 +571,7 @@ impl SenderStats {
         self.channel_full += channel_full;
     }
 
-    pub(super) fn report(&self) {
+    pub(super) fn report(self) {
         let Self {
             sent,
             channel_full,

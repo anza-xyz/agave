@@ -2194,7 +2194,7 @@ fn test_merkle_root_metas_data() {
     );
 
     // Block is now dead
-    blockstore.db.write(write_batch).unwrap();
+    blockstore.write_batch(write_batch).unwrap();
     assert!(blockstore.is_dead(slot));
     blockstore.remove_dead_slot(slot).unwrap();
 
@@ -2237,7 +2237,7 @@ fn test_merkle_root_metas_data() {
         .next()
         .unwrap();
 
-    let mut write_batch = blockstore.db.batch();
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker =
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
@@ -2255,7 +2255,7 @@ fn test_merkle_root_metas_data() {
         write_batch,
         ..
     } = shred_insertion_tracker;
-    blockstore.db.write(write_batch).unwrap();
+    blockstore.write_batch(write_batch).unwrap();
 
     // Verify that we still have the merkle root meta for the original shred
     // and the new shred
@@ -2443,7 +2443,7 @@ fn test_mark_slot_dead_if_not_full() {
         block_id: Hash::new_unique(),
     };
 
-    let mut write_batch = blockstore.db.batch();
+    let mut write_batch = blockstore.get_write_batch();
     let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
 
     blockstore.mark_slot_dead_if_not_full(empty_slot, location, &mut shred_insertion_tracker);

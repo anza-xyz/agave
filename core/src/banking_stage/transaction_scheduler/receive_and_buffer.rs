@@ -1,6 +1,5 @@
 use {
     super::{
-        transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::{
             StateContainer, TransactionViewState, TransactionViewStateContainer,
@@ -484,8 +483,7 @@ impl TransactionViewReceiveAndBuffer {
             return;
         }
 
-        let transaction_id = container.insert_map_only(state);
-        let priority_id = TransactionPriorityId::new(priority, transaction_id);
+        let priority_id = container.insert_map_only(state);
 
         // A validated nonce transaction is higher priority than any queued
         // conflict. Evict that conflict only after all ingress checks passed.
