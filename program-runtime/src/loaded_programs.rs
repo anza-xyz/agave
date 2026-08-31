@@ -1002,6 +1002,14 @@ pub(crate) mod tests {
         ProgramCacheEntryType::Closed
     }
 
+    fn new_builtin_entry(_env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
+        ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock())
+    }
+
+    fn new_failed_verification_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
+        ProgramCacheEntryType::FailedVerification(env)
+    }
+
     fn new_unloaded_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
         ProgramCacheEntryType::Unloaded(env)
     }
@@ -2995,6 +3003,248 @@ pub(crate) mod tests {
             extracted.entries.get(&program_id).unwrap(),
             &loaded
         ));
+    }
+
+    #[test_matrix(
+        (
+            new_closed_entry,
+            new_builtin_entry,
+            new_failed_verification_entry,
+            new_unloaded_entry,
+            new_loaded_entry,
+        ),
+        (100, 101)
+    )]
+    fn test_extract_effective_slot(
+        new_program: fn(ProgramRuntimeEnvironment) -> ProgramCacheEntryType,
+        batch_slot: Slot,
+    ) {
+        // Fork graph created for the test
+        //                100 - 101
+        //                ^^^   ^^^
+        //                |     `Loaded` and `Unloaded` become effective here
+        //                the entry is deployed here
+        //
+        // Only `Loaded` and `Unloaded` have a delay window. The other three
+        // are effective in the slot they were deployed in.
+        //
+        // Here we want to test that for all entry types, inside their
+        // designated delay window, we get a tombstone standing in for the
+        // entry, and outside it we get the entry itself (unless it is
+        // `Unloaded`).
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+        let entry = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_program(env.clone()),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 1);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &entry));
+
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(batch_slot);
+        cache.extract(&mut search_for, &mut extracted, &env, true, true);
+
+        if batch_slot < entry.effective_slot() {
+            // The entry wasn't effective, so a tombstone was minted to stand
+            // in for it. It is built at that moment rather than found, so what
+            // it carries is copied across from the entry.
+            assert!(search_for.is_empty());
+            let tombstone = extracted.entries.get(&program_id).unwrap();
+            assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
+            assert_eq!(tombstone.account_owner, ProgramCacheEntryOwner::LoaderV3);
+            assert_eq!(tombstone.deployment_slot, 100);
+            assert!(Arc::ptr_eq(&tombstone.stats, &entry.stats)); // <-- Shared, not copied.
+            assert_eq!(entry.stats.uses.load(Ordering::Relaxed), 1);
+
+            // The access slot is recorded on the entry the tombstone stands in
+            // for. The tombstone's own is never touched, and is thrown away
+            // with the batch.
+            assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), batch_slot);
+            assert_eq!(tombstone.latest_access_slot.load(Ordering::Relaxed), 0);
+        } else if matches!(entry.program, ProgramCacheEntryType::Unloaded(_)) {
+            // The entry was effective, but there is no binary behind it, so
+            // the search breaks off and the caller is left to reload. Nothing
+            // is recorded against the entry.
+            assert!(extracted.entries.is_empty());
+            assert_eq!(search_for.len(), 1);
+            assert_eq!(entry.stats.uses.load(Ordering::Relaxed), 0);
+            assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), 0);
+        } else {
+            // The entry was effective, so it comes back itself, and the use
+            // and access slot are recorded on it.
+            assert!(search_for.is_empty());
+            assert!(Arc::ptr_eq(
+                extracted.entries.get(&program_id).unwrap(),
+                &entry
+            ));
+            assert_eq!(entry.stats.uses.load(Ordering::Relaxed), 1);
+            assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), batch_slot);
+        }
+    }
+
+    #[test]
+    fn test_extract_closed_entry_matches_any_env() {
+        // Fork graph created for the test
+        //                100
+        //                ^^^
+        //                the program is closed here
+        //
+        // Here we want to test that a closed entry carries no environment at
+        // all, and that `matches_environment` reads that as a match for any of
+        // them. Therefore, the entry is handed out whichever environment is
+        // asked for.
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let other_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let program_id = Pubkey::new_unique();
+        let closed = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_closed_entry(env.clone()), // <-- Entry is created with `env`.
+        );
+        assert_eq!(closed.effective_slot(), closed.deployment_slot);
+        cache.assign_program(&env, program_id, 100, Arc::clone(&closed));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 1);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &closed));
+
+        // Ask for the entry with `env`, matching the one used to assign it.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+        cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert!(Arc::ptr_eq(
+            extracted.entries.get(&program_id).unwrap(),
+            &closed
+        ));
+        assert!(search_for.is_empty());
+
+        // Now ask for it again with `other_env`. Still successful.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+        cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
+        assert!(Arc::ptr_eq(
+            extracted.entries.get(&program_id).unwrap(),
+            &closed
+        ));
+        assert!(search_for.is_empty());
+    }
+
+    #[test]
+    fn test_extract_delay_visibility_tombstone_interleaved_environments() {
+        // Fork graph created for the test
+        //                100 - 101
+        //                ^^^   ^^^
+        //                |     both entries become effective here
+        //                both entries are deployed here
+        //
+        // Two entries at one deployment slot, one per environment. Here we
+        // attempt to extract within the delay window (at the deployment slot).
+        //
+        // This test demonstrates that `DelayVisibility` tombstones - like
+        // `Closed` - are indiscriminant about environments. Inside `extract`,
+        // the delay visibility arm does not check the environment. Thus, any
+        // entry provided to `extract` will see a `DelayVisibility` tombstone
+        // if the batch slot falls within the delay window.
+        //
+        // Such a scenario is only possible if a program is deployed, loaded,
+        // recompiled for the upcoming epoch, and extracted all within the same
+        // slot. Since deployments insert `Unloaded` entries, this isn't
+        // reachable in production today.
+        //
+        // However, this test serves to document this behavior, since it causes
+        // a stats bug for now and could one day become a wider footgun.
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let upcoming_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let program_id = Pubkey::new_unique();
+        let on_execution_env = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(env.clone()),
+        );
+        let on_upcoming_env = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(upcoming_env.clone()),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&on_execution_env));
+        cache.assign_program(&upcoming_env, program_id, 100, Arc::clone(&on_upcoming_env));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 2);
+        assert!(Arc::ptr_eq(
+            slot_versions.first().unwrap(),
+            &on_execution_env
+        ));
+        assert!(Arc::ptr_eq(slot_versions.get(1).unwrap(), &on_upcoming_env));
+
+        // Try the extraction, with the batch slot within the delay window.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+        cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert!(search_for.is_empty());
+
+        // As expected, we get a `DelayVisibility` tombstone.
+        let tombstone = extracted.entries.get(&program_id).unwrap();
+        assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
+
+        // TODO: Here's the stats bug, though. The entry the batch is actually
+        // using (passed to `extract`) is present and reached second. The first
+        // one reached is `!is_current_env`. Extraction traverses the second
+        // level in reverse.
+        //
+        // So, in a case like this, we're actually updating the stats on the
+        // wrong underlying `Loaded` entry.
+        assert!(Arc::ptr_eq(&tombstone.stats, &on_upcoming_env.stats));
+        assert_eq!(on_upcoming_env.stats.uses.load(Ordering::Relaxed), 1);
+        assert_eq!(on_execution_env.stats.uses.load(Ordering::Relaxed), 0);
+
+        // Now extract one slot later, when the program becomes effective. As
+        // we know, here environment *does* matter.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 100,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(101);
+        cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert!(search_for.is_empty());
+        assert!(Arc::ptr_eq(
+            extracted.entries.get(&program_id).unwrap(),
+            &on_execution_env
+        ));
+
+        // Now we see one use on each, since we just pulled `on_execution_env`.
+        assert_eq!(on_upcoming_env.stats.uses.load(Ordering::Relaxed), 1);
+        assert_eq!(on_execution_env.stats.uses.load(Ordering::Relaxed), 1);
     }
 
     #[test_case(false)]
