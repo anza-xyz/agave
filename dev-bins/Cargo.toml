@@ -116,12 +116,21 @@ solana-program-runtime = { path = "../program-runtime", version = "=4.3.0-beta.3
 solana-pubkey = { version = "4.2.0", default-features = false }
 solana-quic-client = { path = "../quic-client", version = "=4.3.0-beta.3", features = ["agave-unstable-api"] }
 solana-rent = "4.2.1"
+<<<<<<< HEAD
 solana-rpc = { path = "../rpc", version = "=4.3.0-beta.3", features = ["agave-unstable-api"] }
 solana-rpc-client = { path = "../rpc-client", version = "=4.3.0-beta.3", default-features = false }
 solana-rpc-client-api = { path = "../rpc-client-api", version = "=4.3.0-beta.3" }
 solana-runtime = { path = "../runtime", version = "=4.3.0-beta.3", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.3.0-beta.3", features = ["agave-unstable-api"] }
 solana-sbpf = { version = "=0.23.0", default-features = false }
+=======
+solana-rpc = { path = "../rpc", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
+solana-rpc-client = { path = "../rpc-client", version = "=4.4.0-alpha.2", default-features = false }
+solana-rpc-client-api = { path = "../rpc-client-api", version = "=4.4.0-alpha.2" }
+solana-runtime = { path = "../runtime", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
+solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
+solana-sbpf = { version = "=0.24.0", default-features = false }
+>>>>>>> adfe834 (Bump sbpf version (#14880))
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
