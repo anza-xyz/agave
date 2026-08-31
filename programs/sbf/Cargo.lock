@@ -147,8 +147,8 @@ name = "agave-geyser-plugin-interface"
 version = "4.4.0-alpha.2"
 dependencies = [
  "log",
+ "solana-bls-signatures",
  "solana-clock",
- "solana-entry",
  "solana-hash 4.6.0",
  "solana-message",
  "solana-signature",
