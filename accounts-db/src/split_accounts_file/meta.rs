@@ -1,3 +1,88 @@
+//! meta file layout:
+//!
+//!  +-----------+-------------------+---------------------+
+//!  |    Offset | Region            |                Size |
+//!  +-----------+-------------------+---------------------+
+//!  |         0 | meta header       |                64 B |
+//!  +-----------+-------------------+---------------------+
+//!  |        64 | meta entry 0      | 88 B + DataRef size |
+//!  +-----------+-------------------+---------------------+
+//!  |           | alignment padding | to 32-byte boundary |
+//!  +-----------+-------------------+---------------------+
+//!  | align(32) | meta entry 1      | 88 B + DataRef size |
+//!  +-----------+-------------------+---------------------+
+//!  |           | alignment padding | to 32-byte boundary |
+//!  +-----------+-------------------+---------------------+
+//!  | align(32) | meta entry 2      | 88 B + DataRef size |
+//!  +-----------+-------------------+---------------------+
+//!  |           | ...               |                     |
+//!  +-----------+-------------------+---------------------+
+//!
+//!  - meta entries are written at file offsets aligned to 32
+//!
+//! meta header layout:
+//!
+//!  +--------+----------------+----------+-------+
+//!  | Offset | Field          | Type     |  Size |
+//!  +--------+----------------+----------+-------+
+//!  |      0 | magic          | [u8; 16] |  16 B |
+//!  +--------+----------------+----------+-------+
+//!  |     16 | format_version | u16      |   2 B |
+//!  +--------+----------------+----------+-------+
+//!  |     18 | reserved       | [u8; 46] |  46 B |
+//!  +--------+----------------+----------+-------+
+//!
+//!  - total size: 64 B
+//!
+//! meta entry layout:
+//!
+//!  +--------+---------------+---------+--------+
+//!  | Offset | Field         | Type    |   Size |
+//!  +--------+---------------+---------+--------+
+//!  |      0 | address       | Pubkey  |   32 B |
+//!  +--------+---------------+---------+--------+
+//!  |     32 | owner         | Pubkey  |   32 B |
+//!  +--------+---------------+---------+--------+
+//!  |     64 | lamports      | u64     |    8 B |
+//!  +--------+---------------+---------+--------+
+//!  |     72 | rent_epoch    | u64     |    8 B |
+//!  +--------+---------------+---------+--------+
+//!  |     80 | is_executable | u8      |    1 B |
+//!  +--------+---------------+---------+--------+
+//!  |     81 | reserved      | [u8; 3] |    3 B |
+//!  +--------+---------------+---------+--------+
+//!  |     84 | data_len      | u32     |    4 B |
+//!  +--------+---------------+---------+--------+
+//!  |     88 | data_ref      | DataRef | varies |
+//!  +--------+---------------+---------+--------+
+//!
+//!  - fixed size: 88 B
+//!  - max size: 4096 B
+//!
+//! data ref layout:
+//!
+//!  +--------+--------------+----------------+----------+
+//!  | Offset | Union Member | Type           |     Size |
+//!  +--------+--------------+----------------+----------+
+//!  |      0 | NoData       | ()             |      0 B |
+//!  +--------+--------------+----------------+----------+
+//!  |      0 | Inline       | [u8; data_len] | data_len |
+//!  +--------+--------------+----------------+----------+
+//!  |      0 | External     | u64            |      8 B |
+//!  +--------+--------------+----------------+----------+
+//!
+//!  - DataRef is an untagged union. The active member is inferred from data_len.
+//!    ```
+//!    union DataRef {
+//!        NoData,
+//!        Inline { data: [u8; data_len] },
+//!        External { data_file_offset: u64 },
+//!    }
+//!    ```
+//!    data_len == 0          -> NoData
+//!    1 <= data_len <= 4008  -> Inline
+//!    data_len > 4008        -> External
+
 use {
     super::{
         DataLen, DataRefBorrowed, SplitAccountsFileError,
@@ -33,8 +118,7 @@ pub const META_ENTRY_OFFSET_ALIGNMENT_LOG2: u32 = 5;
 pub const META_ENTRY_MAX_SIZE: usize = 4 * 1024;
 
 /// Maximum size, in bytes, for account data that will be stored inline in a meta entry.
-pub const META_ENTRY_INLINE_DATA_MAX_SIZE: usize =
-    META_ENTRY_MAX_SIZE - META_ENTRY_FIXED_SIZE - size_of::<ExternalDataOffset>();
+pub const META_ENTRY_INLINE_DATA_MAX_SIZE: usize = META_ENTRY_MAX_SIZE - META_ENTRY_FIXED_SIZE;
 
 /// Size, in bytes, of a meta entry's fixed portion (i.e. *not* the data ref).
 pub const META_ENTRY_FIXED_SIZE: usize = 88;
