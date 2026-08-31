@@ -4759,25 +4759,6 @@ impl Bank {
             processing_results,
             processed_counts,
             balance_collector,
-<<<<<<< HEAD
-        } = self.load_and_execute_transactions(
-            batch,
-            self.max_processing_age(),
-            timings,
-            &mut TransactionErrorMetrics::default(),
-            TransactionProcessingConfig {
-                account_overrides: None,
-                check_program_deployment_slot: self.check_program_deployment_slot,
-                log_messages_bytes_limit,
-                limit_to_load_programs: false,
-                recording_config,
-                drop_on_failure: false,
-                all_or_nothing: false,
-                strict_nonce_size_check: false,
-                drop_noop_transactions: false,
-            },
-        );
-=======
         } = if let Some(execution_guard) = execution_guard.as_ref() {
             execution_guard.load_and_execute_transactions(
                 batch,
@@ -4786,6 +4767,7 @@ impl Bank {
                 &mut TransactionErrorMetrics::default(),
                 TransactionProcessingConfig {
                     account_overrides: None,
+                    check_program_deployment_slot: self.check_program_deployment_slot,
                     log_messages_bytes_limit,
                     limit_to_load_programs: false,
                     recording_config,
@@ -4798,7 +4780,6 @@ impl Bank {
         } else {
             Self::cancelled_load_and_execute_tx_batch(batch)
         };
->>>>>>> 3ae0058 (bank quiesce (#14864))
 
         if let Some(pre_commit_callback) = pre_commit_callback {
             let () = pre_commit_callback(&processing_results)?;
