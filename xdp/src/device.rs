@@ -2,7 +2,7 @@ use {
     crate::{
         netlink::MacAddress,
         route::Router,
-        umem::{CompletedFrameOffset, Frame, FrameOffset, SliceUmem, Umem},
+        umem::{CompletedFrameOffset, Frame, FrameOffset},
     },
     libc::{
         AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, SYS_ioctl,
@@ -585,22 +585,16 @@ impl<F: Frame> RxFillRing<F> {
         Ok(result as u64)
     }
 
-    pub fn write_batch<'a>(
-        &mut self,
-        umem: &mut SliceUmem<'a>,
-        frames: &[FrameOffset],
-    ) -> Result<usize, io::Error> {
+    pub fn write_batch(&mut self, frames: &[FrameOffset]) -> Result<usize, io::Error> {
         let n = frames.len() as u32;
         let mask = self.size.saturating_sub(1);
         let start_idx = self.producer.cached_producer;
 
-        for i in 0..frames.len() {
-            let Some(frame) = umem.reserve() else {
-                return Err(io::Error::other("Failed to reserve frame for RX fill ring"));
-            };
+        for (i, frame) in frames.iter().enumerate() {
             let ring_idx = (start_idx.wrapping_add(i as u32) & mask) as usize;
+            // Safety: ring_idx is masked to the ring size so the pointer is valid
             unsafe {
-                *self.mmap.desc.add(ring_idx) = frame.offset().0 as u64;
+                *self.mmap.desc.add(ring_idx) = frame.0 as u64;
             }
         }
 

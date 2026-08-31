@@ -57,7 +57,7 @@ pub fn rx_loop(
             .unwrap();
     let umem = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
 
-    let Ok((mut socket, rx)) = Socket::rx(queue, umem, zero_copy, rx_size * 2, rx_size) else {
+    let Ok((socket, rx)) = Socket::rx(queue, umem, zero_copy, rx_size * 2, rx_size) else {
         panic!("failed to create AF_XDP socket on queue {queue_id:?}");
     };
 
@@ -95,8 +95,10 @@ pub fn rx_loop(
         let mut recycled = 0usize;
         let bulk = available & !3;
         for (chunk, frame) in descs[..available]
-            .chunks_exact(4)
-            .zip(frames[..available].chunks_exact_mut(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(frames[..available].as_chunks_mut::<4>().0.iter_mut())
         {
             unsafe {
                 let p0 = umem_base.add(chunk[0].addr as usize);
@@ -108,17 +110,13 @@ pub fn rx_loop(
                 handle_packet(p1, chunk[1].len as usize, &sender);
                 handle_packet(p2, chunk[2].len as usize, &sender);
                 handle_packet(p3, chunk[3].len as usize, &sender);
-
-                umem.release(FrameOffset(chunk[0].addr as usize));
-                umem.release(FrameOffset(chunk[1].addr as usize));
-                umem.release(FrameOffset(chunk[2].addr as usize));
-                umem.release(FrameOffset(chunk[3].addr as usize));
-
-                frame[0] = FrameOffset(chunk[0].addr as usize);
-                frame[1] = FrameOffset(chunk[1].addr as usize);
-                frame[2] = FrameOffset(chunk[2].addr as usize);
-                frame[3] = FrameOffset(chunk[3].addr as usize);
             }
+
+            // recycle the frames straight back into the fill ring
+            frame[0] = FrameOffset(chunk[0].addr as usize);
+            frame[1] = FrameOffset(chunk[1].addr as usize);
+            frame[2] = FrameOffset(chunk[2].addr as usize);
+            frame[3] = FrameOffset(chunk[3].addr as usize);
             recycled += 4;
         }
 
@@ -129,14 +127,12 @@ pub fn rx_loop(
                     let p = umem_base.add(d.addr as usize);
                     handle_packet(p, d.len as usize, &sender);
                 }
-                let off = FrameOffset(d.addr as usize);
-                umem.release(off);
-                frames[recycled] = off;
+                frames[recycled] = FrameOffset(d.addr as usize);
                 recycled += 1;
             }
         }
 
-        let _ = fill_ring.write_batch(umem, &frames[..recycled]);
+        let _ = fill_ring.write_batch(&frames[..recycled]);
     }
 }
 
