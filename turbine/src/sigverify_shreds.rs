@@ -24,7 +24,10 @@ use {
         packet::{PacketBatch, PacketRef, PacketRefMut},
     },
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::{
+        bank::Bank,
+        bank_forks::{BankForks, SharableBanks},
+    },
     solana_signer::Signer,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
@@ -121,6 +124,94 @@ struct WorkerCounters {
     num_unknown_turbine_parent: usize,
 }
 
+#[derive(Clone)]
+struct WorkerContext {
+    cache: Arc<RwLock<LruCache>>,
+    cluster_info: Arc<ClusterInfo>,
+    sharable_banks: SharableBanks,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
+    cluster_nodes_cache: Arc<ClusterNodesCache<RetransmitStage>>,
+    deduper: Arc<Deduper<2, [u8]>>,
+    stats: Arc<SigverifyWorkerStats>,
+}
+
+fn verify_batch(batch: &mut PacketBatch, ctx: &WorkerContext, keypair: &Keypair) {
+    let mut counters = WorkerCounters::default();
+
+    // Repair shreds include a randomly generated u32 nonce, so it does not
+    // make sense to deduplicate the entire packet payload (i.e. they are not
+    // duplicate of any other packet.data(..)).
+    // If the nonce is excluded from the deduper then false positives might
+    // prevent us from repairing a block until the deduper is reset after
+    // DEDUPER_RESET_CYCLE. A workaround is to also repair "coding" shreds to
+    // add some redundancy but that is not implemented at the moment.
+    // Because the repair nonce is already verified in shred-fetch-stage we can
+    // exclude repair shreds from the deduper, but we still need to pass the
+    // repair shred to the deduper to filter out duplicates from the turbine
+    // path once a shred is repaired.
+    // For backward compatibility we need to allow trailing bytes in the packet
+    // after the shred payload, but have to exclude them here from the deduper.
+    for mut packet in batch.iter_mut() {
+        if packet.meta().discard() {
+            continue;
+        }
+
+        let duplicate = shred::wire::get_shred(packet.as_ref())
+            .map(|shred| ctx.deduper.dedup(shred))
+            .unwrap_or(true);
+
+        if duplicate && !packet.meta().repair() {
+            packet.meta_mut().set_discard(true);
+            counters.num_duplicates += 1;
+        }
+    }
+
+    let banks = ctx.sharable_banks.load();
+    let working_bank = banks.working_bank;
+    let root_bank = banks.root_bank;
+
+    let self_pubkey = keypair.pubkey();
+    let slot_leaders = get_slot_leaders(
+        &self_pubkey,
+        batch,
+        ctx.leader_schedule_cache.as_ref(),
+        working_bank.as_ref(),
+    )
+    .filter_map(|(slot, pubkey)| pubkey.map(|pubkey| (slot, pubkey)))
+    .chain(std::iter::once((Slot::MAX, Pubkey::default())))
+    .collect::<SlotPubkeys>();
+
+    for mut packet in batch.iter_mut() {
+        if packet.meta().discard() {
+            counters.num_discards_post += 1;
+            continue;
+        }
+
+        if !verify_shred_cpu(packet.as_ref(), &slot_leaders, ctx.cache.as_ref()) {
+            packet.meta_mut().set_discard(true);
+            counters.num_discards_post += 1;
+            continue;
+        }
+
+        if maybe_verify_and_resign_packet(
+            &mut packet,
+            root_bank.as_ref(),
+            working_bank.as_ref(),
+            ctx.cluster_info.as_ref(),
+            ctx.leader_schedule_cache.as_ref(),
+            ctx.cluster_nodes_cache.as_ref(),
+            &mut counters,
+            keypair,
+        )
+        .is_err()
+        {
+            packet.meta_mut().set_discard(true);
+        }
+    }
+
+    ctx.stats.add_batch(counters);
+}
+
 struct BatchJob {
     batch: PacketBatch,
     keypair: Arc<Keypair>,
@@ -171,18 +262,21 @@ impl ShredSigverifyWorkers {
         // Keep cheap lock-free handles to the current root and working banks.
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
 
+        let worker_context = WorkerContext {
+            cache,
+            cluster_info,
+            sharable_banks,
+            leader_schedule_cache,
+            cluster_nodes_cache,
+            deduper: deduper.clone(),
+            stats: stats.clone(),
+        };
+
         let worker_handles = (0..num_workers.get())
             .map(|index| {
                 let job_receiver = job_receiver.clone();
                 let result_sender = result_sender.clone();
-
-                let cache = cache.clone();
-                let cluster_info = cluster_info.clone();
-                let sharable_banks = sharable_banks.clone();
-                let leader_schedule_cache = leader_schedule_cache.clone();
-                let cluster_nodes_cache = cluster_nodes_cache.clone();
-                let deduper = deduper.clone();
-                let stats = stats.clone();
+                let ctx = worker_context.clone();
 
                 Builder::new()
                     .name(format!("solSvrfyShred{index:02}"))
@@ -201,81 +295,7 @@ impl ShredSigverifyWorkers {
                         }
 
                         while let Ok(BatchJob { mut batch, keypair }) = job_receiver.recv() {
-                            let mut counters = WorkerCounters::default();
-
-                            // Repair shreds include a randomly generated u32 nonce, so it does not
-                            // make sense to deduplicate the entire packet payload (i.e. they are not
-                            // duplicate of any other packet.data(..)).
-                            // If the nonce is excluded from the deduper then false positives might
-                            // prevent us from repairing a block until the deduper is reset after
-                            // DEDUPER_RESET_CYCLE. A workaround is to also repair "coding" shreds to
-                            // add some redundancy but that is not implemented at the moment.
-                            // Because the repair nonce is already verified in shred-fetch-stage we can
-                            // exclude repair shreds from the deduper, but we still need to pass the
-                            // repair shred to the deduper to filter out duplicates from the turbine
-                            // path once a shred is repaired.
-                            // For backward compatibility we need to allow trailing bytes in the packet
-                            // after the shred payload, but have to exclude them here from the deduper.
-                            for mut packet in batch.iter_mut() {
-                                if packet.meta().discard() {
-                                    continue;
-                                }
-
-                                let duplicate = shred::wire::get_shred(packet.as_ref())
-                                    .map(|shred| deduper.dedup(shred))
-                                    .unwrap_or(true);
-
-                                if duplicate && !packet.meta().repair() {
-                                    packet.meta_mut().set_discard(true);
-                                    counters.num_duplicates += 1;
-                                }
-                            }
-
-                            let banks = sharable_banks.load();
-                            let working_bank = banks.working_bank;
-                            let root_bank = banks.root_bank;
-
-                            let self_pubkey = keypair.pubkey();
-                            let slot_leaders = get_slot_leaders(
-                                &self_pubkey,
-                                &mut batch,
-                                leader_schedule_cache.as_ref(),
-                                working_bank.as_ref(),
-                            )
-                            .filter_map(|(slot, pubkey)| pubkey.map(|pubkey| (slot, pubkey)))
-                            .chain(std::iter::once((Slot::MAX, Pubkey::default())))
-                            .collect::<SlotPubkeys>();
-
-                            for mut packet in batch.iter_mut() {
-                                if packet.meta().discard() {
-                                    counters.num_discards_post += 1;
-                                    continue;
-                                }
-
-                                if !verify_shred_cpu(packet.as_ref(), &slot_leaders, cache.as_ref())
-                                {
-                                    packet.meta_mut().set_discard(true);
-                                    counters.num_discards_post += 1;
-                                    continue;
-                                }
-
-                                if maybe_verify_and_resign_packet(
-                                    &mut packet,
-                                    root_bank.as_ref(),
-                                    working_bank.as_ref(),
-                                    cluster_info.as_ref(),
-                                    leader_schedule_cache.as_ref(),
-                                    cluster_nodes_cache.as_ref(),
-                                    &mut counters,
-                                    keypair.as_ref(),
-                                )
-                                .is_err()
-                                {
-                                    packet.meta_mut().set_discard(true);
-                                }
-                            }
-
-                            stats.add_batch(counters);
+                            verify_batch(&mut batch, &ctx, keypair.as_ref());
 
                             if result_sender.send(Ok(batch)).is_err() {
                                 break;
