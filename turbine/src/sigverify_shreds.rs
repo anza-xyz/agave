@@ -5,6 +5,7 @@ use {
     },
     agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, bounded},
+    scopeguard::defer,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -32,7 +33,7 @@ use {
             Arc, RwLock,
             atomic::{AtomicUsize, Ordering},
         },
-        thread::{Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -125,11 +126,30 @@ struct BatchJob {
     keypair: Arc<Keypair>,
 }
 
+#[derive(Debug)]
+struct WorkerPanicked;
+
+type WorkerResult = Result<PacketBatch, WorkerPanicked>;
+
 struct ShredSigverifyWorkers {
-    job_sender: Sender<BatchJob>,
-    result_receiver: Receiver<PacketBatch>,
+    job_sender: Option<Sender<BatchJob>>,
+    result_receiver: Receiver<WorkerResult>,
+    worker_handles: Vec<JoinHandle<()>>,
     stats: Arc<SigverifyWorkerStats>,
     deduper: Arc<Deduper<2, [u8]>>,
+}
+
+impl Drop for ShredSigverifyWorkers {
+    fn drop(&mut self) {
+        // Disconnect the job channel so that live workers exit recv().
+        drop(self.job_sender.take());
+
+        for handle in self.worker_handles.drain(..) {
+            if let Err(err) = handle.join() {
+                error!("shred sigverify worker encountered unexpected error: {err:?}");
+            }
+        }
+    }
 }
 
 impl ShredSigverifyWorkers {
@@ -142,7 +162,7 @@ impl ShredSigverifyWorkers {
         cluster_nodes_cache: Arc<ClusterNodesCache<RetransmitStage>>,
     ) -> Self {
         let (job_sender, job_receiver) = bounded::<BatchJob>(SIGVERIFY_SHRED_BATCH_SIZE);
-        let (result_sender, result_receiver) = bounded::<PacketBatch>(SIGVERIFY_SHRED_BATCH_SIZE);
+        let (result_sender, result_receiver) = bounded::<WorkerResult>(SIGVERIFY_SHRED_BATCH_SIZE);
         let stats = Arc::new(SigverifyWorkerStats::default());
 
         let mut rng = rand::rng();
@@ -151,108 +171,125 @@ impl ShredSigverifyWorkers {
         // Keep cheap lock-free handles to the current root and working banks.
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
 
-        for index in 0..num_workers.get() {
-            let job_receiver = job_receiver.clone();
-            let result_sender = result_sender.clone();
+        let worker_handles = (0..num_workers.get())
+            .map(|index| {
+                let job_receiver = job_receiver.clone();
+                let result_sender = result_sender.clone();
 
-            let cache = cache.clone();
-            let cluster_info = cluster_info.clone();
-            let sharable_banks = sharable_banks.clone();
-            let leader_schedule_cache = leader_schedule_cache.clone();
-            let cluster_nodes_cache = cluster_nodes_cache.clone();
-            let deduper = deduper.clone();
-            let stats = stats.clone();
+                let cache = cache.clone();
+                let cluster_info = cluster_info.clone();
+                let sharable_banks = sharable_banks.clone();
+                let leader_schedule_cache = leader_schedule_cache.clone();
+                let cluster_nodes_cache = cluster_nodes_cache.clone();
+                let deduper = deduper.clone();
+                let stats = stats.clone();
 
-            Builder::new()
-                .name(format!("solSvrfyShred{index:02}"))
-                .spawn(move || {
-                    while let Ok(BatchJob { mut batch, keypair }) = job_receiver.recv() {
-                        let mut counters = WorkerCounters::default();
-
-                        // Repair shreds include a randomly generated u32 nonce, so it does not
-                        // make sense to deduplicate the entire packet payload (i.e. they are not
-                        // duplicate of any other packet.data(..)).
-                        // If the nonce is excluded from the deduper then false positives might
-                        // prevent us from repairing a block until the deduper is reset after
-                        // DEDUPER_RESET_CYCLE. A workaround is to also repair "coding" shreds to
-                        // add some redundancy but that is not implemented at the moment.
-                        // Because the repair nonce is already verified in shred-fetch-stage we can
-                        // exclude repair shreds from the deduper, but we still need to pass the
-                        // repair shred to the deduper to filter out duplicates from the turbine
-                        // path once a shred is repaired.
-                        // For backward compatibility we need to allow trailing bytes in the packet
-                        // after the shred payload, but have to exclude them here from the deduper.
-                        for mut packet in batch.iter_mut() {
-                            if packet.meta().discard() {
-                                continue;
+                Builder::new()
+                    .name(format!("solSvrfyShred{index:02}"))
+                    .spawn(move || {
+                        defer! {
+                            if !thread::panicking() {
+                                return;
                             }
 
-                            let duplicate = shred::wire::get_shred(packet.as_ref())
-                                .map(|shred| deduper.dedup(shred))
-                                .unwrap_or(true);
+                            let current_thread = thread::current();
+                            error!("shred sigverify worker is panicking: {current_thread:?}");
 
-                            if duplicate && !packet.meta().repair() {
-                                packet.meta_mut().set_discard(true);
-                                counters.num_duplicates += 1;
+                            if result_sender.send(Err(WorkerPanicked)).is_err() {
+                                error!("failed to report shred sigverify worker panic");
                             }
                         }
 
-                        let banks = sharable_banks.load();
-                        let working_bank = banks.working_bank;
-                        let root_bank = banks.root_bank;
+                        while let Ok(BatchJob { mut batch, keypair }) = job_receiver.recv() {
+                            let mut counters = WorkerCounters::default();
 
-                        let self_pubkey = keypair.pubkey();
-                        let slot_leaders = get_slot_leaders(
-                            &self_pubkey,
-                            &mut batch,
-                            leader_schedule_cache.as_ref(),
-                            working_bank.as_ref(),
-                        )
-                        .filter_map(|(slot, pubkey)| pubkey.map(|pubkey| (slot, pubkey)))
-                        .chain(std::iter::once((Slot::MAX, Pubkey::default())))
-                        .collect::<SlotPubkeys>();
+                            // Repair shreds include a randomly generated u32 nonce, so it does not
+                            // make sense to deduplicate the entire packet payload (i.e. they are not
+                            // duplicate of any other packet.data(..)).
+                            // If the nonce is excluded from the deduper then false positives might
+                            // prevent us from repairing a block until the deduper is reset after
+                            // DEDUPER_RESET_CYCLE. A workaround is to also repair "coding" shreds to
+                            // add some redundancy but that is not implemented at the moment.
+                            // Because the repair nonce is already verified in shred-fetch-stage we can
+                            // exclude repair shreds from the deduper, but we still need to pass the
+                            // repair shred to the deduper to filter out duplicates from the turbine
+                            // path once a shred is repaired.
+                            // For backward compatibility we need to allow trailing bytes in the packet
+                            // after the shred payload, but have to exclude them here from the deduper.
+                            for mut packet in batch.iter_mut() {
+                                if packet.meta().discard() {
+                                    continue;
+                                }
 
-                        for mut packet in batch.iter_mut() {
-                            if packet.meta().discard() {
-                                counters.num_discards_post += 1;
-                                continue;
+                                let duplicate = shred::wire::get_shred(packet.as_ref())
+                                    .map(|shred| deduper.dedup(shred))
+                                    .unwrap_or(true);
+
+                                if duplicate && !packet.meta().repair() {
+                                    packet.meta_mut().set_discard(true);
+                                    counters.num_duplicates += 1;
+                                }
                             }
 
-                            if !verify_shred_cpu(packet.as_ref(), &slot_leaders, cache.as_ref()) {
-                                packet.meta_mut().set_discard(true);
-                                counters.num_discards_post += 1;
-                                continue;
-                            }
+                            let banks = sharable_banks.load();
+                            let working_bank = banks.working_bank;
+                            let root_bank = banks.root_bank;
 
-                            if maybe_verify_and_resign_packet(
-                                &mut packet,
-                                root_bank.as_ref(),
-                                working_bank.as_ref(),
-                                cluster_info.as_ref(),
+                            let self_pubkey = keypair.pubkey();
+                            let slot_leaders = get_slot_leaders(
+                                &self_pubkey,
+                                &mut batch,
                                 leader_schedule_cache.as_ref(),
-                                cluster_nodes_cache.as_ref(),
-                                &mut counters,
-                                keypair.as_ref(),
+                                working_bank.as_ref(),
                             )
-                            .is_err()
-                            {
-                                packet.meta_mut().set_discard(true);
+                            .filter_map(|(slot, pubkey)| pubkey.map(|pubkey| (slot, pubkey)))
+                            .chain(std::iter::once((Slot::MAX, Pubkey::default())))
+                            .collect::<SlotPubkeys>();
+
+                            for mut packet in batch.iter_mut() {
+                                if packet.meta().discard() {
+                                    counters.num_discards_post += 1;
+                                    continue;
+                                }
+
+                                if !verify_shred_cpu(packet.as_ref(), &slot_leaders, cache.as_ref())
+                                {
+                                    packet.meta_mut().set_discard(true);
+                                    counters.num_discards_post += 1;
+                                    continue;
+                                }
+
+                                if maybe_verify_and_resign_packet(
+                                    &mut packet,
+                                    root_bank.as_ref(),
+                                    working_bank.as_ref(),
+                                    cluster_info.as_ref(),
+                                    leader_schedule_cache.as_ref(),
+                                    cluster_nodes_cache.as_ref(),
+                                    &mut counters,
+                                    keypair.as_ref(),
+                                )
+                                .is_err()
+                                {
+                                    packet.meta_mut().set_discard(true);
+                                }
+                            }
+
+                            stats.add_batch(counters);
+
+                            if result_sender.send(Ok(batch)).is_err() {
+                                break;
                             }
                         }
-
-                        stats.add_batch(counters);
-
-                        if result_sender.send(batch).is_err() {
-                            break;
-                        }
-                    }
-                })
-                .unwrap();
-        }
+                    })
+                    .unwrap()
+            })
+            .collect();
 
         Self {
-            job_sender,
+            job_sender: Some(job_sender),
             result_receiver,
+            worker_handles,
             stats,
             deduper,
         }
@@ -270,9 +307,13 @@ impl ShredSigverifyWorkers {
         );
 
         let num_batches = packets.len();
+        let job_sender = self
+            .job_sender
+            .as_ref()
+            .expect("shred sigverify job sender must be present");
 
         for batch in packets.drain(..) {
-            self.job_sender
+            job_sender
                 .send(BatchJob {
                     batch,
                     keypair: keypair.clone(),
@@ -281,12 +322,15 @@ impl ShredSigverifyWorkers {
         }
 
         for _ in 0..num_batches {
-            let batch = self
-                .result_receiver
-                .recv()
-                .expect("shred sigverify worker must return a result");
-
-            packets.push(batch);
+            match self.result_receiver.recv() {
+                Ok(Ok(batch)) => packets.push(batch),
+                Ok(Err(WorkerPanicked)) => {
+                    panic!("shred sigverify worker panicked");
+                }
+                Err(_) => {
+                    panic!("all shred sigverify workers died");
+                }
+            }
         }
     }
 }
@@ -770,6 +814,23 @@ mod tests {
         num_workers: usize,
     ) -> ShredSigverifyWorkers {
         let cache = Arc::new(RwLock::new(LruCache::new(/*capacity:*/ 128)));
+
+        new_sigverify_workers_with_cache(
+            cluster_info,
+            bank_forks,
+            leader_schedule_cache,
+            cache,
+            num_workers,
+        )
+    }
+    // Allows panic-path tests to inject a poisoned cache.
+    fn new_sigverify_workers_with_cache(
+        cluster_info: Arc<ClusterInfo>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        cache: Arc<RwLock<LruCache>>,
+        num_workers: usize,
+    ) -> ShredSigverifyWorkers {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -783,6 +844,70 @@ mod tests {
             leader_schedule_cache,
             cluster_nodes_cache,
         )
+    }
+
+    #[test]
+    #[should_panic(expected = "shred sigverify worker panicked")]
+    fn test_sigverify_worker_panic_is_propagated() {
+        let leader_keypair = Arc::new(Keypair::new());
+        let node_keypair = Arc::new(Keypair::new());
+        let leader_pubkey = leader_keypair.pubkey();
+        let node_pubkey = node_keypair.pubkey();
+
+        let bank = Bank::new_for_tests(
+            &create_genesis_config_with_leader(100, &leader_pubkey, 10).genesis_config,
+        );
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::new_localhost(&node_pubkey, timestamp()),
+            node_keypair.clone(),
+            SocketAddrSpace::Unspecified,
+        ));
+
+        let cache = Arc::new(RwLock::new(LruCache::new(/*capacity:*/ 128)));
+        let cache_to_poison = cache.clone();
+
+        let poison_result = std::thread::spawn(move || {
+            let _guard = cache_to_poison.write().unwrap();
+            panic!("poison shred sigverify cache");
+        })
+        .join();
+
+        assert!(poison_result.is_err());
+
+        let workers = new_sigverify_workers_with_cache(
+            cluster_info,
+            bank_forks,
+            leader_schedule_cache,
+            cache,
+            1,
+        );
+
+        let entries = create_ticks(1, 1, Hash::new_unique());
+        let shredder = Shredder::new(1, 0, 1, 0).unwrap();
+
+        let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+            &leader_keypair,
+            &entries,
+            false,
+            Hash::new_unique(),
+            0,
+            0,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
+
+        let shred = &shreds[0];
+        let mut batch = RecycledPacketBatch::with_capacity(1);
+        batch.resize(1, Packet::default());
+        batch[0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
+        batch[0].meta_mut().size = shred.payload().len();
+
+        let mut batches = vec![PacketBatch::from(batch)];
+
+        workers.process_batches(&mut batches, &node_keypair);
     }
     #[test]
     fn test_sigverify_shreds_verify_batches() {
