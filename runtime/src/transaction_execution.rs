@@ -59,12 +59,9 @@ pub enum TransactionStatusMessage {
 /// Data used to reconstruct the transaction-history keys removed by a purge.
 #[derive(Debug)]
 pub enum TransactionHistoryPurgeInput {
-    /// Replay paths derive the transaction boundary from the UpdateParent
-    /// marker already persisted in Blockstore.
-    PersistedUpdateParent,
-    /// BCL supplies the ordered transactions recorded before its locally
-    /// produced UpdateParent marker.
-    Transactions(Arc<Vec<VersionedTransaction>>),
+    ReplayStage,
+    SwitchBank,
+    Bcl(Arc<Vec<VersionedTransaction>>),
 }
 
 /// The validator path that requested transaction-history cleanup for a slot.
@@ -74,6 +71,7 @@ pub enum TransactionHistoryPurgeSource {
     SoftDeadSlot,
     UpdateParentSignal,
     AbandonedBank,
+    SwitchBank,
 }
 
 impl TransactionHistoryPurgeSource {
@@ -83,6 +81,7 @@ impl TransactionHistoryPurgeSource {
             Self::SoftDeadSlot => "soft_dead_slot",
             Self::UpdateParentSignal => "update_parent_signal",
             Self::AbandonedBank => "abandoned_bank",
+            Self::SwitchBank => "switch_bank",
         }
     }
 }

@@ -284,10 +284,13 @@ impl TransactionStatusService {
                 let queue_wait_us = requested_at.elapsed().as_micros();
                 let purge_result = if enable_rpc_transaction_history {
                     match &purge_input {
-                        TransactionHistoryPurgeInput::PersistedUpdateParent => {
+                        TransactionHistoryPurgeInput::ReplayStage => {
                             blockstore.purge_transaction_history_for_slot_exact(slot)
                         }
-                        TransactionHistoryPurgeInput::Transactions(transactions) => blockstore
+                        TransactionHistoryPurgeInput::SwitchBank => {
+                            blockstore.purge_transaction_history_for_slot_full(slot)
+                        }
+                        TransactionHistoryPurgeInput::Bcl(transactions) => blockstore
                             .purge_transaction_history_for_slot_exact_bcl(
                                 slot,
                                 transactions.as_slice(),
@@ -783,7 +786,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_purge_transaction_history_for_slot() {
+    fn test_purge_transaction_history_for_switch_bank() {
         let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let transaction_status_sender = TransactionStatusSender {
             sender: transaction_status_sender,
@@ -796,7 +799,6 @@ pub(crate) mod tests {
         let address = Pubkey::new_unique();
         let transaction = system_transaction::transfer(&payer, &address, 1, Hash::new_unique());
         let signature = transaction.signatures[0];
-        let accumulated_txs = Arc::new(vec![VersionedTransaction::from(transaction.clone())]);
         let entry = next_entry_mut(&mut Hash::default(), 1, vec![transaction]);
         blockstore
             .insert_shreds(
@@ -833,8 +835,8 @@ pub(crate) mod tests {
         transaction_status_sender
             .send_purge_transaction_history_for_slot(
                 slot,
-                TransactionHistoryPurgeSource::UpdateParentSignal,
-                TransactionHistoryPurgeInput::Transactions(accumulated_txs),
+                TransactionHistoryPurgeSource::SwitchBank,
+                TransactionHistoryPurgeInput::SwitchBank,
             )
             .unwrap();
 
