@@ -94,19 +94,12 @@ mod serde_snapshot_tests {
         )
     }
 
-    fn account_storages_to_stream<W>(
-        stream: &mut W,
-        slot: Slot,
-        account_storage_entries: &[Arc<AccountStorageEntry>],
-    ) -> wincode::WriteResult<()>
+    fn accounts_db_fields_to_stream<W>(stream: &mut W, slot: Slot) -> wincode::WriteResult<()>
     where
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        serialize_into(
-            stream,
-            &SerializableAccountsDb::new(slot, account_storage_entries, bank_hash_stats),
-        )
+        serialize_into(stream, &SerializableAccountsDb::new(slot, bank_hash_stats))
     }
 
     /// Simulates the unpacking & storage reconstruction done during snapshot unpacking
@@ -162,8 +155,7 @@ mod serde_snapshot_tests {
         accounts_db_config: AccountsDbConfig,
     ) -> AccountsDb {
         let mut writer = Cursor::new(vec![]);
-        let snapshot_storages = accounts.get_storages(..=slot).0;
-        account_storages_to_stream(&mut writer, slot, &snapshot_storages).unwrap();
+        accounts_db_fields_to_stream(&mut writer, slot).unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
@@ -234,12 +226,7 @@ mod serde_snapshot_tests {
             .calculate_accounts_lt_hash_at_startup_from_index(&Ancestors::default());
 
         let mut writer = Cursor::new(vec![]);
-        account_storages_to_stream(
-            &mut writer,
-            slot,
-            &accounts.accounts_db.get_storages(..=slot).0,
-        )
-        .unwrap();
+        accounts_db_fields_to_stream(&mut writer, slot).unwrap();
 
         let copied_accounts = TempDir::new().unwrap();
 
