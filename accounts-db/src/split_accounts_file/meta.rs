@@ -22,17 +22,22 @@
 //!
 //! meta header layout:
 //!
+//!  +--------+---------------+----------+-------+
+//!  | Offset | Field         | Type     |  Size |
+//!  +--------+---------------+----------+-------+
+//!  |      0 | magic         | [u8; 16] |  16 B |
 //!  +--------+----------------+----------+-------+
-//!  | Offset | Field          | Type     |  Size |
+//!  |     16 | major_version | u64      |   8 B |
 //!  +--------+----------------+----------+-------+
-//!  |      0 | magic          | [u8; 16] |  16 B |
+//!  |     24 | minor_version | u64      |   8 B |
 //!  +--------+----------------+----------+-------+
-//!  |     16 | format_version | u16      |   2 B |
-//!  +--------+----------------+----------+-------+
-//!  |     18 | reserved       | [u8; 46] |  46 B |
-//!  +--------+----------------+----------+-------+
+//!  |     32 | patch_version | u64      |   8 B |
+//!  +--------+---------------+----------+-------+
+//!  |     40 | reserved      | [u8; 24] |  24 B |
+//!  +--------+---------------+----------+-------+
 //!
 //!  - total size: 64 B
+//!  - the version fields combine to follow semver
 //!
 //! meta entry layout:
 //!
@@ -72,7 +77,7 @@
 //!  +--------+--------------+----------------+----------+
 //!
 //!  - DataRef is an untagged union. The active member is inferred from data_len.
-//!    ```
+//!    ```text
 //!    union DataRef {
 //!        NoData,
 //!        Inline { data: [u8; data_len] },
@@ -94,6 +99,7 @@ use {
         utils,
     },
     agave_fs::{FileSize, file_io},
+    semver::Version,
     solana_pubkey::Pubkey,
     std::{
         cmp,
@@ -108,7 +114,7 @@ use {
 pub const META_HEADER_SIZE: usize = 64;
 
 const META_MAGIC: &[u8; 16] = b"agave meta file\0";
-const META_FORMAT_VERSION: u16 = 1;
+const META_FORMAT_VERSION: Version = Version::new(1, 0, 0);
 
 /// meta entries are always written at offsets that are multiples of this alignment
 pub const META_ENTRY_OFFSET_ALIGNMENT: usize = 1 << META_ENTRY_OFFSET_ALIGNMENT_LOG2;
@@ -148,8 +154,10 @@ fn meta_path_from_base(base_path: impl AsRef<Path>) -> PathBuf {
 fn write_meta_header(file: &mut File) -> Result<usize, WriteMetaHeaderError> {
     let header = MetaHeaderSerde {
         magic: *META_MAGIC,
-        format_version: META_FORMAT_VERSION,
-        _unused: [0; 46],
+        major_version: META_FORMAT_VERSION.major,
+        minor_version: META_FORMAT_VERSION.minor,
+        patch_version: META_FORMAT_VERSION.patch,
+        _unused: [0; 24],
     };
     let header_bytes = as_bytes_ref(&header);
     file_io::write_buffer_to_file(file, header_bytes, /*offset*/ 0)?;
@@ -162,8 +170,10 @@ pub fn read_meta_header(
 ) -> Result<MetaHeader, ReadMetaHeaderError> {
     let mut header = MetaHeaderSerde {
         magic: [0; 16],
-        format_version: 0,
-        _unused: [0; 46],
+        major_version: 0,
+        minor_version: 0,
+        patch_version: 0,
+        _unused: [0; 24],
     };
     let header_bytes = as_bytes_mut(&mut header);
     let num_bytes_read =
@@ -178,15 +188,18 @@ pub fn read_meta_header(
     if header.magic != *META_MAGIC {
         return Err(ReadMetaHeaderError::InvalidMagic);
     }
-    if header.format_version != META_FORMAT_VERSION {
-        return Err(ReadMetaHeaderError::InvalidFormatVersion(
-            header.format_version,
-        ));
+    let format_version = Version::new(
+        header.major_version,
+        header.minor_version,
+        header.patch_version,
+    );
+    if format_version != META_FORMAT_VERSION {
+        return Err(ReadMetaHeaderError::InvalidFormatVersion(format_version));
     }
 
     Ok(MetaHeader {
         size: META_HEADER_SIZE,
-        format_version: header.format_version,
+        format_version,
     })
 }
 
@@ -411,8 +424,10 @@ pub fn should_store_account_data_in_meta_file(data_len: DataLen) -> bool {
 #[derive(Debug)]
 struct MetaHeaderSerde {
     magic: [u8; 16],
-    format_version: u16,
-    _unused: [u8; 46],
+    major_version: u64,
+    minor_version: u64,
+    patch_version: u64,
+    _unused: [u8; 24],
 }
 const _: () = const {
     assert!(size_of::<MetaHeaderSerde>() == META_HEADER_SIZE);
@@ -427,7 +442,7 @@ unsafe impl AsBytesMut for MetaHeaderSerde {}
 #[derive(Debug)]
 pub struct MetaHeader {
     pub size: usize,
-    pub format_version: u16,
+    pub format_version: Version,
 }
 
 /// The fixed portion of a meta entry (everything except the data ref).
@@ -528,8 +543,10 @@ mod tests {
         {
             let header = MetaHeaderSerde {
                 magic: [0xBA; 16],
-                format_version: META_FORMAT_VERSION,
-                _unused: [0; 46],
+                major_version: META_FORMAT_VERSION.major,
+                minor_version: META_FORMAT_VERSION.minor,
+                patch_version: META_FORMAT_VERSION.patch,
+                _unused: [0; 24],
             };
             file_io::write_buffer_to_file(&file, as_bytes_ref(&header), 0).unwrap();
             let err = read_meta_header(&file, META_HEADER_SIZE as FileSize).unwrap_err();
@@ -540,8 +557,10 @@ mod tests {
         {
             let header = MetaHeaderSerde {
                 magic: *META_MAGIC,
-                format_version: META_FORMAT_VERSION + 1,
-                _unused: [0; 46],
+                major_version: META_FORMAT_VERSION.major + 1,
+                minor_version: 0,
+                patch_version: 0,
+                _unused: [0; 24],
             };
             file_io::write_buffer_to_file(&file, as_bytes_ref(&header), 0).unwrap();
             let err = read_meta_header(&file, META_HEADER_SIZE as FileSize).unwrap_err();

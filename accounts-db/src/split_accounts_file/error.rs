@@ -1,5 +1,6 @@
 use {
     super::{FileOffset, LogicalOffset},
+    semver::Version,
     solana_pubkey::Pubkey,
     std::{io, path::PathBuf},
     thiserror::Error,
@@ -107,7 +108,7 @@ pub enum ReadMetaHeaderError {
     InvalidMagic,
 
     #[error("invalid format version: {0}")]
-    InvalidFormatVersion(u16),
+    InvalidFormatVersion(Version),
 
     // generic io::Error is last so other variants are selected first
     #[error("i/o error: {0}")]
@@ -145,7 +146,7 @@ pub enum ReadDataHeaderError {
     InvalidMagic,
 
     #[error("invalid format version: {0}")]
-    InvalidFormatVersion(u16),
+    InvalidFormatVersion(Version),
 
     // generic io::Error is last so other variants are selected first
     #[error("i/o error: {0}")]
