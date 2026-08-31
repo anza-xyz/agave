@@ -1,12 +1,15 @@
 use {
     crate::handshake::{
-        AgaveHandshakeError, AgaveTpuToPackSession, AgaveWorkerSession, ClientLogon,
+        AgaveCheckWorkerSession, AgaveHandshakeError, AgaveTpuToPackSession, AgaveWorkerSession,
+        ClientLogon,
         shared::{
             AgaveSession, GLOBAL_ALLOCATORS, LOGON_FAILURE, LOGON_SUCCESS, MAX_ALLOCATOR_HANDLES,
             MAX_WORKERS, VERSION,
         },
     },
-    agave_scheduler_bindings::PackToWorkerMessage,
+    agave_scheduler_bindings::{
+        CheckWorkerToPackMessage, PackToCheckWorkerMessage, PackToExecutionWorkerMessage,
+    },
     nix::sys::socket::{self, ControlMessage, MsgFlags, UnixAddr},
     rts_alloc::Allocator,
     std::{
@@ -132,6 +135,12 @@ impl Server {
             return Err(AgaveHandshakeError::WorkerCount(logon.worker_count));
         }
 
+        if !(1..=MAX_WORKERS).contains(&logon.check_worker_count) {
+            return Err(AgaveHandshakeError::CheckWorkerCount(
+                logon.check_worker_count,
+            ));
+        }
+
         // Hard limit allocator handles to 128.
         if !(1..=MAX_ALLOCATOR_HANDLES).contains(&logon.allocator_handles) {
             return Err(AgaveHandshakeError::AllocatorHandles(
@@ -145,8 +154,8 @@ impl Server {
     pub fn setup_session(
         logon: ClientLogon,
     ) -> Result<(AgaveSession, Vec<File>), AgaveHandshakeError> {
-        // Setup the allocator in shared memory (`worker_count` & `allocator_handles` have been
-        // validated so this won't panic).
+        // Setup the allocator in shared memory (`worker_count`, `check_worker_count`, and
+        // `allocator_handles` have been validated so this won't panic).
         let (allocator_file, tpu_to_pack_allocator) = Self::create_allocator(&logon)?;
 
         // Setup the global queues.
@@ -154,6 +163,29 @@ impl Server {
             Self::create_producer(logon.tpu_to_pack_capacity, true)?;
         let (progress_tracker_file, progress_tracker) =
             Self::create_producer(logon.progress_tracker_capacity, false)?;
+        let (pack_to_check_worker_file, _) = Self::create_mpmc_consumer::<PackToCheckWorkerMessage>(
+            logon.pack_to_check_worker_capacity,
+        )?;
+        let (check_worker_to_pack_file, _) = Self::create_mpmc_producer::<CheckWorkerToPackMessage>(
+            logon.check_worker_to_pack_capacity,
+            true,
+        )?;
+
+        let check_workers = (0..logon.check_worker_count)
+            .map(|_| {
+                Ok(AgaveCheckWorkerSession {
+                    allocator: Allocator::join(&allocator_file)?,
+                    // SAFETY: this file was initialized above using the same message type.
+                    pack_to_check_worker: unsafe {
+                        shaq::mpmc::Consumer::join(&pack_to_check_worker_file)?
+                    },
+                    // SAFETY: this file was initialized above using the same message type.
+                    check_worker_to_pack: unsafe {
+                        shaq::mpmc::Producer::join(&check_worker_to_pack_file)?
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, AgaveHandshakeError>>()?;
 
         // Setup the worker sessions.
         let (worker_files, workers) = (0..logon.worker_count).try_fold(
@@ -185,18 +217,27 @@ impl Server {
                     producer: tpu_to_pack_queue,
                 },
                 progress_tracker,
+                check_workers,
                 workers,
             },
-            [allocator_file, tpu_to_pack_file, progress_tracker_file]
-                .into_iter()
-                .chain(worker_files)
-                .collect(),
+            [
+                allocator_file,
+                tpu_to_pack_file,
+                progress_tracker_file,
+                pack_to_check_worker_file,
+                check_worker_to_pack_file,
+            ]
+            .into_iter()
+            .chain(worker_files)
+            .collect(),
         ))
     }
 
     fn create_allocator(logon: &ClientLogon) -> Result<(File, Allocator), RtsAllocError> {
         let allocator_count = GLOBAL_ALLOCATORS
             .checked_add(logon.worker_count)
+            .unwrap()
+            .checked_add(logon.check_worker_count)
             .unwrap()
             .checked_add(logon.allocator_handles)
             .unwrap();
@@ -244,10 +285,11 @@ impl Server {
 
     fn create_consumer(
         capacity: usize,
-    ) -> Result<(File, shaq::spsc::Consumer<PackToWorkerMessage>), ShaqError> {
+    ) -> Result<(File, shaq::spsc::Consumer<PackToExecutionWorkerMessage>), ShaqError> {
         let create = |huge: bool| {
             let file = Self::create_shmem(huge)?;
-            let minimum_file_size = shaq::spsc::minimum_file_size::<PackToWorkerMessage>(capacity);
+            let minimum_file_size =
+                shaq::spsc::minimum_file_size::<PackToExecutionWorkerMessage>(capacity);
             let file_size = Self::align_file_size(minimum_file_size, huge);
 
             // SAFETY: uniquely creating as consumer.
@@ -256,6 +298,42 @@ impl Server {
         };
 
         // Try to create with huge pages, fallback to regular pages.
+        create(true).or_else(|_| create(false))
+    }
+
+    fn create_mpmc_producer<T>(
+        capacity: usize,
+        huge: bool,
+    ) -> Result<(File, shaq::mpmc::Producer<T>), ShaqError> {
+        let create = |huge: bool| {
+            let file = Self::create_shmem(huge)?;
+            let minimum_file_size = shaq::mpmc::minimum_file_size::<T>(capacity);
+            let file_size = Self::align_file_size(minimum_file_size, huge);
+
+            // SAFETY: uniquely creating as producer.
+            unsafe { shaq::mpmc::Producer::create(&file, file_size) }
+                .map(|producer| (file, producer))
+        };
+
+        match huge {
+            true => create(true).or_else(|_| create(false)),
+            false => create(false),
+        }
+    }
+
+    fn create_mpmc_consumer<T>(
+        capacity: usize,
+    ) -> Result<(File, shaq::mpmc::Consumer<T>), ShaqError> {
+        let create = |huge: bool| {
+            let file = Self::create_shmem(huge)?;
+            let minimum_file_size = shaq::mpmc::minimum_file_size::<T>(capacity);
+            let file_size = Self::align_file_size(minimum_file_size, huge);
+
+            // SAFETY: uniquely creating as consumer.
+            unsafe { shaq::mpmc::Consumer::create(&file, file_size) }
+                .map(|consumer| (file, consumer))
+        };
+
         create(true).or_else(|_| create(false))
     }
 

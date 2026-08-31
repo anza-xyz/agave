@@ -20,6 +20,7 @@ use {
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
         },
+        vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
     agave_votor_transport::endpoint::{BanSender, Datagram},
@@ -216,7 +217,9 @@ impl SigVerifier {
             }
             self.stats.maybe_report(self.sharable_banks.root().slot());
         }
-        self.stats.do_report(self.sharable_banks.root().slot());
+        let elapsed = self.stats.elapsed_since_last_report();
+        self.stats
+            .do_report(self.sharable_banks.root().slot(), elapsed);
     }
 
     #[cfg(test)]
@@ -323,6 +326,7 @@ impl SigVerifier {
         let root_slot = root_bank.slot();
         let highest_parent_ready_slot = self.highest_parent_ready.read().unwrap().0;
         let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
+        let migration_slot = self.migration_status.migration_slot();
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
         let mut num_pkts = 0u64;
@@ -351,6 +355,7 @@ impl SigVerifier {
                         *sender_identity_pubkey,
                         root_bank,
                         max_vote_slot,
+                        migration_slot,
                     ) {
                         let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                             payload.vote_message.vote,
@@ -408,7 +413,7 @@ impl SigVerifier {
             };
             self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
         }
-        self.stats.num_pkts.add_sample(num_pkts);
+        self.stats.num_pkts += num_pkts;
         ExtractedMsgs {
             certs: cert_groups,
             votes,
@@ -422,6 +427,7 @@ impl SigVerifier {
         sender_identity_pubkey: Pubkey,
         root_bank: &Bank,
         max_vote_slot: Slot,
+        migration_slot: Option<Slot>,
     ) -> Option<UnverifiedVotePayload> {
         // votes from self take a different pathway.
         if sender_identity_pubkey == self.cluster_info.id() {
@@ -429,7 +435,15 @@ impl SigVerifier {
         }
         let root_slot = root_bank.slot();
         let vote_slot = msg.vote.slot();
-        if vote_slot > max_vote_slot {
+        let is_in_range = match msg.vote {
+            // Genesis votes bypass the normal range check, instead we require that they are only accepted during the
+            // migration epoch and less than the migration slot
+            Vote::Genesis(_) => {
+                migration_slot.is_some_and(|migration_slot| vote_slot < migration_slot)
+            }
+            _ => vote_slot <= max_vote_slot,
+        };
+        if !is_in_range {
             self.stats.vote_too_far_in_future += 1;
             return None;
         }
@@ -553,6 +567,7 @@ mod tests {
         },
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
@@ -2111,6 +2126,120 @@ mod tests {
                 vec![max_vote_slot],
             )
         );
+        expect_no_receive(&ctx.repair_receiver);
+    }
+
+    #[test]
+    fn genesis_votes_bypass_future_bound_during_migration() {
+        let mut ctx = TestContext::new();
+        let highest_parent_ready_slot = 100;
+        *ctx.verifier.highest_parent_ready.write().unwrap() = (
+            highest_parent_ready_slot,
+            Block {
+                slot: highest_parent_ready_slot,
+                block_id: Hash::new_unique(),
+            },
+        );
+        let max_vote_slot = highest_parent_ready_slot + MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY;
+        let migration_slot = ctx.verifier.migration_status.record_feature_activation(200);
+        let genesis_slot = migration_slot.saturating_sub(1);
+        assert!(genesis_slot > max_vote_slot);
+
+        let genesis_block = Block {
+            slot: genesis_slot,
+            block_id: Hash::new_unique(),
+        };
+        ctx.verifier
+            .migration_status
+            .set_genesis_block(genesis_block);
+        let genesis_vote_rank = 0;
+        let genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_genesis_vote(genesis_block),
+            genesis_vote_rank,
+        ));
+
+        // Normal votes remain bounded by ParentReady even when they target the exact block.
+        let normal_vote_rank = 1;
+        let normal_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_notarization_vote(genesis_block),
+            normal_vote_rank,
+        ));
+
+        // The migration slot itself cannot be the Genesis slot.
+        let different_slot_genesis_vote_rank = 2;
+        let different_slot_genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_genesis_vote(Block {
+                slot: migration_slot,
+                block_id: genesis_block.block_id,
+            }),
+            different_slot_genesis_vote_rank,
+        ));
+
+        // The Genesis exception does not require the locally discovered block's hash either.
+        let different_hash_genesis_vote_rank = 3;
+        let different_hash_genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_genesis_vote(Block {
+                slot: genesis_slot,
+                block_id: Hash::new_unique(),
+            }),
+            different_hash_genesis_vote_rank,
+        ));
+
+        let datagrams = messages_to_datagrams(
+            &[
+                (
+                    genesis_vote,
+                    ctx.validator_keypairs[genesis_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+                (
+                    normal_vote,
+                    ctx.validator_keypairs[normal_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+                (
+                    different_slot_genesis_vote,
+                    ctx.validator_keypairs[different_slot_genesis_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+                (
+                    different_hash_genesis_vote,
+                    ctx.validator_keypairs[different_hash_genesis_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+            ],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
+
+        assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 2);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 2);
+        let SigVerifiedBatch::Votes(aggregates) = ctx.pool_receiver.try_recv().unwrap() else {
+            panic!("expected a vote batch");
+        };
+        assert_eq!(aggregates.len(), 2);
+        assert!(
+            aggregates
+                .iter()
+                .all(|aggregate| aggregate.vote().is_genesis_vote())
+        );
+        expect_no_receive(&ctx.pool_receiver);
         expect_no_receive(&ctx.repair_receiver);
     }
 

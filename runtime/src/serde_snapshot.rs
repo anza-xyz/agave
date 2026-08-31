@@ -92,8 +92,9 @@ type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>
 #[derive(Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub(crate) struct SlotAccountStorageEntries {
     slot: Slot,
-    /// In a real snapshot this always holds exactly one entry; it is sampled as an arbitrary
-    /// (`0..=5`-length) collection only to keep the abi digest compatible with the current one.
+    /// In a real snapshot this always holds exactly one entry; sampling is spelled out because
+    /// `SmallVec` has no `StableAbi` impl (the length range no longer matters, as the map holding
+    /// these entries is itself sampled empty).
     #[cfg_attr(
         feature = "frozen-abi",
         stable_abi_sample(with = "solana_frozen_abi::stable_abi::sample_collection_sized(rng, \
@@ -109,6 +110,9 @@ pub(crate) struct SlotAccountStorageEntries {
 )]
 #[derive(Debug, Deserialize, SchemaRead)]
 pub(crate) struct AccountsDbFields(
+    /// account storage entries; the map is no longer used, so it is sampled empty (see
+    /// [`EmptySampledStorageEntries`]) and only its wire shape is pinned
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Vec::new()"))]
     Vec<SlotAccountStorageEntries>,
     u64, // unused, formerly write_version
     Slot,
@@ -491,7 +495,7 @@ pub struct ExtraFieldsToSerialize {
     feature = "frozen-abi",
     derive(Deserialize, Serialize, SchemaWrite, StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
+        abi_digest = "EULkWXkHiQJQazbeCQSP6L7ZMDBXZpBg1JntdHZktrEh",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "wire_only"
     )
@@ -689,11 +693,11 @@ struct SerializableBankSnapshot<E> {
 // roundtrip.
 #[cfg(all(test, feature = "frozen-abi"))]
 #[frozen_abi(
-    abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
+    abi_digest = "EULkWXkHiQJQazbeCQSP6L7ZMDBXZpBg1JntdHZktrEh",
     abi_serializer = ["bincode", "wincode"],
     test_roundtrip = "no"
 )]
-type SerializableBankSnapshotForAbi = SerializableBankSnapshot<Vec<SlotAccountStorageEntries>>;
+type SerializableBankSnapshotForAbi = SerializableBankSnapshot<EmptySampledStorageEntries>;
 
 /// Serializes bank snapshot with `serializer`
 pub fn serialize_bank_snapshot_with<S>(
@@ -825,16 +829,15 @@ impl SerializableAccountsDb<()> {
             impl ExactSizeIterator<Item = SlotAccountStorageEntries> + Clone + '_,
         >,
     > {
-        // Stream the storage entries as a `slot -> [entry]` map, each slot's single entry kept
-        // inline in a `SmallVec`. `SerializableExactIteratorView` re-creates the iterator on each
-        // serialization, so nothing is materialized.
+        // The `slot -> [entry]` map is written empty (`take(0)`): nothing reads it back, storages
+        // are reconstructed from the snapshot's storage files.
         let accounts_storage_entries =
-            SerializableExactIteratorView(account_storage_entries.iter().map(move |entry| {
-                SlotAccountStorageEntries {
+            SerializableExactIteratorView(account_storage_entries.iter().take(0).map(
+                move |entry| SlotAccountStorageEntries {
                     slot: entry.slot(),
                     entries: smallvec![SerializableAccountStorageEntry::new(entry, slot)],
-                }
-            }));
+                },
+            ));
         let bank_hash_info = BankHashInfo {
             unused_accounts_delta_hash: [0; 32],
             unused_accounts_hash: [0; 32],
@@ -851,17 +854,25 @@ impl SerializableAccountsDb<()> {
     }
 }
 
+// A `Vec` of the storage entries map's `(slot, entries)` shape, sampled empty: the map is unused,
+// so the abi digests pin its wire shape but not its contents.
+#[cfg(all(test, feature = "frozen-abi"))]
+#[derive(Serialize, SchemaWrite, StableAbi, StableAbiSample)]
+struct EmptySampledStorageEntries(
+    #[stable_abi_sample(with = "Vec::new()")] Vec<SlotAccountStorageEntries>,
+);
+
 // Concrete instantiation of `SerializableAccountsDb` used only to pin the wire ABI. The runtime
 // serializes the storage entries with a lazy map-serializing iterator; this alias uses a `Vec` of
 // the same `(slot, entries)` shape, which serializes to identical bytes. Write-only type (its
 // deserialize counterpart is `AccountsDbFields`), so there is no roundtrip.
 #[cfg(all(test, feature = "frozen-abi"))]
 #[frozen_abi(
-    abi_digest = "2TpwtsyrverM4ius4ykX3RRCGqeLfXJQbAvYHkxdUVrs",
+    abi_digest = "6d9LgxwkMTVHRKGtF8QSFFn3rYG8MSmyT9wPrL1HESu1",
     abi_serializer = ["bincode", "wincode"],
     test_roundtrip = "no"
 )]
-type SerializableAccountsDbForAbi = SerializableAccountsDb<Vec<SlotAccountStorageEntries>>;
+type SerializableAccountsDbForAbi = SerializableAccountsDb<EmptySampledStorageEntries>;
 
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]

@@ -268,7 +268,10 @@ impl<'a> CallerAccount<'a> {
     /// * The caller must ensure that this function does not violate mutable reference uniqueness
     ///   constraints;
     /// * The caller must ensure that the lifetime of the returned slice does not outlive the
-    ///   backing data.
+    ///   backing data;
+    /// * If `virtual_address_space_adjustments` is enabled and
+    ///   `account_data_direct_mapping` is disabled, the caller must ensure that the full
+    ///   `[vm_addr, vm_addr + len)` range is valid for the account.
     pub unsafe fn get_serialized_data(
         memory_mapping: &solana_sbpf::memory_region::MemoryMapping,
         check_aligned: bool,

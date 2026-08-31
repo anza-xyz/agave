@@ -3545,192 +3545,27 @@ mod tests {
             &program_cache_for_tx_batch,
             keys.iter(),
         );
-        // TODO: But instead we *do* see the program identified for extraction!
-        // At this point, knowing what we know about the continuous loop case
-        // described above in `test_replenish_program_cache_loader_v3_closed`,
-        // we are in trouble...
-        assert_eq!(missing_programs.len(), 1);
+        assert!(missing_programs.is_empty());
 
-        // Since SVM thinks the program must be extracted, let's call into
-        // `replenish_program_cache`.
+        // As in `test_replenish_program_cache_loader_v3_closed`,
+        // `filter_executable_program_accounts` is the guard. Forcing the
+        // program into the search list anyway walks into the continuous loop
+        // described there, which debug mode traps on.
         let panicked = catch_panic(|| {
             batch_processor.replenish_program_cache(
                 &account_loader,
-                missing_programs,
+                vec![ProgramToLoad {
+                    program_id: &program_id,
+                    loader: ProgramCacheEntryOwner::LoaderV4,
+                    deployment_slot: if just_zeroes { 0 } else { 9 },
+                    last_modification_slot: 0,
+                }],
                 &environment,
                 &mut program_cache_for_tx_batch,
                 &mut ExecuteTimings::default(),
                 true,
                 true,
             )
-        });
-        assert_eq!(
-            panicked.as_deref(),
-            Some("Unexpected replacement of an entry")
-        );
-    }
-
-    #[test_case(true)]
-    #[test_case(false)]
-    fn test_replenish_program_cache_loader_v4_retracted_simulated(just_zeroes: bool) {
-        // Same test as above, except for when we're about to run through
-        // `replenish_program_cache`. Instead, we simulate its internal calls
-        // to step around the panic and demonstrate the continuous loop.
-        const BATCH_SLOT: u64 = 200;
-        const DEPLOYMENT_SLOT: u64 = 10;
-
-        let mock_bank = MockBankCallback::default();
-        // let account_loader = (&mock_bank).into();
-        let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        let batch_processor =
-            TransactionBatchProcessor::new(BATCH_SLOT, 0, Arc::downgrade(&fork_graph), None);
-        let environment = batch_processor.program_runtime_environment_for_epoch(0);
-        let program_id = Pubkey::new_unique();
-
-        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
-
-        let program_account = if just_zeroes {
-            // Case: "gifted" state
-            // Sized correctly, all-zeroes. Since `LoaderV4Status::Retracted`
-            // holds variant `0`, we check this case, too.
-            let mut account = AccountSharedData::default();
-            account.set_owner(loader_v4::id());
-            account.set_data_from_slice(&[0u8; LoaderV4State::program_data_offset()]);
-            account
-        } else {
-            // Case: status is Retracted
-            loader_v4_account(
-                DEPLOYMENT_SLOT,
-                LoaderV4Status::Retracted,
-                &load_test_program(),
-            )
-        };
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(program_id, program_account);
-
-        // We know from the last test that the program will appear in the
-        // search list for extraction.
-        let keys = [program_id];
-        let mut missing_programs = filter_executable_program_accounts(
-            &mock_bank,
-            &program_cache_for_tx_batch,
-            keys.iter(),
-        );
-        assert_eq!(missing_programs.len(), 1);
-
-        // The search criteria will hold the deployment slot of the retracted
-        // program.
-        let deployment_slot = if just_zeroes { 0 } else { DEPLOYMENT_SLOT };
-        assert_eq!(
-            missing_programs.first().unwrap(),
-            &ProgramToLoad {
-                program_id: &program_id,
-                loader: ProgramCacheEntryOwner::LoaderV4,
-                deployment_slot,
-                last_modification_slot: 0,
-            }
-        );
-
-        // Round one. `extract` finds nothing cached and hands the key back
-        // for us to load.
-        let to_load = batch_processor
-            .global_program_cache
-            .read()
-            .unwrap()
-            .extract(
-                &mut missing_programs,
-                &mut program_cache_for_tx_batch,
-                &environment,
-                true,
-                true,
-            );
-        assert_eq!(to_load, Some(program_id));
-        assert_eq!(missing_programs.len(), 1);
-
-        // The load returns a `Closed` tombstone keyed at the *batch* slot,
-        // not at the deployment slot the batch was told to expect.
-        let (entry, last_modification_slot) = load_program_with_pubkey(
-            &mock_bank,
-            &environment,
-            &program_id,
-            batch_processor.slot,
-            &mut ExecuteTimings::default(),
-        )
-        .unwrap();
-        assert_eq!(
-            entry,
-            Arc::new(ProgramCacheEntry::new_closed_tombstone(
-                BATCH_SLOT,
-                ProgramCacheEntryOwner::LoaderV4,
-            ))
-        );
-
-        // Submitting it is accepted, this first time.
-        let was_occupied = batch_processor
-            .global_program_cache
-            .write()
-            .unwrap()
-            .finish_cooperative_loading_task(
-                &environment,
-                batch_processor.slot,
-                program_id,
-                last_modification_slot,
-                entry,
-            );
-        assert!(!was_occupied);
-
-        // Round two. The program is still in `missing_programs`, and `extract`
-        // searches by deployment slot, so it misses the entry sitting at the
-        // batch slot and hands the key back to be loaded all over again.
-        let to_load = batch_processor
-            .global_program_cache
-            .read()
-            .unwrap()
-            .extract(
-                &mut missing_programs,
-                &mut program_cache_for_tx_batch,
-                &environment,
-                true,
-                false,
-            );
-        assert_eq!(to_load, Some(program_id));
-        assert_eq!(missing_programs.len(), 1);
-        assert!(program_cache_for_tx_batch.find(&program_id).is_none());
-
-        // Same closed tombstone.
-        let (entry, last_modification_slot) = load_program_with_pubkey(
-            &mock_bank,
-            &environment,
-            &program_id,
-            batch_processor.slot,
-            &mut ExecuteTimings::default(),
-        )
-        .unwrap();
-        assert_eq!(
-            entry,
-            Arc::new(ProgramCacheEntry::new_closed_tombstone(
-                BATCH_SLOT,
-                ProgramCacheEntryOwner::LoaderV4,
-            ))
-        );
-
-        // This time, insertion fails in debug mode. In production, this loop
-        // continues, unless `limit_to_load_programs` saves it.
-        let panicked = catch_panic(|| {
-            batch_processor
-                .global_program_cache
-                .write()
-                .unwrap()
-                .finish_cooperative_loading_task(
-                    &environment,
-                    batch_processor.slot,
-                    program_id,
-                    last_modification_slot,
-                    entry,
-                );
         });
         assert_eq!(
             panicked.as_deref(),

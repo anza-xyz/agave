@@ -115,7 +115,7 @@ pub struct CostTracker {
     cost_by_writable_accounts: HashMap<Pubkey, u64, ahash::RandomState>,
     block_cost: SharedBlockCost,
     transaction_count: Saturating<u64>,
-    allocated_accounts_data_size: Saturating<u64>,
+    allocated_accounts_data_size: SharedAllocatedAccountsDataSize,
     transaction_signature_count: Saturating<u64>,
     secp256k1_instruction_signature_count: Saturating<u64>,
     ed25519_instruction_signature_count: Saturating<u64>,
@@ -136,7 +136,7 @@ impl Default for CostTracker {
             ),
             block_cost: SharedBlockCost::new(0),
             transaction_count: Saturating(0),
-            allocated_accounts_data_size: Saturating(0),
+            allocated_accounts_data_size: SharedAllocatedAccountsDataSize::new(0),
             transaction_signature_count: Saturating(0),
             secp256k1_instruction_signature_count: Saturating(0),
             ed25519_instruction_signature_count: Saturating(0),
@@ -217,10 +217,12 @@ impl CostTracker {
             return Err(CostTrackerError::WouldExceedAccountMaxLimit);
         }
 
-        let allocated_accounts_data_size =
-            self.allocated_accounts_data_size + Saturating(tx_cost.allocated_accounts_data_size());
+        let allocated_accounts_data_size = self
+            .allocated_accounts_data_size
+            .load()
+            .saturating_add(tx_cost.allocated_accounts_data_size());
 
-        if allocated_accounts_data_size.0 > self.limits.allocated_data_size {
+        if allocated_accounts_data_size > self.limits.allocated_data_size {
             return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
         }
 
@@ -254,7 +256,8 @@ impl CostTracker {
         }
 
         // every check passed: publish the block-level state
-        self.allocated_accounts_data_size = allocated_accounts_data_size;
+        self.allocated_accounts_data_size
+            .store(allocated_accounts_data_size);
         self.transaction_count += 1;
         self.transaction_signature_count += tx_cost.num_transaction_signatures();
         self.secp256k1_instruction_signature_count +=
@@ -331,6 +334,10 @@ impl CostTracker {
         self.block_cost.clone()
     }
 
+    pub fn shared_allocated_accounts_data_size(&self) -> SharedAllocatedAccountsDataSize {
+        self.allocated_accounts_data_size.clone()
+    }
+
     pub fn transaction_count(&self) -> u64 {
         self.transaction_count.0
     }
@@ -343,7 +350,7 @@ impl CostTracker {
             number_of_accounts: self.number_of_accounts(),
             costliest_account,
             costliest_account_cost,
-            allocated_accounts_data_size: self.allocated_accounts_data_size.0,
+            allocated_accounts_data_size: self.allocated_accounts_data_size.load(),
             transaction_signature_count: self.transaction_signature_count.0,
             secp256k1_instruction_signature_count: self.secp256k1_instruction_signature_count.0,
             ed25519_instruction_signature_count: self.ed25519_instruction_signature_count.0,
@@ -378,7 +385,11 @@ impl CostTracker {
     fn remove_transaction_cost(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
         let cost = tx_cost.sum();
         self.sub_transaction_execution_cost(tx_cost, cost);
-        self.allocated_accounts_data_size -= tx_cost.allocated_accounts_data_size();
+        self.allocated_accounts_data_size.store(
+            self.allocated_accounts_data_size
+                .load()
+                .saturating_sub(tx_cost.allocated_accounts_data_size()),
+        );
         self.transaction_count -= 1;
         self.transaction_signature_count -= tx_cost.num_transaction_signatures();
         self.secp256k1_instruction_signature_count -=
@@ -454,6 +465,25 @@ impl SharedBlockCost {
 
     fn fetch_sub(&self, value: u64) -> u64 {
         self.0.fetch_sub(value, Ordering::Release)
+    }
+
+    pub fn load(&self) -> u64 {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+/// Wrapper around the allocated accounts data size to allow fast sharing of the value without
+/// locking. Value is read-only outside of cost-tracker.
+#[derive(Debug, Clone)]
+pub struct SharedAllocatedAccountsDataSize(Arc<AtomicU64>);
+
+impl SharedAllocatedAccountsDataSize {
+    pub fn new(value: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(value)))
+    }
+
+    fn store(&self, value: u64) {
+        self.0.store(value, Ordering::Release);
     }
 
     pub fn load(&self) -> u64 {
@@ -578,9 +608,10 @@ mod tests {
 
         // build testee to have capacity for one simple transaction
         let mut testee = CostTracker::new(cost, cost);
-        let old = testee.allocated_accounts_data_size;
+        let shared_allocated_accounts_data_size = testee.shared_allocated_accounts_data_size();
+        let old = shared_allocated_accounts_data_size.load();
         assert!(testee.try_add(&tx_cost).is_ok());
-        assert_eq!(old.0 + 1, testee.allocated_accounts_data_size.0);
+        assert_eq!(old + 1, shared_allocated_accounts_data_size.load());
     }
 
     #[test]
@@ -1024,14 +1055,14 @@ mod tests {
         assert_eq!(1, cost_tracker.transaction_count.0);
         assert_eq!(1, cost_tracker.number_of_accounts());
         assert_eq!(cost, cost_tracker.block_cost());
-        assert_eq!(0, cost_tracker.allocated_accounts_data_size.0);
+        assert_eq!(0, cost_tracker.allocated_accounts_data_size.load());
 
         cost_tracker.remove_transaction_cost(&tx_cost);
         // assert cost_tracker is reverted to default
         assert_eq!(0, cost_tracker.transaction_count.0);
         assert_eq!(0, cost_tracker.number_of_accounts());
         assert_eq!(0, cost_tracker.block_cost());
-        assert_eq!(0, cost_tracker.allocated_accounts_data_size.0);
+        assert_eq!(0, cost_tracker.allocated_accounts_data_size.load());
         let stats = cost_tracker.stats();
         assert_eq!(stats.block_cost, 0);
         assert_eq!(stats.transaction_count, 0);

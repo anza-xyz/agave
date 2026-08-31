@@ -181,7 +181,7 @@ agave-math-utils = { path = "math-utils", version = "=4.4.0-alpha.2", features =
 agave-precompiles = { path = "precompiles", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-random = { path = "random", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
-agave-scheduler-bindings = "5.0.0"
+agave-scheduler-bindings = "6.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-transaction-view = "6.1.0"
@@ -469,7 +469,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=4.4.0-alpha.2
 solana-runtime = { path = "runtime", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
-solana-sbpf = { version = "=0.23.0", default-features = false }
+solana-sbpf = { version = "=0.24.0", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.1"
 solana-secp256k1-recover = "3.3.0"
