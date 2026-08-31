@@ -337,7 +337,9 @@ impl Blockstore {
         }
 
         match purge_type {
-            PurgeType::Exact => self.purge_special_columns_exact(write_batch, from_slot, to_slot),
+            PurgeType::Exact => self
+                .purge_special_columns_exact(write_batch, from_slot, to_slot)
+                .map(|_| ()),
             PurgeType::CompactionFilter => {
                 // Relying on the compaction filter means there is no action
                 // required here. Instead, the compaction filter cleans the
@@ -616,6 +618,26 @@ impl Blockstore {
         Ok(stats)
     }
 
+    /// Removes transaction history for the entire persisted slot.
+    pub fn purge_transaction_history_for_slot_full(
+        &self,
+        slot: Slot,
+    ) -> Result<TransactionHistoryPurgeStats> {
+        let mut write_batch = self.get_write_batch();
+        let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
+        let mut stats = self.purge_special_columns_exact(&mut write_batch, slot, slot)?;
+        prepare_deletions_timer.stop();
+        stats.prepare_deletions_us = prepare_deletions_timer.as_us();
+
+        let mut write_batch_timer = Measure::start("write_transaction_history_purge_batch");
+        let write_result = self.write_batch(write_batch);
+        write_batch_timer.stop();
+        stats.write_batch_us = write_batch_timer.as_us();
+        write_result?;
+
+        Ok(stats)
+    }
+
     /// Purges special columns (using a non-Slot primary-index) exactly, by
     /// deserializing each slot being purged and iterating through all
     /// transactions to determine the keys of individual records.
@@ -628,9 +650,10 @@ impl Blockstore {
         batch: &mut WriteBatch,
         from_slot: Slot,
         to_slot: Slot,
-    ) -> Result<()> {
+    ) -> Result<TransactionHistoryPurgeStats> {
+        let mut stats = TransactionHistoryPurgeStats::default();
         if self.special_columns_empty()? {
-            return Ok(());
+            return Ok(stats);
         }
 
         for slot in from_slot..=to_slot {
@@ -658,8 +681,14 @@ impl Blockstore {
                             if let Some(&signature) = transaction.signatures().first() {
                                 self.transaction_status_cf
                                     .delete_in_batch(batch, (signature, slot));
+                                stats.transaction_status_deletion_keys_staged = stats
+                                    .transaction_status_deletion_keys_staged
+                                    .saturating_add(1);
                                 self.transaction_memos_cf
                                     .delete_in_batch(batch, (signature, slot));
+                                stats.transaction_memos_deletion_keys_staged = stats
+                                    .transaction_memos_deletion_keys_staged
+                                    .saturating_add(1);
 
                                 let meta = self.read_transaction_status((signature, slot))?;
                                 let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
@@ -675,9 +704,14 @@ impl Blockstore {
                                         batch,
                                         (*pubkey, slot, transaction_index, signature),
                                     );
+                                    stats.address_signatures_deletion_keys_staged = stats
+                                        .address_signatures_deletion_keys_staged
+                                        .saturating_add(1);
                                 }
                             }
                             transaction_index += 1;
+                            stats.transactions_processed =
+                                stats.transactions_processed.saturating_add(1);
                         }
                     }
                     ParsedBlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
@@ -688,7 +722,7 @@ impl Blockstore {
             }
         }
 
-        Ok(())
+        Ok(stats)
     }
 
     pub(crate) fn register_manual_purge_request_sender(&self, sender: Sender<Slot>) {

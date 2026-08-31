@@ -213,7 +213,7 @@ fn transaction_history_purge_responder() -> (
         };
         assert!(matches!(
             purge_input,
-            TransactionHistoryPurgeInput::PersistedUpdateParent
+            TransactionHistoryPurgeInput::ReplayStage
         ));
         done_sender.send(()).unwrap();
         (slot, source)
