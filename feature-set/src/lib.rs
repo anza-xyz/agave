@@ -81,7 +81,6 @@ pub struct FeatureSnapshot {
     pub relax_post_exec_min_balance_check: bool,
     pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
-    pub upgrade_bpf_stake_program_to_v5_1: bool,
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
 }
@@ -185,7 +184,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
-            upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
             remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
         }
@@ -1522,10 +1520,6 @@ pub mod reduce_slot_time_to_200ms {
 
 pub mod upgrade_bpf_stake_program_to_v5_1 {
     solana_pubkey::declare_id!("s51VGwCAgebo2745DSUris72RavoLkXGUmVJosESCXr");
-
-    pub mod buffer {
-        solana_pubkey::declare_id!("p51x11QCYMHwuVS1MBcLHKb3MezWyqGS5BEB41CA1dk");
-    }
 }
 
 pub mod alpenglow_fast_leader_handover {

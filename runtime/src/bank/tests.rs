@@ -26,7 +26,6 @@ use {
         },
         snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
         snapshot_utils::create_tmp_accounts_dir_for_tests,
-        stake_delegation::effective_stake,
         stake_history::StakeHistory,
         stake_utils,
         stakes::{
@@ -3093,13 +3092,7 @@ fn test_bank_epoch_vote_accounts() {
 
         // epoch_stakes are a snapshot at the leader_schedule_slot_offset boundary
         //   in the prior epoch (0 in this case)
-        let expected_stake = effective_stake(
-            &leader_stake,
-            0,
-            &StakeHistory::default(),
-            None,
-            parent.use_fixed_point_stake_math(),
-        );
+        let expected_stake = leader_stake.stake_v2(0, &StakeHistory::default(), None);
         assert_eq!(
             expected_stake,
             vote_accounts.unwrap().get(&leader_vote_account).unwrap().0
@@ -3116,13 +3109,7 @@ fn test_bank_epoch_vote_accounts() {
     );
 
     assert!(child.epoch_vote_accounts(epoch).is_some());
-    let expected_stake = effective_stake(
-        &leader_stake,
-        child.epoch(),
-        &StakeHistory::default(),
-        None,
-        child.use_fixed_point_stake_math(),
-    );
+    let expected_stake = leader_stake.stake_v2(child.epoch(), &StakeHistory::default(), None);
     assert_eq!(
         expected_stake,
         child
@@ -3141,13 +3128,7 @@ fn test_bank_epoch_vote_accounts() {
         SLOTS_PER_EPOCH - (LEADER_SCHEDULE_SLOT_OFFSET % SLOTS_PER_EPOCH) + 1,
     );
     assert!(child.epoch_vote_accounts(epoch).is_some());
-    let expected_stake = effective_stake(
-        &leader_stake,
-        child.epoch(),
-        &StakeHistory::default(),
-        None,
-        child.use_fixed_point_stake_math(),
-    );
+    let expected_stake = leader_stake.stake_v2(child.epoch(), &StakeHistory::default(), None);
     assert_eq!(
         expected_stake,
         child
@@ -5658,10 +5639,9 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         .unwrap()
     };
     bank0.stakes_cache = StakesCache::new(restored_stakes);
-    bank0.stakes_cache.refresh_delegated_stakes(
-        bank0.new_warmup_cooldown_rate_epoch(),
-        bank0.use_fixed_point_stake_math(),
-    );
+    bank0
+        .stakes_cache
+        .refresh_delegated_stakes(bank0.new_warmup_cooldown_rate_epoch());
 
     for (validator_index, validator_keypairs) in validator_keypairs.iter().enumerate() {
         let vote_pubkey = validator_keypairs.vote_keypair.pubkey();

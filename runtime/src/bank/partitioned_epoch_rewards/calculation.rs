@@ -23,7 +23,6 @@ use {
         },
         reward_info::RewardInfo,
         stake_account::StakeAccount,
-        stake_delegation::{delegation_activation_status, delegation_effective_stake},
         stakes::Stakes,
     },
     log::{debug, info},
@@ -178,7 +177,6 @@ fn calculate_block_reward(
     distribution_epoch_vote_accounts: &VoteAccounts,
     ag_epoch_type: &AlpenglowEpochType,
     new_warmup_cooldown_rate_epoch: Option<Epoch>,
-    use_fixed_point_stake_math: bool,
 ) -> u64 {
     let vote_pubkey = delegation.voter_pubkey;
     let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey) else {
@@ -211,12 +209,10 @@ fn calculate_block_reward(
     if total_active_stake == 0 {
         0
     } else {
-        let stake = delegation_effective_stake(
-            delegation,
+        let stake = delegation.stake_v2(
             rewarded_epoch,
             stake_history,
             new_warmup_cooldown_rate_epoch,
-            use_fixed_point_stake_math,
         );
         // During recalculation, if stake account has already received rewards,
         // it's possible to have `stake > total_active_stake`. If
@@ -623,7 +619,6 @@ impl Bank {
         adjust_delegations_for_rent: bool,
         ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
-        use_fixed_point_stake_math: bool,
     ) -> Option<InflationRewardWithCommission> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -653,12 +648,10 @@ impl Bank {
             // Even if the vote account doesn't exist, there might still be a
             // need to adjust the stake delegation
             if adjust_delegations_for_rent {
-                let status = delegation_activation_status(
-                    &stake.delegation,
+                let status = stake.delegation.stake_activating_and_deactivating_v2(
                     rewarded_epoch,
                     stake_history,
                     new_rate_activation_epoch,
-                    use_fixed_point_stake_math,
                 );
                 if delegation_may_need_adjustment(
                     stake.delegation.stake,
@@ -734,7 +727,6 @@ impl Bank {
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
-                use_fixed_point_stake_math,
             },
             reward_calc_tracer,
             ag_epoch_type,
@@ -791,7 +783,6 @@ impl Bank {
     ) -> (RewardCommissions, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
-        let use_fixed_point_stake_math = feature_snapshot.upgrade_bpf_stake_program_to_v5_1;
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
         // Name intentionally doesn't match -- "adjust delegations for rent" is
@@ -826,7 +817,6 @@ impl Bank {
                             cached_vote_accounts.distribution_epoch_vote_accounts,
                             ag_epoch_type,
                             new_warmup_cooldown_rate_epoch,
-                            use_fixed_point_stake_math,
                         )
                     } else {
                         0
@@ -845,7 +835,6 @@ impl Bank {
                         adjust_delegations_for_rent,
                         ag_epoch_type,
                         custom_commission_collector,
-                        use_fixed_point_stake_math,
                     );
 
                     let (reward, maybe_reward_record) = match (block_reward, maybe_reward_record) {
@@ -974,7 +963,6 @@ impl Bank {
             }
         }
 
-        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
@@ -994,7 +982,6 @@ impl Bank {
                         DelegatedVoteState::from(vote_account.vote_state_view()),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
-                        use_fixed_point_stake_math,
                     )
                     .unwrap_or(0)
                 })
@@ -1400,7 +1387,6 @@ mod tests {
                 true,  // adjust_delegations_for_rent (SIMD-0392)
                 &AlpenglowEpochType::Tower,
                 false, // custom_commission_collector
-                true,  // use_fixed_point_stake_math
             );
 
             // `Some`: included in PER, `None`: excluded
@@ -2266,7 +2252,6 @@ mod tests {
             &inert_stake_address,
             &inert_stake_account,
             bank.new_warmup_cooldown_rate_epoch(),
-            bank.use_fixed_point_stake_math(),
             false,
         );
         assert!(
@@ -4404,7 +4389,6 @@ mod tests {
             stake_history.add(epoch, StakeHistoryEntry::with_effective(total_stake));
         }
 
-        let use_fixed_point_stake_math = true;
         let new_warmup_cooldown_rate_epoch = Some(0);
 
         calculate_block_reward(
@@ -4414,7 +4398,6 @@ mod tests {
             &vote_accounts,
             &ag_epoch_type,
             new_warmup_cooldown_rate_epoch,
-            use_fixed_point_stake_math,
         )
     }
 

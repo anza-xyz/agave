@@ -6,10 +6,7 @@ use {
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
-    crate::{
-        alpenglow_epoch_type::AlpenglowEpochType,
-        stake_delegation::{delegation_activation_status, effective_stake},
-    },
+    crate::alpenglow_epoch_type::AlpenglowEpochType,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
         error::StakeError,
@@ -53,16 +50,10 @@ pub(crate) fn redeem_rewards<'a>(
             stake_history,
             new_rate_activation_epoch,
             commission_rate_in_basis_points,
-            use_fixed_point_stake_math,
             ..
         } = calculation_environment;
-        let effective_stake_at_rewarded_epoch = effective_stake(
-            &stake,
-            rewarded_epoch,
-            stake_history,
-            new_rate_activation_epoch,
-            use_fixed_point_stake_math,
-        );
+        let effective_stake_at_rewarded_epoch =
+            stake.stake_v2(rewarded_epoch, stake_history, new_rate_activation_epoch);
         inflation_point_calc_tracer(
             &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(
                 effective_stake_at_rewarded_epoch,
@@ -118,12 +109,10 @@ fn redeem_stake_rewards<'a>(
 
     let adjust_delegations_for_rent = calculation_environment.adjust_delegations_for_rent;
 
-    let status = delegation_activation_status(
-        &stake.delegation,
+    let status = stake.delegation.stake_activating_and_deactivating_v2(
         calculation_environment.rewarded_epoch,
         calculation_environment.stake_history,
         calculation_environment.new_rate_activation_epoch,
-        calculation_environment.use_fixed_point_stake_math,
     );
 
     let maybe_rewards = calculate_stake_rewards(
@@ -220,7 +209,6 @@ fn calculate_stake_rewards<'a>(
         new_rate_activation_epoch,
         point_value,
         rewarded_epoch,
-        use_fixed_point_stake_math,
         ..
     } = calculation_environment;
 
@@ -237,7 +225,6 @@ fn calculate_stake_rewards<'a>(
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
         ag_epoch_type,
-        use_fixed_point_stake_math,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -570,7 +557,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -603,7 +589,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -669,7 +654,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -705,7 +689,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -739,7 +722,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -776,7 +758,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -817,7 +798,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -859,7 +839,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -899,7 +878,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -927,7 +905,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -962,7 +939,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -997,7 +973,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -1027,7 +1002,6 @@ mod tests {
                     vote_state.as_ref_v4(),
                     ag_total_stake_multiplier
                 ),
-                true,
             )
         );
 
@@ -1053,7 +1027,6 @@ mod tests {
                     vote_state.as_ref_v4(),
                     ag_total_stake_multiplier
                 ),
-                true,
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
@@ -1076,7 +1049,6 @@ mod tests {
                     vote_state.as_ref_v4(),
                     ag_total_stake_multiplier
                 ),
-                true,
             )
         );
 
@@ -1104,7 +1076,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -1140,7 +1111,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(
@@ -1178,7 +1148,6 @@ mod tests {
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
-                use_fixed_point_stake_math: true,
             },
             null_tracer(),
             &AlpenglowEpochType::Tower,
@@ -1227,7 +1196,6 @@ mod tests {
                     new_rate_activation_epoch,
                     commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_stake_state,
@@ -1263,7 +1231,6 @@ mod tests {
             new_rate_activation_epoch: None,
             commission_rate_in_basis_points: true,
             adjust_delegations_for_rent: true,
-            use_fixed_point_stake_math: true,
         };
         let migration_epoch_type = AlpenglowEpochType::MigrationEpoch {
             num_tower_slots: 0,
@@ -1350,7 +1317,6 @@ mod tests {
                     new_rate_activation_epoch: None,
                     commission_rate_in_basis_points: true,
                     adjust_delegations_for_rent: true,
-                    use_fixed_point_stake_math: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,
