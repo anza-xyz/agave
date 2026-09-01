@@ -134,19 +134,12 @@ where
             } else {
                 0
             };
-        if (amount == SpendAmount::RentExempt || amount == SpendAmount::Available)
-            && account.owner == solana_sdk_ids::vote::id()
-        {
+        if amount == SpendAmount::RentExempt && account.owner == solana_sdk_ids::vote::id() {
             // On top of the rent-exempt minimum, the vote program also reserves the rewards that
             // are pending distribution to the account's stake delegators.
             let pending_delegator_rewards =
                 vote::get_pending_delegator_rewards(&account, from_pubkey)?;
             from_balance = from_balance.saturating_sub(pending_delegator_rewards);
-            if amount == SpendAmount::Available {
-                // `RentExempt` has the rent-exempt minimum deducted when the spend amount is
-                // resolved, but `Available` does not, so reserve it here.
-                from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
-            }
         }
         if amount == SpendAmount::Available && account.owner == solana_sdk_ids::stake::id() {
             let state = stake::get_account_stake_state(
@@ -359,13 +352,9 @@ mod tests {
         }
     }
 
-    /// Resolves the amount that `withdraw-from-vote-account` withdraws from
-    /// `vote_account` for `amount`, with the fee paid by another account.
-    async fn resolve_vote_withdrawal(
-        vote_account: Account,
-        rent_exempt_minimum: u64,
-        amount: SpendAmount,
-    ) -> u64 {
+    /// Resolves the amount that `withdraw-from-vote-account ALL` withdraws from
+    /// `vote_account`, with the fee paid by another account.
+    async fn resolve_rent_exempt_spend(vote_account: Account, rent_exempt_minimum: u64) -> u64 {
         let vote_account_pubkey = Pubkey::new_unique();
         let account_response = json!(Response {
             context: RpcResponseContext {
@@ -394,7 +383,7 @@ mod tests {
         let (_message, spend) = resolve_spend_tx_and_check_account_balances(
             &rpc_client,
             false,
-            amount,
+            SpendAmount::RentExempt,
             &Hash::default(),
             &vote_account_pubkey,
             &fee_payer,
@@ -417,10 +406,8 @@ mod tests {
         spend
     }
 
-    /// `withdraw-from-vote-account` resolves both `ALL` and `AVAILABLE` to the
-    /// balance in excess of what the vote program requires the account to retain.
     #[tokio::test]
-    async fn test_vote_withdrawal_reserves_pending_delegator_rewards() {
+    async fn test_rent_exempt_spend_reserves_pending_delegator_rewards() {
         const RENT_EXEMPT_MINIMUM: u64 = 27_000_000;
         const PENDING_DELEGATOR_REWARDS: u64 = 5_000_000;
         const WITHDRAWABLE: u64 = 1_000_000;
@@ -428,41 +415,36 @@ mod tests {
         const BALANCE: u64 = RESERVED_BALANCE + WITHDRAWABLE;
         const BALANCE_WITHOUT_PENDING_REWARDS: u64 = RENT_EXEMPT_MINIMUM + WITHDRAWABLE;
 
-        for amount in [SpendAmount::RentExempt, SpendAmount::Available] {
-            // Without pending rewards, everything in excess of the rent-exempt
-            // minimum is withdrawable.
-            assert_eq!(
-                resolve_vote_withdrawal(
-                    vote_account(BALANCE_WITHOUT_PENDING_REWARDS, 0),
-                    RENT_EXEMPT_MINIMUM,
-                    amount,
-                )
-                .await,
-                WITHDRAWABLE
-            );
+        // Without pending rewards, everything in excess of the rent-exempt
+        // minimum is withdrawable.
+        assert_eq!(
+            resolve_rent_exempt_spend(
+                vote_account(BALANCE_WITHOUT_PENDING_REWARDS, 0),
+                RENT_EXEMPT_MINIMUM,
+            )
+            .await,
+            WITHDRAWABLE
+        );
 
-            // Pending delegator rewards are reserved as well, matching the balance
-            // the vote program requires the account to retain.
-            assert_eq!(
-                resolve_vote_withdrawal(
-                    vote_account(BALANCE, PENDING_DELEGATOR_REWARDS),
-                    RENT_EXEMPT_MINIMUM,
-                    amount,
-                )
-                .await,
-                WITHDRAWABLE
-            );
+        // Pending delegator rewards are reserved as well, matching the balance
+        // the vote program requires the account to retain.
+        assert_eq!(
+            resolve_rent_exempt_spend(
+                vote_account(BALANCE, PENDING_DELEGATOR_REWARDS),
+                RENT_EXEMPT_MINIMUM,
+            )
+            .await,
+            WITHDRAWABLE
+        );
 
-            // Nothing is withdrawable when the balance only covers the reserves.
-            assert_eq!(
-                resolve_vote_withdrawal(
-                    vote_account(RESERVED_BALANCE, PENDING_DELEGATOR_REWARDS),
-                    RENT_EXEMPT_MINIMUM,
-                    amount,
-                )
-                .await,
-                0
-            );
-        }
+        // Nothing is withdrawable when the balance only covers the reserves.
+        assert_eq!(
+            resolve_rent_exempt_spend(
+                vote_account(RESERVED_BALANCE, PENDING_DELEGATOR_REWARDS),
+                RENT_EXEMPT_MINIMUM,
+            )
+            .await,
+            0
+        );
     }
 }

@@ -472,13 +472,10 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("AMOUNT")
                         .takes_value(true)
                         .required(true)
-                        .validator(is_amount_or_all_or_available)
+                        .validator(is_amount_or_all)
                         .help(
-                            "The amount to withdraw, in SOL; accepts keywords ALL and AVAILABLE, \
-                             which for this command both mean the account balance minus the \
-                             amount the vote program requires the account to retain: the \
-                             rent-exempt minimum, plus any rewards pending distribution to \
-                             delegators",
+                            "The amount to withdraw, in SOL; accepts keyword ALL, which for this \
+                             command means account balance minus rent-exempt minimum",
                         ),
                 )
                 .arg(
@@ -831,8 +828,8 @@ pub fn parse_withdraw_from_vote_account(
         pubkey_of_signer(matches, "destination_account_pubkey", wallet_manager)?.unwrap();
     let mut withdraw_amount = SpendAmount::new_from_matches(matches, "amount")?;
     // As a safeguard for vote accounts for running validators, `ALL` withdraws only the amount in
-    // excess of the rent-exempt minimum, the same as `AVAILABLE`. In order to close the account
-    // with this subcommand, a validator must specify the withdrawal amount precisely.
+    // excess of the rent-exempt minimum. In order to close the account with this subcommand, a
+    // validator must specify the withdrawal amount precisely.
     if withdraw_amount == SpendAmount::All {
         withdraw_amount = SpendAmount::RentExempt;
     }
@@ -2814,35 +2811,6 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 0,
                     withdraw_amount: SpendAmount::RentExempt,
-                    sign_only: false,
-                    dump_transaction_message: false,
-                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                    nonce_account: None,
-                    nonce_authority: 0,
-                    memo: None,
-                    fee_payer: 0,
-                    compute_unit_price: None,
-                },
-                signers: vec![Box::new(read_keypair_file(&default_keypair_file).unwrap())],
-            }
-        );
-
-        // Test WithdrawFromVoteAccount subcommand w/ AVAILABLE amount
-        let test_withdraw_from_vote_account = test_commands.clone().get_matches_from(vec![
-            "test",
-            "withdraw-from-vote-account",
-            &keypair_file,
-            &pubkey_string,
-            "AVAILABLE",
-        ]);
-        assert_eq!(
-            parse_command(&test_withdraw_from_vote_account, &default_signer, &mut None).unwrap(),
-            CliCommandInfo {
-                command: CliCommand::WithdrawFromVoteAccount {
-                    vote_account_pubkey: read_keypair_file(&keypair_file).unwrap().pubkey(),
-                    destination_account_pubkey: pubkey,
-                    withdraw_authority: 0,
-                    withdraw_amount: SpendAmount::Available,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
