@@ -9,7 +9,6 @@ use {
 
 /// Cross-program invocation called from Rust
 pub struct SyscallInvokeSignedRust {}
-
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallInvokeSignedRust {
     type Error = Error;
     fn rust(

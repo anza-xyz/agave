@@ -190,7 +190,6 @@ const OFFSET_LENGTH_EXCEEDS_SYSVAR: u64 = 1;
 // because this syscall can both return error codes and abort, well-ordered error checking is crucial
 /// Get a slice of a Sysvar in-memory representation
 pub struct SyscallGetSysvar {}
-
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetSysvar {
     type Error = Error;
     fn rust(

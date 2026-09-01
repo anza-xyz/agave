@@ -762,7 +762,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPanic {
 /// memory chunk is given to the allocator during allocator creation and
 /// information about that memory (start address and size) is passed
 /// to the VM to use for enforcement.
-struct SyscallAllocFree {}
+pub struct SyscallAllocFree {}
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAllocFree {
     type Error = Error;
     fn rust(

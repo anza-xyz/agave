@@ -108,7 +108,6 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogPubkey {
 
 /// Log data handling
 pub struct SyscallLogData {}
-
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogData {
     type Error = Error;
     fn rust(
