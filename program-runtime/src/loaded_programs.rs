@@ -730,7 +730,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         program_runtime_environment: &ProgramRuntimeEnvironment,
         current_slot: Slot,
         key: Pubkey,
-        last_modification_slot: Slot,
         loaded_program: Arc<ProgramCacheEntry>,
     ) -> bool {
         match &mut self.index {
@@ -758,7 +757,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 let was_occupied = self.assign_program(
                     program_runtime_environment,
                     key,
-                    last_modification_slot,
+                    current_slot,
                     loaded_program,
                 );
                 self.loading_task_waiter.notify();
@@ -3696,7 +3695,6 @@ pub(crate) mod tests {
             &env,
             100,
             *program_ids.first().unwrap(),
-            50,
             Arc::clone(&loaded),
         );
         assert_ne!(cache.loading_task_waiter.wait(cookie), cookie);
