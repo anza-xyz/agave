@@ -47,7 +47,9 @@ pub fn parse_stake(
                 "lockup": lockup,
             });
             let map = value.as_object_mut().unwrap();
-            if instruction.accounts.len() >= 2 {
+            if instruction.accounts.len() >= 2
+                && account_keys[instruction.accounts[1] as usize] == sysvar::rent::ID
+            {
                 map.insert(
                     "rentSysvar".to_string(),
                     json!(account_keys[instruction.accounts[1] as usize].to_string()),
@@ -602,35 +604,45 @@ mod test {
         message.instructions[0].accounts.pop();
         assert!(parse_stake(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
 
-        // Minimal layout without the rent sysvar
-        let instruction = Instruction::new_with_bincode(
-            solana_sdk_ids::stake::ID,
-            &StakeInstruction::Initialize(authorized, lockup),
+        // Minimal layout without the rent sysvar; a second account is only
+        // labeled rentSysvar when it actually is the rent sysvar
+        let expected_parsed = ParsedInstructionEnum {
+            instruction_type: "initialize".to_string(),
+            info: json!({
+                "stakeAccount": stake_pubkey.to_string(),
+                "authorized": {
+                    "staker": authorized.staker.to_string(),
+                    "withdrawer": authorized.withdrawer.to_string(),
+                },
+                "lockup": {
+                    "unixTimestamp": lockup.unix_timestamp,
+                    "epoch": lockup.epoch,
+                    "custodian": lockup.custodian.to_string(),
+                }
+            }),
+        };
+        for account_metas in [
             vec![AccountMeta::new(stake_pubkey, false)],
-        );
-        let message = Message::new(&[instruction], None);
-        assert_eq!(
-            parse_stake(
-                &message.instructions[0],
-                &AccountKeys::new(&message.account_keys, None)
-            )
-            .unwrap(),
-            ParsedInstructionEnum {
-                instruction_type: "initialize".to_string(),
-                info: json!({
-                    "stakeAccount": stake_pubkey.to_string(),
-                    "authorized": {
-                        "staker": authorized.staker.to_string(),
-                        "withdrawer": authorized.withdrawer.to_string(),
-                    },
-                    "lockup": {
-                        "unixTimestamp": lockup.unix_timestamp,
-                        "epoch": lockup.epoch,
-                        "custodian": lockup.custodian.to_string(),
-                    }
-                }),
-            }
-        );
+            vec![
+                AccountMeta::new(stake_pubkey, false),
+                AccountMeta::new_readonly(Pubkey::new_unique(), false),
+            ],
+        ] {
+            let instruction = Instruction::new_with_bincode(
+                solana_sdk_ids::stake::ID,
+                &StakeInstruction::Initialize(authorized, lockup),
+                account_metas,
+            );
+            let message = Message::new(&[instruction], None);
+            assert_eq!(
+                parse_stake(
+                    &message.instructions[0],
+                    &AccountKeys::new(&message.account_keys, None)
+                )
+                .unwrap(),
+                expected_parsed
+            );
+        }
     }
 
     #[test]
