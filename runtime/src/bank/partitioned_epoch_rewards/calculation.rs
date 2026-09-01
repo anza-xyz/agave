@@ -1172,134 +1172,124 @@ impl Bank {
                     commission_receiving_vote_accounts.contains(vote_address)
                 });
 
-        let (accounts_with_rewards, swept_vote_accounts): (Vec<_>, Vec<_>) =
-            thread_pool.join(
-                    || {
-                        reward_commissions
-                            .par_iter()
-                            .filter_map(
-                                |(
+        let (accounts_with_rewards, swept_vote_accounts): (Vec<_>, Vec<_>) = thread_pool.join(
+            || {
+                reward_commissions
+                    .par_iter()
+                    .filter_map(
+                        |(
+                            commission_pubkey,
+                            RewardCommission {
+                                commission_bps,
+                                commission_lamports,
+                                burned_lamports,
+                                is_vote_account,
+                            },
+                        )| {
+                            let maybe_commission_account =
+                                self.get_account_with_fixed_root_no_cache(commission_pubkey);
+                            let mut commission_account = if custom_commission_collector {
+                                // If the account doesn't exist, the vote commission
+                                // may be enough lamports to cover rent-exemption
+                                // and properly create the commission account.
+                                maybe_commission_account.unwrap_or_default()
+                            } else {
+                                // Before SIMD-0232, commission accounts were always
+                                // vote accounts, which cannot be closed unless the
+                                // account hasn't voted for at least a full epoch.
+                                // This means that `maybe_commission_account` should
+                                // always exist.
+                                let Some(commission_account) = maybe_commission_account else {
+                                    debug!(
+                                        "commission account {commission_pubkey} missing at \
+                                         distribution time"
+                                    );
+                                    return None;
+                                };
+                                commission_account
+                            };
+                            if *burned_lamports != 0 {
+                                total_non_incinerator_burned_lamports
+                                    .fetch_add(*burned_lamports, Relaxed);
+                            }
+                            let pre_lamports = commission_account.lamports();
+                            if let Err(err) =
+                                commission_account.checked_add_lamports(*commission_lamports)
+                            {
+                                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
+                                total_non_incinerator_burned_lamports
+                                    .fetch_add(*commission_lamports, Relaxed);
+                                return None;
+                            }
+                            if *is_vote_account {
+                                if block_revenue_sharing {
+                                    let stake = commission_receiving_vote_stakes
+                                        .get(commission_pubkey)
+                                        .copied()
+                                        .unwrap_or_default();
+                                    // result doesn't matter since this account
+                                    // will get stored regardless
+                                    let _ = sweep_vote_account(
+                                        &mut commission_account,
+                                        stake,
+                                        &total_block_reward_lamports,
+                                    );
+                                }
+                            } else {
+                                match Self::collector_type_checked(
                                     commission_pubkey,
-                                    RewardCommission {
-                                        commission_bps,
-                                        commission_lamports,
-                                        burned_lamports,
-                                        is_vote_account,
-                                    },
-                                )| {
-                                    let maybe_commission_account = self
-                                        .get_account_with_fixed_root_no_cache(commission_pubkey);
-                                    let mut commission_account = if custom_commission_collector {
-                                        // If the account doesn't exist, the vote commission
-                                        // may be enough lamports to cover rent-exemption
-                                        // and properly create the commission account.
-                                        maybe_commission_account.unwrap_or_default()
-                                    } else {
-                                        // Before SIMD-0232, commission accounts were always
-                                        // vote accounts, which cannot be closed unless the
-                                        // account hasn't voted for at least a full epoch.
-                                        // This means that `maybe_commission_account` should
-                                        // always exist.
-                                        let Some(commission_account) = maybe_commission_account
-                                        else {
-                                            debug!(
-                                                "commission account {commission_pubkey} missing \
-                                                 at distribution time"
-                                            );
-                                            return None;
-                                        };
-                                        commission_account
-                                    };
-                                    if *burned_lamports != 0 {
-                                        total_non_incinerator_burned_lamports
-                                            .fetch_add(*burned_lamports, Relaxed);
+                                    pre_lamports,
+                                    &commission_account,
+                                    reserved_account_keys,
+                                    rent,
+                                    relax_post_exec_min_balance_check,
+                                ) {
+                                    Ok(ExternalCollectorType::SystemAccount) => {}
+                                    Ok(ExternalCollectorType::Incinerator) => {
+                                        total_incinerator_lamports
+                                            .fetch_add(*commission_lamports, Relaxed);
                                     }
-                                    let pre_lamports = commission_account.lamports();
-                                    if let Err(err) = commission_account
-                                        .checked_add_lamports(*commission_lamports)
-                                    {
+                                    Err(err) => {
                                         debug!(
-                                            "reward redemption failed for {commission_pubkey}: \
-                                             {err:?}"
+                                            "reward redemption failed for {commission_pubkey} due \
+                                             to commission account error: {err:?}"
                                         );
                                         total_non_incinerator_burned_lamports
                                             .fetch_add(*commission_lamports, Relaxed);
                                         return None;
                                     }
-                                    if *is_vote_account {
-                                        if block_revenue_sharing {
-                                            let stake = commission_receiving_vote_stakes
-                                                .get(commission_pubkey)
-                                                .copied()
-                                                .unwrap_or_default();
-                                            // result doesn't matter since this account
-                                            // will get stored regardless
-                                            let _ = sweep_vote_account(
-                                                &mut commission_account,
-                                                stake,
-                                                &total_block_reward_lamports,
-                                            );
-                                        }
-                                    } else {
-                                        match Self::collector_type_checked(
-                                            commission_pubkey,
-                                            pre_lamports,
-                                            &commission_account,
-                                            reserved_account_keys,
-                                            rent,
-                                            relax_post_exec_min_balance_check,
-                                        ) {
-                                            Ok(ExternalCollectorType::SystemAccount) => {}
-                                            Ok(ExternalCollectorType::Incinerator) => {
-                                                total_incinerator_lamports
-                                                    .fetch_add(*commission_lamports, Relaxed);
-                                            }
-                                            Err(err) => {
-                                                debug!(
-                                                    "reward redemption failed for \
-                                                     {commission_pubkey} due to commission \
-                                                     account error: {err:?}"
-                                                );
-                                                total_non_incinerator_burned_lamports
-                                                    .fetch_add(*commission_lamports, Relaxed);
-                                                return None;
-                                            }
-                                        }
-                                    }
-                                    Some((
-                                        *commission_pubkey,
-                                        RewardInfo {
-                                            reward_type: RewardType::Voting,
-                                            lamports: *commission_lamports as i64,
-                                            post_balance: commission_account.lamports(),
-                                            commission_bps: *commission_bps,
-                                        },
-                                        commission_account,
-                                    ))
+                                }
+                            }
+                            Some((
+                                *commission_pubkey,
+                                RewardInfo {
+                                    reward_type: RewardType::Voting,
+                                    lamports: *commission_lamports as i64,
+                                    post_balance: commission_account.lamports(),
+                                    commission_bps: *commission_bps,
                                 },
-                            )
-                            .collect()
-                    },
-                    || {
-                        if block_revenue_sharing {
-                            other_vote_stakes
-                                .into_par_iter()
-                                .filter_map(|(vote_address, stake)| {
-                                    let mut account =
-                                        self.get_account_with_fixed_root_no_cache(vote_address)?;
-                                    sweep_vote_account(
-                                        &mut account,
-                                        stake,
-                                        &total_block_reward_lamports,
-                                    )?
-                                    .then_some((*vote_address, account))
-                                })
-                                .collect()
-                        } else {
-                            Vec::new()
-                        }
-                    },
-            );
+                                commission_account,
+                            ))
+                        },
+                    )
+                    .collect()
+            },
+            || {
+                if block_revenue_sharing {
+                    other_vote_stakes
+                        .into_par_iter()
+                        .filter_map(|(vote_address, stake)| {
+                            let mut account =
+                                self.get_account_with_fixed_root_no_cache(vote_address)?;
+                            sweep_vote_account(&mut account, stake, &total_block_reward_lamports)?
+                                .then_some((*vote_address, account))
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            },
+        );
 
         let distributed_to_incinerator_lamports = total_incinerator_lamports.into_inner();
         let distributed_lamports = accounts_with_rewards
