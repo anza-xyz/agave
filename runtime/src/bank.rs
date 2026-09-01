@@ -1731,11 +1731,8 @@ impl Bank {
                     .global_program_cache
                     .read()
                     .unwrap();
-                epoch_boundary_preparation.programs_to_recompile = program_cache_guard
-                    .get_flattened_entries()
-                    .into_iter()
-                    .map(|(id, _last_modification_slot, entry)| (id, entry))
-                    .collect();
+                epoch_boundary_preparation.programs_to_recompile =
+                    program_cache_guard.get_flattened_entries();
                 epoch_boundary_preparation
                     .programs_to_recompile
                     .sort_by_cached_key(|(_id, program)| program.retention_score());

@@ -783,7 +783,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Returns the list of entries which are verified and compiled.
-    pub fn get_flattened_entries(&self) -> Vec<(Pubkey, Slot, Arc<ProgramCacheEntry>)> {
+    pub fn get_flattened_entries(&self) -> Vec<(Pubkey, Arc<ProgramCacheEntry>)> {
         match &self.index {
             IndexImplementation::V1 { entries, .. } => entries
                 .iter()
@@ -791,7 +791,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     second_level
                         .iter()
                         .filter_map(move |program| match program.program {
-                            ProgramCacheEntryType::Loaded(_) => Some((*id, 0, program.clone())),
+                            ProgramCacheEntryType::Loaded(_) => Some((*id, program.clone())),
                             _ => None,
                         })
                 })
@@ -825,15 +825,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// Unloads programs which were used infrequently
     pub fn sort_and_unload(&mut self, shrink_to_percent: Percent) {
         let mut sorted_candidates = self.get_flattened_entries();
-        sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
-            program.stats.uses.load(Ordering::Relaxed)
-        });
+        sorted_candidates
+            .sort_by_cached_key(|(_id, program)| program.stats.uses.load(Ordering::Relaxed));
         let num_to_unload = sorted_candidates
             .len()
             .saturating_sub(percent_of_max_entries(shrink_to_percent));
-        for (program, _last_modification_slot, entry) in
-            sorted_candidates.iter().take(num_to_unload)
-        {
+        for (program, entry) in sorted_candidates.iter().take(num_to_unload) {
             self.unload_program_entry(*program, entry);
         }
     }
@@ -852,7 +849,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let num_to_unload = candidates
             .len()
             .saturating_sub(percent_of_max_entries(shrink_to_percent));
-        let mut sample_entry = |candidates: &Vec<(Pubkey, u64, Arc<ProgramCacheEntry>)>| {
+        let mut sample_entry = |candidates: &Vec<(Pubkey, Arc<ProgramCacheEntry>)>| {
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
             // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
             #[cfg(feature = "shuttle-test")]
@@ -862,7 +859,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             let usage_counter = candidates
                 .get(index)
                 .expect("Failed to get cached entry")
-                .2
+                .1
                 .retention_score();
             (index, usage_counter)
         };
@@ -888,7 +885,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     break;
                 }
             }
-            let (id, _last_modification_slot, entry) = candidates.swap_remove(index);
+            let (id, entry) = candidates.swap_remove(index);
             self.unload_program_entry(id, &entry);
         }
     }
