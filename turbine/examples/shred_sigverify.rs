@@ -41,9 +41,26 @@ const CHANNEL_CAPACITY: usize = 1_024;
 
 const DEFAULT_NUM_SLOTS: usize = 50;
 const DEFAULT_BATCHES_PER_SLOT: usize = 500;
+const DEFAULT_PACKETS_PER_BATCH: usize = PACKETS_PER_BATCH;
 const DEFAULT_INVALID_PACKETS_PER_SLOT: usize = 0;
 
 const FIRST_SLOT: u64 = 1;
+
+#[derive(Clone, Copy, Debug)]
+enum ReplayMode {
+    Paced,
+    Saturate,
+}
+
+fn replay_mode() -> ReplayMode {
+    match env::var("SHRED_SIGVERIFY_MODE").as_deref() {
+        Ok("paced") | Err(_) => ReplayMode::Paced,
+        Ok("saturate") => ReplayMode::Saturate,
+        Ok(mode) => {
+            panic!("SHRED_SIGVERIFY_MODE must be either 'paced' or 'saturate', got '{mode}'")
+        }
+    }
+}
 
 fn env_usize(name: &str, default: usize) -> usize {
     match env::var(name) {
@@ -83,9 +100,10 @@ fn make_slot_batches(
     leader_keypair: &Keypair,
     slot: u64,
     batches_per_slot: usize,
+    packets_per_batch: usize,
     invalid_packets_per_slot: usize,
 ) -> Vec<PacketBatch> {
-    let shreds_per_slot = batches_per_slot * PACKETS_PER_BATCH;
+    let shreds_per_slot = batches_per_slot * packets_per_batch;
     let shred_size = shred_size_typical();
 
     let ticks_per_shred = max_ticks_per_n_shreds(1, Some(shred_size)).max(1);
@@ -122,11 +140,11 @@ fn make_slot_batches(
     let mut batches = Vec::with_capacity(batches_per_slot);
     let mut corrupted_packets = 0usize;
 
-    for (batch_index, shreds) in shreds.chunks(PACKETS_PER_BATCH).enumerate() {
+    for (batch_index, shreds) in shreds.chunks(packets_per_batch).enumerate() {
         let mut batch = RecycledPacketBatch::with_capacity(shreds.len());
 
         for (packet_index, shred) in shreds.iter().enumerate() {
-            let slot_packet_index = batch_index * PACKETS_PER_BATCH + packet_index;
+            let slot_packet_index = batch_index * packets_per_batch + packet_index;
             let mut packet = shred.payload().to_packet(None);
 
             if should_corrupt_packet(slot_packet_index, shreds_per_slot, invalid_packets_per_slot) {
@@ -150,6 +168,7 @@ fn make_workload(
     leader_keypair: &Keypair,
     num_slots: usize,
     batches_per_slot: usize,
+    packets_per_batch: usize,
     invalid_packets_per_slot: usize,
 ) -> Vec<PacketBatch> {
     let mut workload = Vec::with_capacity(num_slots * batches_per_slot);
@@ -161,6 +180,7 @@ fn make_workload(
             leader_keypair,
             slot,
             batches_per_slot,
+            packets_per_batch,
             invalid_packets_per_slot,
         ));
     }
@@ -190,9 +210,16 @@ fn sleep_until(deadline: Instant) {
 }
 
 fn main() {
+    let replay_mode = replay_mode();
+
     let num_slots = env_usize("SHRED_SIGVERIFY_SLOTS", DEFAULT_NUM_SLOTS);
 
     let batches_per_slot = env_usize("SHRED_SIGVERIFY_BATCHES_PER_SLOT", DEFAULT_BATCHES_PER_SLOT);
+
+    let packets_per_batch = env_usize(
+        "SHRED_SIGVERIFY_PACKETS_PER_BATCH",
+        DEFAULT_PACKETS_PER_BATCH,
+    );
 
     let invalid_packets_per_slot = env_usize(
         "SHRED_SIGVERIFY_INVALID_PACKETS_PER_SLOT",
@@ -207,12 +234,23 @@ fn main() {
         num_slots > 0,
         "SHRED_SIGVERIFY_SLOTS must be greater than zero"
     );
+
     assert!(
         batches_per_slot > 0,
         "SHRED_SIGVERIFY_BATCHES_PER_SLOT must be greater than zero"
     );
 
-    let shreds_per_slot = batches_per_slot * PACKETS_PER_BATCH;
+    assert!(
+        packets_per_batch > 0,
+        "SHRED_SIGVERIFY_PACKETS_PER_BATCH must be greater than zero"
+    );
+
+    assert!(
+        packets_per_batch <= PACKETS_PER_BATCH,
+        "SHRED_SIGVERIFY_PACKETS_PER_BATCH must not exceed {PACKETS_PER_BATCH}"
+    );
+
+    let shreds_per_slot = batches_per_slot * packets_per_batch;
 
     assert!(
         invalid_packets_per_slot <= shreds_per_slot,
@@ -224,10 +262,10 @@ fn main() {
     let expected_valid_shreds = expected_shreds - expected_invalid_shreds;
 
     println!(
-        "shred sigverify workload: slots={num_slots}, batches_per_slot={batches_per_slot}, \
-         packets_per_batch={PACKETS_PER_BATCH}, shreds_per_slot={shreds_per_slot}, \
-         invalid_packets_per_slot={invalid_packets_per_slot}, total_shreds={expected_shreds}, \
-         intentionally_invalid={expected_invalid_shreds}, \
+        "shred sigverify workload: mode={replay_mode:?}, slots={num_slots}, \
+         batches_per_slot={batches_per_slot}, packets_per_batch={packets_per_batch}, \
+         shreds_per_slot={shreds_per_slot}, invalid_packets_per_slot={invalid_packets_per_slot}, \
+         total_shreds={expected_shreds}, intentionally_invalid={expected_invalid_shreds}, \
          sigverify_threads={num_sigverify_threads}"
     );
 
@@ -242,13 +280,17 @@ fn main() {
         leader_keypair.as_ref(),
         num_slots,
         batches_per_slot,
+        packets_per_batch,
         invalid_packets_per_slot,
     );
+
     println!(
         "Shred sigverify workload ready; attach profiler to pid {}",
         std::process::id()
     );
+
     assert_eq!(workload.len(), num_slots * batches_per_slot);
+
     assert_eq!(
         workload.iter().map(PacketBatch::len).sum::<usize>(),
         expected_shreds,
@@ -269,7 +311,7 @@ fn main() {
 
     let (shred_fetch_sender, shred_fetch_receiver) = bounded::<PacketBatch>(CHANNEL_CAPACITY);
 
-    // Retransmit consumption itself is outside this benchmark.
+    // Retransmit consumption itself is outside this harness.
     let (retransmit_sender, _retransmit_receiver) = EvictingSender::new_bounded(1);
 
     // Drain verified output continuously so sigverify cannot block on the
@@ -305,17 +347,29 @@ fn main() {
 
     let replay_start = Instant::now();
     let mut sent_shreds = 0usize;
+    let mut max_input_queue_depth = 0usize;
 
     for batch in workload {
-        let deadline = replay_start + arrival_offset(sent_shreds, shreds_per_slot);
-
-        sleep_until(deadline);
-
         let batch_len = batch.len();
 
-        shred_fetch_sender
-            .try_send(batch)
-            .expect("shred sigverify input channel must not be full");
+        match replay_mode {
+            ReplayMode::Paced => {
+                let deadline = replay_start + arrival_offset(sent_shreds, shreds_per_slot);
+
+                sleep_until(deadline);
+
+                shred_fetch_sender
+                    .try_send(batch)
+                    .expect("shred sigverify input channel must not be full");
+
+                max_input_queue_depth = max_input_queue_depth.max(shred_fetch_sender.len());
+            }
+            ReplayMode::Saturate => {
+                shred_fetch_sender
+                    .send(batch)
+                    .expect("shred sigverify receiver disconnected");
+            }
+        }
 
         sent_shreds += batch_len;
     }
@@ -343,10 +397,25 @@ fn main() {
     let replay_elapsed = replay_start.elapsed();
     let expected_replay = SLOT_DURATION * num_slots as u32;
 
-    println!(
-        "shred sigverify result: sent={sent_shreds}, \
-         intentionally_invalid={expected_invalid_shreds}, expected_valid={expected_valid_shreds}, \
-         verified={verified_shreds}, additional_discards={additional_discards}, \
-         replay_elapsed={replay_elapsed:?}, expected_replay={expected_replay:?}"
-    );
+    match replay_mode {
+        ReplayMode::Paced => {
+            println!(
+                "shred sigverify result: mode={replay_mode:?}, sent={sent_shreds}, \
+                 intentionally_invalid={expected_invalid_shreds}, \
+                 expected_valid={expected_valid_shreds}, verified={verified_shreds}, \
+                 additional_discards={additional_discards}, \
+                 max_input_queue_depth={max_input_queue_depth}, \
+                 replay_elapsed={replay_elapsed:?}, expected_replay={expected_replay:?}"
+            );
+        }
+        ReplayMode::Saturate => {
+            println!(
+                "shred sigverify result: mode={replay_mode:?}, sent={sent_shreds}, \
+                 intentionally_invalid={expected_invalid_shreds}, \
+                 expected_valid={expected_valid_shreds}, verified={verified_shreds}, \
+                 additional_discards={additional_discards}, replay_elapsed={replay_elapsed:?}, \
+                 expected_replay={expected_replay:?}"
+            );
+        }
+    }
 }

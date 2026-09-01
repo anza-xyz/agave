@@ -88,9 +88,5 @@ harness = false
 name = "cluster_nodes"
 harness = false
 
-[[bench]]
-name = "shred_sigverify"
-harness = false
-
 [lints]
 workspace = true
