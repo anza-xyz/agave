@@ -339,7 +339,7 @@ serde_with = { version = "3.22.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
 shaq = { version = "4.0.0" }
-shuttle = "0.7.1"
+shuttle = "0.9.3"
 signal-hook = "0.4.4"
 slab = "0.4.12"
 slotmap = "1.0.7"
