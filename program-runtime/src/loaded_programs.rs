@@ -831,9 +831,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let num_to_unload = sorted_candidates
             .len()
             .saturating_sub(percent_of_max_entries(shrink_to_percent));
-        for (program, last_modification_slot, entry) in sorted_candidates.iter().take(num_to_unload)
+        for (program, _last_modification_slot, entry) in
+            sorted_candidates.iter().take(num_to_unload)
         {
-            self.unload_program_entry(*program, *last_modification_slot, entry);
+            self.unload_program_entry(*program, entry);
         }
     }
 
@@ -887,8 +888,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     break;
                 }
             }
-            let (id, last_modification_slot, entry) = candidates.swap_remove(index);
-            self.unload_program_entry(id, last_modification_slot, &entry);
+            let (id, _last_modification_slot, entry) = candidates.swap_remove(index);
+            self.unload_program_entry(id, &entry);
         }
     }
 
@@ -905,12 +906,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
     /// This function removes the given entry for the given program from the cache.
     /// The function expects that the program and entry exists in the cache. Otherwise it'll panic.
-    fn unload_program_entry(
-        &mut self,
-        id: Pubkey,
-        _last_modification_slot: Slot,
-        remove_entry: &Arc<ProgramCacheEntry>,
-    ) {
+    fn unload_program_entry(&mut self, id: Pubkey, remove_entry: &Arc<ProgramCacheEntry>) {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
                 let second_level = entries.get_mut(&id).expect("Cache lookup failed");
@@ -4104,7 +4100,7 @@ pub(crate) mod tests {
             // Check that unload_program_entry() does nothing for this entry
             let program_id = Pubkey::new_unique();
             cache.assign_program(&env, program_id, entry.deployment_slot, entry.clone());
-            cache.unload_program_entry(program_id, entry.deployment_slot, &entry);
+            cache.unload_program_entry(program_id, &entry);
             assert_eq!(cache.get_slot_versions_for_tests(&program_id).len(), 1);
             assert!(cache.stats.evictions.is_empty());
         }
@@ -4123,7 +4119,7 @@ pub(crate) mod tests {
         // Check that unload_program_entry() does its work
         let program_id = Pubkey::new_unique();
         cache.assign_program(&env, program_id, entry.deployment_slot, entry.clone());
-        cache.unload_program_entry(program_id, entry.deployment_slot, &entry);
+        cache.unload_program_entry(program_id, &entry);
         assert!(cache.stats.evictions.contains_key(&program_id));
     }
 
