@@ -120,6 +120,7 @@ mod tests {
     }
 }
 
+#[cfg(unix)]
 pub(crate) mod external {
     use {
         crate::banking_stage::{
