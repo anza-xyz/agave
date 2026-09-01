@@ -211,6 +211,9 @@ pub enum AddBankSnapshotError {
     #[error("failed to write storages list: {0}")]
     WriteStoragesList(#[source] Box<SnapshotError>),
 
+    #[error("failed to write startup hints: {0}")]
+    WriteStartupHints(#[source] Box<SnapshotError>),
+
     #[error("failed to write snapshot version file '{1}': {0}")]
     WriteSnapshotVersionFile(#[source] io::Error, PathBuf),
 
