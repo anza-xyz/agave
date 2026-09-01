@@ -338,7 +338,7 @@ serde_json = "1.0.151"
 serde_with = { version = "3.22.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
-shaq = { version = "4.0.0" }
+shaq = { version = "4.1.0" }
 shuttle = "0.7.1"
 signal-hook = "0.4.4"
 slab = "0.4.12"
