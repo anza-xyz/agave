@@ -83,7 +83,10 @@ struct ModuleXdp {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct ModuleTx {
+    interface: String,
     queues: QueueSelection,
+    #[serde(skip)]
+    interface_source: Source,
     #[serde(skip)]
     queues_source: Source,
 }
@@ -539,6 +542,14 @@ fn mark_user_sources(config: &mut EffectiveConfig, user: &toml::Value) {
         {
             module.tx.queues_source = Source::User;
         }
+        if user
+            .get(name)
+            .and_then(|module| module.get("xdp"))
+            .and_then(|xdp| xdp.get("tx"))
+            .is_some_and(|tx| tx.get("interface").is_some())
+        {
+            module.tx.interface_source = Source::User;
+        }
     }
 }
 
@@ -736,6 +747,34 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
         return Ok(warnings);
     }
     let (label, interface) = config.interfaces.iter().next().unwrap();
+    let used: BTreeSet<&str> = config
+        .named_modules()
+        .into_iter()
+        .filter(|(_, module)| module.enabled)
+        .map(|(_, module)| module.tx.interface.as_str())
+        .collect();
+    if used.len() > 1 {
+        let names: Vec<_> = used.iter().map(|name| format!("{name:?}")).collect();
+        return Err(format!(
+            "XDP version 1 supports one interface, but enabled modules use {}; point every \
+             module's tx.interface at the same label",
+            names.join(", ")
+        ));
+    }
+    for (name, module) in config.named_modules() {
+        if module.tx.interface == *label {
+            continue;
+        }
+        let message = format!(
+            "{name}.xdp.tx.interface names {:?}, which is not a declared interface; declared: \
+             {:?}",
+            module.tx.interface, label
+        );
+        if active && module.enabled {
+            return Err(message);
+        }
+        warnings.push(message);
+    }
     let pool = worker_queue_ids(&interface.xdp.workers);
     let pool_set: BTreeSet<_> = pool.iter().copied().collect();
     for (name, module) in config.named_modules() {
@@ -1017,7 +1056,12 @@ tx.queues = [0]
 
     #[test]
     fn scalar_patch_inherits_atomic_choices() {
-        let config = user("[interfaces.primary.xdp]\nzero_copy = true\n");
+        let config = user(
+            r#"
+[interfaces.primary.xdp]
+zero_copy = true
+"#,
+        );
         let interface = &config.interfaces["primary"];
         assert!(interface.xdp.zero_copy);
         assert_eq!(interface.device, DeviceSelector::DefaultRoute);
@@ -1026,7 +1070,12 @@ tx.queues = [0]
 
     #[test]
     fn new_interface_error_lists_missing_fields() {
-        let error = user_error("[interfaces.fast.xdp]\nzero_copy = false\n");
+        let error = user_error(
+            r#"
+[interfaces.fast.xdp]
+zero_copy = false
+"#,
+        );
         assert!(
             error.contains("new interface \"fast\" is incomplete"),
             "{error}"
@@ -1037,13 +1086,23 @@ tx.queues = [0]
 
     #[test]
     fn workers_replace_atomically() {
-        let config = user("[interfaces.primary.xdp]\nworkers.cpus = [8, 9]\n");
+        let config = user(
+            r#"
+[interfaces.primary.xdp]
+workers.cpus = [8, 9]
+"#,
+        );
         assert_eq!(
             config.interfaces["primary"].xdp.workers,
             WorkerPolicy::Cpus(vec![8, 9])
         );
 
-        let error = user_error("[interfaces.primary.xdp]\nworkers.unused = \"warn\"\n");
+        let error = user_error(
+            r#"
+[interfaces.primary.xdp]
+workers.unused = "warn"
+"#,
+        );
         assert!(error.contains("unknown field `unused`"), "{error}");
     }
 
@@ -1052,22 +1111,38 @@ tx.queues = [0]
         for (case, contents, expected) in [
             (
                 "existing interface device",
-                "[interfaces.primary]\ndevice.route = \"default\"\ndevice.name = \"eth0\"\n",
+                r#"
+[interfaces.primary]
+device.route = "default"
+device.name = "eth0"
+"#,
                 "conflicting keys device.route and device.name",
             ),
             (
                 "new interface device",
-                "[interfaces.fast]\ndevice.route = \"default\"\ndevice.name = \"eth0\"\n",
+                r#"
+[interfaces.fast]
+device.route = "default"
+device.name = "eth0"
+"#,
                 "conflicting keys device.route and device.name",
             ),
             (
                 "existing interface workers",
-                "[interfaces.primary.xdp]\nworkers.auto.count = 1\nworkers.cpus = [8]\n",
+                r#"
+[interfaces.primary.xdp]
+workers.auto.count = 1
+workers.cpus = [8]
+"#,
                 "conflicting worker modes",
             ),
             (
                 "new interface workers",
-                "[interfaces.fast.xdp]\nworkers.auto.count = 1\nworkers.cpus = [8]\n",
+                r#"
+[interfaces.fast.xdp]
+workers.auto.count = 1
+workers.cpus = [8]
+"#,
                 "conflicting worker modes",
             ),
         ] {
@@ -1103,8 +1178,12 @@ tx.queues = [0]
 
     #[test]
     fn bindings_require_named_device_before_cli() {
-        let error =
-            user_error("[interfaces.primary.xdp]\nworkers.bindings = [{ queue = 0, cpu = 8 }]\n");
+        let error = user_error(
+            r#"
+[interfaces.primary.xdp]
+workers.bindings = [{ queue = 0, cpu = 8 }]
+"#,
+        );
         assert!(
             error.contains("workers.bindings requires device.name"),
             "{error}"
@@ -1113,14 +1192,30 @@ tx.queues = [0]
 
     #[test]
     fn absent_version_is_one_and_mismatch_fails() {
-        user("[xdp]\nenabled = false\n");
-        let error = user_error("schema_version = 2\n");
+        user(
+            r#"
+[xdp]
+enabled = false
+"#,
+        );
+        let error = user_error(
+            r#"
+schema_version = 2
+"#,
+        );
         assert!(error.contains("supports version 1"), "{error}");
     }
 
     #[test]
     fn dormant_queue_error_warns() {
-        let config = user("[xdp]\nenabled = false\n[tpu.xdp]\ntx.queues = [1]\n");
+        let config = user(
+            r#"
+[xdp]
+enabled = false
+[tpu.xdp]
+tx.queues = [1]
+"#,
+        );
         assert!(!validate_policy(&config).unwrap().is_empty());
     }
 
@@ -1135,15 +1230,30 @@ tx.queues = [0]
         for (mode, contents) in [
             (
                 "auto",
-                format!("[interfaces.primary.xdp]\nworkers.auto.count = {too_many}\n"),
+                format!(
+                    r#"
+[interfaces.primary.xdp]
+workers.auto.count = {too_many}
+"#
+                ),
             ),
             (
                 "cpus",
-                format!("[interfaces.primary.xdp]\nworkers.cpus = {cpus:?}\n"),
+                format!(
+                    r#"
+[interfaces.primary.xdp]
+workers.cpus = {cpus:?}
+"#
+                ),
             ),
             (
                 "bindings",
-                format!("[interfaces.primary.xdp]\nworkers.bindings = [{bindings}]\n"),
+                format!(
+                    r#"
+[interfaces.primary.xdp]
+workers.bindings = [{bindings}]
+"#
+                ),
             ),
         ] {
             let error = user_error(&contents);
@@ -1152,17 +1262,30 @@ tx.queues = [0]
     }
 
     #[test]
-    fn modules_implicitly_use_the_sole_interface() {
-        let config = user(
-            r#"
+    fn renaming_the_interface_requires_updating_module_references() {
+        const RENAMED: &str = r#"
 [interfaces.fast]
 device.name = "eth0"
 [interfaces.fast.xdp]
 zero_copy = false
 workers.cpus = [8]
-"#,
-        );
-        let (runtime, _) = resolve_runtime(&config, &BTreeSet::from([8, 9]), None).unwrap();
+"#;
+        let error = validate_policy(&user(RENAMED)).unwrap_err();
+        assert!(error.contains("not a declared interface"), "{error}");
+
+        let pointed = user(&format!(
+            r#"{RENAMED}
+[tpu.xdp]
+tx.interface = "fast"
+[turbine.xdp]
+tx.interface = "fast"
+[repair.xdp]
+tx.interface = "fast"
+[gossip.xdp]
+tx.interface = "fast"
+"#
+        ));
+        let (runtime, _) = resolve_runtime(&pointed, &BTreeSet::from([8, 9]), None).unwrap();
         assert_eq!(runtime.interface_label, "fast");
         assert!(
             runtime
@@ -1174,15 +1297,27 @@ workers.cpus = [8]
     }
 
     #[test]
-    fn module_interface_selection_is_not_part_of_version_one() {
-        let error = user_error("[tpu.xdp]\ntx.interface = \"primary\"\n");
-        assert!(error.contains("unknown field `interface`"), "{error}");
+    fn using_more_than_one_interface_is_rejected() {
+        let config = user(
+            r#"
+[tpu.xdp]
+tx.interface = "other"
+"#,
+        );
+        let error = validate_policy(&config).unwrap_err();
+        assert!(error.contains("supports one interface"), "{error}");
     }
 
     #[test]
     fn cli_worker_replacement_rejects_user_queue_ids_even_if_they_survive() {
-        let config =
-            user("[interfaces.primary.xdp]\nworkers.cpus = [8, 9]\n[tpu.xdp]\ntx.queues = [0]\n");
+        let config = user(
+            r#"
+[interfaces.primary.xdp]
+workers.cpus = [8, 9]
+[tpu.xdp]
+tx.queues = [0]
+"#,
+        );
         let error = apply_cli(
             config,
             CliOverrides {
@@ -1197,8 +1332,13 @@ workers.cpus = [8]
     #[test]
     fn cli_worker_replacement_ignores_disabled_module_queue_ids() {
         let config = user(
-            "[interfaces.primary.xdp]\nworkers.cpus = [8, 9]\n[tpu.xdp]\nenabled =              \
-             false\ntx.queues = [0]\n",
+            r#"
+[interfaces.primary.xdp]
+workers.cpus = [8, 9]
+[tpu.xdp]
+enabled = false
+tx.queues = [0]
+"#,
         );
         let application = apply_cli(
             config,
@@ -1216,7 +1356,12 @@ workers.cpus = [8]
 
     #[test]
     fn cli_cpu_workers_preserve_module_queue_scoping() {
-        let config = user("[tpu.xdp]\ntx.queues = [0]\n");
+        let config = user(
+            r#"
+[tpu.xdp]
+tx.queues = [0]
+"#,
+        );
         let application = apply_cli(
             config,
             CliOverrides {
@@ -1247,8 +1392,20 @@ workers.cpus = [8]
     #[test]
     fn every_worker_mode_must_leave_a_cpu_unreserved() {
         for (mode, contents) in [
-            ("auto", "[interfaces.primary.xdp]\nworkers.auto.count = 2\n"),
-            ("cpus", "[interfaces.primary.xdp]\nworkers.cpus = [8, 9]\n"),
+            (
+                "auto",
+                r#"
+[interfaces.primary.xdp]
+workers.auto.count = 2
+"#,
+            ),
+            (
+                "cpus",
+                r#"
+[interfaces.primary.xdp]
+workers.cpus = [8, 9]
+"#,
+            ),
             (
                 "bindings",
                 r#"[interfaces.primary]
@@ -1266,8 +1423,12 @@ workers.bindings = [{ queue = 0, cpu = 8 }, { queue = 1, cpu = 9 }]
 
     #[test]
     fn unselected_workers_do_not_reserve_their_cpus() {
-        let config =
-            user_with_all_modules_queue_zero("[interfaces.primary.xdp]\nworkers.cpus = [8, 9]\n");
+        let config = user_with_all_modules_queue_zero(
+            r#"
+[interfaces.primary.xdp]
+workers.cpus = [8, 9]
+"#,
+        );
         let (runtime, _) = resolve_runtime(&config, &BTreeSet::from([8, 9]), None).unwrap();
         assert_eq!(runtime.queues, [QueueCpuBinding { queue: 0, cpu: 8 }]);
     }
@@ -1349,7 +1510,12 @@ workers.cpus = [8, 9]
 
     #[test]
     fn queue_selection_type_error_is_targeted() {
-        let error = user_error("[tpu.xdp]\ntx.queues = true\n");
+        let error = user_error(
+            r#"
+[tpu.xdp]
+tx.queues = true
+"#,
+        );
         assert!(
             error.contains("accepts only \"all\" or a non-empty integer array"),
             "{error}"
