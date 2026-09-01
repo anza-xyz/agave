@@ -1688,8 +1688,10 @@ workers.auto.count = 1
 
     #[test]
     fn init_rejects_invalid_config_values() {
-        let Err(error) = build_with_config(b"schema_version = \"one\"\n", Operation::Initialize)
-        else {
+        let config = br#"
+schema_version = "one"
+"#;
+        let Err(error) = build_with_config(config, Operation::Initialize) else {
             panic!("invalid schema version unexpectedly succeeded")
         };
         assert!(error.contains("non-integer schema_version"), "{error}");
