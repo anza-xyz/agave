@@ -222,24 +222,27 @@ struct WorkerPanicked;
 
 type WorkerResult = Result<PacketBatch, WorkerPanicked>;
 
-struct ShredSigverifyWorkers {
-    job_sender: Option<Sender<BatchJob>>,
-    result_receiver: Receiver<WorkerResult>,
-    worker_handles: Vec<JoinHandle<()>>,
-    stats: Arc<SigverifyWorkerStats>,
-}
+struct WorkerHandles(Vec<JoinHandle<()>>);
 
-impl Drop for ShredSigverifyWorkers {
+impl Drop for WorkerHandles {
     fn drop(&mut self) {
-        // Disconnect the job channel so that live workers exit recv().
-        drop(self.job_sender.take());
-
-        for handle in self.worker_handles.drain(..) {
+        for handle in self.0.drain(..) {
             if let Err(err) = handle.join() {
                 error!("shred sigverify worker encountered unexpected error: {err:?}");
             }
         }
     }
+}
+
+struct ShredSigverifyWorkers {
+    // Drop order is significant:
+    // 1. Disconnect the job channel so workers stop receiving new work.
+    // 2. Disconnect the result channel so workers cannot block sending results.
+    // 3. Drop WorkerHandles, whose Drop impl joins all worker threads.
+    job_sender: Sender<BatchJob>,
+    result_receiver: Receiver<WorkerResult>,
+    _worker_handles: WorkerHandles,
+    stats: Arc<SigverifyWorkerStats>,
 }
 
 impl ShredSigverifyWorkers {
@@ -269,44 +272,46 @@ impl ShredSigverifyWorkers {
             stats: stats.clone(),
         };
 
-        let worker_handles = (0..num_workers.get())
-            .map(|index| {
-                let job_receiver = job_receiver.clone();
-                let result_sender = result_sender.clone();
-                let ctx = worker_context.clone();
+        let _worker_handles = WorkerHandles(
+            (0..num_workers.get())
+                .map(|index| {
+                    let job_receiver = job_receiver.clone();
+                    let result_sender = result_sender.clone();
+                    let ctx = worker_context.clone();
 
-                Builder::new()
-                    .name(format!("solSvrfyShred{index:02}"))
-                    .spawn(move || {
-                        defer! {
-                            if !thread::panicking() {
-                                return;
+                    Builder::new()
+                        .name(format!("solSvrfyShred{index:02}"))
+                        .spawn(move || {
+                            defer! {
+                                if !thread::panicking() {
+                                    return;
+                                }
+
+                                let current_thread = thread::current();
+                                error!("shred sigverify worker is panicking: {current_thread:?}");
+
+                                if result_sender.send(Err(WorkerPanicked)).is_err() {
+                                    error!("failed to report shred sigverify worker panic");
+                                }
                             }
 
-                            let current_thread = thread::current();
-                            error!("shred sigverify worker is panicking: {current_thread:?}");
+                            while let Ok(BatchJob { mut batch, keypair }) = job_receiver.recv() {
+                                verify_batch(&mut batch, &ctx, keypair.as_ref());
 
-                            if result_sender.send(Err(WorkerPanicked)).is_err() {
-                                error!("failed to report shred sigverify worker panic");
+                                if result_sender.send(Ok(batch)).is_err() {
+                                    break;
+                                }
                             }
-                        }
-
-                        while let Ok(BatchJob { mut batch, keypair }) = job_receiver.recv() {
-                            verify_batch(&mut batch, &ctx, keypair.as_ref());
-
-                            if result_sender.send(Ok(batch)).is_err() {
-                                break;
-                            }
-                        }
-                    })
-                    .unwrap()
-            })
-            .collect();
+                        })
+                        .unwrap()
+                })
+                .collect(),
+        );
 
         Self {
-            job_sender: Some(job_sender),
+            job_sender,
             result_receiver,
-            worker_handles,
+            _worker_handles,
             stats,
         }
     }
@@ -323,13 +328,9 @@ impl ShredSigverifyWorkers {
         );
 
         let num_batches = packets.len();
-        let job_sender = self
-            .job_sender
-            .as_ref()
-            .expect("shred sigverify job sender must be present");
 
         for batch in packets.drain(..) {
-            job_sender
+            self.job_sender
                 .send(BatchJob {
                     batch,
                     keypair: keypair.clone(),
