@@ -12,7 +12,9 @@ use {
     solana_pubkey::Pubkey,
     std::{
         fs::File,
-        io, mem,
+        io,
+        iter::ExactSizeIterator,
+        mem,
         path::{Path, PathBuf},
     },
     thiserror::Error,
@@ -209,10 +211,13 @@ impl AccountsFile {
         }
     }
 
-    /// for each offset in `sorted_offsets`, get the data size
-    pub(crate) fn get_account_data_lens(&self, sorted_offsets: &[usize]) -> Vec<usize> {
+    /// Returns the account data size for each account in `offsets`.
+    pub(crate) fn get_account_data_lens<'a>(
+        &self,
+        offsets: impl IntoIterator<Item = &'a Offset, IntoIter: ExactSizeIterator>,
+    ) -> Vec<usize> {
         match self {
-            Self::AppendVec(av) => av.get_account_data_lens(sorted_offsets),
+            Self::AppendVec(av) => av.get_account_data_lens(offsets),
         }
     }
 
