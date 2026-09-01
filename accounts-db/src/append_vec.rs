@@ -5,7 +5,6 @@
 //! <https://docs.anza.xyz/implemented-proposals/persistent-account-storage>
 
 mod meta;
-pub mod test_utils;
 
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::StoredAccountMeta;
@@ -1085,7 +1084,7 @@ impl ObsoleteAccountHash {
 #[cfg(test)]
 mod tests {
     use {
-        super::{test_utils::*, *},
+        super::*,
         assert_matches::assert_matches,
         memoffset::offset_of,
         rand::{prelude::*, rng},
@@ -1117,6 +1116,15 @@ mod tests {
 
     // Offset of the first account's `data_len` field.
     const ACCOUNT_0_DATA_LEN_OFFSET: u64 = core::mem::offset_of!(StoredMeta, data_len) as u64;
+
+    /// return a test account.
+    /// Note that `sample`=0 returns a fully default account with a default pubkey.
+    fn create_test_account(sample: usize) -> (Pubkey, AccountSharedData) {
+        let data_len = sample % 256;
+        let mut account = AccountSharedData::new(sample as u64, 0, &Pubkey::default());
+        account.set_data_from_slice(&vec![data_len as u8; data_len]);
+        (Pubkey::default(), account)
+    }
 
     #[test]
     #[should_panic(expected = "FileSizeTooSmall(0)")]
@@ -1728,13 +1736,14 @@ mod tests {
             // Set up a test account with data_len larger than PAGE_SIZE (i.e.
             // AppendVec internal buffer size is PAGESIZE).
             let data_len: usize = 2 * PAGE_SIZE;
-            let account = create_test_account_with(data_len);
+            let pubkey = Pubkey::default();
+            let account = AccountSharedData::new(100, data_len, &Pubkey::default());
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(
                 &path,
                 AppendVec::calculate_stored_size(data_len),
             ));
-            av.append_account_test(&account).unwrap();
+            av.append_account_test(&(pubkey, account)).unwrap();
             av.flush().unwrap();
         }
 
