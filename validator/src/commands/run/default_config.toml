@@ -1,62 +1,52 @@
-# Built-in host-independent validator policy, and the reference for the file
-# format. Print it with `agave-validator --print-default-config`.
+# Built-in validator policy, and the reference for the config file format.
+# Print it with `agave-validator --print-default-config`.
 #
-# XDP transmit exists only on Linux. Other platforms still parse and validate this
-# policy, so a file means the same thing everywhere, but report it as inactive.
+# Layers: this policy, then `--config-file`, then CLI flags, each overriding the
+# previous. Unknown fields are rejected. `device` and `workers` are single
+# choices: naming either replaces the whole choice rather than merging into it.
+# A user file containing `interfaces` replaces the built-in label set; omitted
+# labels are dropped, matching labels inherit unspecified fields, and a new
+# label must define `device`, `xdp.zero_copy` and `xdp.workers`.
 #
-# Three layers form the effective configuration, each overriding the previous:
-# this built-in policy, then a file passed with `--config-file`, then matching
-# CLI flags. A user file patches matching interface labels and all other fields,
-# and unknown fields are rejected rather than ignored. If a user file contains
-# `interfaces`, its labels replace the built-in label set: omitted labels are
-# removed, matching labels inherit unspecified fields, and new labels must
-# specify `device`, `xdp.zero_copy`, and `xdp.workers`. `device` and `workers`
-# are single choices, so naming either one replaces that whole choice rather
-# than merging into it.
-#
-# schema_version must be 1. Omitting it means 1.
+# XDP transmit is Linux-only. Other platforms validate this policy, then report
+# it as inactive. schema_version must be 1; omitting it means 1.
 #
 # [xdp]
-#   enabled     Global gate. When false every module uses OS sockets whatever
-#               its own `enabled` says. `--no-xdp` forces this false, and
-#               nothing turns it back on.
+# enabled       Global gate. False puts every module on OS sockets. `--no-xdp`
+#               forces it false and nothing re-enables it.
 #
 # [interfaces.<label>]
-#               <label> is a logical name, not a device name. Version 1
-#               supports exactly one effective interface. To rename `primary`,
-#               provide one complete interface under the new label. Specifying
-#               multiple labels is rejected. Specify exactly one selector:
-#   device.route = "default"    Bind the NIC carrying the default route.
-#   device.name  = "ens1f0"     Bind this device by name.
+# <label> is a logical name, not a device name, referenced by each module's
+# tx.interface. Version 1 supports one interface: enabled modules naming more
+# than one, or naming an undeclared label, is an error. Specify exactly one
+# device selector:
+#
+# device.route = "default"    Bind the NIC carrying the default route.
+# device.name = "ens1f0"      Bind this device by name.
 #
 # [interfaces.<label>.xdp]
-#   zero_copy   Strictly request AF_XDP zero-copy mode. Startup fails rather
-#               than falling back automatically when it is unsupported.
-#               `--xdp-zero-copy` / `--no-xdp-zero-copy` override it.
-#               Specify exactly one worker mode, holding 1 to 4096 workers.
-#               Every worker CPU must be in the process CPU-affinity set and
-#               must not be the PoH core:
-#   workers.auto.count = 1      Take the N highest eligible CPUs, excluding the
-#                               PoH core, and assign hardware queues 0..N-1 in
-#                               that order. At least one CPU must stay
-#                               unreserved, so this cannot claim every CPU.
-#   workers.cpus = [8, 9]       Name the CPUs. Hardware queues 0..n-1 map to
-#                               the list in order.
-#   workers.bindings = [        Name hardware queue ids explicitly, for a NIC
-#     { queue = 0, cpu = 8 },   whose queues are not 0..n-1. List order is
-#     { queue = 3, cpu = 9 },   sender order. Requires device.name, since queue
-#   ]                           ids are specific to one device.
-#               `--xdp-cpu-cores` replaces the whole worker choice with the
-#               equivalent of workers.cpus.
-#               The workers selected by enabled modules must leave at least
-#               one process CPU unreserved for the main thread.
+# zero_copy     Strictly request AF_XDP zero-copy; startup fails when the device
+#               cannot provide it. `--xdp-zero-copy` and `--no-xdp-zero-copy`
+#               override it.
+#
+# Each worker owns one hardware queue and runs on one CPU. Worker CPUs must be
+# in the process CPU affinity, cannot be the PoH core, and must leave at least
+# one CPU for non-XDP work. Define the pool with exactly one mode, 1 to 4096
+# workers; `--xdp-cpu-cores` replaces it with the workers.cpus form:
+#
+# workers.auto.count = 1      Select the N highest eligible CPUs, excluding PoH;
+#                             assign queues 0..N-1.
+# workers.cpus = [8, 9]       Queue 0 uses CPU 8; queue 1 uses CPU 9.
+# workers.bindings = [        Map queues to CPUs explicitly, for a NIC whose
+#   { queue = 0, cpu = 8 },   queue ids are not 0..n-1. List order is sender
+#   { queue = 3, cpu = 9 },   order. Requires device.name.
+# ]
 #
 # [<module>.xdp] for tpu, turbine, repair and gossip
-#   enabled     False leaves that module on OS sockets.
-#   tx.queues   Which of the interface's workers this module transmits over:
-#               "all", or hardware queue ids in sender order, e.g. [0, 3].
-#               Ids must exist in the worker pool above. Two modules may name
-#               the same queue; they then share its sender.
+# enabled       False leaves the module on OS sockets.
+# tx.interface  Which declared interface this module transmits over.
+# tx.queues     "all", or hardware queue ids in sender order, e.g. [0, 3]. Ids
+#               must exist in the pool above. Modules may share a queue.
 
 schema_version = 1
 
@@ -72,16 +62,20 @@ workers.auto.count = 1
 
 [tpu.xdp]
 enabled = true
+tx.interface = "primary"
 tx.queues = "all"
 
 [turbine.xdp]
 enabled = true
+tx.interface = "primary"
 tx.queues = "all"
 
 [repair.xdp]
 enabled = true
+tx.interface = "primary"
 tx.queues = "all"
 
 [gossip.xdp]
 enabled = true
+tx.interface = "primary"
 tx.queues = "all"
