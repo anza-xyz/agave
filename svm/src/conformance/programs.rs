@@ -170,7 +170,7 @@ pub fn fill_program_cache_from_accounts(
             {
                 continue;
             }
-            if let Some((loaded_program, _last_modification_slot)) = load_program_with_pubkey(
+            if let Some(loaded_program) = load_program_with_pubkey(
                 &FillFromAccountsCallback(accounts),
                 program_runtime_environment,
                 &acc.0,

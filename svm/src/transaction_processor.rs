@@ -957,7 +957,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let program_to_store = program_to_load.map(|key| {
                 // Load, verify and compile one program.
-                let (program, _last_modification_slot) = load_program_with_pubkey(
+                let program = load_program_with_pubkey(
                     account_loader,
                     program_runtime_environment_for_execution,
                     &key,
@@ -1032,7 +1032,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // Maybe the enqueued program was already loaded and can be skipped.
         if let Some(key) = program_to_load {
             // Load, verify and compile one program.
-            let (recompiled, _last_modification_slot) = load_program_with_pubkey(
+            let recompiled = load_program_with_pubkey(
                 account_loader,
                 upcoming_environment,
                 &key,

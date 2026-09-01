@@ -102,7 +102,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     pubkey: &Pubkey,
     current_slot: Slot,
     execute_timings: &mut ExecuteTimings,
-) -> Option<(Arc<ProgramCacheEntry>, Slot)> {
+) -> Option<Arc<ProgramCacheEntry>> {
     #[cfg(feature = "metrics")]
     let mut load_program_metrics = LoadProgramMetrics {
         program_id: pubkey.to_string(),
@@ -111,7 +111,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     #[cfg(not(feature = "metrics"))]
     let _ = execute_timings;
 
-    let (load_result, last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
+    let (load_result, _last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
     let loaded_program = match load_result {
         ProgramAccountLoadResult::InvalidAccountData(owner) => {
             Ok(ProgramCacheEntry::new_closed_tombstone(current_slot, owner))
@@ -185,7 +185,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     #[cfg(feature = "metrics")]
     load_program_metrics.submit_datapoint(&mut execute_timings.details);
     loaded_program.update_access_slot(current_slot);
-    Some((Arc::new(loaded_program), last_modification_slot))
+    Some(Arc::new(loaded_program))
 }
 
 /// Find the slot in which the program was most recently re-/deployed.
@@ -695,21 +695,20 @@ mod tests {
         assert_eq!(last_modification_slot, 60);
 
         // This is key, because we should now get a `Closed` tombstone.
-        let result = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &batch_processor.program_runtime_environment_for_epoch(20),
             &program_key,
             100, // Slot 100
             &mut ExecuteTimings::default(),
-        );
+        )
+        .unwrap();
 
         // Assert the result matches a `Closed` tombstone.
         let closed_tombstone = ProgramCacheEntry::new_closed_tombstone(
             100, // Slot 100
             ProgramCacheEntryOwner::LoaderV3,
         );
-        let (entry, last_modification_slot) = result.unwrap();
-        assert_eq!(last_modification_slot, 60);
         assert_eq!(entry, Arc::new(closed_tombstone));
 
         // Assert that it is NOT a `FailedVerification` tombstone.
@@ -768,13 +767,14 @@ mod tests {
 
         // This is key, because the ELF fails to verify, so we should now get a
         // `FailedVerification` tombstone.
-        let result = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &batch_processor.program_runtime_environment_for_epoch(20),
             &program_key,
             100, // Slot 100
             &mut ExecuteTimings::default(),
-        );
+        )
+        .unwrap();
 
         // Assert the result matches a `FailedVerification` tombstone.
         let fv_tombstone = ProgramCacheEntry::new_failed_verification_tombstone(
@@ -782,8 +782,6 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV3,
             batch_processor.program_runtime_environment_for_epoch(20),
         );
-        let (entry, last_modification_slot) = result.unwrap();
-        assert_eq!(last_modification_slot, 60);
         assert_eq!(entry, Arc::new(fv_tombstone));
 
         // Assert that it is NOT a `Closed` tombstone.
@@ -815,19 +813,20 @@ mod tests {
             .insert(key, (account_data.clone(), 0));
 
         // This should return an error
-        let result = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &batch_processor.program_runtime_environment_for_epoch(20),
             &key,
             200,
             &mut ExecuteTimings::default(),
-        );
+        )
+        .unwrap();
         let loaded_program = ProgramCacheEntry::new_failed_verification_tombstone(
             0,
             ProgramCacheEntryOwner::LoaderV2,
             batch_processor.program_runtime_environment_for_epoch(20),
         );
-        assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
+        assert_eq!(entry, Arc::new(loaded_program));
 
         let buffer = load_test_program();
         account_data.set_data_from_slice(&buffer);
@@ -837,13 +836,14 @@ mod tests {
             .borrow_mut()
             .insert(key, (account_data.clone(), 0));
 
-        let result = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &batch_processor.program_runtime_environment_for_epoch(20),
             &key,
             200,
             &mut ExecuteTimings::default(),
-        );
+        )
+        .unwrap();
 
         let program_runtime_environment = get_mock_program_runtime_environment();
         let expected = ProgramCacheEntry::load(
@@ -855,7 +855,7 @@ mod tests {
             &mut LoadProgramMetrics::default(),
         );
 
-        assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
+        assert_eq!(entry, Arc::new(expected.unwrap()));
     }
 
     #[test]
@@ -890,16 +890,17 @@ mod tests {
 
         // The programdata account is not owned by the loader, so this is a
         // `Closed` tombstone rather than a `FailedVerification` one.
-        let result = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &batch_processor.program_runtime_environment_for_epoch(0),
             &key1,
             0,
             &mut ExecuteTimings::default(),
-        );
+        )
+        .unwrap();
         let loaded_program =
             ProgramCacheEntry::new_closed_tombstone(0, ProgramCacheEntryOwner::LoaderV3);
-        assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
+        assert_eq!(entry, Arc::new(loaded_program));
 
         let mut buffer = load_test_program();
         let mut header = bincode::serialize(&state).unwrap();
@@ -919,13 +920,14 @@ mod tests {
             .borrow_mut()
             .insert(key2, (account_data.clone(), 0));
 
-        let result = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &batch_processor.program_runtime_environment_for_epoch(20),
             &key1,
             200,
             &mut ExecuteTimings::default(),
-        );
+        )
+        .unwrap();
 
         let data = account_data.data().to_vec();
         account_data
@@ -940,7 +942,7 @@ mod tests {
             #[cfg(feature = "metrics")]
             &mut LoadProgramMetrics::default(),
         );
-        assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
+        assert_eq!(entry, Arc::new(expected.unwrap()));
     }
 
     #[test]
@@ -955,7 +957,7 @@ mod tests {
             key,
             (loader_v4_account(9, LoaderV4Status::Retracted, &[]), 100),
         );
-        let (entry, _) = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &environment,
             &key,
@@ -971,7 +973,7 @@ mod tests {
             key,
             (loader_v4_account(9, LoaderV4Status::Deployed, &[]), 100),
         );
-        let (entry, _) = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &environment,
             &key,
@@ -994,7 +996,7 @@ mod tests {
             .account_shared_data
             .borrow_mut()
             .insert(key, (account, 100));
-        let (entry, _) = load_program_with_pubkey(
+        let entry = load_program_with_pubkey(
             &mock_bank,
             &environment,
             &key,
@@ -1029,7 +1031,7 @@ mod tests {
             .insert(key, (account_data.clone(), 0));
 
         for is_upcoming_env in [false, true] {
-            let (result, _last_modification_slot) = load_program_with_pubkey(
+            let result = load_program_with_pubkey(
                 &mock_bank,
                 &batch_processor.program_runtime_environment_for_epoch(is_upcoming_env as u64),
                 &key,
