@@ -1,10 +1,10 @@
 use {
     crate::handshake::{
         AgaveCheckWorkerSession, AgaveHandshakeError, AgaveTpuToPackSession, AgaveWorkerSession,
-        ClientLogon,
+        ClientLogon, ProtocolVersions,
         shared::{
             AgaveSession, GLOBAL_ALLOCATORS, LOGON_FAILURE, LOGON_SUCCESS, MAX_ALLOCATOR_HANDLES,
-            MAX_WORKERS, VERSION,
+            MAX_WORKERS,
         },
     },
     agave_scheduler_bindings::{
@@ -115,20 +115,25 @@ impl Server {
             }
         }
 
-        // Ensure exact version match, version will be bumped any time a backwards incompatible
-        // change is made to handshake/shared memory objects.
-        let version = u64::from_le_bytes(self.buffer[..8].try_into().unwrap());
-        if version != VERSION {
+        // Ensure exact version matches for the handshake and all shared-memory interfaces.
+        let client_versions =
+            ProtocolVersions::try_from_bytes(&self.buffer[..ProtocolVersions::SERIALIZED_SIZE])
+                .unwrap();
+        let server_versions = ProtocolVersions::current();
+        if client_versions != server_versions {
             return Err(AgaveHandshakeError::Version {
-                server: VERSION,
-                client: version,
+                server: server_versions,
+                client: client_versions,
             });
         }
 
         // Read the logon message, cannot panic as we ensure the correct buf size at compile time
         // (hence the const just below).
-        const LOGON_END: usize = 8 + core::mem::size_of::<ClientLogon>();
-        let logon = ClientLogon::try_from_bytes(&self.buffer[8..LOGON_END]).unwrap();
+        const LOGON_END: usize =
+            ProtocolVersions::SERIALIZED_SIZE + core::mem::size_of::<ClientLogon>();
+        let logon =
+            ClientLogon::try_from_bytes(&self.buffer[ProtocolVersions::SERIALIZED_SIZE..LOGON_END])
+                .unwrap();
 
         // Put a hard limit of 64 worker threads for now.
         if !(1..=MAX_WORKERS).contains(&logon.worker_count) {
