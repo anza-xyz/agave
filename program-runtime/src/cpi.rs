@@ -263,6 +263,16 @@ pub struct CallerAccount<'a> {
 }
 
 impl<'a> CallerAccount<'a> {
+    /// Returns the length of the addres space reserved depending on the ABI version
+    pub fn address_space_reserved_for_account(&self, is_caller_loader_deprecated: bool) -> usize {
+        if is_caller_loader_deprecated {
+            self.original_data_len
+        } else {
+            self.original_data_len
+                .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+        }
+    }
+
     /// # Safety
     ///
     /// * The caller must ensure that this function does not violate mutable reference uniqueness
@@ -1146,13 +1156,8 @@ unsafe fn update_caller_account_region(
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
     let is_caller_loader_deprecated = !check_aligned;
-    let address_space_reserved_for_account = if is_caller_loader_deprecated {
-        caller_account.original_data_len
-    } else {
-        caller_account
-            .original_data_len
-            .saturating_add(MAX_PERMITTED_DATA_INCREASE)
-    };
+    let address_space_reserved_for_account =
+        caller_account.address_space_reserved_for_account(is_caller_loader_deprecated);
 
     if address_space_reserved_for_account > 0 {
         // We can trust vm_data_addr to point to the correct region because we
@@ -1190,10 +1195,6 @@ unsafe fn update_caller_account_region(
 //
 // This method updates caller_account so the CPI caller can see the callee's
 // changes.
-//
-// Safety: Once `syscall_parameter_address_restrictions` is enabled all fields of [CallerAccount] used
-// in this function should never point inside the address space reserved for
-// accounts (regardless of the current size of an account).
 fn update_caller_account(
     invoke_context: &InvokeContext,
     check_aligned: bool,
@@ -1208,13 +1209,8 @@ fn update_caller_account(
     let prev_len = *caller_account.ref_to_len_in_vm as usize;
     let post_len = callee_account.get_data().len();
     let is_caller_loader_deprecated = !check_aligned;
-    let address_space_reserved_for_account = if is_caller_loader_deprecated {
-        caller_account.original_data_len
-    } else {
-        caller_account
-            .original_data_len
-            .saturating_add(MAX_PERMITTED_DATA_INCREASE)
-    };
+    let address_space_reserved_for_account =
+        caller_account.address_space_reserved_for_account(is_caller_loader_deprecated);
 
     if post_len > address_space_reserved_for_account {
         let max_increase =
