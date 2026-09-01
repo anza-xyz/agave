@@ -1052,7 +1052,7 @@ where
             accounts.push(TranslatedAccount {
                 index_in_caller,
                 caller_account,
-                update_caller_account_region: true, // overwritten after calling update_callee_account() later
+                update_caller_account_region: true, // overwritten in `cpi_common` via `update_callee_acccount()`
                 update_caller_account_info: instruction_account.is_writable(),
             });
         } else {
