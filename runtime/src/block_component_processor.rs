@@ -804,6 +804,7 @@ mod tests {
             BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
         },
         solana_hash::Hash,
+        solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
         std::{
             assert_matches,
             sync::{Arc, RwLock},
@@ -2193,13 +2194,13 @@ mod tests {
 
         let (parent, bank_forks) = create_test_bank();
         // First slot of a leader window so UpdateParent passes the window check
-        let slot = 4;
+        let slot = NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot;
         let bank = create_child_bank(&bank_forks, &parent, slot);
         assert_eq!(leader_slot_index(slot), 0);
         // A bank whose slot is not the first in its leader window, for the
         // UpdateParent window check
-        let bank_not_window_start = create_child_bank(&bank_forks, &parent, 5);
-        assert_ne!(leader_slot_index(5), 0);
+        let bank_not_window_start = create_child_bank(&bank_forks, &parent, slot + 1);
+        assert_ne!(leader_slot_index(slot + 1), 0);
         let shred_version: u16 = rand::rng().random();
 
         // A timestamp inside the footer clock bounds for every case below
