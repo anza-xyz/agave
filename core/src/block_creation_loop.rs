@@ -16,7 +16,7 @@ use {
     agave_bls_sigverify::rewards::RewardInput,
     agave_votor::{event::LeaderWindowInfo, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::{
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
@@ -241,8 +241,8 @@ enum StartLeaderError {
     ParentBlockIdMismatch {
         leader_slot: Slot,
         parent_slot: Slot,
-        expected: Hash,
-        actual: Option<Hash>,
+        expected: BlockId,
+        actual: Option<BlockId>,
     },
 
     /// PoH recorder failed while starting or completing a leader block.
@@ -417,18 +417,14 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
             continue;
         }
 
-        let mut slot_metrics = SlotMetrics::new(start_slot, fast_leader_handover);
-        let res = produce_window(
+        if let Err(e) = produce_window(
             fast_leader_handover,
             start_slot,
             end_slot,
             parent_block,
             block_timer,
             &mut ctx,
-            &mut slot_metrics,
-        );
-        slot_metrics.report();
-        if let Err(e) = res {
+        ) {
             // Give up on this leader window
             error!(
                 "{my_pubkey}: Unable to produce window {start_slot}-{end_slot}, skipping window: \
@@ -592,8 +588,110 @@ fn produce_block_footer(
     }
 }
 
-/// Produces the leader window from `start_slot` -> `end_slot` using parent
-/// `parent_slot` while abiding to the `block_timer`
+fn produce_first_slot(
+    fast_leader_handover: bool,
+    slot: Slot,
+    parent_block: Block,
+    block_timer: &mut Instant,
+    ctx: &mut LeaderContext,
+) -> Result<(), StartLeaderError> {
+    let mut slot_metrics = SlotMetrics::new(slot, fast_leader_handover);
+    let res = start_leader_wait_for_parent_replay(
+        ctx,
+        &mut slot_metrics,
+        slot,
+        parent_block.slot,
+        Some(parent_block.block_id),
+        *block_timer,
+        /* entry_bytes_consumed */ 0,
+    )
+    .and_then(|working_bank| {
+        produce_slot(
+            ctx,
+            &mut slot_metrics,
+            slot,
+            fast_leader_handover.then_some(parent_block),
+            block_timer,
+            working_bank,
+        )
+    });
+    slot_metrics.report();
+    res
+}
+
+fn produce_intra_window_slot(
+    slot: Slot,
+    block_timer: &mut Instant,
+    ctx: &mut LeaderContext,
+) -> Result<(), StartLeaderError> {
+    let mut slot_metrics = SlotMetrics::new(slot, false);
+    let res = start_leader_wait_for_parent_replay(
+        ctx,
+        &mut slot_metrics,
+        slot,
+        slot - 1,
+        None,
+        *block_timer,
+        /* entry_bytes_consumed */ 0,
+    )
+    .and_then(|working_bank| {
+        produce_slot(
+            ctx,
+            &mut slot_metrics,
+            slot,
+            None,
+            block_timer,
+            working_bank,
+        )
+    });
+    slot_metrics.report();
+    res
+}
+
+fn produce_slot(
+    ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
+    slot: Slot,
+    optimistic_parent: Option<Block>,
+    block_timer: &mut Instant,
+    working_bank: Arc<Bank>,
+) -> Result<(), StartLeaderError> {
+    let timeout = block_timeout(&working_bank, slot);
+    trace!(
+        "{}: waiting for leader bank {slot} to finish, remaining time: {}ms",
+        ctx.my_pubkey,
+        timeout.saturating_sub(block_timer.elapsed()).as_millis()
+    );
+
+    let mut bank_completion_measure = Measure::start("bank_completion");
+    if let Err(e) = record_and_complete_block(
+        ctx,
+        slot_metrics,
+        slot,
+        optimistic_parent,
+        block_timer,
+        timeout,
+    ) {
+        if ctx.exit.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if !matches!(&e, PohRecorderError::WindowMovedOn(_)) {
+            abort_failed_working_bank(ctx, slot)?;
+        }
+        return Err(StartLeaderError::PohRecorder(e));
+    }
+    assert!(!ctx.poh_recorder.read().unwrap().has_bank());
+    bank_completion_measure.stop();
+
+    ctx.metrics.bank_timeout_completion_count += 1;
+    ctx.metrics
+        .bank_timeout_completion_elapsed
+        .add_sample(bank_completion_measure.as_us());
+    Ok(())
+}
+
+/// Produces the inclusive leader window `start_slot..=end_slot`, using
+/// `parent_block` as the first slot's parent while abiding to the `block_timer`
 fn produce_window(
     fast_leader_handover: bool,
     start_slot: Slot,
@@ -601,80 +699,28 @@ fn produce_window(
     parent_block: Block,
     mut block_timer: Instant,
     ctx: &mut LeaderContext,
-    slot_metrics: &mut SlotMetrics,
 ) -> Result<(), StartLeaderError> {
     update_leader_window_clock(ctx, start_slot, block_timer);
-
-    // Insert the first bank
-    let mut working_bank = start_leader_wait_for_parent_replay(
-        ctx,
-        slot_metrics,
-        start_slot,
-        parent_block.slot,
-        Some(parent_block.block_id.to_hash()),
-        block_timer,
-    )?;
-
-    let my_pubkey = ctx.my_pubkey;
     let mut window_production_start = Measure::start("window_production");
-    let mut slot = start_slot;
 
-    while !ctx.exit.load(Ordering::Relaxed) && slot <= end_slot {
-        let timeout = block_timeout(&working_bank, slot);
-        trace!(
-            "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}ms",
-            timeout.saturating_sub(block_timer.elapsed()).as_millis()
-        );
-
-        let mut bank_completion_measure = Measure::start("bank_completion");
-        let optimistic_parent =
-            (fast_leader_handover && slot == start_slot).then_some(parent_block);
-        if let Err(e) = record_and_complete_block(
-            ctx,
-            slot_metrics,
-            slot,
-            optimistic_parent,
-            &mut block_timer,
-            timeout,
-        ) {
-            if ctx.exit.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-            if !matches!(&e, PohRecorderError::WindowMovedOn(_)) {
-                abort_failed_working_bank(ctx, slot)?;
-            }
-            return Err(StartLeaderError::PohRecorder(e));
-        }
-        assert!(!ctx.poh_recorder.read().unwrap().has_bank());
-        bank_completion_measure.stop();
-
-        ctx.metrics.bank_timeout_completion_count += 1;
-        ctx.metrics
-            .bank_timeout_completion_elapsed
-            .add_sample(bank_completion_measure.as_us());
-
-        // Produce our next slot
-        slot += 1;
-        if slot > end_slot {
-            trace!("{my_pubkey}: finished leader window {start_slot}-{end_slot}");
+    produce_first_slot(
+        fast_leader_handover,
+        start_slot,
+        parent_block,
+        &mut block_timer,
+        ctx,
+    )?;
+    for slot in (start_slot + 1)..=end_slot {
+        if ctx.exit.load(Ordering::Relaxed) {
             break;
         }
-        {
-            let mut swap = SlotMetrics::new(slot, false);
-            std::mem::swap(&mut swap, slot_metrics);
-            swap.report();
-        }
-
-        // Although `slot - 1`has been cleared from `poh_recorder`, it might not have finished processing in
-        // `replay_stage`, which is why we use `start_leader_retry_replay`
-        working_bank = start_leader_wait_for_parent_replay(
-            ctx,
-            slot_metrics,
-            slot,
-            slot - 1,
-            None,
-            block_timer,
-        )?;
+        produce_intra_window_slot(slot, &mut block_timer, ctx)?;
+    }
+    if !ctx.exit.load(Ordering::Relaxed) {
+        trace!(
+            "{}: finished leader window {start_slot}-{end_slot}",
+            ctx.my_pubkey
+        );
     }
 
     window_production_start.stop();
@@ -1007,7 +1053,7 @@ fn handle_parent_ready(
     let old_parent_slot = optimistic_parent_block.slot;
     let Block {
         slot: new_parent_slot,
-        block_id: new_parent_hash,
+        block_id: new_parent_block_id,
     } = leader_window_info.parent_block;
 
     let bank = ctx
@@ -1032,19 +1078,19 @@ fn handle_parent_ready(
             slot,
             cleared_bank_id,
             parent_slot: new_parent_slot,
-            parent_block_id: new_parent_hash.to_hash(),
+            parent_block_id: new_parent_block_id.to_hash(),
         }))
     {
         warn!("UpdateParent entry notification send failed: {err:?}");
     }
 
     // Create the new bank before re-injecting transactions to avoid racing.
-    let new_bank = start_leader_wait_for_parent_replay_with_used_bytes(
+    let new_bank = start_leader_wait_for_parent_replay(
         ctx,
         slot_metrics,
         slot,
         new_parent_slot,
-        Some(new_parent_hash.to_hash()),
+        Some(new_parent_block_id),
         *block_timer,
         entry_bytes_consumed,
     )
@@ -1133,26 +1179,7 @@ fn start_leader_wait_for_parent_replay(
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     parent_slot: Slot,
-    parent_hash: Option<Hash>,
-    block_timer: Instant,
-) -> Result<Arc<Bank>, StartLeaderError> {
-    start_leader_wait_for_parent_replay_with_used_bytes(
-        ctx,
-        slot_metrics,
-        slot,
-        parent_slot,
-        parent_hash,
-        block_timer,
-        0,
-    )
-}
-
-fn start_leader_wait_for_parent_replay_with_used_bytes(
-    ctx: &mut LeaderContext,
-    slot_metrics: &mut SlotMetrics,
-    slot: Slot,
-    parent_slot: Slot,
-    parent_hash: Option<Hash>,
+    parent_block_id: Option<BlockId>,
     block_timer: Instant,
     entry_bytes_consumed: u64,
 ) -> Result<Arc<Bank>, StartLeaderError> {
@@ -1187,7 +1214,7 @@ fn start_leader_wait_for_parent_replay_with_used_bytes(
             slot_metrics,
             slot,
             parent_slot,
-            parent_hash,
+            parent_block_id,
             entry_bytes_consumed,
         ) {
             Ok(()) => {
@@ -1273,7 +1300,7 @@ fn maybe_start_leader(
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     parent_slot: Slot,
-    parent_hash: Option<Hash>,
+    parent_block_id: Option<BlockId>,
     entry_bytes_consumed: u64,
 ) -> Result<(), StartLeaderError> {
     if ctx.bank_forks.read().unwrap().get(slot).is_some() {
@@ -1289,8 +1316,8 @@ fn maybe_start_leader(
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     }
 
-    if let Some(expected) = parent_hash.filter(|hash| *hash != Hash::default()) {
-        let actual = parent_bank.block_id();
+    if let Some(expected) = parent_block_id.filter(|block_id| block_id != &BlockId::default()) {
+        let actual = parent_bank.block_id().map(BlockId::from);
         if actual != Some(expected) {
             return Err(StartLeaderError::ParentBlockIdMismatch {
                 leader_slot: slot,
@@ -1642,8 +1669,8 @@ mod tests {
         let new_identity = Pubkey::new_unique();
         let genesis = create_genesis_config_with_leader(10_000, &old_identity, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
-        let parent_block_id = Hash::new_unique();
-        root_bank.set_block_id(Some(parent_block_id));
+        let parent_block_id = BlockId::new_unique();
+        root_bank.set_block_id(Some(parent_block_id.to_hash()));
         root_bank.freeze();
         let bank_forks = BankForks::new_rw_arc(root_bank);
         let root_bank = bank_forks.read().unwrap().root_bank();
@@ -1697,18 +1724,16 @@ mod tests {
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
         // A window for the new identity can arrive before the loop refreshes its cached identity.
-        let mut slot_metrics = SlotMetrics::new(1, false);
         let err = produce_window(
             false,
             1,
             3,
             Block {
                 slot: 0,
-                block_id: BlockId::from(parent_block_id),
+                block_id: parent_block_id,
             },
             Instant::now(),
             &mut ctx,
-            &mut slot_metrics,
         )
         .unwrap_err();
         assert!(matches!(
@@ -1716,7 +1741,6 @@ mod tests {
             StartLeaderError::LeaderIdentityMismatch { slot: 1, identity, leader }
                 if identity == old_identity && leader == new_identity
         ));
-        assert_eq!(slot_metrics.attempt_start_leader_count, 1);
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
         assert_eq!(
             ctx.poh_recorder.read().unwrap().start_bank_id(),
@@ -1737,6 +1761,7 @@ mod tests {
             0,
             Some(parent_block_id),
             Instant::now(),
+            0,
         )
         .unwrap();
         assert_eq!(bank.slot(), 4);
