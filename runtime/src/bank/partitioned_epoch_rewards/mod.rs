@@ -442,7 +442,8 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs,
-                create_genesis_config_with_tower_vote_accounts, deactivate_features,
+                create_genesis_config_with_tower_vote_accounts,
+                create_genesis_config_with_vote_accounts, deactivate_features,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
@@ -466,6 +467,7 @@ mod tests {
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
         solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
         std::sync::{Arc, RwLock},
+        test_case::test_case,
     };
 
     impl PartitionedStakeReward {
@@ -591,11 +593,13 @@ mod tests {
     pub(super) fn create_default_reward_bank(
         expected_num_delegations: usize,
         advance_num_slots: u64,
+        is_alpenglow: bool,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
-        create_reward_bank(
-            expected_num_delegations,
+        create_reward_bank_with_specific_stakes(
+            vec![2_000_000_000; expected_num_delegations],
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
             advance_num_slots,
+            is_alpenglow,
         )
     }
 
@@ -608,6 +612,7 @@ mod tests {
             vec![2_000_000_000; expected_num_delegations],
             stake_account_stores_per_block,
             advance_num_slots,
+            false,
         )
     }
 
@@ -615,6 +620,7 @@ mod tests {
         stakes: Vec<u64>,
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
+        is_alpenglow: bool,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         // Disable slot time reduction features as they will override the custom
         // stores per block provided in this test helper.
@@ -625,11 +631,15 @@ mod tests {
 
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_genesis_config_with_tower_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stakes,
-        );
+        } = if is_alpenglow {
+            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes)
+        } else {
+            create_genesis_config_with_tower_vote_accounts(
+                1_000_000_000,
+                &validator_keypairs,
+                stakes,
+            )
+        };
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         deactivate_features(&mut genesis_config, &features_to_deactivate);
 
@@ -855,8 +865,9 @@ mod tests {
         assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
     }
 
-    #[test]
-    fn test_rewards_computation_and_partitioned_distribution_one_block() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_rewards_computation_and_partitioned_distribution_one_block(is_alpenglow: bool) {
         agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
@@ -866,17 +877,19 @@ mod tests {
                 ..
             },
             bank_forks,
-        ) = create_default_reward_bank(100, starting_slot - 1);
+        ) = create_default_reward_bank(100, starting_slot - 1, is_alpenglow);
 
         // simulate block progress
         for slot in starting_slot..=(2 * SLOTS_PER_EPOCH) + 2 {
-            let pre_cap = previous_bank.capitalization();
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 SlotLeader::default(),
                 slot,
             );
+            // Creating the child freezes its parent, which can burn Alpenglow VAT. Capture the
+            // parent capitalization after that freeze so reward deltas remain the only difference.
+            let pre_cap = previous_bank.capitalization();
             let post_cap = curr_bank.capitalization();
 
             if slot % SLOTS_PER_EPOCH == 0 {
@@ -895,7 +908,9 @@ mod tests {
                         .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
                         .is_some()
                 );
-                assert_eq!(post_cap, pre_cap);
+                if !is_alpenglow {
+                    assert_eq!(post_cap, pre_cap);
+                }
 
                 // Make a root the bank, which is the first bank in the epoch.
                 // This will clear the cache.
