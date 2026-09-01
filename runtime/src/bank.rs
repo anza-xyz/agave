@@ -4552,9 +4552,7 @@ impl Bank {
             let to_store = (self.slot(), accounts_to_store.as_slice());
             self.update_bank_hash_stats(&to_store);
             self.enqueue_on_chain_accounts_lt_hash_updates(&to_store);
-            // See https://github.com/solana-labs/solana/pull/31455 for discussion
-            // on *not* updating the index within a threadpool.
-            self.rc.accounts.store_accounts_seq(
+            self.rc.accounts.store_accounts(
                 to_store,
                 self.bank_id(),
                 transactions.as_deref(),
@@ -4993,7 +4991,7 @@ impl Bank {
         );
         self.rc
             .accounts
-            .store_accounts_par(accounts, self.bank_id(), None, &self.ancestors);
+            .store_accounts(accounts, self.bank_id(), None, &self.ancestors);
     }
 
     pub fn force_flush_accounts_cache(&self) {

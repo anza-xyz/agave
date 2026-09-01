@@ -339,6 +339,31 @@ fn verify_votes(
     thread_pool: &ThreadPool,
 ) -> (Vec<VerifiedVotePayload>, VoteVerificationStats) {
     let mut stats = VoteVerificationStats::default();
+
+    // no need to do optimistic verification when batch size == 1.
+    if let [unverified_vote] = unverified_votes.as_slice() {
+        let ((verification_result, sender_identity_pubkey), time_us) = measure_us!({
+            let serialized_vote = wincode::serialize(&vote_payload_to_sign).unwrap();
+            let prepared_hash_msg = PreparedHashedMessage::new(&serialized_vote);
+            let sender_identity_pubkey = unverified_vote.sender_identity_pubkey;
+            (
+                unverified_vote.verify(max_validators, &prepared_hash_msg),
+                sender_identity_pubkey,
+            )
+        });
+        stats.fn_verify_individual_votes_stats.add_sample(time_us);
+        return match verification_result {
+            Ok(verified_vote) => {
+                stats.num_individual_verified += 1;
+                (vec![verified_vote], stats)
+            }
+            Err(error) => {
+                ban_invalid_vote_sender(ban_sender, &mut stats, sender_identity_pubkey, error);
+                (Vec::new(), stats)
+            }
+        };
+    }
+
     // Try optimistic verification - fast to verify, but cannot identify invalid votes
     let res = verify_votes_optimistic(
         vote_payload_to_sign,
@@ -383,17 +408,26 @@ fn verify_votes(
                 ));
             stats.num_individual_verified += verified_votes.len() as u64;
             for (sender_identity_pubkey, error) in invalid_remote_pubkeys {
-                stats.banning_validator += 1;
-                ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
-                info!(
-                    "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed \
-                     verification {error:?}"
-                );
+                ban_invalid_vote_sender(ban_sender, &mut stats, sender_identity_pubkey, error);
             }
             stats.fn_verify_individual_votes_stats.add_sample(time_us);
             (verified_votes, stats)
         }
     }
+}
+
+fn ban_invalid_vote_sender(
+    ban_sender: &BanSender,
+    stats: &mut VoteVerificationStats,
+    sender_identity_pubkey: Pubkey,
+    error: BlsError,
+) {
+    stats.banning_validator += 1;
+    ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
+    info!(
+        "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed verification \
+         {error:?}"
+    );
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
