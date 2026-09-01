@@ -2170,4 +2170,291 @@ mod tests {
 
         processor.on_final(&migration_status, slot, 0).unwrap();
     }
+
+    /// Each case runs a component sequence against a fresh processor — one
+    /// `on_marker` / `on_entry_batch` call per component — then `on_final`,
+    /// as on a full slot.
+    #[test]
+    fn test_processor_component_sequences() {
+        use BlockComponentProcessorError as E;
+
+        type Step = Box<
+            dyn FnOnce(
+                &mut BlockComponentProcessor,
+                &MigrationStatus,
+            ) -> Result<(), BlockComponentProcessorError>,
+        >;
+
+        let post_migration = MigrationStatus::post_migration_status();
+        let pre_migration = MigrationStatus::default();
+        // Feature activated but migration not yet complete
+        let in_migration = MigrationStatus::default();
+        in_migration.record_feature_activation(0);
+
+        let (parent, bank_forks) = create_test_bank();
+        // First slot of a leader window so UpdateParent passes the window check
+        let slot = 4;
+        let bank = create_child_bank(&bank_forks, &parent, slot);
+        assert_eq!(leader_slot_index(slot), 0);
+        // A bank whose slot is not the first in its leader window, for the
+        // UpdateParent window check
+        let bank_not_window_start = create_child_bank(&bank_forks, &parent, 5);
+        assert_ne!(leader_slot_index(5), 0);
+        let shred_version: u16 = rand::rng().random();
+
+        // A timestamp inside the footer clock bounds for every case below
+        let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
+        let footer_time_nanos = u64::try_from(parent_time_nanos + 400_000_000).unwrap();
+
+        // One step = one direct `on_marker` call
+        let marker_step = {
+            let (bank, parent) = (bank.clone(), parent.clone());
+            move |marker: VersionedBlockMarker, allow_initial_update_parent: bool| -> Step {
+                let (bank, parent) = (bank.clone(), parent.clone());
+                Box::new(move |processor, migration_status| {
+                    processor.on_marker(
+                        bank,
+                        parent,
+                        shred_version,
+                        marker,
+                        allow_initial_update_parent,
+                        None,
+                        migration_status,
+                    )
+                })
+            }
+        };
+        // One step = one direct `on_entry_batch` call
+        let batch_step = move |entries: Vec<EntryView<Bytes>>, is_final: bool| -> Step {
+            Box::new(move |processor, migration_status| {
+                processor.on_entry_batch(migration_status, slot, &entries, is_final)
+            })
+        };
+
+        // Step builders: real wire types, fresh per case
+        let header_with_parent_slot = |parent_slot: Slot| {
+            marker_step(
+                VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                    parent_slot,
+                    parent_block_id: Hash::default(),
+                }),
+                false,
+            )
+        };
+        let header = || header_with_parent_slot(0);
+        let genesis_cert = || {
+            marker_step(
+                VersionedBlockMarker::from_genesis_cert_block_marker(test_genesis_cert_marker()),
+                false,
+            )
+        };
+        let update_parent = |allow_initial_update_parent: bool| {
+            marker_step(
+                VersionedBlockMarker::from_update_parent(UpdateParentV1 {
+                    new_parent_slot: 0,
+                    new_parent_block_id: Hash::default(),
+                }),
+                allow_initial_update_parent,
+            )
+        };
+        // Same UpdateParent marker, sent to a bank whose slot is not the
+        // first in its leader window
+        let update_parent_not_window_start = {
+            let (bank, parent) = (bank_not_window_start.clone(), parent.clone());
+            move |allow_initial_update_parent: bool| -> Step {
+                let (bank, parent) = (bank.clone(), parent.clone());
+                Box::new(move |processor, migration_status| {
+                    processor.on_marker(
+                        bank,
+                        parent,
+                        shred_version,
+                        VersionedBlockMarker::from_update_parent(UpdateParentV1 {
+                            new_parent_slot: 0,
+                            new_parent_block_id: Hash::default(),
+                        }),
+                        allow_initial_update_parent,
+                        None,
+                        migration_status,
+                    )
+                })
+            }
+        };
+        let footer = || {
+            marker_step(
+                VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+                    bank_hash: Hash::new_unique(),
+                    block_producer_time_nanos: footer_time_nanos,
+                    block_user_agent: vec![],
+                    block_final_cert: None,
+                    skip_reward_cert: None,
+                    notar_reward_cert: None,
+                }),
+                false,
+            )
+        };
+        let entries = || {
+            batch_step(
+                vec![EntryView {
+                    num_hashes: 2,
+                    hash: Hash::default(),
+                    transactions: vec![],
+                }],
+                false,
+            )
+        };
+        // Single tick with num_hashes == 1: classified as the alpentick only
+        // when it is the final component of a full slot
+        let tick = |is_final: bool| {
+            batch_step(
+                vec![EntryView {
+                    num_hashes: 1,
+                    hash: Hash::default(),
+                    transactions: vec![],
+                }],
+                is_final,
+            )
+        };
+
+        let abandoned = || {
+            E::AbandonedBank(VersionedUpdateParent::V1(UpdateParentV1 {
+                new_parent_slot: 0,
+                new_parent_block_id: Hash::default(),
+            }))
+        };
+
+        #[rustfmt::skip]
+        let cases: Vec<(&MigrationStatus, Vec<Step>, Result<(), E>)> = vec![
+            // - Pre migration
+            (&pre_migration, vec![entries(), tick(true)], Ok(())),
+            (&pre_migration, vec![entries(), tick(false)], Ok(())),
+            (&pre_migration, vec![tick(false)], Ok(())),
+            (&pre_migration, vec![tick(true), entries()], Ok(())),
+            (&pre_migration, vec![entries(), entries(), tick(false), tick(true)], Ok(())),
+            (&pre_migration, vec![header()], Err(E::BlockComponentPreMigration)),
+            (&pre_migration, vec![genesis_cert()], Err(E::BlockComponentPreMigration)),
+            (&pre_migration, vec![footer()], Err(E::BlockComponentPreMigration)),
+            (&pre_migration, vec![update_parent(false)], Err(E::BlockComponentPreMigration)),
+            (&pre_migration, vec![update_parent(true)], Err(E::BlockComponentPreMigration)),
+
+            // - In migration
+            // header and genesis cert are processed so a slow node can catch up,
+            // other markers are still rejected
+            (&in_migration, vec![entries(), tick(true)], Ok(())),
+            (&in_migration, vec![header()], Err(E::BlockComponentPreMigration)),
+            // genesis cert reaches the stage check instead of the migration gate
+            (&in_migration, vec![genesis_cert()], Err(E::MissingParentMarker)),
+            // header passes on_marker: the genesis cert reaches deep validation
+            (&in_migration, vec![header(), genesis_cert()], Err(E::GenesisCertificateInAlpenglowCluster)),
+            (&in_migration, vec![footer()], Err(E::BlockComponentPreMigration)),
+            (&in_migration, vec![update_parent(false)], Err(E::BlockComponentPreMigration)),
+            (&in_migration, vec![update_parent(true)], Err(E::BlockComponentPreMigration)),
+
+            // - Post migration
+
+            // Valid block
+            // a valid genesis cert block needs a parent slot != 0, covered by
+            // test_first_alpenglow_block_with_genesis_certificate_marker_succeeds
+            (&post_migration, vec![header(), footer(), tick(true)], Ok(())),
+            (&post_migration, vec![header(), entries(), entries(), footer(), tick(true)], Ok(())),
+            (&post_migration, vec![update_parent(true), entries(), footer(), tick(true)], Ok(())),
+            (&post_migration, vec![update_parent(true), footer(), tick(true)], Ok(())),
+            // Alpentick-shaped batch mid-block is a plain entry batch, not the alpentick
+            (&post_migration, vec![header(), tick(false), footer(), tick(true)], Ok(())),
+            (&post_migration, vec![update_parent(true), tick(false), footer(), tick(true)], Ok(())),
+
+            // Empty block
+            (&post_migration, vec![], Err(E::MissingBlockFooter)),
+
+            // MissingParentMarker
+            (&post_migration, vec![entries()], Err(E::MissingParentMarker)),
+            (&post_migration, vec![genesis_cert()], Err(E::MissingParentMarker)),
+            (&post_migration, vec![footer()], Err(E::MissingParentMarker)),
+            (&post_migration, vec![tick(true)], Err(E::MissingParentMarker)),
+            (&post_migration, vec![tick(false)], Err(E::MissingParentMarker)),
+
+            // From-shred-zero replay must not accept an initial UpdateParent
+            (&post_migration, vec![update_parent(false)], Err(E::UnexpectedInitialUpdateParent)),
+
+            // Genesis cert position
+            (&post_migration, vec![header(), entries(), genesis_cert()], Err(E::GenesisCertificateOutOfOrder)),
+            (&post_migration, vec![header(), footer(), genesis_cert()], Err(E::GenesisCertificateOutOfOrder)),
+            (&post_migration, vec![update_parent(true), genesis_cert()], Err(E::GenesisCertificateOutOfOrder)),
+            // correct position, but this cluster runs Alpenglow from slot 0
+            (&post_migration, vec![header(), genesis_cert()], Err(E::GenesisCertificateInAlpenglowCluster)),
+
+            // Duplicate / misplaced parent markers
+            (&post_migration, vec![header(), header()], Err(E::MultipleBlockHeaders)),
+            (&post_migration, vec![header(), entries(), header()], Err(E::MultipleBlockHeaders)),
+            (&post_migration, vec![header(), footer(), header()], Err(E::MultipleBlockHeaders)),
+            (&post_migration, vec![update_parent(true), header()], Err(E::SpuriousUpdateParent)),
+            (&post_migration, vec![update_parent(true), update_parent(true)], Err(E::MultipleUpdateParents)),
+            (&post_migration, vec![update_parent(true), update_parent(false)], Err(E::MultipleUpdateParents)),
+
+            // Header parent slot must match the bank parent slot
+            (&post_migration, vec![header_with_parent_slot(3)], Err(E::HeaderParentSlotMismatch { header_parent_slot: 3, bank_parent_slot: 0 })),
+
+            // UpdateParent is only valid in the first slot of a leader window,
+            // whatever the flag
+            (&post_migration, vec![update_parent_not_window_start(true)], Err(E::UpdateParentNotFirstInLeaderWindow(5))),
+            (&post_migration, vec![update_parent_not_window_start(false)], Err(E::UpdateParentNotFirstInLeaderWindow(5))),
+
+            // Mid-block UpdateParent: controlled abort (fast leader handover)
+            // the flag only matters as the first component
+            (&post_migration, vec![header(), update_parent(false)], Err(abandoned())),
+            (&post_migration, vec![header(), update_parent(true)], Err(abandoned())),
+            (&post_migration, vec![header(), entries(), update_parent(false)], Err(abandoned())),
+            (&post_migration, vec![header(), footer(), update_parent(false)], Err(E::SpuriousUpdateParent)),
+            (&post_migration, vec![header(), footer(), update_parent(true)], Err(E::SpuriousUpdateParent)),
+
+            // Alpentick (tick with is_final) only directly after the footer
+            (&post_migration, vec![header(), tick(true)], Err(E::InvalidAlpentickPosition)),
+            (&post_migration, vec![header(), entries(), tick(true)], Err(E::InvalidAlpentickPosition)),
+            (&post_migration, vec![update_parent(true), tick(true)], Err(E::InvalidAlpentickPosition)),
+
+            // Footer is terminal
+            (&post_migration, vec![header(), footer(), entries(), tick(true)], Err(E::EntryBatchAfterBlockFooter)),
+            (&post_migration, vec![header(), footer(), footer()], Err(E::MultipleBlockFooters)),
+            // Alpentick-shaped but non-final after the footer: plain entry batch
+            (&post_migration, vec![header(), footer(), tick(false), tick(true)], Err(E::EntryBatchAfterBlockFooter)),
+
+            // Nothing after the alpentick
+            (&post_migration, vec![header(), footer(), tick(true), header()], Err(E::MultipleBlockHeaders)),
+            (&post_migration, vec![header(), footer(), tick(true), genesis_cert()], Err(E::GenesisCertificateOutOfOrder)),
+            (&post_migration, vec![header(), footer(), tick(true), entries()], Err(E::EntryBatchAfterBlockFooter)),
+            (&post_migration, vec![header(), footer(), tick(true), tick(false)], Err(E::EntryBatchAfterBlockFooter)),
+            // A second alpentick after the real one
+            (&post_migration, vec![header(), footer(), tick(true), tick(true)], Err(E::InvalidAlpentickPosition)),
+            (&post_migration, vec![header(), footer(), tick(true), footer()], Err(E::MultipleBlockFooters)),
+            (&post_migration, vec![header(), footer(), tick(true), update_parent(false)], Err(E::SpuriousUpdateParent)),
+
+            // Missing tail on a full slot
+            (&post_migration, vec![header()], Err(E::MissingBlockFooter)),
+            (&post_migration, vec![header(), entries()], Err(E::MissingBlockFooter)),
+            (&post_migration, vec![update_parent(true), entries()], Err(E::MissingBlockFooter)),
+            // Footer but no alpentick
+            (&post_migration, vec![header(), footer()], Err(E::InvalidAlpentickPosition)),
+        ];
+
+        for (case_index, (migration_status, steps, expected)) in cases.into_iter().enumerate() {
+            let mut processor = BlockComponentProcessor::default();
+            let result = steps
+                .into_iter()
+                .try_for_each(|step| step(&mut processor, migration_status))
+                .and_then(|()| processor.on_final(migration_status, slot, bank.parent_slot()));
+
+            match (result, expected) {
+                (Ok(()), Ok(())) => (),
+                (Err(err), Err(expected_err)) => {
+                    assert_eq!(
+                        std::mem::discriminant(&err),
+                        std::mem::discriminant(&expected_err),
+                        "case {case_index}: got {err:?}, expected {expected_err:?}"
+                    );
+                }
+                (result, expected) => {
+                    panic!("case {case_index}: got {result:?}, expected {expected:?}");
+                }
+            }
+        }
+    }
 }
