@@ -808,6 +808,7 @@ mod tests {
             assert_matches,
             sync::{Arc, RwLock},
         },
+        test_case::test_case,
     };
 
     const DEFAULT_NS_PER_SLOT: u64 = DEFAULT_MS_PER_SLOT * 1_000_000;
@@ -1787,8 +1788,19 @@ mod tests {
         assert_eq!(bank.clock().epoch_start_timestamp, expected_time_secs);
     }
 
-    // Helper function to test clock bounds enforcement
-    fn test_clock_bounds_helper(
+    // Test clock bounds enforcement
+    #[test_case(1, |_, lower, _| lower, true; "at_minimum")]
+    #[test_case(1, |_, _, upper| upper, true; "at_maximum")]
+    #[test_case(1, |_, lower, _| lower - 1, false; "below_minimum")]
+    #[test_case(1, |_, _, upper| upper + 1, false; "above_maximum")]
+    // For 5 slots: upper_bound = parent_time + 2 * 5 * 400ms = parent_time + 4000ms
+    // Use 2 seconds which is within bounds
+    #[test_case(5, |_, lower, _| lower + 2_000_000_000, true; "multi_slot_gap")]
+    // Exceed by 1 second beyond the upper bound
+    #[test_case(5, |_, _, upper| upper + 1_000_000_000, false; "multi_slot_gap_exceeds")]
+    // Timestamp equal to parent time (should fail, must be strictly greater)
+    #[test_case(1, |parent_time, _, _| parent_time, false; "timestamp_equals_parent")]
+    fn test_clock_bounds(
         slot_gap: u64,
         timestamp_fn: impl FnOnce(i64, i64, i64) -> i64,
         should_pass: bool,
@@ -1831,45 +1843,6 @@ mod tests {
                 BlockComponentProcessorError::NanosecondClockOutOfBounds
             ));
         }
-    }
-
-    #[test]
-    fn test_clock_bounds_at_minimum() {
-        test_clock_bounds_helper(1, |_, lower, _| lower, true);
-    }
-
-    #[test]
-    fn test_clock_bounds_at_maximum() {
-        test_clock_bounds_helper(1, |_, _, upper| upper, true);
-    }
-
-    #[test]
-    fn test_clock_bounds_below_minimum() {
-        test_clock_bounds_helper(1, |_, lower, _| lower - 1, false);
-    }
-
-    #[test]
-    fn test_clock_bounds_above_maximum() {
-        test_clock_bounds_helper(1, |_, _, upper| upper + 1, false);
-    }
-
-    #[test]
-    fn test_clock_bounds_multi_slot_gap() {
-        // For 5 slots: upper_bound = parent_time + 2 * 5 * 400ms = parent_time + 4000ms
-        // Use 2 seconds which is within bounds
-        test_clock_bounds_helper(5, |_, lower, _| lower + 2_000_000_000, true);
-    }
-
-    #[test]
-    fn test_clock_bounds_multi_slot_gap_exceeds() {
-        // Exceed by 1 second beyond the upper bound
-        test_clock_bounds_helper(5, |_, _, upper| upper + 1_000_000_000, false);
-    }
-
-    #[test]
-    fn test_clock_bounds_timestamp_equals_parent() {
-        // Timestamp equal to parent time (should fail, must be strictly greater)
-        test_clock_bounds_helper(1, |parent_time, _, _| parent_time, false);
     }
 
     #[test]
