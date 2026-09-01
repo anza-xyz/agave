@@ -1055,9 +1055,7 @@ mod tests {
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
         parking_lot::RwLock as PlRwLock,
-        solana_bls_signatures::{
-            keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
-        },
+        solana_bls_signatures::{keypair::Keypair as BLSKeypair, signature::SignatureAffine},
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
         solana_ledger::{
@@ -1511,7 +1509,7 @@ mod tests {
         fn expected_vote_message(&self, expected_vote: &Vote) -> VoteMessage {
             let payload =
                 get_vote_payload_to_sign(*expected_vote, self.cluster_info.my_shred_version());
-            let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
+            let signature = SignatureAffine::from(self.my_bls_keypair.sign(&payload));
             let root_bank = self.bank_forks.read().unwrap().root_bank();
             let rank_map = root_bank.get_rank_map(expected_vote.slot()).unwrap();
             let stake = rank_map.get_pubkey_stake_entry(0).unwrap().stake;

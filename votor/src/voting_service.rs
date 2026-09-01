@@ -368,6 +368,7 @@ mod tests {
             consensus_message::{ConsensusMessage, VoteMessage},
             migration::MigrationStatus,
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
         agave_votor_transport::{
             PeerList, PeerListReceiver, PeerListSender,
@@ -377,7 +378,10 @@ mod tests {
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded, unbounded},
         rand::Rng,
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        solana_bls_signatures::{
+            BLS_SIGNATURE_AFFINE_SIZE, Keypair as BlsKeypair, Signature as BLSSignature,
+            signature::SignatureAffine,
+        },
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -408,17 +412,24 @@ mod tests {
     fn test_vote_message(
         vote: Vote,
         rank: u16,
-        shred_verion: u16,
+        shred_version: u16,
     ) -> VersionedWireConsensusMessage {
         VersionedWireConsensusMessage::new_from_vote(
-            VoteMessage {
-                vote,
-                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                rank,
-                stake: NonZero::new(123).unwrap(),
-            },
-            shred_verion,
+            test_vote(vote, rank, shred_version),
+            shred_version,
         )
+    }
+
+    fn test_vote(vote: Vote, rank: u16, shred_version: u16) -> VoteMessage {
+        let bls_keypair = BlsKeypair::new();
+        let payload = get_vote_payload_to_sign(vote, shred_version);
+        let signature = SignatureAffine::from(bls_keypair.sign(&payload));
+        VoteMessage {
+            vote,
+            signature,
+            rank,
+            stake: NonZero::new(123).unwrap(),
+        }
     }
 
     fn test_certificate_message(
@@ -623,45 +634,29 @@ mod tests {
         )
     }
 
-    #[test_case(BLSOp::PushVote {
-        vote: Arc::new(VoteMessage {
-            vote: Vote::new_skip_vote(5),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank: 1,
-            stake:NonZero::new(123).unwrap()
-        }),
-    }, ConsensusMessage::Vote(VoteMessage {
-        vote: Vote::new_skip_vote(5),
-        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        rank: 1,
-        stake:NonZero::new(123).unwrap()
-    }))]
+    #[test_case(BLSOp::PushVote { vote: Arc::new(test_vote(Vote::new_skip_vote(5), 1, 0)) }, None)]
     #[test_case(BLSOp::PushCertificates {
         certificates: vec![Arc::new(Certificate {
         cert_type: CertificateType::Skip(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: Vec::new(),
         })],
-    }, ConsensusMessage::Certificate(Certificate {
+    }, Some(ConsensusMessage::Certificate(Certificate {
         cert_type: CertificateType::Skip(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: Vec::new(),
-    }))]
+    })))]
     #[test_case(BLSOp::RefreshVotes {
-        votes: vec![Arc::new(VoteMessage {
-        vote: Vote::new_skip_vote(6),
-        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        rank: 1,
-        stake:NonZero::new(123).unwrap()
-        })],
-    }, ConsensusMessage::Vote(VoteMessage {
-        vote: Vote::new_skip_vote(6),
-        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        rank: 1,
-        stake:NonZero::new(123).unwrap()
-    }))]
-    fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
+        votes: vec![Arc::new(test_vote(Vote::new_skip_vote(6), 1, 0))],
+    }, None)]
+    fn test_send_message(bls_op: BLSOp, expected_message: Option<ConsensusMessage>) {
         agave_logger::setup();
+
+        let expected_message = expected_message.unwrap_or_else(|| match &bls_op {
+            BLSOp::PushVote { vote } => ConsensusMessage::Vote((**vote).clone()),
+            BLSOp::RefreshVotes { votes } => ConsensusMessage::Vote((*votes[0]).clone()),
+            _ => panic!("expected message is required for certificate operations"),
+        });
 
         let listener_kp = Keypair::new();
         let listener_pubkey = listener_kp.pubkey();
