@@ -32,10 +32,7 @@ use {
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         num::NonZeroUsize,
-        sync::{
-            Arc, RwLock,
-            atomic::{AtomicUsize, Ordering},
-        },
+        sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
@@ -78,43 +75,7 @@ enum ResignError {
 pub type RepairNonceLocationLookup = dyn Fn(shred::Nonce) -> Option<BlockLocation> + Send + Sync;
 
 #[derive(Default)]
-struct SigverifyWorkerStats {
-    num_discards_post: AtomicUsize,
-    num_duplicates: AtomicUsize,
-    num_invalid_retransmitter: AtomicUsize,
-    num_retranmitter_signature_skipped: AtomicUsize,
-    num_retranmitter_signature_verified: AtomicUsize,
-    num_unknown_slot_leader: AtomicUsize,
-    num_unknown_turbine_parent: AtomicUsize,
-}
-
-// Accumulate per-packet worker counters locally and publish them once per batch
-// to avoid atomic updates on every shred.
-impl SigverifyWorkerStats {
-    fn add_batch(&self, counters: WorkerCounters) {
-        self.num_discards_post
-            .fetch_add(counters.num_discards_post, Ordering::Relaxed);
-        self.num_duplicates
-            .fetch_add(counters.num_duplicates, Ordering::Relaxed);
-        self.num_invalid_retransmitter
-            .fetch_add(counters.num_invalid_retransmitter, Ordering::Relaxed);
-        self.num_retranmitter_signature_skipped.fetch_add(
-            counters.num_retranmitter_signature_skipped,
-            Ordering::Relaxed,
-        );
-        self.num_retranmitter_signature_verified.fetch_add(
-            counters.num_retranmitter_signature_verified,
-            Ordering::Relaxed,
-        );
-        self.num_unknown_slot_leader
-            .fetch_add(counters.num_unknown_slot_leader, Ordering::Relaxed);
-        self.num_unknown_turbine_parent
-            .fetch_add(counters.num_unknown_turbine_parent, Ordering::Relaxed);
-    }
-}
-
-#[derive(Default)]
-struct WorkerCounters {
+struct WorkerStats {
     num_discards_post: usize,
     num_duplicates: usize,
     num_invalid_retransmitter: usize,
@@ -122,6 +83,29 @@ struct WorkerCounters {
     num_retranmitter_signature_verified: usize,
     num_unknown_slot_leader: usize,
     num_unknown_turbine_parent: usize,
+}
+impl WorkerStats {
+    fn add_batch(&mut self, counters: WorkerCounters) {
+        self.num_discards_post += usize::from(counters.num_discards_post);
+        self.num_duplicates += usize::from(counters.num_duplicates);
+        self.num_invalid_retransmitter += usize::from(counters.num_invalid_retransmitter);
+        self.num_retranmitter_signature_skipped +=
+            usize::from(counters.num_retranmitter_signature_skipped);
+        self.num_retranmitter_signature_verified +=
+            usize::from(counters.num_retranmitter_signature_verified);
+        self.num_unknown_slot_leader += usize::from(counters.num_unknown_slot_leader);
+        self.num_unknown_turbine_parent += usize::from(counters.num_unknown_turbine_parent);
+    }
+}
+#[derive(Default)]
+struct WorkerCounters {
+    num_discards_post: u16,
+    num_duplicates: u16,
+    num_invalid_retransmitter: u16,
+    num_retranmitter_signature_skipped: u16,
+    num_retranmitter_signature_verified: u16,
+    num_unknown_slot_leader: u16,
+    num_unknown_turbine_parent: u16,
 }
 
 #[derive(Clone)]
@@ -132,10 +116,9 @@ struct WorkerContext {
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     cluster_nodes_cache: Arc<ClusterNodesCache<RetransmitStage>>,
     deduper: Arc<Deduper<2, [u8]>>,
-    stats: Arc<SigverifyWorkerStats>,
 }
 
-fn verify_batch(batch: &mut PacketBatch, ctx: &WorkerContext, keypair: &Keypair) {
+fn verify_batch(batch: &mut PacketBatch, ctx: &WorkerContext, keypair: &Keypair) -> WorkerCounters {
     let mut counters = WorkerCounters::default();
 
     // Repair shreds include a randomly generated u32 nonce, so it does not
@@ -209,7 +192,7 @@ fn verify_batch(batch: &mut PacketBatch, ctx: &WorkerContext, keypair: &Keypair)
         }
     }
 
-    ctx.stats.add_batch(counters);
+    counters
 }
 
 struct BatchJob {
@@ -220,7 +203,12 @@ struct BatchJob {
 #[derive(Debug)]
 struct WorkerPanicked;
 
-type WorkerResult = Result<PacketBatch, WorkerPanicked>;
+struct BatchResult {
+    batch: PacketBatch,
+    counters: WorkerCounters,
+}
+
+type WorkerResult = Result<BatchResult, WorkerPanicked>;
 
 struct WorkerHandles(Vec<JoinHandle<()>>);
 
@@ -242,7 +230,6 @@ struct ShredSigverifyWorkers {
     job_sender: Sender<BatchJob>,
     result_receiver: Receiver<WorkerResult>,
     _worker_handles: WorkerHandles,
-    stats: Arc<SigverifyWorkerStats>,
 }
 
 impl ShredSigverifyWorkers {
@@ -257,7 +244,6 @@ impl ShredSigverifyWorkers {
     ) -> Self {
         let (job_sender, job_receiver) = bounded::<BatchJob>(SIGVERIFY_SHRED_BATCH_SIZE);
         let (result_sender, result_receiver) = bounded::<WorkerResult>(SIGVERIFY_SHRED_BATCH_SIZE);
-        let stats = Arc::new(SigverifyWorkerStats::default());
 
         // Keep cheap lock-free handles to the current root and working banks.
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
@@ -269,7 +255,6 @@ impl ShredSigverifyWorkers {
             leader_schedule_cache,
             cluster_nodes_cache,
             deduper,
-            stats: stats.clone(),
         };
 
         let _worker_handles = WorkerHandles(
@@ -296,9 +281,12 @@ impl ShredSigverifyWorkers {
                             }
 
                             while let Ok(BatchJob { mut batch, keypair }) = job_receiver.recv() {
-                                verify_batch(&mut batch, &ctx, keypair.as_ref());
+                                let counters = verify_batch(&mut batch, &ctx, keypair.as_ref());
 
-                                if result_sender.send(Ok(batch)).is_err() {
+                                if result_sender
+                                    .send(Ok(BatchResult { batch, counters }))
+                                    .is_err()
+                                {
                                     break;
                                 }
                             }
@@ -312,13 +300,16 @@ impl ShredSigverifyWorkers {
             job_sender,
             result_receiver,
             _worker_handles,
-            stats,
         }
     }
 
-    fn process_batches(&self, packets: &mut Vec<PacketBatch>, keypair: &Arc<Keypair>) {
+    fn process_batches(
+        &self,
+        packets: &mut Vec<PacketBatch>,
+        keypair: &Arc<Keypair>,
+    ) -> WorkerStats {
         if packets.is_empty() {
-            return;
+            return WorkerStats::default();
         }
 
         debug_assert!(
@@ -338,9 +329,14 @@ impl ShredSigverifyWorkers {
                 .expect("shred sigverify workers must be alive");
         }
 
+        let mut worker_stats = WorkerStats::default();
+
         for _ in 0..num_batches {
             match self.result_receiver.recv() {
-                Ok(Ok(batch)) => packets.push(batch),
+                Ok(Ok(BatchResult { batch, counters })) => {
+                    worker_stats.add_batch(counters);
+                    packets.push(batch);
+                }
                 Ok(Err(WorkerPanicked)) => {
                     panic!("shred sigverify worker panicked");
                 }
@@ -349,6 +345,8 @@ impl ShredSigverifyWorkers {
                 }
             }
         }
+
+        worker_stats
     }
 }
 
@@ -415,7 +413,7 @@ pub fn spawn_shred_sigverify(
                 Err(ShredSigverifyError::SendError) => break,
             }
 
-            stats.maybe_submit(workers.stats.as_ref());
+            stats.maybe_submit();
         }
     };
 
@@ -455,7 +453,10 @@ fn run_shred_sigverify(
     stats.num_discards_pre += count_discards(shred_buffer);
 
     let verify_and_resign_start = Instant::now();
-    workers.process_batches(shred_buffer, keypair);
+
+    let worker_stats = workers.process_batches(shred_buffer, keypair);
+    stats.add_worker_stats(worker_stats);
+
     stats.verify_and_resign_micros += verify_and_resign_start.elapsed().as_micros() as u64;
 
     let mut retransmit_shreds = Vec::new();
@@ -696,6 +697,7 @@ struct ShredSigVerifyStats {
     num_packets: usize,
     num_deduper_saturations: usize,
     num_discards_pre: usize,
+    worker_stats: WorkerStats,
     num_retransmit_stage_overflow_shreds: usize,
     num_retransmit_shreds: usize,
     /// This means the OutstandingRequests cache is saturated and we
@@ -716,6 +718,7 @@ impl ShredSigVerifyStats {
             num_packets: 0,
             num_deduper_saturations: 0,
             num_discards_pre: 0,
+            worker_stats: WorkerStats::default(),
             num_retransmit_stage_overflow_shreds: 0,
             num_retransmit_shreds: 0,
             num_unknown_block_location: 0,
@@ -724,7 +727,19 @@ impl ShredSigVerifyStats {
         }
     }
 
-    fn maybe_submit(&mut self, worker_stats: &SigverifyWorkerStats) {
+    fn add_worker_stats(&mut self, worker_stats: WorkerStats) {
+        self.worker_stats.num_discards_post += worker_stats.num_discards_post;
+        self.worker_stats.num_duplicates += worker_stats.num_duplicates;
+        self.worker_stats.num_invalid_retransmitter += worker_stats.num_invalid_retransmitter;
+        self.worker_stats.num_retranmitter_signature_skipped +=
+            worker_stats.num_retranmitter_signature_skipped;
+        self.worker_stats.num_retranmitter_signature_verified +=
+            worker_stats.num_retranmitter_signature_verified;
+        self.worker_stats.num_unknown_slot_leader += worker_stats.num_unknown_slot_leader;
+        self.worker_stats.num_unknown_turbine_parent += worker_stats.num_unknown_turbine_parent;
+    }
+
+    fn maybe_submit(&mut self) {
         if self.since.elapsed() <= Self::METRICS_SUBMIT_CADENCE {
             return;
         }
@@ -738,33 +753,23 @@ impl ShredSigVerifyStats {
             ("num_deduper_saturations", self.num_deduper_saturations, i64),
             (
                 "num_discards_post",
-                worker_stats.num_discards_post.swap(0, Ordering::Relaxed),
+                self.worker_stats.num_discards_post,
                 i64
             ),
-            (
-                "num_duplicates",
-                worker_stats.num_duplicates.swap(0, Ordering::Relaxed),
-                i64
-            ),
+            ("num_duplicates", self.worker_stats.num_duplicates, i64),
             (
                 "num_invalid_retransmitter",
-                worker_stats
-                    .num_invalid_retransmitter
-                    .swap(0, Ordering::Relaxed),
+                self.worker_stats.num_invalid_retransmitter,
                 i64
             ),
             (
                 "num_retranmitter_signature_skipped",
-                worker_stats
-                    .num_retranmitter_signature_skipped
-                    .swap(0, Ordering::Relaxed),
+                self.worker_stats.num_retranmitter_signature_skipped,
                 i64
             ),
             (
                 "num_retranmitter_signature_verified",
-                worker_stats
-                    .num_retranmitter_signature_verified
-                    .swap(0, Ordering::Relaxed),
+                self.worker_stats.num_retranmitter_signature_verified,
                 i64
             ),
             (
@@ -780,16 +785,12 @@ impl ShredSigVerifyStats {
             ),
             (
                 "num_unknown_slot_leader",
-                worker_stats
-                    .num_unknown_slot_leader
-                    .swap(0, Ordering::Relaxed),
+                self.worker_stats.num_unknown_slot_leader,
                 i64
             ),
             (
                 "num_unknown_turbine_parent",
-                worker_stats
-                    .num_unknown_turbine_parent
-                    .swap(0, Ordering::Relaxed),
+                self.worker_stats.num_unknown_turbine_parent,
                 i64
             ),
             ("elapsed_micros", self.elapsed_micros, i64),
@@ -932,6 +933,7 @@ mod tests {
 
         workers.process_batches(&mut batches, &node_keypair);
     }
+
     #[test]
     fn test_sigverify_shreds_verify_batches() {
         let leader_keypair = Arc::new(Keypair::new());
@@ -992,9 +994,9 @@ mod tests {
 
         let mut batches = vec![PacketBatch::from(batch)];
 
-        workers.process_batches(&mut batches, &node_keypair);
+        let worker_stats = workers.process_batches(&mut batches, &node_keypair);
 
-        assert_eq!(workers.stats.num_discards_post.load(Ordering::Relaxed), 1);
+        assert_eq!(worker_stats.num_discards_post, 1);
         assert!(!batches[0].get(0).unwrap().meta().discard());
         assert!(batches[0].get(1).unwrap().meta().discard());
     }
@@ -1171,6 +1173,7 @@ mod tests {
     fn test_sigverify_workers_fanout_aggregates_stats() {
         const NUM_WORKERS: usize = 3;
         const NUM_BATCHES: usize = SIGVERIFY_SHRED_BATCH_SIZE;
+
         let leader_keypair = Arc::new(Keypair::new());
         let wrong_keypair = Keypair::new();
         let node_keypair = Arc::new(Keypair::new());
@@ -1228,7 +1231,7 @@ mod tests {
             batches.push(PacketBatch::from(batch));
         }
 
-        workers.process_batches(&mut batches, &node_keypair);
+        let worker_stats = workers.process_batches(&mut batches, &node_keypair);
 
         assert_eq!(batches.len(), NUM_BATCHES);
 
@@ -1239,13 +1242,9 @@ mod tests {
             .count();
 
         assert_eq!(num_discards, NUM_BATCHES / 2);
-        assert_eq!(
-            workers.stats.num_discards_post.load(Ordering::Relaxed),
-            NUM_BATCHES / 2
-        );
-        assert_eq!(workers.stats.num_duplicates.load(Ordering::Relaxed), 0);
+        assert_eq!(worker_stats.num_discards_post, NUM_BATCHES / 2);
+        assert_eq!(worker_stats.num_duplicates, 0);
     }
-
     #[test]
     fn test_sigverify_workers_dedup_across_batches() {
         const NUM_WORKERS: usize = 8;
@@ -1299,7 +1298,7 @@ mod tests {
             batches.push(PacketBatch::from(batch));
         }
 
-        workers.process_batches(&mut batches, &node_keypair);
+        let worker_stats = workers.process_batches(&mut batches, &node_keypair);
 
         assert_eq!(batches.len(), NUM_BATCHES);
 
@@ -1315,14 +1314,8 @@ mod tests {
         // race while setting those bits, so at most two copies may be accepted.
         assert!((1..=2).contains(&num_survivors));
 
-        assert_eq!(
-            workers.stats.num_duplicates.load(Ordering::Relaxed),
-            num_discards
-        );
-        assert_eq!(
-            workers.stats.num_discards_post.load(Ordering::Relaxed),
-            num_discards
-        );
+        assert_eq!(worker_stats.num_duplicates, num_discards);
+        assert_eq!(worker_stats.num_discards_post, num_discards);
     }
     #[test]
     fn test_sigverify_workers_repair_shreds_are_deduped_but_not_discarded() {
@@ -1399,7 +1392,7 @@ mod tests {
 
         let mut batches = vec![PacketBatch::from(batch)];
 
-        workers.process_batches(&mut batches, &node_keypair);
+        let worker_stats = workers.process_batches(&mut batches, &node_keypair);
 
         let batch = &batches[0];
 
@@ -1408,10 +1401,9 @@ mod tests {
         assert!(!batch.get(2).unwrap().meta().discard());
         assert!(batch.get(3).unwrap().meta().discard());
 
-        assert_eq!(workers.stats.num_duplicates.load(Ordering::Relaxed), 1);
-        assert_eq!(workers.stats.num_discards_post.load(Ordering::Relaxed), 1);
+        assert_eq!(worker_stats.num_duplicates, 1);
+        assert_eq!(worker_stats.num_discards_post, 1);
     }
-
     #[test]
     fn test_sigverify_workers_use_updated_keypair_across_rounds() {
         let mut rng = rand::rng();
