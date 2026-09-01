@@ -760,7 +760,6 @@ pub mod tests {
         },
         serial_test::serial,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::BlockstoreSignals,
@@ -842,13 +841,7 @@ pub mod tests {
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = bounded(1024);
         let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(1024);
-        let highest_parent_ready = Arc::new(RwLock::new((
-            0,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        )));
+        let highest_parent_ready = Arc::new(RwLock::new((0, Block::new_unique(0))));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
             bounded(1024);
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));

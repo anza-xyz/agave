@@ -1657,21 +1657,8 @@ mod tests {
 
         // If there is a parent ready for block 1 Notarization is sent out.
         let slot = 1;
-        let parent_slot = 0;
-        test_context.send_parent_ready_event(
-            slot,
-            Block {
-                slot: parent_slot,
-                block_id: Hash::default(),
-            },
-        );
-        test_context.check_parent_ready_slot((
-            slot,
-            Block {
-                slot: parent_slot,
-                block_id: Hash::default(),
-            },
-        ));
+        test_context.send_parent_ready_event(slot, test_context.local_context.genesis_block);
+        test_context.check_parent_ready_slot((slot, test_context.local_context.genesis_block));
         test_context.check_alpenglow_slot(slot);
         let root_bank = test_context
             .bank_forks
@@ -1771,20 +1758,8 @@ mod tests {
         let block_id_1 = bank1.block_id().unwrap();
 
         // Add parent ready for 0 to trigger notar vote for 1
-        test_context.send_parent_ready_event(
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
-        test_context.check_parent_ready_slot((
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        ));
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
+        test_context.check_parent_ready_slot((1, test_context.local_context.genesis_block));
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
             slot: 1,
             block_id: block_id_1,
@@ -1924,21 +1899,9 @@ mod tests {
             .root();
         let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1_old = bank_1.block_id().unwrap();
-        test_context.send_parent_ready_event(
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
-        test_context.check_parent_ready_slot((
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        ));
+        test_context.check_parent_ready_slot((1, test_context.local_context.genesis_block));
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
             slot: 1,
             block_id: block_id_1_old,
@@ -1997,21 +1960,9 @@ mod tests {
             .root();
         let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank_1.block_id().unwrap();
-        test_context.send_parent_ready_event(
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
-        test_context.check_parent_ready_slot((
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        ));
+        test_context.check_parent_ready_slot((1, test_context.local_context.genesis_block));
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
             slot: 1,
             block_id: block_id_1,
@@ -2036,14 +1987,7 @@ mod tests {
 
         // Produce a full window of blocks
         // Assume the leader for 1-3 is us, send produce window event
-        test_context.send_produce_window_event(
-            1,
-            3,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
+        test_context.send_produce_window_event(1, 3, test_context.local_context.genesis_block);
 
         // Check that leader_window_info is sent via channel
         let received_leader_window_info =
@@ -2052,10 +1996,7 @@ mod tests {
         assert_eq!(received_leader_window_info.end_slot, 3);
         assert_eq!(
             received_leader_window_info.parent_block,
-            Block {
-                slot: 0,
-                block_id: Hash::default()
-            }
+            test_context.local_context.genesis_block,
         );
 
         // Suddenly I found out I produced block 1 already, send new produce window event
@@ -2094,21 +2035,9 @@ mod tests {
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
 
-        test_context.send_parent_ready_event(
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
-        test_context.check_parent_ready_slot((
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        ));
+        test_context.check_parent_ready_slot((1, test_context.local_context.genesis_block));
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
             slot: 1,
             block_id: block_id_1,
@@ -2275,13 +2204,7 @@ mod tests {
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
-        test_context.send_parent_ready_event(
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
             slot: 1,
@@ -2370,13 +2293,7 @@ mod tests {
             .sharable_banks()
             .root();
         let _ = test_context.create_block_and_send_block_event(1, root_bank.clone());
-        test_context.send_parent_ready_event(
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
         // There should be no votes but we should see commitments for hot spares
         assert_eq!(
@@ -2393,13 +2310,7 @@ mod tests {
         let slot = 4;
         let bank4 = test_context.create_block_and_send_block_event(slot, root_bank);
         let block_id_4 = bank4.block_id().unwrap();
-        test_context.send_parent_ready_event(
-            slot,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
+        test_context.send_parent_ready_event(slot, test_context.local_context.genesis_block);
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
             slot,
             block_id: block_id_4,
@@ -2606,17 +2517,12 @@ mod tests {
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
-        test_context.send_parent_ready_event(
-            1,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        );
-        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
+        let block = Block {
             slot: 1,
             block_id: block_id_1,
-        }));
+        };
+        test_context.check_for_vote(&Vote::new_notarization_vote(block));
 
         // Send standstill event - should record the standstill slot
         test_context.send_standstill_event(0);

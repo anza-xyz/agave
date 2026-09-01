@@ -850,10 +850,7 @@ mod tests {
         let migration_slot = migration_status.record_feature_activation(0);
         assert!(genesis_slot < migration_slot);
 
-        let genesis_block = Block {
-            slot: genesis_slot,
-            block_id: Hash::default(),
-        };
+        let genesis_block = Block::new_unique(genesis_slot);
         migration_status.set_genesis_block(genesis_block);
         let cert = Arc::new(GenesisCert {
             block: genesis_block,

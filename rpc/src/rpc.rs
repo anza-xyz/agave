@@ -5250,12 +5250,10 @@ pub mod tests {
 
         let rpc = RpcHandler::start();
         // Seed the bank with a genesis certificate for the RPC to return.
+        let block = Block::new_unique(0);
         rpc.working_bank()
             .set_alpenglow_genesis_certificate(&GenesisCert {
-                block: Block {
-                    slot: 0,
-                    block_id: Hash::default(),
-                },
+                block,
                 signature: CertSignature {
                     signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                     bitmap: vec![1, 2, 3],
@@ -5267,7 +5265,7 @@ pub mod tests {
         let expected = json!({
             "block": {
                 "slot": 0,
-                "blockId": vec![0u8; 32],
+                "blockId": &block.block_id,
             },
             "signature": {
                 "signature": vec![0u8; BLS_SIGNATURE_AFFINE_SIZE],
