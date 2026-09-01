@@ -63,7 +63,6 @@ fn program_cache_execution(threads: usize) {
                         program_id,
                         loader: ProgramCacheEntryOwner::LoaderV3,
                         deployment_slot: 0,
-                        last_modification_slot: 0,
                     })
                     .collect();
                 let feature_set = SVMFeatureSet::all_enabled();

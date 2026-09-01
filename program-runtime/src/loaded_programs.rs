@@ -209,8 +209,6 @@ pub struct ProgramToLoad<'a> {
     ///
     /// For Loader V1/V2 and builtin programs, this is 0.
     pub deployment_slot: Slot,
-    /// When the program account was last written to (might be after the deployment slot)
-    pub last_modification_slot: Slot,
 }
 
 #[derive(Debug)]
@@ -2427,7 +2425,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &new_env, true, true);
@@ -2444,7 +2441,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -2531,7 +2527,6 @@ pub(crate) mod tests {
                         program_id: key,
                         loader: entry.account_owner,
                         deployment_slot: entry.deployment_slot,
-                        last_modification_slot: entry.deployment_slot,
                     })
             })
             .collect()
@@ -2822,7 +2817,6 @@ pub(crate) mod tests {
             program_id: &program,
             loader: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 5,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
@@ -2834,7 +2828,6 @@ pub(crate) mod tests {
             program_id: &program,
             loader: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 11,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
@@ -2989,7 +2982,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 0,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3016,7 +3008,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3044,7 +3035,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3060,7 +3050,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 150,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3092,7 +3081,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3124,7 +3112,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3140,7 +3127,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
@@ -3170,7 +3156,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3193,7 +3178,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3249,7 +3233,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(batch_slot);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3324,7 +3307,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3339,7 +3321,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
@@ -3404,7 +3385,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3431,7 +3411,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(101);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3491,7 +3470,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3505,7 +3483,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
@@ -3531,7 +3508,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(
@@ -3569,7 +3545,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3614,13 +3589,11 @@ pub(crate) mod tests {
                 program_id: &found,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 100,
-                last_modification_slot: 0,
             },
             ProgramToLoad {
                 program_id: &missing,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             },
         ];
         let mut extracted = ProgramCacheForTxBatch::new(200);
@@ -3664,7 +3637,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(extracted.entries.len(), 2);
@@ -3684,7 +3656,6 @@ pub(crate) mod tests {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         let mut extracted = ProgramCacheForTxBatch::new(100);
@@ -3709,7 +3680,6 @@ pub(crate) mod tests {
             program_id: program_ids.first().unwrap(),
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 0,
-            last_modification_slot: 0,
         }];
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(search_for.len(), 1);
@@ -3741,7 +3711,6 @@ pub(crate) mod tests {
             program_id: program_ids.first().unwrap(),
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3767,7 +3736,6 @@ pub(crate) mod tests {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3782,7 +3750,6 @@ pub(crate) mod tests {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3811,7 +3778,6 @@ pub(crate) mod tests {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3856,7 +3822,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3883,7 +3848,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3929,7 +3893,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 150,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3959,7 +3922,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 150,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4007,7 +3969,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4031,7 +3992,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 150,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4072,7 +4032,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 0,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(50);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4117,7 +4076,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(300);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);

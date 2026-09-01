@@ -354,7 +354,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 program_id,
                 loader: ProgramCacheEntryOwner::NativeLoader,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         self.global_program_cache.read().unwrap().extract(
@@ -2146,7 +2145,6 @@ mod tests {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::NativeLoader,
                     deployment_slot: 0,
-                    last_modification_slot: 0,
                 }],
                 &mut loaded_programs_for_tx_batch,
                 &program_runtime_environment,
@@ -2377,7 +2375,6 @@ mod tests {
             program_id: &key,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: MIGRATION_SLOT,
-            last_modification_slot: MIGRATION_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(MIGRATION_SLOT);
         batch_processor
@@ -2415,7 +2412,6 @@ mod tests {
             program_id: &key,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: MIGRATION_SLOT,
-            last_modification_slot: MIGRATION_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
         next_slot.global_program_cache.read().unwrap().extract(
@@ -2434,7 +2430,6 @@ mod tests {
             program_id: &key,
             loader: ProgramCacheEntryOwner::NativeLoader,
             deployment_slot: BUILTIN_SLOT,
-            last_modification_slot: BUILTIN_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
         next_slot.global_program_cache.read().unwrap().extract(
@@ -3222,7 +3217,6 @@ mod tests {
                 program_id: &program_id,
                 loader,
                 deployment_slot: expected_deployment_slot,
-                last_modification_slot: 0,
             }]
         );
 
@@ -3276,7 +3270,6 @@ mod tests {
                     program_id: &program_id,
                     loader,
                     deployment_slot: 0,
-                    last_modification_slot: 0,
                 }],
                 &environment,
                 &mut program_cache_for_tx_batch,
@@ -3336,7 +3329,6 @@ mod tests {
                     program_id: &program_id,
                     loader,
                     deployment_slot: 0,
-                    last_modification_slot: 0,
                 }],
                 &environment,
                 &mut program_cache_for_tx_batch,
@@ -3490,7 +3482,6 @@ mod tests {
                     program_id: &program_id,
                     loader: ProgramCacheEntryOwner::LoaderV3,
                     deployment_slot: DEPLOYMENT_SLOT,
-                    last_modification_slot: 100, // Don't care
                 }],
                 &environment,
                 &mut program_cache_for_tx_batch,
@@ -3558,7 +3549,6 @@ mod tests {
                     program_id: &program_id,
                     loader: ProgramCacheEntryOwner::LoaderV4,
                     deployment_slot: if just_zeroes { 0 } else { 9 },
-                    last_modification_slot: 0,
                 }],
                 &environment,
                 &mut program_cache_for_tx_batch,

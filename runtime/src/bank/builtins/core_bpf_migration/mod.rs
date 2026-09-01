@@ -776,7 +776,6 @@ pub(crate) mod tests {
                     program_id: &self.target_program_address,
                     loader: ProgramCacheEntryOwner::LoaderV3,
                     deployment_slot: migration_or_upgrade_slot,
-                    last_modification_slot: migration_or_upgrade_slot,
                 }],
                 &bank.transaction_processor.program_runtime_environment,
                 &mut program_cache_for_tx_batch,

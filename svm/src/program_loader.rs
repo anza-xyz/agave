@@ -249,24 +249,12 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
     for account_key in keys {
         if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
             cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
-        } else if let Some((account, mut last_modification_slot)) =
+        } else if let Some((account, _last_modification_slot)) =
             callbacks.get_account_shared_data(account_key)
         {
             let loader = if loader_v4::check_id(account.owner()) {
                 ProgramCacheEntryOwner::LoaderV4
             } else if bpf_loader_upgradeable::check_id(account.owner()) {
-                if let Ok(UpgradeableLoaderState::Program {
-                    programdata_address,
-                }) = bincode::deserialize(account.data())
-                {
-                    last_modification_slot = if let Some((_programdata, slot)) =
-                        callbacks.get_account_shared_data(&programdata_address)
-                    {
-                        slot
-                    } else {
-                        0
-                    };
-                }
                 ProgramCacheEntryOwner::LoaderV3
             } else if bpf_loader::check_id(account.owner()) {
                 ProgramCacheEntryOwner::LoaderV2
@@ -283,7 +271,6 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
                 program_id: account_key,
                 loader,
                 deployment_slot,
-                last_modification_slot,
             });
         }
     }
@@ -1328,13 +1315,11 @@ mod tests {
                     program_id: &program_ids[1],
                     loader: ProgramCacheEntryOwner::LoaderV2,
                     deployment_slot: 0,
-                    last_modification_slot: 0,
                 },
                 ProgramToLoad {
                     program_id: &program_ids[2],
                     loader: ProgramCacheEntryOwner::LoaderV3,
                     deployment_slot: 0,
-                    last_modification_slot: 0,
                 },
             ]
         );
@@ -1437,7 +1422,6 @@ mod tests {
             let program_to_load = result.first().unwrap();
             assert_eq!(program_to_load.loader, loader);
             assert_eq!(program_to_load.deployment_slot, 0);
-            assert_eq!(program_to_load.last_modification_slot, 40);
         }
     }
 
@@ -1490,7 +1474,6 @@ mod tests {
         let program_to_load = result.first().unwrap();
         assert_eq!(program_to_load.loader, ProgramCacheEntryOwner::LoaderV3);
         assert_eq!(program_to_load.deployment_slot, 7);
-        assert_eq!(program_to_load.last_modification_slot, 60);
     }
 
     #[test]
@@ -1544,7 +1527,6 @@ mod tests {
         let program_to_load = result.first().unwrap();
         assert_eq!(program_to_load.loader, ProgramCacheEntryOwner::LoaderV4);
         assert_eq!(program_to_load.deployment_slot, 9);
-        assert_eq!(program_to_load.last_modification_slot, 100);
     }
 
     #[test]
