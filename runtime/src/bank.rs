@@ -1777,12 +1777,6 @@ impl Bank {
             .new_warmup_cooldown_rate_epoch(&self.epoch_schedule)
     }
 
-    fn use_fixed_point_stake_math(&self) -> bool {
-        self.feature_set
-            .snapshot()
-            .upgrade_bpf_stake_program_to_v5_1
-    }
-
     /// Get cached vote account state from the past few epochs so that some vote
     /// state configuration changes are delayed before being used in reward
     /// calculation.
@@ -1837,7 +1831,6 @@ impl Bank {
             thread_pool,
             self.new_warmup_cooldown_rate_epoch(),
             &stake_delegations,
-            self.use_fixed_point_stake_math(),
         ));
         debug_assert_eq!(reward_epoch_delegated_stakes.epoch, rewarded_epoch);
 
@@ -3326,7 +3319,6 @@ impl Bank {
         self.stakes_cache = StakesCache::new(Stakes::new_from_accounts_for_genesis(
             self.new_warmup_cooldown_rate_epoch(),
             genesis_config.accounts.iter(),
-            self.use_fixed_point_stake_math(),
         ));
 
         // After storing genesis accounts, the bank stakes cache will be warmed
@@ -4932,7 +4924,6 @@ impl Bank {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
 
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
@@ -4940,7 +4931,6 @@ impl Bank {
                     account.pubkey(),
                     &account,
                     new_warmup_cooldown_rate_epoch,
-                    use_fixed_point_stake_math,
                 )
             })
         });
@@ -5951,7 +5941,6 @@ impl Bank {
     ) {
         debug_assert_eq!(txs.len(), processing_results.len());
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
         txs.iter()
             .zip(processing_results)
             .filter_map(|(tx, processing_result)| {
@@ -5973,12 +5962,8 @@ impl Bank {
             .for_each(|(pubkey, account)| {
                 // note that this could get timed to: self.rc.accounts.accounts_db.stats.stakes_cache_check_and_store_us,
                 //  but this code path is captured separately in ExecuteTimingType::UpdateStakesCacheUs
-                self.stakes_cache.check_and_store(
-                    pubkey,
-                    account,
-                    new_warmup_cooldown_rate_epoch,
-                    use_fixed_point_stake_math,
-                );
+                self.stakes_cache
+                    .check_and_store(pubkey, account, new_warmup_cooldown_rate_epoch);
             });
     }
 
@@ -6264,10 +6249,8 @@ impl Bank {
         }
 
         self.compute_and_apply_features_after_snapshot_restore();
-        self.stakes_cache.refresh_delegated_stakes(
-            self.new_warmup_cooldown_rate_epoch(),
-            self.use_fixed_point_stake_math(),
-        );
+        self.stakes_cache
+            .refresh_delegated_stakes(self.new_warmup_cooldown_rate_epoch());
 
         self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
 
@@ -6453,16 +6436,6 @@ impl Bank {
                 &solana_sdk_ids::stake::id(),
                 &feature_set::upgrade_bpf_stake_program_to_v5::buffer::id(),
                 "upgrade_stake_program_to_v5",
-            )
-        {
-            error!("Failed to upgrade Core BPF Stake program: {e}");
-        }
-
-        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5_1::id())
-            && let Err(e) = self.upgrade_core_bpf_program(
-                &solana_sdk_ids::stake::id(),
-                &feature_set::upgrade_bpf_stake_program_to_v5_1::buffer::id(),
-                "upgrade_stake_program_to_v5_1",
             )
         {
             error!("Failed to upgrade Core BPF Stake program: {e}");
@@ -7096,10 +7069,8 @@ impl Bank {
         );
 
         bank.apply_activated_features();
-        bank.stakes_cache.refresh_delegated_stakes(
-            bank.new_warmup_cooldown_rate_epoch(),
-            bank.use_fixed_point_stake_math(),
-        );
+        bank.stakes_cache
+            .refresh_delegated_stakes(bank.new_warmup_cooldown_rate_epoch());
 
         // If booting mid-distribution, recalculate reward partitions from the
         // EpochRewards sysvar (mirrors initialize_after_snapshot_restore).
