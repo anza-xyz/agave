@@ -151,9 +151,11 @@ dependencies = [
  "solana-clock",
  "solana-hash 4.6.0",
  "solana-message",
+ "solana-pubkey 4.3.0",
+ "solana-reward-info",
  "solana-signature",
  "solana-transaction",
- "solana-transaction-status",
+ "solana-transaction-error",
  "thiserror 2.0.20",
 ]
 
@@ -6804,6 +6806,7 @@ dependencies = [
  "libloading",
  "log",
  "serde_json",
+ "smallvec",
  "solana-account 4.7.0",
  "solana-accounts-db",
  "solana-clock",

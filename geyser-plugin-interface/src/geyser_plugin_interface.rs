@@ -3,13 +3,15 @@
 //! In addition, the dynamic library must export a "C" function _create_plugin which
 //! creates the implementation of the plugin.
 use {
-    crate::block_footer::VersionedBlockFooter,
+    crate::{
+        block_footer::VersionedBlockFooter,
+        transaction_status_meta::{RewardsAndNumPartitions, TransactionStatusMeta},
+    },
     solana_clock::{BankId, Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
-    solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
     std::{any::Any, error, io, net::SocketAddr},
     thiserror::Error,
 };
@@ -122,47 +124,10 @@ pub enum ReplicaAccountInfoVersions<'a> {
     V0_0_3(&'a ReplicaAccountInfoV3<'a>),
 }
 
-/// Information about a transaction
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub struct ReplicaTransactionInfo<'a> {
-    /// The first signature of the transaction, used for identifying the transaction.
-    pub signature: &'a Signature,
-
-    /// Indicates if the transaction is a simple vote transaction.
-    pub is_vote: bool,
-
-    /// The sanitized transaction.
-    pub transaction: &'a SanitizedTransaction,
-
-    /// Metadata of the transaction status.
-    pub transaction_status_meta: &'a TransactionStatusMeta,
-}
-
 /// Information about a transaction, including index in block
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub struct ReplicaTransactionInfoV2<'a> {
-    /// The first signature of the transaction, used for identifying the transaction.
-    pub signature: &'a Signature,
-
-    /// Indicates if the transaction is a simple vote transaction.
-    pub is_vote: bool,
-
-    /// The sanitized transaction.
-    pub transaction: &'a SanitizedTransaction,
-
-    /// Metadata of the transaction status.
-    pub transaction_status_meta: &'a TransactionStatusMeta,
-
-    /// The transaction's index in the block
-    pub index: usize,
-}
-
-/// Information about a transaction, including index in block
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub struct ReplicaTransactionInfoV3<'a> {
+pub struct ReplicaTransactionInfoV4<'a> {
     /// The transaction signature, used for identifying the transaction.
     pub signature: &'a Signature,
 
@@ -176,7 +141,7 @@ pub struct ReplicaTransactionInfoV3<'a> {
     pub transaction: &'a VersionedTransaction,
 
     /// Metadata of the transaction status.
-    pub transaction_status_meta: &'a TransactionStatusMeta,
+    pub transaction_status_meta: &'a TransactionStatusMeta<'a>,
 
     /// The transaction's index in the block
     pub index: usize,
@@ -186,11 +151,15 @@ pub struct ReplicaTransactionInfoV3<'a> {
 /// If there were a change to the structure of ReplicaTransactionInfo,
 /// there would be new enum entry for the newer version, forcing
 /// plugin implementations to handle the change.
+///
+/// `V0_0_1` through `V0_0_3` carried
+/// `solana_transaction_status::TransactionStatusMeta` and shipped through
+/// v4.3; they were removed when the payload became the
+/// `transaction_status_meta` mirror types. The explicit discriminant keeps
+/// the formats distinguishable across plugin builds.
 #[repr(u32)]
 pub enum ReplicaTransactionInfoVersions<'a> {
-    V0_0_1(&'a ReplicaTransactionInfo<'a>),
-    V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
-    V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
+    V0_0_4(&'a ReplicaTransactionInfoV4<'a>) = 3,
 }
 
 /// Information about a transaction after deshredding (when entries are formed from shreds).
@@ -364,66 +333,28 @@ pub enum ReplicaBlockFooterInfoVersions<'a> {
     V0_0_2(&'a ReplicaBlockFooterInfo<'a>) = 1,
 }
 
+/// Information about a block, including RewardsAndNumPartitions.
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub struct ReplicaBlockInfo<'a> {
-    pub slot: Slot,
-    pub blockhash: &'a str,
-    pub rewards: &'a [Reward],
-    pub block_time: Option<UnixTimestamp>,
-    pub block_height: Option<u64>,
-}
-
-/// Extending ReplicaBlockInfo by sending the executed_transaction_count.
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub struct ReplicaBlockInfoV2<'a> {
+pub struct ReplicaBlockInfoV5<'a> {
     pub parent_slot: Slot,
     pub parent_blockhash: &'a str,
     pub slot: Slot,
     pub blockhash: &'a str,
-    pub rewards: &'a [Reward],
-    pub block_time: Option<UnixTimestamp>,
-    pub block_height: Option<u64>,
-    pub executed_transaction_count: u64,
-}
-
-/// Extending ReplicaBlockInfo by sending the entries_count.
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub struct ReplicaBlockInfoV3<'a> {
-    pub parent_slot: Slot,
-    pub parent_blockhash: &'a str,
-    pub slot: Slot,
-    pub blockhash: &'a str,
-    pub rewards: &'a [Reward],
+    pub rewards: &'a RewardsAndNumPartitions<'a>,
     pub block_time: Option<UnixTimestamp>,
     pub block_height: Option<u64>,
     pub executed_transaction_count: u64,
     pub entry_count: u64,
 }
 
-/// Extending ReplicaBlockInfo by sending RewardsAndNumPartitions.
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub struct ReplicaBlockInfoV4<'a> {
-    pub parent_slot: Slot,
-    pub parent_blockhash: &'a str,
-    pub slot: Slot,
-    pub blockhash: &'a str,
-    pub rewards: &'a RewardsAndNumPartitions,
-    pub block_time: Option<UnixTimestamp>,
-    pub block_height: Option<u64>,
-    pub executed_transaction_count: u64,
-    pub entry_count: u64,
-}
-
+/// `V0_0_1` through `V0_0_4` carried `solana_transaction_status` reward
+/// types and shipped through v4.3; they were removed when the payload
+/// became the `transaction_status_meta` mirror types. The explicit
+/// discriminant keeps the formats distinguishable across plugin builds.
 #[repr(u32)]
 pub enum ReplicaBlockInfoVersions<'a> {
-    V0_0_1(&'a ReplicaBlockInfo<'a>),
-    V0_0_2(&'a ReplicaBlockInfoV2<'a>),
-    V0_0_3(&'a ReplicaBlockInfoV3<'a>),
-    V0_0_4(&'a ReplicaBlockInfoV4<'a>),
+    V0_0_5(&'a ReplicaBlockInfoV5<'a>) = 4,
 }
 
 /// A snapshot of a validator's gossip contact info at a point in time.

@@ -24,9 +24,11 @@ solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-hash = { workspace = true, features = ["copy"] }
 solana-message = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-reward-info = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
-solana-transaction-status = { workspace = true }
+solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
 [lints]
