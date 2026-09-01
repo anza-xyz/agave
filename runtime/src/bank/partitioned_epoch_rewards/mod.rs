@@ -212,7 +212,7 @@ pub(super) struct RewardLamportAmounts {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct RewardCommissionAccounts {
+pub(super) struct EpochBoundaryAccounts {
     /// accounts with rewards to be stored
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
     /// vote accounts whose pending delegator rewards were swept, to be stored
@@ -221,28 +221,27 @@ pub(super) struct RewardCommissionAccounts {
     pub(super) amounts: RewardLamportAmounts,
 }
 
-/// Wrapper struct to implement StorableAccounts for RewardCommissionAccounts
-pub(super) struct RewardCommissionAccountsStorable<'a> {
+/// Wrapper struct to implement StorableAccounts for EpochBoundaryAccounts
+pub(super) struct EpochBoundaryAccountsStorable<'a> {
     pub slot: Slot,
-    pub reward_commission_accounts: &'a RewardCommissionAccounts,
+    pub epoch_boundary_accounts: &'a EpochBoundaryAccounts,
 }
 
-impl<'a> RewardCommissionAccountsStorable<'a> {
+impl<'a> EpochBoundaryAccountsStorable<'a> {
     fn get_unchecked(&self, index: usize) -> (&Pubkey, &AccountSharedData) {
-        let num_accounts_with_rewards = self.reward_commission_accounts.accounts_with_rewards.len();
+        let num_accounts_with_rewards = self.epoch_boundary_accounts.accounts_with_rewards.len();
         if index >= num_accounts_with_rewards {
-            let (pubkey, account) = &self.reward_commission_accounts.swept_vote_accounts
+            let (pubkey, account) = &self.epoch_boundary_accounts.swept_vote_accounts
                 [index - num_accounts_with_rewards];
             (pubkey, account)
         } else {
-            let (pubkey, _, account) =
-                &self.reward_commission_accounts.accounts_with_rewards[index];
+            let (pubkey, _, account) = &self.epoch_boundary_accounts.accounts_with_rewards[index];
             (pubkey, account)
         }
     }
 }
 
-impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
+impl<'a> StorableAccounts<'a> for EpochBoundaryAccountsStorable<'a> {
     fn account<Ret>(
         &self,
         index: usize,
@@ -282,8 +281,8 @@ impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
     }
 
     fn len(&self) -> usize {
-        self.reward_commission_accounts.accounts_with_rewards.len()
-            + self.reward_commission_accounts.swept_vote_accounts.len()
+        self.epoch_boundary_accounts.accounts_with_rewards.len()
+            + self.epoch_boundary_accounts.swept_vote_accounts.len()
     }
 }
 
