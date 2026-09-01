@@ -17,6 +17,12 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* The `jsonParsed` encoding now parses stake instructions that use the reduced account layouts
+  accepted by the Core BPF stake program (v5.0.0, [SIMD-0490](https://github.com/solana-foundation/solana-improvement-documents/pull/490)),
+  which omit sysvar and stake config accounts. These instructions were previously returned in
+  `partiallyDecoded` form; they now return the same parsed fields as the legacy layouts with the
+  omitted accounts absent. Trailing stake authority accounts that the stake program no longer
+  reads are now optional when parsing the legacy layouts.
 ### Validator
 #### Breaking
 * scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
