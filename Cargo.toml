@@ -324,7 +324,7 @@ reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.5"
-rts-alloc = { version = "5.0.0" }
+rts-alloc = { version = "5.1.0" }
 rusb = "0.9"
 rustls = { version = "0.23.43", features = ["std"], default-features = false }
 rustls-webpki = { version = "0.103.15", default-features = false, features = ["std"] }
