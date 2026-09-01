@@ -6968,8 +6968,7 @@ fn test_vat_burn_slot_params() {
             &validator_keypairs,
             vec![minimum_vote_account_balance_for_vat(100)],
             ClusterType::Development,
-            &FeatureSet::default(),
-            false,
+            FeatureSet::default(),
         );
         activate_feature(&mut genesis_config, feature_set::alpenglow::id());
         if let Some(feature_id) = slot_time_feature_id {

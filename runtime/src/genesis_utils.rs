@@ -152,8 +152,7 @@ pub fn create_genesis_config_with_vote_accounts(
         voting_keypairs,
         stakes,
         ClusterType::Development,
-        &FeatureSet::all_enabled(),
-        true,
+        FeatureSet::all_enabled(),
     )
 }
 
@@ -163,13 +162,14 @@ pub fn create_genesis_config_with_tower_vote_accounts(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
 ) -> GenesisConfigInfo {
+    let mut feature_set = FeatureSet::all_enabled();
+    feature_set.deactivate(&agave_feature_set::alpenglow::id());
     create_genesis_config_with_vote_accounts_and_cluster_type(
         mint_lamports,
         voting_keypairs,
         stakes,
         ClusterType::Development,
-        &FeatureSet::all_enabled(),
-        false,
+        feature_set,
     )
 }
 
@@ -178,8 +178,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
     cluster_type: ClusterType,
-    feature_set: &FeatureSet,
-    is_alpenglow: bool,
+    feature_set: FeatureSet,
 ) -> GenesisConfigInfo {
     assert!(!voting_keypairs.is_empty());
     assert_eq!(voting_keypairs.len(), stakes.len());
@@ -196,14 +195,6 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             .public
             .to_bytes_compressed(),
     );
-    let mut feature_set = if is_alpenglow {
-        FeatureSet::all_enabled()
-    } else {
-        feature_set.clone()
-    };
-    if !is_alpenglow {
-        feature_set.deactivate(&agave_feature_set::alpenglow::id());
-    }
 
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
