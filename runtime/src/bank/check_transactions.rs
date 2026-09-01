@@ -35,8 +35,6 @@ impl Bank {
     ) -> TransactionResult<Option<Pubkey>> {
         self.check_v1_enabled(tx)?;
 
-        self.check_compute_budget_and_limits(tx, error_counters)?;
-
         let hash_queue = self.blockhash_queue.read().unwrap();
         let next_durable_nonce = hash_queue.next_durable_nonce();
 
