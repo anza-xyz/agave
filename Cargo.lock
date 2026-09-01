@@ -1191,6 +1191,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dfdb4953a096c551ce9ace855a604d702e6e62d77fac690575ae347571717f5"
 
 [[package]]
+name = "bg-compression"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "zstd",
+]
+
+[[package]]
+name = "bg-config"
+version = "0.1.0"
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7836,6 +7848,7 @@ dependencies = [
  "arrayvec",
  "assert_matches",
  "bencher",
+ "bg-compression",
  "bincode",
  "bitvec",
  "bytes",

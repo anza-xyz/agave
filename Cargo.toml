@@ -29,6 +29,7 @@ members = [
     "core",
     "cost-model",
     "cpu-utils",
+    "compression",
     "download-utils",
     "entry",
     "faucet",

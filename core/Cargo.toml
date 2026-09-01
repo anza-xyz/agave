@@ -71,6 +71,7 @@ assert_matches = { workspace = true }
 bincode = { workspace = true }
 bitvec = { workspace = true }
 bytes = { workspace = true }
+bg-compression = { path = "../compression" }
 chrono = { workspace = true, features = ["default", "serde"] }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
