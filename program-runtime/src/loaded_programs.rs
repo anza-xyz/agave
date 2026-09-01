@@ -539,7 +539,14 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             let relation =
                                 fork_graph.relationship(entry.deployment_slot, new_root_slot);
                             if entry.deployment_slot >= new_root_slot {
-                                matches!(relation, BlockRelation::Equal | BlockRelation::Descendant)
+                                let keep = matches!(
+                                    relation,
+                                    BlockRelation::Equal | BlockRelation::Descendant
+                                );
+                                if !keep {
+                                    self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
+                                }
+                                keep
                             } else if matches!(relation, BlockRelation::Ancestor)
                                 || entry.deployment_slot <= self.latest_root_slot
                             {
@@ -1870,6 +1877,7 @@ pub(crate) mod tests {
             IndexImplementation::V1 { entries, .. } => assert!(!entries.contains_key(&emptied)),
         }
         assert_eq!(cache.stats.empty_entries.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.stats.prunes_orphan.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -2011,6 +2019,39 @@ pub(crate) mod tests {
         assert_eq!(slot_versions.len(), 1);
         assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &entry));
         assert_eq!(cache.stats.prunes_orphan.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_prune_orphan_newer_than_root() {
+        // Fork graph created for the test
+        //                50  ?  100
+        //                ^^     ^^^
+        //                |      the entry is deployed here
+        //                the new root
+        //
+        // Here we want to test the other side of the root from the test above:
+        // an entry deployed past it, which the graph cannot place either.
+        // Therefore it is pruned, where the one behind the root was kept.
+        let (mut cache, fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Unknown);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+        let orphan = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(env.clone()),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&orphan));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 1);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &orphan));
+
+        cache.prune(50, None, &fork_graph.read().unwrap());
+
+        // Past the root there is no `deployment_slot <= latest_root_slot`
+        // fallback to keep it, so the entry the graph cannot place goes.
+        assert!(cache.get_slot_versions_for_tests(&program_id).is_empty());
+        assert_eq!(cache.stats.prunes_orphan.load(Ordering::Relaxed), 1);
     }
 
     #[test]
