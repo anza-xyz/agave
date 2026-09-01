@@ -6943,10 +6943,11 @@ impl InvokeContextCallback for Bank {
 }
 
 impl TransactionProcessingCallback for Bank {
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.rc
             .accounts
             .load_with_fixed_root(&self.ancestors, pubkey, None::<fn(_, &_, _) -> _>)
+            .map(|(account, _slot)| account)
     }
 
     fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {

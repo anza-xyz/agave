@@ -1908,7 +1908,7 @@ fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_sema
         for key in &transaction.message.account_keys {
             if let Some(n) = bank
                 .get_account_shared_data(key)
-                .map(|(account, _)| account.data().len())
+                .map(|account| account.data().len())
             {
                 loaded_accounts_data_size += (n + TRANSACTION_ACCOUNT_BASE_SIZE) as u32
             }

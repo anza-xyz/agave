@@ -186,10 +186,10 @@ pub fn fill_program_cache_from_accounts(
 struct FillFromAccountsCallback<'a>(&'a [(Pubkey, Account)]);
 
 impl TransactionProcessingCallback for FillFromAccountsCallback<'_> {
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, u64)> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.0
             .iter()
             .find(|(found_pubkey, _)| *found_pubkey == *pubkey)
-            .map(|(_, account)| (AccountSharedData::from(account.clone()), 0u64))
+            .map(|(_, account)| AccountSharedData::from(account.clone()))
     }
 }
