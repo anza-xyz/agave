@@ -67,6 +67,7 @@ agave-votor-messages = { path = "../votor-messages", features = ["dev-context-on
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }
+clap = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }

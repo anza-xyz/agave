@@ -11345,6 +11345,7 @@ dependencies = [
  "bencher",
  "bs58",
  "bytes",
+ "clap 2.33.3",
  "crossbeam-channel",
  "itertools 0.15.0",
  "lazy-lru",
