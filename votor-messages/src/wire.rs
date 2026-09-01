@@ -85,8 +85,9 @@ pub(crate) struct WireVoteSignature {
 
 impl From<VoteMessage> for WireVoteSignature {
     fn from(msg: VoteMessage) -> Self {
-        let signature = BLSSignature::from(msg.signature);
-        Self { signature }
+        Self {
+            signature: msg.signature,
+        }
     }
 }
 

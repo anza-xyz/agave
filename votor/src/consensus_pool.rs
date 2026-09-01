@@ -584,7 +584,7 @@ mod tests {
         bitvec::vec::BitVec,
         solana_bls_signatures::{
             BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature, VerifiableSignature,
-            keypair::Keypair as BLSKeypair, signature::SignatureAffine,
+            keypair::Keypair as BLSKeypair,
         },
         solana_clock::Slot,
         solana_hash::Hash,
@@ -746,7 +746,7 @@ mod tests {
                 .unwrap()
                 .stake;
             let payload = get_vote_payload_to_sign(vote, self.pool.cluster_info.my_shred_version());
-            let signature = SignatureAffine::from(bls_keypair.sign(&payload));
+            let signature: BLSSignature = bls_keypair.sign(&payload).into();
             VoteMessage {
                 vote,
                 signature,
@@ -804,7 +804,7 @@ mod tests {
             .unwrap()
             .stake;
         let payload = get_vote_payload_to_sign(*vote, shred_version);
-        let signature = SignatureAffine::from(bls_keypair.sign(&payload));
+        let signature: BLSSignature = bls_keypair.sign(&payload).into();
         let msg = VoteMessage {
             vote: *vote,
             signature,

@@ -562,9 +562,7 @@ mod tests {
         bitvec::prelude::{BitVec, Lsb0},
         bytes::Bytes,
         crossbeam_channel::{Receiver, TryRecvError, bounded},
-        solana_bls_signatures::{
-            BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, Signature, signature::SignatureAffine,
-        },
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, Signature},
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
@@ -736,7 +734,7 @@ mod tests {
     ) -> VoteMessage {
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
         let payload = get_vote_payload_to_sign(vote, shred_version);
-        let signature = SignatureAffine::from(bls_keypair.sign(&payload));
+        let signature: Signature = bls_keypair.sign(&payload).into();
         VoteMessage {
             vote,
             signature,
@@ -975,13 +973,10 @@ mod tests {
         expect_no_receive(&ctx.pool_receiver);
 
         // Send a packet with invalid rank
-        let vote = Vote::new_finalization_vote(5);
-        let payload = get_vote_payload_to_sign(vote, ctx.verifier.cluster_info.my_shred_version());
-        let signature = SignatureAffine::from(ctx.validator_keypairs[0].bls_keypair.sign(&payload));
         let messages_invalid_rank = [(
             ConsensusMessage::Vote(VoteMessage {
                 vote: Vote::new_finalization_vote(5),
-                signature,
+                signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 rank: 1000, // Invalid rank
                 stake: NonZero::new(123).unwrap(),
             }),
@@ -1129,7 +1124,7 @@ mod tests {
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
-            let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
+            let signature: Signature = bls_keypair.sign(&vote_payload).into();
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
                 vote,
                 signature,
@@ -1273,9 +1268,9 @@ mod tests {
             };
 
             let signature = if rank == invalid_rank {
-                SignatureAffine::from(bls_keypair.sign(&invalid_payload)) // Invalid signature
+                bls_keypair.sign(&invalid_payload).into() // Invalid signature
             } else {
-                SignatureAffine::from(bls_keypair.sign(payload))
+                bls_keypair.sign(payload).into()
             };
 
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
@@ -1336,9 +1331,9 @@ mod tests {
             let bls_keypair = &validator_keypair.bls_keypair;
 
             let signature = if rank == invalid_rank {
-                SignatureAffine::from(bls_keypair.sign(&invalid_vote_payload)) // Invalid signature
+                bls_keypair.sign(&invalid_vote_payload).into() // Invalid signature
             } else {
-                SignatureAffine::from(bls_keypair.sign(&valid_vote_payload)) // Valid signature
+                bls_keypair.sign(&valid_vote_payload).into() // Valid signature
             };
 
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
@@ -1541,7 +1536,7 @@ mod tests {
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
-            let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
+            let signature = bls_keypair.sign(&vote_payload).into();
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
                 vote,
                 signature,
@@ -1611,7 +1606,7 @@ mod tests {
         let vote_payload =
             get_vote_payload_to_sign(vote, ctx.verifier.cluster_info.my_shred_version());
         let bls_keypair = &ctx.validator_keypairs[0].bls_keypair;
-        let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
+        let signature: Signature = bls_keypair.sign(&vote_payload).into();
 
         let consensus_message = ConsensusMessage::Vote(VoteMessage {
             vote,
@@ -1691,7 +1686,7 @@ mod tests {
         let vote_payload =
             get_vote_payload_to_sign(vote, sig_verifier.cluster_info.my_shred_version());
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
-        let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
+        let signature: Signature = bls_keypair.sign(&vote_payload).into();
         let consensus_message_vote = ConsensusMessage::Vote(VoteMessage {
             vote,
             signature,
@@ -1935,9 +1930,9 @@ mod tests {
             .take(5)
             .map(|(i, keypair)| {
                 let signature = if invalid_indexes.contains(&i) {
-                    SignatureAffine::from(keypair.bls_keypair.sign(&invalid_payload))
+                    keypair.bls_keypair.sign(&invalid_payload).into()
                 } else {
-                    SignatureAffine::from(keypair.bls_keypair.sign(&valid_payload))
+                    keypair.bls_keypair.sign(&valid_payload).into()
                 };
                 let message = ConsensusMessage::Vote(VoteMessage {
                     vote,

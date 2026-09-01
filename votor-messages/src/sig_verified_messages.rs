@@ -6,7 +6,7 @@ use {
         wire::VotePayloadToSign,
     },
     bitvec::vec::BitVec,
-    solana_bls_signatures::{SignatureProjective, signature::SignatureAffine},
+    solana_bls_signatures::{Signature as BLSSignature, SignatureProjective},
     std::num::NonZero,
 };
 
@@ -42,12 +42,12 @@ impl SigVerifiedBatch {
 ///
 /// NOTE: the fields should not be exposed outside of the crate so that users use approved paths to
 /// build it to ensure signature verification takes place.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VoteAggregate {
     /// The type of vote in the batch.
     vote: Vote,
     /// The aggregate signature of the votes in the batch.
-    signature: SignatureAffine,
+    signature: BLSSignature,
     /// The total stake in the batch.
     stake: NonZero<u64>,
     /// Ranks of the various validators whose votes are in the batch.
@@ -114,7 +114,7 @@ impl VoteAggregate {
     }
 
     /// Accessor for the signature.
-    pub fn signature(&self) -> &SignatureAffine {
+    pub fn signature(&self) -> &BLSSignature {
         &self.signature
     }
 
