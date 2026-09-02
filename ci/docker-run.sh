@@ -133,6 +133,7 @@ ARGS+=(
   --env CI_JOB_ID
   --env CI_PULL_REQUEST
   --env CI_REPO_SLUG
+  --env "CARGO_NET_GIT_FETCH_WITH_CLI=true"
 )
 
 CODECOV_ENVS=
