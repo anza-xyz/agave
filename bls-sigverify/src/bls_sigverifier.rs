@@ -4,11 +4,15 @@ use {
     crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
         bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
+        certs_verifier::CertsVerifier,
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
+        msg_receiver::MsgReceiver,
         rewards::{RewardInput, rewards_wants_vote},
         stats::SigVerifierStats,
         vote_pool::{VotePool, VotePoolError},
+        votes_processor::VotesProcessor,
+        votes_verifier::VotesVerifier,
     },
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
@@ -24,7 +28,7 @@ use {
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
     agave_votor_transport::endpoint::{BanSender, Datagram},
-    crossbeam_channel::{Receiver, Sender, TryRecvError, select},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, select},
     log::{error, info},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_clock::{Epoch, Slot},
@@ -107,18 +111,86 @@ impl SigVerifierChannels {
     }
 }
 
-/// Starts the BLS sigverifier service in its own dedicated thread.
 pub fn spawn_service(
     exit: Arc<AtomicBool>,
     context: SigVerifierContext,
     channels: SigVerifierChannels,
 ) -> thread::JoinHandle<()> {
-    let verifier = SigVerifier::new(context, channels);
+    let (unverified_votes_sender, unverified_votes_receiver) = bounded(2);
+    let (unverified_certs_sender, unverified_certs_receiver) = bounded(2);
+    let (verified_votes_sender, verified_votes_receiver) = bounded(2);
+    let msg_receiver = MsgReceiver::new(
+        exit.clone(),
+        context.migration_status,
+        channels.packet_receiver,
+        channels.certificate_receiver,
+        context.highest_parent_ready,
+        context.cluster_info.clone(),
+        context.sharable_banks.clone(),
+        context.leader_schedule.clone(),
+        context.ban_sender.clone(),
+        context.generated_cert_types,
+        unverified_votes_sender,
+        unverified_certs_sender,
+    );
 
-    Builder::new()
-        .name("solSigVerBLS".to_string())
-        .spawn(move || verifier.run(exit))
-        .unwrap()
+    let thread_pool = Arc::new(
+        ThreadPoolBuilder::new()
+            .num_threads(context.num_threads)
+            .thread_name(|i| format!("solBls{i:02}"))
+            .build()
+            .unwrap(),
+    );
+    let votes_verifier = VotesVerifier::new(
+        exit.clone(),
+        unverified_votes_receiver,
+        verified_votes_sender,
+        context.ban_sender.clone(),
+        thread_pool.clone(),
+        context.sharable_banks.clone(),
+    );
+
+    let votes_processor = VotesProcessor::new(
+        exit.clone(),
+        verified_votes_receiver,
+        context.sharable_banks.clone(),
+        context.cluster_info.clone(),
+        context.leader_schedule,
+        channels.channel_to_repair,
+        channels.channel_to_reward,
+        channels.channel_to_pool.clone(),
+        channels.channel_to_metrics,
+    );
+
+    let certs_verifier = CertsVerifier::new(
+        exit,
+        unverified_certs_receiver,
+        context.cluster_info,
+        context.sharable_banks,
+        channels.channel_to_pool,
+        context.ban_sender,
+        thread_pool,
+    );
+
+    let msg_receiver = Builder::new()
+        .name("solBlsMsg".to_string())
+        .spawn(move || msg_receiver.run())
+        .unwrap();
+    let _votes_verifier = Builder::new()
+        .name("solBlsVote".to_string())
+        .spawn(move || votes_verifier.run())
+        .unwrap();
+    let _votes_processor = Builder::new()
+        .name("solBlsVoteP".to_string())
+        .spawn(move || votes_processor.run())
+        .unwrap();
+    let _certs_verifier = Builder::new()
+        .name("solBlsCert".to_string())
+        .spawn(move || certs_verifier.run())
+        .unwrap();
+
+    // TODO: handle joining all threads
+    msg_receiver
 }
 
 struct ExtractedMsgs {

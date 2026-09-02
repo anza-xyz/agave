@@ -46,11 +46,11 @@ use {
 };
 
 #[derive(Default)]
-struct ProcessedVotes {
-    reward_msg: Vec<VoteAggregate>,
-    repair_msg: HashMap<Pubkey, Vec<Slot>>,
-    vote_aggregates_for_pool: Vec<VoteAggregate>,
-    metrics_msg: Vec<ConsensusMetricsEvent>,
+pub(crate) struct ProcessedVotes {
+    pub(crate) reward_msg: Vec<VoteAggregate>,
+    pub(crate) repair_msg: HashMap<Pubkey, Vec<Slot>>,
+    pub(crate) vote_aggregates_for_pool: Vec<VoteAggregate>,
+    pub(crate) metrics_msg: Vec<ConsensusMetricsEvent>,
 }
 
 impl ProcessedVotes {
@@ -77,9 +77,9 @@ impl ProcessedVotes {
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-struct VerifiedVotePayload {
-    vote_aggregate: VoteAggregate,
-    sender_vote_account_pubkeys: Vec<Pubkey>,
+pub(crate) struct VerifiedVotePayload {
+    pub(crate) vote_aggregate: VoteAggregate,
+    pub(crate) sender_vote_account_pubkeys: Vec<Pubkey>,
 }
 
 /// [`VoteMessage`] along with other information needed to sig verify it.
@@ -95,7 +95,7 @@ pub(super) struct UnverifiedVotePayload {
 }
 
 impl UnverifiedVotePayload {
-    fn verify(
+    pub(crate) fn verify(
         &self,
         max_validators: usize,
         prepared_hashed_message: &PreparedHashedMessage,

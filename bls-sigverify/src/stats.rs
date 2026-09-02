@@ -584,3 +584,127 @@ impl SenderStats {
         );
     }
 }
+
+pub(crate) struct VotesVerifierStats {
+    last_report: Reporting,
+    pub(crate) votes_verified: Saturating<u64>,
+}
+
+impl VotesVerifierStats {
+    pub(crate) fn new(root_slot: Slot) -> Self {
+        Self {
+            last_report: Reporting::new(root_slot),
+            votes_verified: Saturating(0),
+        }
+    }
+
+    pub(crate) fn maybe_report(&mut self, root_slot: Slot) {
+        if self.last_report.should_report(root_slot).is_some() {
+            let mut stats = Self::new(root_slot);
+            std::mem::swap(self, &mut stats);
+            stats.do_report();
+        }
+    }
+
+    fn do_report(self) {
+        let Self {
+            last_report: _,
+            votes_verified,
+        } = self;
+
+        datapoint_info!(
+            "bls_votes_verifier_stats",
+            ("votes_verified", votes_verified.0, i64),
+        );
+    }
+}
+
+pub(crate) struct MsgReceiverStats {
+    last_report: Reporting,
+    pub(crate) votes_received: Saturating<u64>,
+    pub(crate) votes_too_far_in_future: Saturating<u64>,
+    pub(crate) old_votes_received: Saturating<u64>,
+    pub(crate) vote_invalid_rank: Saturating<u64>,
+    pub(crate) duplicate_vote: Saturating<u64>,
+    pub(crate) invalid_vote: Saturating<u64>,
+    pub(crate) vote_no_epoch_stakes: Saturating<u64>,
+    pub(crate) keep_vote_failed: Saturating<u64>,
+    pub(crate) certs_received: Saturating<u64>,
+    pub(crate) certs_too_far_in_future_received: Saturating<u64>,
+    pub(crate) old_certs_received: Saturating<u64>,
+    pub(crate) generated_certs_received: Saturating<u64>,
+    pub(crate) deserialization_failed: Saturating<u64>,
+    pub(crate) total_pkts: Saturating<u64>,
+}
+
+impl MsgReceiverStats {
+    pub(crate) fn new(root_slot: Slot) -> Self {
+        Self {
+            last_report: Reporting::new(root_slot),
+            votes_received: Saturating(0),
+            votes_too_far_in_future: Saturating(0),
+            old_votes_received: Saturating(0),
+            vote_invalid_rank: Saturating(0),
+            duplicate_vote: Saturating(0),
+            invalid_vote: Saturating(0),
+            vote_no_epoch_stakes: Saturating(0),
+            keep_vote_failed: Saturating(0),
+            certs_received: Saturating(0),
+            certs_too_far_in_future_received: Saturating(0),
+            old_certs_received: Saturating(0),
+            generated_certs_received: Saturating(0),
+            deserialization_failed: Saturating(0),
+            total_pkts: Saturating(0),
+        }
+    }
+
+    pub(crate) fn maybe_report(&mut self, root_slot: Slot) {
+        if self.last_report.should_report(root_slot).is_some() {
+            let mut stats = Self::new(root_slot);
+            std::mem::swap(self, &mut stats);
+            stats.do_report();
+        }
+    }
+
+    pub(crate) fn do_report(self) {
+        let Self {
+            last_report: _,
+            votes_received,
+            votes_too_far_in_future,
+            old_votes_received,
+            vote_invalid_rank,
+            duplicate_vote,
+            invalid_vote,
+            vote_no_epoch_stakes,
+            keep_vote_failed,
+            certs_received,
+            certs_too_far_in_future_received,
+            old_certs_received,
+            generated_certs_received,
+            deserialization_failed,
+            total_pkts,
+        } = self;
+
+        datapoint_info!(
+            "bls_msg_receiver_stats",
+            ("votes_received", votes_received.0, i64),
+            ("votes_too_far_in_future", votes_too_far_in_future.0, i64),
+            ("old_votes_received", old_votes_received.0, i64),
+            ("vote_invalid_rank", vote_invalid_rank.0, i64),
+            ("duplicate_vote", duplicate_vote.0, i64),
+            ("invalid_vote", invalid_vote.0, i64),
+            ("vote_no_epoch_stakes", vote_no_epoch_stakes.0, i64),
+            ("keep_vote_failed", keep_vote_failed.0, i64),
+            ("certs_received", certs_received.0, i64),
+            (
+                "certs_to_far_in_future",
+                certs_too_far_in_future_received.0,
+                i64
+            ),
+            ("old_certs_received", old_certs_received.0, i64),
+            ("generated_certs_received", generated_certs_received.0, i64),
+            ("deserialization_failed", deserialization_failed.0, i64),
+            ("total_pkts", total_pkts.0, i64),
+        );
+    }
+}
