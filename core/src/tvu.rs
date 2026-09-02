@@ -27,7 +27,7 @@ use {
         window_service::{WindowService, WindowServiceChannels},
     },
     agave_bls_sigverify::{
-        bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
+        bls_sigverifier::{BlsSigverifyService, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
         rewards::RewardInput,
     },
@@ -131,7 +131,7 @@ pub struct Tvu {
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
-    bls_sigverifier: JoinHandle<()>,
+    bls_sigverifier: BlsSigverifyService,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
     votor_transport_endpoint: QuicDatagramEndpoint,
@@ -356,7 +356,7 @@ impl Tvu {
             );
         }
         let votor_ban_sender = endpoint.ban_sender();
-        let bls_sigverifier = bls_sigverifier::spawn_service(
+        let bls_sigverifier = BlsSigverifyService::new(
             exit.clone(),
             SigVerifierContext {
                 migration_status: migration_status.clone(),

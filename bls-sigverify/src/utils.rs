@@ -2,10 +2,11 @@ use {
     crate::{
         errors::{SigVerifyCertError, SigVerifyVoteError},
         rewards::RewardInput,
-        stats::{SenderStats, VoteSenderStats},
+        stats::{CertsVerifierStats, VoteProcessorStats},
     },
     agave_votor_messages::{
         VerifiedVotorSlotsMessage,
+        certificate::Certificate,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
@@ -26,15 +27,17 @@ pub(super) fn send_votes_to_metrics(
     my_pubkey: &Pubkey,
     votes: Vec<ConsensusMetricsEvent>,
     channel: &ConsensusMetricsEventSender,
-    stats: &mut VoteSenderStats,
+    stats: &mut VoteProcessorStats,
 ) {
-    let len = votes.len();
+    if votes.is_empty() {
+        return;
+    }
     let msg = (Instant::now(), votes);
     match channel.try_send(msg) {
-        Ok(()) => stats.metrics_sender.sent += len as u64,
+        Ok(()) => stats.metrics_channel_succ += 1,
         Err(TrySendError::Full(_)) => {
+            stats.metrics_channel_drops += 1;
             warn!("{my_pubkey}: channel \"{METRICS_CHANNEL}\" is full, dropping msg");
-            stats.metrics_sender.channel_full += 1;
         }
         Err(TrySendError::Disconnected(_)) => {
             warn!("{my_pubkey}: channel \"{METRICS_CHANNEL}\" disconnected");
@@ -46,18 +49,17 @@ pub(super) fn send_votes_to_rewards(
     my_pubkey: &Pubkey,
     votes: Vec<VoteAggregate>,
     channel: &Sender<RewardInput>,
-    stats: &mut VoteSenderStats,
+    stats: &mut VoteProcessorStats,
 ) {
     if votes.is_empty() {
         return;
     }
-    let len = votes.len();
     let msg = RewardInput::External(votes);
     match channel.try_send(msg) {
-        Ok(()) => stats.rewards_sender.sent += len as u64,
+        Ok(()) => stats.rewards_channel_succ += 1,
         Err(TrySendError::Full(_)) => {
+            stats.rewards_channel_drops += 1;
             warn!("{my_pubkey}: channel \"{REWARDS_CHANNEL}\" is full, dropping msg");
-            stats.rewards_sender.channel_full += 1
         }
         Err(TrySendError::Disconnected(_)) => {
             warn!("{my_pubkey}: channel \"{REWARDS_CHANNEL}\" disconnected");
@@ -69,26 +71,26 @@ pub(super) fn send_votes_to_rewards(
 /// blocking send.
 pub(super) fn send_sig_verified_batch_to_pool(
     my_pubkey: &Pubkey,
-    batch: SigVerifiedBatch,
+    verified_vote_aggregates: Vec<VoteAggregate>,
     channel: &Sender<SigVerifiedBatch>,
-    stats: &mut VoteSenderStats,
+    stats: &mut VoteProcessorStats,
 ) -> Result<(), SigVerifyVoteError> {
-    if batch.is_empty() {
+    if verified_vote_aggregates.is_empty() {
         return Ok(());
     }
-    let len = batch.len();
+    let batch = SigVerifiedBatch::Votes(verified_vote_aggregates);
     match channel.try_send(batch) {
         Ok(()) => {
-            stats.pool_sender.sent += len as u64;
+            stats.pool_channel_succ += 1;
             Ok(())
         }
         Err(TrySendError::Full(msgs)) => {
-            stats.pool_sender.channel_full += 1;
+            stats.pool_channel_full += 1;
             error!("{my_pubkey}: channel \"{POOL_CHANNEL}\" is full.  Doing a blocking send.");
             match channel.send(msgs) {
                 Ok(()) => {
+                    stats.pool_channel_reopened += 1;
                     info!("{my_pubkey}: channel \"{POOL_CHANNEL}\" has space again");
-                    stats.pool_sender.sent += len as u64;
                     Ok(())
                 }
                 Err(_) => Err(SigVerifyVoteError::ChannelDisconnected(POOL_CHANNEL)),
@@ -104,16 +106,16 @@ pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
     votes: HashMap<Slot, Vec<Pubkey>>,
     channel: &EvictingSender<VerifiedVotorSlotsMessage>,
-    stats: &mut VoteSenderStats,
+    stats: &mut VoteProcessorStats,
 ) {
     if votes.is_empty() {
         return;
     }
     match channel.try_send(votes) {
-        Ok(()) => stats.repair_sender.sent += 1,
+        Ok(()) => stats.repair_channel_succ += 1,
         Err(TrySendError::Full(_)) => {
+            stats.repair_channel_drops += 1;
             warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");
-            stats.repair_sender.channel_full += 1
         }
         Err(TrySendError::Disconnected(_)) => {
             warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" disconnected");
@@ -125,26 +127,26 @@ pub(super) fn send_votes_to_repair(
 /// blocking send.
 pub(super) fn send_certs_to_pool(
     my_pubkey: &Pubkey,
-    batch: SigVerifiedBatch,
+    verified_certs: Vec<Certificate>,
     channel: &Sender<SigVerifiedBatch>,
-    stats: &mut SenderStats,
+    stats: &mut CertsVerifierStats,
 ) -> Result<(), SigVerifyCertError> {
-    if batch.is_empty() {
+    if verified_certs.is_empty() {
         return Ok(());
     }
-    let len = batch.len();
+    let batch = SigVerifiedBatch::Certificates(verified_certs);
     match channel.try_send(batch) {
         Ok(()) => {
-            stats.sent += len as u64;
+            stats.pool_channel_succ += 1;
             Ok(())
         }
         Err(TrySendError::Full(msgs)) => {
-            stats.channel_full += 1;
+            stats.pool_channel_full += 1;
             error!("{my_pubkey}: channel \"{POOL_CHANNEL}\" is full.  Doing a blocking send.");
             match channel.send(msgs) {
                 Ok(()) => {
+                    stats.pool_channel_reopened += 1;
                     info!("{my_pubkey}: channel \"{POOL_CHANNEL}\" has space again");
-                    stats.sent += len as u64;
                     Ok(())
                 }
                 Err(_) => Err(SigVerifyCertError::ChannelDisconnected(POOL_CHANNEL)),

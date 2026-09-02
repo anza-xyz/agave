@@ -184,3 +184,196 @@ impl VotePool {
         self.entries.retain(|slot, _| slot >= &slot_to_keep);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*, agave_votor_messages::consensus_message::Block, solana_bls_signatures::Keypair,
+    };
+
+    fn message(vote: Vote) -> UnverifiedVoteMessage {
+        // VotePool inspects vote state, not signatures.
+        UnverifiedVoteMessage {
+            vote,
+            signature: Keypair::new().sign(b"vote pool test").into(),
+            shred_version: 0,
+        }
+    }
+
+    #[test]
+    fn duplicates_are_scoped_to_voter_and_slot() {
+        let block = Block::new_unique(5);
+        for vote in [
+            Vote::new_skip_vote(5),
+            Vote::new_skip_fallback_vote(5),
+            Vote::new_finalization_vote(5),
+            Vote::new_notarization_vote(block),
+            Vote::new_notarization_fallback_vote(block),
+            Vote::new_genesis_vote(block),
+        ] {
+            let mut pool = VotePool::default();
+            let msg = message(vote);
+            assert!(pool.try_add_vote(&msg, 0, 2).is_ok());
+            assert!(matches!(
+                pool.try_add_vote(&msg, 0, 2),
+                Err(VotePoolError::Duplicate)
+            ));
+            assert!(pool.try_add_vote(&msg, 1, 2).is_ok());
+        }
+        let mut pool = VotePool::default();
+        assert!(
+            pool.try_add_vote(&message(Vote::new_skip_vote(5)), 0, 2)
+                .is_ok()
+        );
+        assert!(
+            pool.try_add_vote(&message(Vote::new_finalization_vote(6)), 0, 2)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn vote_combinations_in_both_arrival_orders() {
+        let block = Block::new_unique(5);
+        let votes = [
+            Vote::new_skip_vote(5),
+            Vote::new_skip_fallback_vote(5),
+            Vote::new_finalization_vote(5),
+            Vote::new_notarization_vote(block),
+            Vote::new_notarization_fallback_vote(block),
+            Vote::new_genesis_vote(block),
+        ];
+        // Allowed pairs: skip + notar fallback; skip fallback + notar;
+        // skip fallback + notar fallback; finalize + notar.
+        let allowed_pairs = [(0, 4), (1, 3), (1, 4), (2, 3)];
+        for (i, first) in votes.iter().enumerate() {
+            for (j, second) in votes.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let mut pool = VotePool::default();
+                assert!(pool.try_add_vote(&message(*first), 0, 2).is_ok());
+                let result = pool.try_add_vote(&message(*second), 0, 2);
+                if allowed_pairs.contains(&(i.min(j), i.max(j))) {
+                    assert!(result.is_ok(), "{first:?} then {second:?}");
+                } else {
+                    assert!(
+                        matches!(result, Err(VotePoolError::Invalid)),
+                        "{first:?} then {second:?}"
+                    );
+                }
+                // Rejecting or accepting another vote must preserve the original vote.
+                assert!(matches!(
+                    pool.try_add_vote(&message(*first), 0, 2),
+                    Err(VotePoolError::Duplicate)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn conflicting_block_hashes_and_distinct_fallbacks() {
+        let block1 = Block::new_unique(5);
+        let block2 = Block::new_unique(5);
+        for (first, second) in [
+            (
+                Vote::new_notarization_vote(block1),
+                Vote::new_notarization_vote(block2),
+            ),
+            (
+                Vote::new_genesis_vote(block1),
+                Vote::new_genesis_vote(block2),
+            ),
+        ] {
+            let mut pool = VotePool::default();
+            assert!(pool.try_add_vote(&message(first), 0, 2).is_ok());
+            assert!(matches!(
+                pool.try_add_vote(&message(second), 0, 2),
+                Err(VotePoolError::Invalid)
+            ));
+            assert!(matches!(
+                pool.try_add_vote(&message(first), 0, 2),
+                Err(VotePoolError::Duplicate)
+            ));
+        }
+        let notar = message(Vote::new_notarization_vote(block1));
+        let fallback = message(Vote::new_notarization_fallback_vote(block2));
+        for (first, second) in [(&notar, &fallback), (&fallback, &notar)] {
+            let mut pool = VotePool::default();
+            assert!(pool.try_add_vote(first, 0, 2).is_ok());
+            assert!(pool.try_add_vote(second, 0, 2).is_ok());
+        }
+    }
+
+    #[test]
+    fn notar_fallback_limit_counts_distinct_blocks_per_voter_and_slot() {
+        let mut pool = VotePool::default();
+        let votes = (0..4)
+            .map(|_| message(Vote::new_unique_notar_fallback(5)))
+            .collect::<Vec<_>>();
+        for msg in &votes[..3] {
+            assert!(pool.try_add_vote(msg, 0, 2).is_ok());
+            assert!(matches!(
+                pool.try_add_vote(msg, 0, 2),
+                Err(VotePoolError::Duplicate)
+            ));
+        }
+        assert!(matches!(
+            pool.try_add_vote(&votes[3], 0, 2),
+            Err(VotePoolError::Invalid)
+        ));
+        assert!(matches!(
+            pool.try_add_vote(&votes[0], 0, 2),
+            Err(VotePoolError::Duplicate)
+        ));
+        assert!(pool.try_add_vote(&votes[3], 1, 2).is_ok());
+        assert!(
+            pool.try_add_vote(&message(Vote::new_unique_notar_fallback(6)), 0, 2)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn pruning_preserves_reward_window_boundary() {
+        let mut pool = VotePool::default();
+        let votes = [0, 9, 10, 11].map(|slot| message(Vote::new_skip_vote(slot)));
+        for msg in &votes {
+            assert!(pool.try_add_vote(msg, 0, 2).is_ok());
+        }
+        pool.prune(0);
+        assert!(matches!(
+            pool.try_add_vote(&votes[0], 0, 2),
+            Err(VotePoolError::Duplicate)
+        ));
+        pool.prune(NUM_SLOTS_FOR_REWARD + 10);
+        for msg in &votes[..2] {
+            assert!(pool.try_add_vote(msg, 0, 2).is_ok());
+        }
+        for msg in &votes[2..] {
+            assert!(matches!(
+                pool.try_add_vote(msg, 0, 2),
+                Err(VotePoolError::Duplicate)
+            ));
+        }
+        pool.prune(NUM_SLOTS_FOR_REWARD + 11);
+        assert!(pool.try_add_vote(&votes[2], 0, 2).is_ok());
+        assert!(matches!(
+            pool.try_add_vote(&votes[3], 0, 2),
+            Err(VotePoolError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn invalid_rank_does_not_record_vote() {
+        let mut pool = VotePool::default();
+        let msg = message(Vote::new_skip_vote(5));
+        assert!(matches!(
+            pool.try_add_vote(&msg, 2, 2),
+            Err(VotePoolError::Invalid)
+        ));
+        assert!(matches!(
+            pool.try_add_vote(&msg, u16::MAX, 2),
+            Err(VotePoolError::Invalid)
+        ));
+        assert!(pool.try_add_vote(&msg, 1, 2).is_ok());
+    }
+}
