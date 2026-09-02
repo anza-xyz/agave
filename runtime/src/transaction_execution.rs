@@ -52,7 +52,7 @@ pub enum TransactionStatusMessage {
         source: TransactionHistoryPurgeSource,
         purge_input: TransactionHistoryPurgeInput,
         requested_at: Instant,
-        done_sender: crossbeam_channel::Sender<()>,
+        done_sender: Option<crossbeam_channel::Sender<()>>,
     },
 }
 
@@ -324,19 +324,38 @@ impl TransactionStatusSender {
         purge_input: TransactionHistoryPurgeInput,
     ) -> Result<(), String> {
         let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
-        let requested_at = Instant::now();
+        self.send_purge_transaction_history_request(slot, source, purge_input, Some(done_sender))?;
 
+        done_receiver.recv().map_err(|err| err.to_string())
+    }
+
+    /// Queues removal of transaction history for `slot` without waiting for
+    /// TransactionStatusService to process the request.
+    pub fn enqueue_purge_transaction_history_for_slot(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+    ) -> Result<(), String> {
+        self.send_purge_transaction_history_request(slot, source, purge_input, None)
+    }
+
+    fn send_purge_transaction_history_request(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+        done_sender: Option<crossbeam_channel::Sender<()>>,
+    ) -> Result<(), String> {
         self.sender
             .send(TransactionStatusMessage::PurgeTransactionHistory {
                 slot,
                 source,
                 purge_input,
-                requested_at,
+                requested_at: Instant::now(),
                 done_sender,
             })
-            .map_err(|err| err.to_string())?;
-
-        done_receiver.recv().map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())
     }
 }
 

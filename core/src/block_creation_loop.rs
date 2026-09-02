@@ -1030,12 +1030,12 @@ fn handle_parent_ready(
 
     if let Some(transaction_status_sender) = &ctx.transaction_status_sender {
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(
+            .enqueue_purge_transaction_history_for_slot(
                 slot,
                 TransactionHistoryPurgeSource::LeaderWindow,
                 TransactionHistoryPurgeInput::Bcl(Arc::clone(&accumulated_txs)),
             )
-            .expect("TransactionStatusService failed to purge UpdateParent transaction history");
+            .expect("failed to enqueue UpdateParent transaction-history purge");
     }
 
     if let Some(sender) = &ctx.entry_notification_sender
@@ -1578,7 +1578,7 @@ mod tests {
             else {
                 panic!("expected transaction-history purge request");
             };
-            done_sender.send(()).unwrap();
+            assert!(done_sender.is_none());
             (slot, source, purge_input)
         });
         (

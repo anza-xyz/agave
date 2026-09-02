@@ -215,7 +215,7 @@ fn transaction_history_purge_responder() -> (
             purge_input,
             TransactionHistoryPurgeInput::ReplayStage
         ));
-        done_sender.send(()).unwrap();
+        assert!(done_sender.is_none());
         (slot, source)
     });
     (
