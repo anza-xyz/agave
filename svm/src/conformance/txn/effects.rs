@@ -2,7 +2,10 @@
 
 #[cfg(feature = "conformance")]
 use {
-    crate::conformance::{account_state::account_to_proto, err::serialized_error_code},
+    crate::conformance::{
+        account_state::account_to_proto_hashed, err::serialized_error_code,
+        fd_hash::fd_hash_or_zero,
+    },
     agave_precompiles::is_precompile,
     protosol::protos::{FeeDetails as ProtoFeeDetails, TxnResult as ProtoTxnResult},
     solana_instruction::error::InstructionError,
@@ -123,12 +126,12 @@ impl From<TxnEffects> for ProtoTxnResult {
         let modified_accounts = value
             .resulting_accounts
             .into_iter()
-            .map(|(pubkey, account)| account_to_proto((pubkey, account)))
+            .map(|(pubkey, account)| account_to_proto_hashed((pubkey, account)))
             .collect();
         let rollback_accounts = value
             .rollback_accounts
             .into_iter()
-            .map(|(pubkey, account)| account_to_proto((pubkey, account)))
+            .map(|(pubkey, account)| account_to_proto_hashed((pubkey, account)))
             .collect();
 
         Self {
@@ -137,7 +140,7 @@ impl From<TxnEffects> for ProtoTxnResult {
             instruction_error,
             instruction_error_index,
             custom_error,
-            return_data: value.return_data,
+            return_data_hash: fd_hash_or_zero(&value.return_data),
             executed_units: value.executed_units,
             fee_details,
             loaded_accounts_data_size: value.loaded_accounts_data_size,

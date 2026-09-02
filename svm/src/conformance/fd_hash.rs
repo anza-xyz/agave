@@ -18,6 +18,14 @@ pub fn fd_hash(seed: u64, buf: &[u8]) -> u64 {
     xxh64(buf, seed)
 }
 
+pub fn fd_hash_or_zero(buf: &[u8]) -> u64 {
+    if buf.is_empty() {
+        0
+    } else {
+        fd_hash_without_seed(buf)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

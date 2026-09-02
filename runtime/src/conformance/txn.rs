@@ -358,10 +358,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         virtual_address_space_adjustments_active,
         cu_avail,
         has_err,
-        txn_result
-            .modified_accounts
-            .iter_mut()
-            .map(|acc| &mut acc.data),
+        txn_result.modified_accounts.iter_mut(),
     );
 
     txn_result
@@ -708,7 +705,7 @@ mod tests {
         assert_eq!(fee_details.prioritization_fee, 0);
         assert!(result.modified_accounts.is_empty());
         assert!(result.rollback_accounts.is_empty());
-        assert!(result.return_data.is_empty());
+        assert_eq!(result.return_data_hash, 0);
     }
 
     #[test]
