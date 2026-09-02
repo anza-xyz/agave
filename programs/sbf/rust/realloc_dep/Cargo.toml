@@ -1,19 +1,19 @@
 [package]
 name = "solana-sbf-rust-realloc-dep"
 version = { workspace = true }
-description = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
+description = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+
+[lib]
+crate-type = ["lib"]
 
 [dependencies]
 solana-instruction = { workspace = true }
 solana-pubkey = { workspace = true }
-
-[lib]
-crate-type = ["lib"]
 
 [lints]
 workspace = true

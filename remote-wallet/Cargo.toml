@@ -1,14 +1,14 @@
 [package]
 name = "solana-remote-wallet"
-documentation = "https://docs.rs/solana-remote-wallet"
 version = { workspace = true }
 authors = { workspace = true }
-description = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = { workspace = true }
+documentation = "https://docs.rs/solana-remote-wallet"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -17,21 +17,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 # Document the default backend plus the unstable API instead.
 features = ["agave-unstable-api"]
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-default = ["linux-static-hidraw"]
-agave-unstable-api = []
-keystone = [
-    "dep:hex",
-    "dep:rusb",
-    "dep:serde_json",
-    "dep:ur-parse-lib",
-    "dep:ur-registry",
-]
-linux-shared-hidraw = ["hidapi/linux-shared-hidraw"]
-linux-shared-libusb = ["hidapi/linux-shared-libusb"]
-linux-static-hidraw = ["hidapi/linux-static-hidraw"]
-linux-static-libusb = ["hidapi/linux-static-libusb"]
 
 [dependencies]
 console = { workspace = true }
@@ -60,6 +45,21 @@ uriparse = { workspace = true }
 assert_matches = { workspace = true }
 serial_test = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+
+[features]
+default = ["linux-static-hidraw"]
+agave-unstable-api = []
+keystone = [
+  "dep:hex",
+  "dep:rusb",
+  "dep:serde_json",
+  "dep:ur-parse-lib",
+  "dep:ur-registry",
+]
+linux-shared-hidraw = ["hidapi/linux-shared-hidraw"]
+linux-shared-libusb = ["hidapi/linux-shared-libusb"]
+linux-static-hidraw = ["hidapi/linux-static-hidraw"]
+linux-static-libusb = ["hidapi/linux-static-libusb"]
 
 [lints]
 workspace = true

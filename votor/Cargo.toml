@@ -1,37 +1,19 @@
 [package]
 name = "agave-votor"
-documentation = "https://docs.rs/agave-votor"
 version = { workspace = true }
 authors = { workspace = true }
-description = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = { workspace = true }
+documentation = "https://docs.rs/agave-votor"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
-dev-context-only-utils = [
-    "agave-bls-sigverify/dev-context-only-utils",
-    "agave-votor-messages/dev-context-only-utils",
-    "solana-runtime/dev-context-only-utils",
-]
-frozen-abi = [
-    "dep:serde",
-    "dep:serde_bytes",
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-ledger/frozen-abi",
-    "solana-runtime/frozen-abi",
-    "solana-signature/frozen-abi",
-    "agave-votor-messages/frozen-abi",
-]
 
 [dependencies]
 agave-bls-sigverify = { workspace = true }
@@ -52,12 +34,20 @@ smallvec = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ],
+  optional = true
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
+  ],
+  optional = true
+}
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
@@ -77,7 +67,7 @@ solana-tls-utils = { workspace = true, features = ["agave-unstable-api"] }
 solana-transaction = { workspace = true }
 solana-validator-exit = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync", "rt"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
 wincode = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
@@ -86,10 +76,31 @@ agave-votor-transport = { workspace = true, features = ["dev-context-only-utils"
 rand = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { workspace = true }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+  "agave-bls-sigverify/dev-context-only-utils",
+  "agave-votor-messages/dev-context-only-utils",
+  "solana-runtime/dev-context-only-utils",
+]
+frozen-abi = [
+  "agave-votor-messages/frozen-abi",
+  "dep:serde",
+  "dep:serde_bytes",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-ledger/frozen-abi",
+  "solana-runtime/frozen-abi",
+  "solana-signature/frozen-abi",
+]
 
 [lints]
 workspace = true

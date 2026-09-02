@@ -3,9 +3,9 @@ name = "transfer-from-account"
 version = "4.4.0-alpha.2"
 edition = "2021"
 
-[dependencies]
+[workspace]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[workspace]
+[dependencies]

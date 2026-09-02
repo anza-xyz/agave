@@ -1,26 +1,19 @@
 [package]
 name = "solana-rpc-client"
-description = "Solana RPC Client"
-documentation = "https://docs.rs/solana-rpc-client"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana RPC Client"
+documentation = "https://docs.rs/solana-rpc-client"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-default = ["spinner"]
-agave-unstable-api = []
-# Support rpc-client methods that feature a spinner progress bar for
-# command-line interfaces
-spinner = ["dep:indicatif"]
 
 [dependencies]
 agave-votor-messages = { workspace = true }
@@ -31,7 +24,10 @@ bs58 = { workspace = true }
 futures = { workspace = true }
 indicatif = { workspace = true, optional = true }
 log = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
+reqwest = {
+  workspace = true,
+  features = ["blocking", "brotli", "deflate", "gzip", "json", "rustls-tls"]
+}
 reqwest-middleware = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
@@ -73,6 +69,13 @@ solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-system-transaction = { workspace = true }
 test-case = { workspace = true }
+
+[features]
+default = ["spinner"]
+agave-unstable-api = []
+# Support rpc-client methods that feature a spinner progress bar for
+# command-line interfaces
+spinner = ["dep:indicatif"]
 
 [lints]
 workspace = true

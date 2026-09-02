@@ -1,22 +1,22 @@
 [package]
 name = "agave-store-histogram"
-description = "Tool to calculate account storage histogram"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
-
-[features]
-agave-unstable-api = []
-dev-context-only-utils = []
+description = "Tool to calculate account storage histogram"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+publish = false
 
 [dependencies]
 clap = { workspace = true }
 solana-version = { workspace = true }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
 
 [lints]
 workspace = true

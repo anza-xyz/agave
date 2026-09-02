@@ -1,21 +1,18 @@
 [package]
-description = "Solana Program Test Framework"
 name = "solana-program-test"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana Program Test Framework"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -80,6 +77,9 @@ solana-cpi = { workspace = true }
 solana-program = { workspace = true }
 solana-program-test = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

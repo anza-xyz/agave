@@ -1,14 +1,14 @@
 [package]
 name = "solana-vote"
-description = "Solana vote"
-documentation = "https://docs.rs/solana-vote"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana vote"
+documentation = "https://docs.rs/solana-vote"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,24 +19,9 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_vote"
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "dep:rand",
-    "dep:bincode",
-    "dep:solana-bls-signatures",
-    "solana-bls-signatures/solana-signer-derive",
-]
-frozen-abi = [
-    "dep:solana-bls-signatures",
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-account/frozen-abi",
-    "solana-bls-signatures/solana-signer-derive",
-    "solana-pubkey/frozen-abi",
-    "solana-vote-interface/frozen-abi",
-]
+[[bench]]
+harness = false
+name = "vote_account"
 
 [dependencies]
 bincode = { workspace = true, optional = true }
@@ -48,12 +33,20 @@ solana-account = { workspace = true, features = ["serde", "wincode"] }
 solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true, optional = true }
 solana-clock = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ],
+  optional = true
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
+  ],
+  optional = true
+}
 solana-hash = { workspace = true, features = ["copy"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
@@ -78,13 +71,28 @@ solana-keypair = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
-solana-transaction = { workspace = true, features = ["wincode", "dev-context-only-utils"] }
+solana-transaction = { workspace = true, features = ["dev-context-only-utils", "wincode"] }
 solana-vote = { path = ".", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
 
-[[bench]]
-name = "vote_account"
-harness = false
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+  "dep:bincode",
+  "dep:qualifier_attr",
+  "dep:rand",
+  "dep:solana-bls-signatures",
+  "solana-bls-signatures/solana-signer-derive",
+]
+frozen-abi = [
+  "dep:solana-bls-signatures",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-account/frozen-abi",
+  "solana-bls-signatures/solana-signer-derive",
+  "solana-pubkey/frozen-abi",
+  "solana-vote-interface/frozen-abi",
+]
 
 [lints]
 workspace = true

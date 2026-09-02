@@ -1,14 +1,14 @@
 [package]
 name = "solana-bpf-loader-program"
-description = "Solana BPF loader"
-documentation = "https://docs.rs/solana-bpf-loader-program"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana BPF loader"
+documentation = "https://docs.rs/solana-bpf-loader-program"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,18 +19,13 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_bpf_loader_program"
 
-[features]
-default = ["metrics"]
-agave-unstable-api = []
-metrics = ["solana-syscalls/metrics", "solana-program-runtime/metrics"]
-sbpf-debugger = ["solana-program-runtime/sbpf-debugger", "solana-sbpf/debugger"]
-shuttle-test = [
-    "dep:shuttle",
-    "solana-program-runtime/shuttle-test",
-    "solana-sbpf/shuttle-test",
-    "solana-svm-type-overrides/shuttle-test",
-]
-svm-internal = []
+[[bench]]
+harness = false
+name = "serialization"
+
+[[bench]]
+harness = false
+name = "bpf_loader_upgradeable"
 
 [dependencies]
 bincode = { workspace = true }
@@ -65,23 +60,34 @@ solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
-solana-program-runtime = { path = "../../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-program-runtime = {
+  path = "../../program-runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true, features = ["wincode"] }
 solana-slot-hashes = { workspace = true }
 solana-svm-callback = { path = "../../svm-callback", features = ["agave-unstable-api"] }
 solana-system-program = { workspace = true }
 solana-sysvar-id = { workspace = true }
-solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = {
+  path = "../../transaction-context",
+  features = ["agave-unstable-api", "bincode", "dev-context-only-utils"]
+}
 wincode = { workspace = true }
 
-[[bench]]
-name = "serialization"
-harness = false
-
-[[bench]]
-name = "bpf_loader_upgradeable"
-harness = false
+[features]
+default = ["metrics"]
+agave-unstable-api = []
+metrics = ["solana-program-runtime/metrics", "solana-syscalls/metrics"]
+sbpf-debugger = ["solana-program-runtime/sbpf-debugger", "solana-sbpf/debugger"]
+shuttle-test = [
+  "dep:shuttle",
+  "solana-program-runtime/shuttle-test",
+  "solana-sbpf/shuttle-test",
+  "solana-svm-type-overrides/shuttle-test",
+]
+svm-internal = []
 
 [lints]
 workspace = true

@@ -1,14 +1,14 @@
 [package]
 name = "solana-system-program"
-description = "Solana System program"
-documentation = "https://docs.rs/solana-system-program"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana System program"
+documentation = "https://docs.rs/solana-system-program"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,8 +19,9 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_system_program"
 
-[features]
-agave-unstable-api = []
+[[bench]]
+harness = false
+name = "system"
 
 [dependencies]
 bincode = { workspace = true }
@@ -54,12 +55,14 @@ solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-un
 solana-system-program = { path = ".", features = ["agave-unstable-api"] }
 solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-sysvar-id = { workspace = true }
-solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = {
+  path = "../../transaction-context",
+  features = ["agave-unstable-api", "bincode", "dev-context-only-utils"]
+}
 wincode = { workspace = true }
 
-[[bench]]
-name = "system"
-harness = false
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

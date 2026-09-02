@@ -1,14 +1,14 @@
 [package]
 name = "agave-snapshots"
-description = "Agave snapshot utils"
-documentation = "https://docs.rs/agave-snapshots"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Agave snapshot utils"
+documentation = "https://docs.rs/agave-snapshots"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -18,9 +18,6 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 crate-type = ["lib"]
 name = "agave_snapshots"
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 agave-fs = { workspace = true }
@@ -51,6 +48,9 @@ zstd = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

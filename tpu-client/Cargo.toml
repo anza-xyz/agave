@@ -1,26 +1,19 @@
 [package]
 name = "solana-tpu-client"
-description = "Solana TPU Client"
-documentation = "https://docs.rs/solana-tpu-client"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana TPU Client"
+documentation = "https://docs.rs/solana-tpu-client"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-default = ["spinner"]
-agave-unstable-api = []
-# Support tpu-client methods that feature a spinner progress bar for
-# command-line interfaces
-spinner = ["dep:indicatif", "dep:solana-message", "solana-rpc-client/spinner"]
 
 [dependencies]
 futures-util = { workspace = true }
@@ -45,6 +38,13 @@ solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 wincode = { workspace = true }
+
+[features]
+default = ["spinner"]
+agave-unstable-api = []
+# Support tpu-client methods that feature a spinner progress bar for
+# command-line interfaces
+spinner = ["dep:indicatif", "dep:solana-message", "solana-rpc-client/spinner"]
 
 [lints]
 workspace = true

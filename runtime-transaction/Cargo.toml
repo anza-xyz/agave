@@ -1,14 +1,14 @@
 [package]
 name = "solana-runtime-transaction"
-description = "Solana runtime-transaction"
-documentation = "https://docs.rs/solana-runtime-transaction"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana runtime-transaction"
+documentation = "https://docs.rs/solana-runtime-transaction"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,9 +19,9 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_runtime_transaction"
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-utils"]
+[[bench]]
+harness = false
+name = "get_signature_details"
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -46,7 +46,10 @@ agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-compute-budget-instruction = {
+  path = "../compute-budget-instruction",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-compute-budget-interface = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
@@ -58,9 +61,9 @@ solana-system-interface = { workspace = true, features = ["wincode"] }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
 
-[[bench]]
-name = "get_signature_details"
-harness = false
+[features]
+agave-unstable-api = []
+dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-utils"]
 
 [lints]
 workspace = true

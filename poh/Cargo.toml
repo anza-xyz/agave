@@ -1,14 +1,14 @@
 [package]
 name = "solana-poh"
-description = "Solana PoH"
-documentation = "https://docs.rs/solana-poh"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana PoH"
+documentation = "https://docs.rs/solana-poh"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,10 +19,17 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_poh"
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = []
-shuttle-test = ["dep:shuttle"]
+[[bench]]
+harness = false
+name = "poh"
+
+[[bench]]
+harness = false
+name = "poh_verify"
+
+[[bench]]
+harness = false
+name = "transaction_recorder"
 
 [dependencies]
 agave-cpu-utils = { workspace = true }
@@ -56,7 +63,10 @@ solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-conte
 solana-keypair = { workspace = true }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-poh = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
@@ -64,17 +74,10 @@ solana-system-transaction = { workspace = true }
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
 
-[[bench]]
-name = "poh"
-harness = false
-
-[[bench]]
-name = "poh_verify"
-harness = false
-
-[[bench]]
-name = "transaction_recorder"
-harness = false
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+shuttle-test = ["dep:shuttle"]
 
 [lints]
 workspace = true

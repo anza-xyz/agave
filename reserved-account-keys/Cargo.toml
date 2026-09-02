@@ -1,32 +1,36 @@
 [package]
 name = "agave-reserved-account-keys"
-description = "Reserved Solana account keys"
-documentation = "https://docs.rs/agave-reserved-account-keys"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Reserved Solana account keys"
+documentation = "https://docs.rs/agave-reserved-account-keys"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
-[features]
-agave-unstable-api = []
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
-
 [dependencies]
 agave-feature-set = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ],
+  optional = true
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
+  ],
+  optional = true
+}
 solana-pubkey = { workspace = true, default-features = false }
 solana-sdk-ids = { workspace = true }
 
@@ -34,6 +38,10 @@ solana-sdk-ids = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
 solana-sysvar = { workspace = true }
+
+[features]
+agave-unstable-api = []
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [lints]
 workspace = true

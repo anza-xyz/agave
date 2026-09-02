@@ -1,14 +1,14 @@
 [package]
 name = "agave-fs"
-description = "Agave file system utils"
-documentation = "https://docs.rs/agave-fs"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Agave file system utils"
+documentation = "https://docs.rs/agave-fs"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,9 +19,6 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "agave_fs"
 
-[features]
-agave-unstable-api = []
-
 [dependencies]
 libc = { workspace = true }
 log = { workspace = true }
@@ -29,15 +26,18 @@ slab = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+rand = { workspace = true }
+tempfile = { workspace = true }
+test-case = { workspace = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 agave-io-uring = { workspace = true }
 io-uring = { workspace = true }
 tempfile = { workspace = true }
 
-[dev-dependencies]
-rand = { workspace = true }
-tempfile = { workspace = true }
-test-case = { workspace = true }
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

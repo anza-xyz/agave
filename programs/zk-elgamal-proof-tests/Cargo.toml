@@ -1,15 +1,12 @@
 [package]
 name = "solana-zk-elgamal-proof-program-tests"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
-
-[features]
-agave-unstable-api = []
+repository = { workspace = true }
+license = { workspace = true }
+publish = false
 
 [dev-dependencies]
 bytemuck = { workspace = true }
@@ -26,6 +23,9 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-zk-elgamal-proof-interface = { workspace = true }
 solana-zk-sdk = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

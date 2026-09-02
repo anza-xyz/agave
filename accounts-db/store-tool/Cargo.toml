@@ -1,20 +1,14 @@
 [package]
 name = "agave-store-tool"
-description = "Tool for account storage files"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
+description = "Tool for account storage files"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 workspace = "../../dev-bins"
-
-[features]
-agave-unstable-api = []
-dev-context-only-utils = []
-dummy-for-ci-check = []
-frozen-abi = []
+publish = false
 
 [dependencies]
 ahash = { workspace = true }
@@ -25,6 +19,12 @@ solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-version = { workspace = true }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+dummy-for-ci-check = []
+frozen-abi = []
 
 [lints]
 workspace = true

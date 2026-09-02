@@ -1,14 +1,14 @@
 [package]
 name = "solana-accounts-db"
-description = "Solana accounts db"
-documentation = "https://docs.rs/solana-accounts-db"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana accounts db"
+documentation = "https://docs.rs/solana-accounts-db"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,32 +19,36 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_accounts_db"
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "dep:solana-keypair",
-    "dep:solana-rent",
-    "dep:solana-signer",
-    "dep:solana-stake-interface",
-    "dep:solana-vote-program",
-    "solana-account/wincode",
-    "solana-transaction/dev-context-only-utils",
-]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-fee-calculator/frozen-abi",
-    "solana-nonce/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
+[[bench]]
+harness = false
+name = "accounts_index"
+
+[[bench]]
+harness = false
+name = "bench_accounts_file"
+
+[[bench]]
+harness = false
+name = "bench_hashing"
+
+[[bench]]
+harness = false
+name = "read_only_accounts_cache"
+
+[[bench]]
+harness = false
+name = "bench_serde"
+
+[[bench]]
+harness = false
+name = "bench_lock_accounts"
 
 [dependencies]
 agave-fs = { workspace = true }
 ahash = { workspace = true }
 blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
-dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+dashmap = { workspace = true, features = ["raw-api", "rayon"] }
 itertools = { workspace = true }
 log = { workspace = true }
 modular-bitfield = { workspace = true }
@@ -56,21 +60,32 @@ seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
-solana-address-lookup-table-interface = { workspace = true, features = [
+solana-address-lookup-table-interface = {
+  workspace = true,
+  features = [
     "bincode",
     "bytemuck",
-] }
+  ]
+}
 solana-bucket-map = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true, features = ["serde", "wincode"] }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ],
+  optional = true
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-hash = { workspace = true, features = ["serde", "wincode", "rand"] }
+  ],
+  optional = true
+}
+solana-hash = { workspace = true, features = ["rand", "serde", "wincode"] }
 solana-keypair = { workspace = true, optional = true }
 solana-lattice-hash = { workspace = true }
 solana-measure = { workspace = true }
@@ -84,10 +99,14 @@ solana-rent = { workspace = true, optional = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
-solana-stake-interface = { workspace = true, optional = true, features = [
+solana-stake-interface = {
+  workspace = true,
+  features = [
     "serde",
     "wincode",
-] }
+  ],
+  optional = true
+}
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
@@ -103,7 +122,10 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = {
+  path = "../reserved-account-keys",
+  features = ["agave-unstable-api"]
+}
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
@@ -124,29 +146,25 @@ test-case = { workspace = true }
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
 
-[[bench]]
-name = "accounts_index"
-harness = false
-
-[[bench]]
-name = "bench_accounts_file"
-harness = false
-
-[[bench]]
-name = "bench_hashing"
-harness = false
-
-[[bench]]
-name = "read_only_accounts_cache"
-harness = false
-
-[[bench]]
-name = "bench_serde"
-harness = false
-
-[[bench]]
-name = "bench_lock_accounts"
-harness = false
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+  "dep:qualifier_attr",
+  "dep:solana-keypair",
+  "dep:solana-rent",
+  "dep:solana-signer",
+  "dep:solana-stake-interface",
+  "dep:solana-vote-program",
+  "solana-account/wincode",
+  "solana-transaction/dev-context-only-utils",
+]
+frozen-abi = [
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-fee-calculator/frozen-abi",
+  "solana-nonce/frozen-abi",
+  "solana-vote-program/frozen-abi",
+]
 
 [lints]
 workspace = true

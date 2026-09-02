@@ -1,14 +1,14 @@
 [package]
 name = "solana-perf"
-description = "Solana Performance APIs"
-documentation = "https://docs.rs/solana-perf"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana Performance APIs"
+documentation = "https://docs.rs/solana-perf"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -18,27 +18,21 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 name = "solana_perf"
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = [
-    "dep:solana-clock",
-    "dep:solana-keypair",
-    "dep:solana-signer",
-    "dep:solana-system-interface",
-    "dep:solana-system-transaction",
-    "dep:solana-transaction",
-    "dep:solana-vote-program",
-    "dep:solana-vote",
-    "solana-hash/atomic",
-    "solana-transaction/wincode",
-]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-packet/frozen-abi",
-    "solana-short-vec/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
+[[bench]]
+harness = false
+name = "dedup"
+
+[[bench]]
+harness = false
+name = "recycler"
+
+[[bench]]
+harness = false
+name = "reset"
+
+[[bench]]
+harness = false
+name = "sigverify"
 
 [dependencies]
 agave-transaction-view = { workspace = true }
@@ -52,12 +46,20 @@ rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 solana-clock = { workspace = true, optional = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ],
+  optional = true
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
+  ],
+  optional = true
+}
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
@@ -72,16 +74,11 @@ solana-signer = { workspace = true, optional = true }
 solana-system-interface = { workspace = true, optional = true }
 solana-system-transaction = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
-solana-transaction = { workspace = true, optional = true, features = ["serde"] }
+solana-transaction = { workspace = true, features = ["serde"], optional = true }
 solana-transaction-context = { workspace = true }
 solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
 wincode = { workspace = true }
-
-[target."cfg(target_os = \"linux\")".dependencies]
-caps = { workspace = true }
-libc = { workspace = true }
-nix = { workspace = true, features = ["user"] }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
@@ -96,25 +93,32 @@ wincode = { workspace = true }
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
 
-[[bench]]
-name = "dedup"
-harness = false
+[target."cfg(target_os = \"linux\")".dependencies]
+caps = { workspace = true }
+libc = { workspace = true }
+nix = { workspace = true, features = ["user"] }
 
-[[bench]]
-name = "recycler"
-harness = false
-
-[[bench]]
-name = "reset"
-harness = false
-
-[[bench]]
-name = "sigverify"
-harness = false
-
-[lints.rust.unexpected_cfgs]
-level = "warn"
-check-cfg = ['cfg(build_target_feature_avx)', 'cfg(build_target_feature_avx2)']
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+  "dep:solana-clock",
+  "dep:solana-keypair",
+  "dep:solana-signer",
+  "dep:solana-system-interface",
+  "dep:solana-system-transaction",
+  "dep:solana-transaction",
+  "dep:solana-vote",
+  "dep:solana-vote-program",
+  "solana-hash/atomic",
+  "solana-transaction/wincode",
+]
+frozen-abi = [
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-packet/frozen-abi",
+  "solana-short-vec/frozen-abi",
+  "solana-vote-program/frozen-abi",
+]
 
 # Duplicated from the root [workspace.lints.clippy]. This crate defines its own
 # [lints.rust.unexpected_cfgs] above, and cargo does not support combining
@@ -130,3 +134,7 @@ used_underscore_binding = "deny"
 
 # Allowed lints
 new_without_default = "allow"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ["cfg(build_target_feature_avx)", "cfg(build_target_feature_avx2)"]

@@ -1,20 +1,20 @@
 [package]
 name = "rbpf-cli"
-description = "Decommissioned CLI to test and analyze SBF programs"
-keywords = ["SBF", "interpreter", "JIT"]
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Decommissioned CLI to test and analyze SBF programs"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+keywords = ["JIT", "SBF", "interpreter"]
+publish = false
+
+[dependencies]
 
 [features]
 agave-unstable-api = []
-
-[dependencies]
 
 [lints]
 workspace = true

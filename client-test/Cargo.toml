@@ -1,21 +1,18 @@
 [package]
 name = "solana-client-test"
-description = "Solana RPC Test"
-documentation = "https://docs.rs/solana-client-test"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana RPC Test"
+documentation = "https://docs.rs/solana-client-test"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+publish = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 futures-util = { workspace = true }
@@ -49,10 +46,19 @@ log = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-packet = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
+solana-test-validator = {
+  path = "../test-validator",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

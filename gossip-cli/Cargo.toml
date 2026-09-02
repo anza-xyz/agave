@@ -1,14 +1,14 @@
 [package]
 name = "solana-gossip-cli"
-documentation = "https://docs.rs/solana-gossip-cli"
 version = { workspace = true }
 authors = { workspace = true }
-description = "Binary crate providing the Solana Gossip command-line tool."
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Binary crate providing the Solana Gossip command-line tool."
+documentation = "https://docs.rs/solana-gossip-cli"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -16,12 +16,9 @@ all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
 [[bin]]
+bench = false
 name = "solana-gossip"
 path = "src/main.rs"
-bench = false
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 agave-logger = { workspace = true }
@@ -32,6 +29,9 @@ solana-gossip = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-pubkey = { version = "=4.3.0", features = ["rand"] }
 solana-version = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

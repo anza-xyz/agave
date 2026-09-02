@@ -1,22 +1,19 @@
 [package]
 name = "agave-install"
-description = "The solana cluster software installer"
-documentation = "https://docs.rs/agave-install"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "The solana cluster software installer"
+documentation = "https://docs.rs/agave-install"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 agave-logger = { workspace = true }
@@ -28,14 +25,17 @@ ctrlc = { workspace = true, features = ["termination"] }
 dirs-next = { workspace = true }
 indicatif = { workspace = true }
 nix = { workspace = true, features = ["signal"] }
-reqwest = { workspace = true, features = [
+reqwest = {
+  workspace = true,
+  features = [
     "blocking",
     "brotli",
     "deflate",
     "gzip",
-    "rustls-tls",
     "json",
-] }
+    "rustls-tls",
+  ]
+}
 scopeguard = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
@@ -50,6 +50,9 @@ url = { workspace = true }
 [target."cfg(windows)".dependencies]
 winapi = { workspace = true, features = ["minwindef", "winuser"] }
 winreg = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

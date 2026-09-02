@@ -1,14 +1,14 @@
 [package]
 name = "solana-runtime"
-description = "Solana runtime"
-documentation = "https://docs.rs/solana-runtime"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana runtime"
+documentation = "https://docs.rs/solana-runtime"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,46 +19,12 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_runtime"
 
-[features]
-agave-unstable-api = []
-conformance = [
-    "agave-unstable-api",
-    "dep:prost",
-    "dep:protosol",
-    "dev-context-only-utils",
-    "solana-svm/conformance",
-]
-dev-context-only-utils = [
-    "agave-votor-messages/dev-context-only-utils",
-    "solana-accounts-db/dev-context-only-utils",
-    "solana-entry/dev-context-only-utils",
-    "solana-program-binaries",
-    "solana-svm/dev-context-only-utils",
-    "solana-runtime-transaction/dev-context-only-utils",
-    "solana-vote/dev-context-only-utils",
-]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-account/frozen-abi",
-    "solana-accounts-db/frozen-abi",
-    "solana-bls-signatures/frozen-abi",
-    "solana-cost-model/frozen-abi",
-    "solana-epoch-schedule/frozen-abi",
-    "solana-hard-forks/frozen-abi",
-    "solana-inflation/frozen-abi",
-    "solana-instruction/frozen-abi",
-    "solana-instruction-error/frozen-abi",
-    "solana-program-runtime/frozen-abi",
-    "solana-rent/frozen-abi",
-    "solana-stake-interface/frozen-abi",
-    "solana-svm/frozen-abi",
-    "solana-transaction-error/frozen-abi",
-    "solana-version/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
-shuttle-test = ["dep:shuttle"]
+[[bench]]
+name = "prioritization_fee_cache"
+
+[[bench]]
+harness = false
+name = "epoch_turnover"
 
 [dependencies]
 agave-bls-cert-verify = { workspace = true }
@@ -81,7 +47,7 @@ bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 crossbeam-queue = { workspace = true }
 crossbeam-utils = { workspace = true }
-dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
+dashmap = { workspace = true, features = ["raw-api", "rayon", "serde"] }
 imbl = { workspace = true, features = ["rayon", "serde"] }
 itertools = { workspace = true }
 libc = { workspace = true }
@@ -127,15 +93,23 @@ solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
 solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true, features = ["wincode"] }
 solana-fee-structure = { workspace = true, features = ["serde"] }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ],
+  optional = true
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
+  ],
+  optional = true
+}
 solana-genesis-config = { workspace = true, features = ["serde"] }
 solana-hard-forks = { workspace = true, features = ["serde", "wincode"] }
-solana-hash = { workspace = true, features = ["atomic", "wincode", "rand"] }
+solana-hash = { workspace = true, features = ["atomic", "rand", "wincode"] }
 solana-inflation = { workspace = true, features = ["serde", "wincode"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
@@ -206,31 +180,81 @@ bytes = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 proptest = { workspace = true }
-solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-builtins = { path = "../builtins", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-accounts-db = {
+  path = "../accounts-db",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
+solana-builtins = {
+  path = "../builtins",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-instruction-error = { workspace = true }
 solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime-transaction = {
+  path = "../runtime-transaction",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-signer-store = { workspace = true }
 solana-stake-interface = { workspace = true, features = ["bincode"] }
 solana-svm = { path = "../svm", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
-solana-vote-program = { path = "../programs/vote", default-features = false, features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-transaction-context = {
+  path = "../transaction-context",
+  features = ["agave-unstable-api", "bincode", "dev-context-only-utils"]
+}
+solana-vote-program = {
+  path = "../programs/vote",
+  default-features = false,
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
 
-[[bench]]
-name = "prioritization_fee_cache"
-
-[[bench]]
-name = "epoch_turnover"
-harness = false
+[features]
+agave-unstable-api = []
+conformance = [
+  "agave-unstable-api",
+  "dep:prost",
+  "dep:protosol",
+  "dev-context-only-utils",
+  "solana-svm/conformance",
+]
+dev-context-only-utils = [
+  "agave-votor-messages/dev-context-only-utils",
+  "solana-accounts-db/dev-context-only-utils",
+  "solana-entry/dev-context-only-utils",
+  "solana-program-binaries",
+  "solana-runtime-transaction/dev-context-only-utils",
+  "solana-svm/dev-context-only-utils",
+  "solana-vote/dev-context-only-utils",
+]
+frozen-abi = [
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-account/frozen-abi",
+  "solana-accounts-db/frozen-abi",
+  "solana-bls-signatures/frozen-abi",
+  "solana-cost-model/frozen-abi",
+  "solana-epoch-schedule/frozen-abi",
+  "solana-hard-forks/frozen-abi",
+  "solana-inflation/frozen-abi",
+  "solana-instruction-error/frozen-abi",
+  "solana-instruction/frozen-abi",
+  "solana-program-runtime/frozen-abi",
+  "solana-rent/frozen-abi",
+  "solana-stake-interface/frozen-abi",
+  "solana-svm/frozen-abi",
+  "solana-transaction-error/frozen-abi",
+  "solana-version/frozen-abi",
+  "solana-vote-program/frozen-abi",
+  "solana-vote/frozen-abi",
+]
+shuttle-test = ["dep:shuttle"]
 
 [lints]
 workspace = true

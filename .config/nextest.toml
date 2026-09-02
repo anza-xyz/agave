@@ -37,71 +37,71 @@ filter = "package(solana-gossip) & test(/^cluster_info::tests::new_with_external
 threads-required = "num-cpus"
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_kill_partition_switch_threshold_progress$/)'
+filter = "package(solana-local-cluster) & test(/^test_kill_partition_switch_threshold_progress$/)"
 slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_kill_partition_switch_threshold_no_progress$/)'
+filter = "package(solana-local-cluster) & test(/^test_kill_partition_switch_threshold_no_progress$/)"
 slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_run_test_load_program_accounts_partition_root$/)'
+filter = "package(solana-local-cluster) & test(/^test_run_test_load_program_accounts_partition_root$/)"
 slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_fork_choice_refresh_old_votes$/)'
+filter = "package(solana-local-cluster) & test(/^test_fork_choice_refresh_old_votes$/)"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_cluster_partition/)'
+filter = "package(solana-local-cluster) & test(/^test_cluster_partition/)"
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_snapshots_restart_validity$/)'
+filter = "package(solana-local-cluster) & test(/^test_snapshots_restart_validity$/)"
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_slot_hash_expiry$/)'
+filter = "package(solana-local-cluster) & test(/^test_slot_hash_expiry$/)"
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_kill_heaviest_partition/)'
+filter = "package(solana-local-cluster) & test(/^test_kill_heaviest_partition/)"
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_boot_from_local_state$/)'
+filter = "package(solana-local-cluster) & test(/^test_boot_from_local_state$/)"
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster)'
+filter = "package(solana-local-cluster)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-ledger) & test(/^shred::merkle::test::test_merkle_tree_round_trip/)'
+filter = "package(solana-ledger) & test(/^shred::merkle::test::test_merkle_tree_round_trip/)"
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-core) & test(/^banking_stage::consumer::tests::test_bank_nonce_update_blockhash_queried_before_transaction_record/)'
+filter = "package(solana-core) & test(/^banking_stage::consumer::tests::test_bank_nonce_update_blockhash_queried_before_transaction_record/)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-core) & test(/^banking_stage::consumer::tests::test_bank_process_and_record_transactions/)'
+filter = "package(solana-core) & test(/^banking_stage::consumer::tests::test_bank_process_and_record_transactions/)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-core) & test(/^test_slots_to_snapshot/)'
+filter = "package(solana-core) & test(/^test_slots_to_snapshot/)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-core) & test(/^test_snapshots_have_expected_epoch_accounts_hash/)'
+filter = "package(solana-core) & test(/^test_snapshots_have_expected_epoch_accounts_hash/)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-client-test) & test(/^test_send_and_confirm_transactions_in_parallel_with_tpu_client/)'
+filter = "package(solana-client-test) & test(/^test_send_and_confirm_transactions_in_parallel_with_tpu_client/)"
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-svm) & test(/^execute_fixtures/)'
+filter = "package(solana-svm) & test(/^execute_fixtures/)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.ci.overrides]]

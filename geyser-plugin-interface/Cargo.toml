@@ -1,22 +1,19 @@
 [package]
 name = "agave-geyser-plugin-interface"
-description = "The Solana Geyser plugin interface."
-documentation = "https://docs.rs/agave-geyser-plugin-interface"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "The Solana Geyser plugin interface."
+documentation = "https://docs.rs/agave-geyser-plugin-interface"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 log = { workspace = true, features = ["std"] }
@@ -28,6 +25,9 @@ solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

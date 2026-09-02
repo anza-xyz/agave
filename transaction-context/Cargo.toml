@@ -1,26 +1,19 @@
 [package]
 name = "solana-transaction-context"
-description = "Solana data shared between program runtime and built-in programs as well as SBF programs."
-documentation = "https://docs.rs/solana-transaction-context"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana data shared between program runtime and built-in programs as well as SBF programs."
+documentation = "https://docs.rs/solana-transaction-context"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
-bincode = ["dep:bincode", "serde"]
-dev-context-only-utils = ["bincode", "dep:qualifier_attr"]
-serde = ["serde/derive", "solana-pubkey/serde"]
-wincode = ["dep:wincode", "solana-pubkey/wincode"]
 
 [dependencies]
 solana-account = { workspace = true }
@@ -28,6 +21,20 @@ solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-pubkey = { workspace = true }
 wincode = { workspace = true, optional = true }
+
+[dev-dependencies]
+solana-account-info = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-system-interface = { workspace = true }
+solana-transaction-context = {
+  path = ".",
+  features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+  ]
+}
+static_assertions = { workspace = true }
 
 [target.'cfg(not(any(target_arch = "sbf", target_arch = "bpf")))'.dependencies]
 bincode = { workspace = true, optional = true }
@@ -38,16 +45,12 @@ solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, optional = true }
 
-[dev-dependencies]
-solana-account-info = { workspace = true }
-solana-program-entrypoint = { workspace = true }
-solana-pubkey = { workspace = true, features = ["rand"] }
-solana-system-interface = { workspace = true }
-solana-transaction-context = { path = ".", features = [
-    "agave-unstable-api",
-    "dev-context-only-utils",
-] }
-static_assertions = { workspace = true }
+[features]
+agave-unstable-api = []
+bincode = ["dep:bincode", "serde"]
+dev-context-only-utils = ["bincode", "dep:qualifier_attr"]
+serde = ["serde/derive", "solana-pubkey/serde"]
+wincode = ["dep:wincode", "solana-pubkey/wincode"]
 
 [lints]
 workspace = true

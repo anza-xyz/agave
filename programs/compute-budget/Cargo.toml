@@ -1,14 +1,14 @@
 [package]
 name = "solana-compute-budget-program"
-description = "Solana Compute Budget program"
-documentation = "https://docs.rs/solana-compute-budget-program"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana Compute Budget program"
+documentation = "https://docs.rs/solana-compute-budget-program"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,11 +19,11 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_compute_budget_program"
 
-[features]
-agave-unstable-api = []
-
 [dependencies]
 solana-program-runtime = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

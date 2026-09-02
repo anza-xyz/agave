@@ -12,12 +12,6 @@ publish = false
 # Prevents auto-detection of parent workspace (ie. git worktrees).
 [workspace]
 
-[features]
-agave-unstable-api = []
-dummy-for-ci-check = []
-frozen-abi = []
-integration-tests = []
-
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
@@ -38,12 +32,11 @@ xtask_shared = { package = "anza-xtask", version = "0.2.2" }
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 
-[profile.dev]
-debug = "line-tables-only"
-
-[profile.full-dev]
-inherits = "dev"
-debug = "full"
+[features]
+agave-unstable-api = []
+dummy-for-ci-check = []
+frozen-abi = []
+integration-tests = []
 
 # Keep in sync with the root [workspace.lints.clippy].
 [lints.clippy]
@@ -56,3 +49,10 @@ used_underscore_binding = "deny"
 
 # Allowed lints
 new_without_default = "allow"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.full-dev]
+inherits = "dev"
+debug = "full"

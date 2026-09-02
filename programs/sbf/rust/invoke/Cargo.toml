@@ -1,18 +1,15 @@
 [package]
 name = "solana-sbf-rust-invoke"
 version = { workspace = true }
-description = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
+description = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
-
-[features]
-sbpf-v3 = []
 
 [dependencies]
 solana-account-info = { workspace = true }
@@ -28,6 +25,9 @@ solana-sbf-rust-invoked-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-system-interface = { workspace = true }
+
+[features]
+sbpf-v3 = []
 
 [lints]
 workspace = true

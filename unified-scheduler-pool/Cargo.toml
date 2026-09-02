@@ -1,31 +1,27 @@
 [package]
 name = "solana-unified-scheduler-pool"
-description = "The Solana unified scheduler pool"
-documentation = "https://docs.rs/solana-unified-scheduler-pool"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "The Solana unified scheduler pool"
+documentation = "https://docs.rs/solana-unified-scheduler-pool"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
-
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
-derive-where = { workspace = true }
 derive_more = { workspace = true }
+derive-where = { workspace = true }
 log = { workspace = true }
 scopeguard = { workspace = true }
 solana-clock = { workspace = true }
@@ -48,10 +44,20 @@ solana-clock = { workspace = true }
 solana-entry = { path = "../entry", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-system-transaction = { workspace = true }
-solana-unified-scheduler-pool = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-unified-scheduler-pool = {
+  path = ".",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 test-case = { workspace = true }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 
 [lints]
 workspace = true

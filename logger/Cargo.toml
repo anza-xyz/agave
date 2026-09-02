@@ -1,14 +1,14 @@
 [package]
 name = "agave-logger"
-description = "Agave Logger"
-documentation = "https://docs.rs/agave-logger"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Agave Logger"
+documentation = "https://docs.rs/agave-logger"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -18,9 +18,6 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 name = "agave_logger"
 
-[features]
-agave-unstable-api = []
-
 [dependencies]
 env_logger = { workspace = true }
 log = { workspace = true }
@@ -28,6 +25,9 @@ log = { workspace = true }
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
 signal-hook = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

@@ -1,14 +1,14 @@
 [package]
 name = "solana-faucet"
-description = "Solana Faucet"
-documentation = "https://docs.rs/solana-faucet"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana Faucet"
+documentation = "https://docs.rs/solana-faucet"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -18,10 +18,6 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 crate-type = ["lib"]
 name = "solana_faucet"
-
-[features]
-agave-unstable-api = []
-dev-context-only-utils = []
 
 [dependencies]
 crossbeam-channel = { workspace = true }
@@ -46,6 +42,10 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 solana-faucet = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
 
 [lints]
 workspace = true

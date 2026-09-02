@@ -1,14 +1,14 @@
 [package]
 name = "solana-banks-interface"
-description = "Solana banks RPC interface"
-documentation = "https://docs.rs/solana-banks-interface"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana banks RPC interface"
+documentation = "https://docs.rs/solana-banks-interface"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -18,9 +18,6 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 crate-type = ["lib"]
 name = "solana_banks_interface"
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 serde = { workspace = true }
@@ -35,6 +32,9 @@ solana-transaction = { workspace = true, features = ["serde"] }
 solana-transaction-context = { workspace = true, features = ["serde"] }
 solana-transaction-error = { workspace = true, features = ["serde"] }
 tarpc = { workspace = true, features = ["full"] }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

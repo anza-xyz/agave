@@ -1,14 +1,14 @@
 [package]
 name = "agave-random"
-description = "Agave randomization utils"
-documentation = "https://docs.rs/agave-random"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Agave randomization utils"
+documentation = "https://docs.rs/agave-random"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,9 +19,6 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "agave_random"
 
-[features]
-agave-unstable-api = []
-
 [dependencies]
 rand = { workspace = true }
 
@@ -31,6 +28,9 @@ rand_chacha = { workspace = true }
 solana-hash = { workspace = true, features = ["decode"] }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 test-case = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

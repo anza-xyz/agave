@@ -1,14 +1,14 @@
 [package]
 name = "solana-svm-conformance"
-description = "Conformance harnesses for the Solana SVM"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
+description = "Conformance harnesses for the Solana SVM"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 workspace = "../dev-bins"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -38,28 +38,6 @@ name = "test_exec_vm_syscall"
 path = "src/bin/test_exec_vm_syscall.rs"
 required-features = ["cli", "ffi"]
 
-[features]
-default = ["cli", "ffi"]
-agave-unstable-api = []
-cli = ["dep:clap"]
-dev-context-only-utils = []
-dummy-for-ci-check = []
-ffi = [
-    "dep:agave-feature-set",
-    "dep:agave-precompiles",
-    "dep:prost",
-    "dep:protosol",
-    "dep:solana-compute-budget",
-    "dep:solana-instruction",
-    "dep:solana-program-runtime",
-    "dep:solana-pubkey",
-    "dep:solana-svm",
-    "dep:solana-syscalls",
-    "dep:solana-transaction-error",
-    "solana-svm/conformance",
-]
-frozen-abi = []
-
 [dependencies]
 agave-feature-set = { workspace = true, optional = true }
 agave-precompiles = { workspace = true, optional = true }
@@ -83,6 +61,28 @@ solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true }
+
+[features]
+default = ["cli", "ffi"]
+agave-unstable-api = []
+cli = ["dep:clap"]
+dev-context-only-utils = []
+dummy-for-ci-check = []
+ffi = [
+  "dep:agave-feature-set",
+  "dep:agave-precompiles",
+  "dep:prost",
+  "dep:protosol",
+  "dep:solana-compute-budget",
+  "dep:solana-instruction",
+  "dep:solana-program-runtime",
+  "dep:solana-pubkey",
+  "dep:solana-svm",
+  "dep:solana-syscalls",
+  "dep:solana-transaction-error",
+  "solana-svm/conformance",
+]
+frozen-abi = []
 
 [lints]
 workspace = true

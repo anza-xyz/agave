@@ -1,27 +1,21 @@
 [package]
 name = "agave-conformance"
-description = "Cross-domain conformance harnesses for Agave"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
+description = "Cross-domain conformance harnesses for Agave"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 workspace = "../dev-bins"
+publish = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [lib]
-crate-type = ["lib", "cdylib"]
 bench = false
-
-[features]
-agave-unstable-api = []
-dev-context-only-utils = []
-dummy-for-ci-check = ["ffi"]
-ffi = ["dep:prost", "dep:protosol", "agave-unstable-api"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 bv = { workspace = true, features = ["serde"] }
@@ -41,6 +35,12 @@ solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }
 solana-vote-program = { workspace = true }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+dummy-for-ci-check = ["ffi"]
+ffi = ["agave-unstable-api", "dep:prost", "dep:protosol"]
 
 [lints]
 workspace = true

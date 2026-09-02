@@ -1,29 +1,23 @@
 [package]
 name = "agave-bls-sigverify"
-description = "Logic to process incoming alpenglow consensus messages"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Logic to process incoming alpenglow consensus messages"
+readme = "../README.md"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = [
-    "agave-bls-cert-verify/dev-context-only-utils",
-    "agave-votor-messages/dev-context-only-utils",
-    "agave-votor-transport/dev-context-only-utils",
-    "solana-perf/dev-context-only-utils",
-    "solana-runtime/dev-context-only-utils",
-]
+[[bench]]
+harness = false
+name = "bls_vote_sigverify"
 
 [dependencies]
 agave-bls-cert-verify = { workspace = true }
@@ -67,9 +61,15 @@ solana-perf = { workspace = true }
 solana-signer = { workspace = true }
 tokio = { workspace = true }
 
-[[bench]]
-name = "bls_vote_sigverify"
-harness = false
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+  "agave-bls-cert-verify/dev-context-only-utils",
+  "agave-votor-messages/dev-context-only-utils",
+  "agave-votor-transport/dev-context-only-utils",
+  "solana-perf/dev-context-only-utils",
+  "solana-runtime/dev-context-only-utils",
+]
 
 [lints]
 workspace = true

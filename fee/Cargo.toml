@@ -1,26 +1,26 @@
 [package]
 name = "solana-fee"
-description = "Solana fee calculation"
-documentation = "https://docs.rs/solana-fee"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana fee calculation"
+documentation = "https://docs.rs/solana-fee"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
-[features]
-agave-unstable-api = []
-
 [dependencies]
 solana-fee-structure = { workspace = true }
 solana-svm-transaction = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

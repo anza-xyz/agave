@@ -1,30 +1,19 @@
 [package]
 name = "solana-syscalls"
-description = "Solana syscalls."
-documentation = "https://docs.rs/solana-syscalls"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana syscalls."
+documentation = "https://docs.rs/solana-syscalls"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-default = ["metrics"]
-agave-unstable-api = []
-metrics = ["solana-program-runtime/metrics"]
-shuttle-test = [
-    "solana-program-runtime/shuttle-test",
-    "solana-sbpf/shuttle-test",
-    "solana-svm-type-overrides/shuttle-test",
-]
-svm-internal = []
 
 [dependencies]
 bincode = { workspace = true }
@@ -70,13 +59,30 @@ solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
 solana-program = { workspace = true }
-solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-program-runtime = {
+  path = "../program-runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-slot-hashes = { workspace = true }
 solana-svm-callback = { path = "../svm-callback", features = ["agave-unstable-api"] }
 solana-sysvar = { workspace = true, features = ["wincode"] }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = {
+  path = "../transaction-context",
+  features = ["agave-unstable-api", "bincode", "dev-context-only-utils"]
+}
 test-case = { workspace = true }
+
+[features]
+default = ["metrics"]
+agave-unstable-api = []
+metrics = ["solana-program-runtime/metrics"]
+shuttle-test = [
+  "solana-program-runtime/shuttle-test",
+  "solana-sbpf/shuttle-test",
+  "solana-svm-type-overrides/shuttle-test",
+]
+svm-internal = []
 
 [lints]
 workspace = true

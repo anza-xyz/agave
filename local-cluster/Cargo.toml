@@ -1,29 +1,19 @@
 [package]
 name = "solana-local-cluster"
-documentation = "https://docs.rs/solana-local-cluster"
 version = { workspace = true }
 authors = { workspace = true }
-description = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = { workspace = true }
+documentation = "https://docs.rs/solana-local-cluster"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
-dev-context-only-utils = [
-    "agave-votor/dev-context-only-utils",
-    "solana-core/dev-context-only-utils",
-    "agave-votor-messages/dev-context-only-utils",
-    "solana-tpu-client-next/dev-context-only-utils",
-    "agave-votor-transport/dev-context-only-utils",
-]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -105,7 +95,20 @@ solana-download-utils = { path = "../download-utils", features = ["agave-unstabl
 solana-genesis-utils = { path = "../genesis-utils", features = ["agave-unstable-api"] }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+  "agave-votor-messages/dev-context-only-utils",
+  "agave-votor-transport/dev-context-only-utils",
+  "agave-votor/dev-context-only-utils",
+  "solana-core/dev-context-only-utils",
+  "solana-tpu-client-next/dev-context-only-utils",
+]
 
 [lints]
 workspace = true

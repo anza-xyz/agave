@@ -1,14 +1,14 @@
 [package]
 name = "solana-svm-measure"
-description = "Timing measurement utilities for SVM"
-documentation = "https://docs.rs/solana-svm-measure"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Timing measurement utilities for SVM"
+documentation = "https://docs.rs/solana-svm-measure"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

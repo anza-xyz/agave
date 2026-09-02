@@ -1,22 +1,27 @@
 [package]
 name = "solana-turbine"
-documentation = "https://docs.rs/solana-turbine"
 version = { workspace = true }
 authors = { workspace = true }
-description = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = { workspace = true }
+documentation = "https://docs.rs/solana-turbine"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
-[features]
-agave-unstable-api = []
+[[bench]]
+harness = false
+name = "cluster_info"
+
+[[bench]]
+harness = false
+name = "cluster_nodes"
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -69,19 +74,17 @@ bs58 = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-signature = { workspace = true, features = ["rand"] }
 solana-transaction = { workspace = true }
 solana-turbine = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
 
-[[bench]]
-name = "cluster_info"
-harness = false
-
-[[bench]]
-name = "cluster_nodes"
-harness = false
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

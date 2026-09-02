@@ -1,20 +1,17 @@
 [package]
 name = "solana-poh-bench"
-documentation = "https://docs.rs/solana-poh-bench"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+documentation = "https://docs.rs/solana-poh-bench"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+publish = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 agave-logger = { workspace = true }
@@ -25,6 +22,9 @@ solana-entry = { workspace = true }
 solana-measure = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-version = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

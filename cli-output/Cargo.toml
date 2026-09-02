@@ -1,22 +1,19 @@
 [package]
 name = "solana-cli-output"
-documentation = "https://docs.rs/solana-cli-output"
 version = { workspace = true }
 authors = { workspace = true }
-description = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = { workspace = true }
+documentation = "https://docs.rs/solana-cli-output"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 Inflector = { workspace = true }
@@ -63,7 +60,13 @@ spl-memo-interface = { workspace = true }
 solana-keypair = { workspace = true }
 solana-seed-derivable = { workspace = true }
 solana-signer = { workspace = true }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode"] }
+solana-transaction-context = {
+  path = "../transaction-context",
+  features = ["agave-unstable-api", "bincode"]
+}
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

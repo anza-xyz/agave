@@ -1,25 +1,18 @@
 [package]
 name = "solana-tpu-client-next"
-description = "Client code to send transaction to TPU."
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Client code to send transaction to TPU."
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
-dev-context-only-utils = []
-metrics = ["dep:solana-metrics"]
-tracing = ["dep:tracing"]
-websocket-node-address-service = ["dep:solana-pubsub-client", "dep:tokio-stream"]
 
 [dependencies]
 async-trait = { workspace = true }
@@ -59,8 +52,21 @@ solana-commitment-config = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
-solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-tpu-client-next = { path = ".", features = ["agave-unstable-api", "websocket-node-address-service", "dev-context-only-utils"] }
+solana-streamer = {
+  path = "../streamer",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
+solana-tpu-client-next = {
+  path = ".",
+  features = ["agave-unstable-api", "dev-context-only-utils", "websocket-node-address-service"]
+}
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+metrics = ["dep:solana-metrics"]
+tracing = ["dep:tracing"]
+websocket-node-address-service = ["dep:solana-pubsub-client", "dep:tokio-stream"]
 
 [lints]
 workspace = true

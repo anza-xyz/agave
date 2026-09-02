@@ -1,24 +1,24 @@
 [package]
 name = "solana-svm-feature-set"
-description = "Solana SVM Feature Set"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana SVM Feature Set"
 readme = false
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[dependencies]
+
 [features]
 agave-unstable-api = []
-
-[dependencies]
 
 [lints]
 workspace = true

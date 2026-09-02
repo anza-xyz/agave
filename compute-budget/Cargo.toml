@@ -1,28 +1,28 @@
 [package]
 name = "solana-compute-budget"
-description = "Solana compute budget"
-documentation = "https://docs.rs/solana-compute-budget"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana compute budget"
+documentation = "https://docs.rs/solana-compute-budget"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[dependencies]
+solana-fee-structure = { workspace = true }
+solana-program-runtime = { workspace = true }
+
 [features]
 agave-unstable-api = []
 conf-stack-frame-size = ["solana-program-runtime/conf-stack-frame-size"]
 dev-context-only-utils = []
-
-[dependencies]
-solana-fee-structure = { workspace = true }
-solana-program-runtime = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,14 +1,14 @@
 [package]
 name = "solana-vote-program"
-description = "Solana Vote program"
-documentation = "https://docs.rs/solana-vote-program"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana Vote program"
+documentation = "https://docs.rs/solana-vote-program"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,15 +19,13 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_vote_program"
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = ["dep:qualifier_attr"]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-program-runtime/frozen-abi",
-    "solana-vote-interface/frozen-abi",
-]
+[[bench]]
+harness = false
+name = "vote_instructions"
+
+[[bench]]
+harness = false
+name = "process_vote"
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -39,12 +37,20 @@ solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ],
+  optional = true
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
+  ],
+  optional = true
+}
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-packet = { workspace = true }
@@ -67,7 +73,10 @@ solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-fee-calculator = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
-solana-program-runtime = { path = "../../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-program-runtime = {
+  path = "../../program-runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
@@ -80,13 +89,15 @@ solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-conte
 test-case = { workspace = true }
 wincode = { workspace = true }
 
-[[bench]]
-name = "vote_instructions"
-harness = false
-
-[[bench]]
-name = "process_vote"
-harness = false
+[features]
+agave-unstable-api = []
+dev-context-only-utils = ["dep:qualifier_attr"]
+frozen-abi = [
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-program-runtime/frozen-abi",
+  "solana-vote-interface/frozen-abi",
+]
 
 [lints]
 workspace = true

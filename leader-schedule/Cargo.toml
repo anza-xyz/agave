@@ -1,14 +1,14 @@
 [package]
 name = "solana-leader-schedule"
-description = "Solana leader schedule"
-documentation = "https://docs.rs/solana-leader-schedule"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana leader schedule"
+documentation = "https://docs.rs/solana-leader-schedule"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -18,9 +18,6 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 crate-type = ["lib"]
 name = "solana_leader_schedule"
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 agave-random = { workspace = true }
@@ -35,6 +32,9 @@ rand = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

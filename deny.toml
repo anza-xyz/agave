@@ -1,5 +1,5 @@
 [bans]
 deny = [
-    { crate = "solana-sdk", reason = "Deprecated; use the standalone Solana crates instead" },
+  { crate = "solana-sdk", reason = "Deprecated; use the standalone Solana crates instead" },
 ]
 multiple-versions = "allow"

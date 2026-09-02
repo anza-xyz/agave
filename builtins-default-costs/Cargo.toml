@@ -1,14 +1,14 @@
 [package]
 name = "solana-builtins-default-costs"
-description = "Solana builtins default costs"
-documentation = "https://docs.rs/solana-builtins-default-costs"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana builtins default costs"
+documentation = "https://docs.rs/solana-builtins-default-costs"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -20,10 +20,6 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_builtins_default_costs"
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = ["dep:qualifier_attr"]
-
 [dependencies]
 agave-feature-set = { workspace = true }
 ahash = { workspace = true }
@@ -34,6 +30,10 @@ solana-sdk-ids = { workspace = true }
 [dev-dependencies]
 solana-pubkey = { workspace = true, features = ["std"] }
 static_assertions = { workspace = true }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = ["dep:qualifier_attr"]
 
 [lints]
 workspace = true

@@ -1,14 +1,14 @@
 [package]
 name = "solana-bloom"
-description = "Solana bloom filter"
-documentation = "https://docs.rs/solana-bloom"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana bloom filter"
+documentation = "https://docs.rs/solana-bloom"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,25 +19,28 @@ rustdoc-args = ["--cfg=docsrs"]
 crate-type = ["lib"]
 name = "solana_bloom"
 
-[features]
-agave-unstable-api = []
-dev-context-only-utils = []
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-hash/frozen-abi",
-]
+[[bench]]
+harness = false
+name = "bloom"
 
 [dependencies]
 bv = { workspace = true }
 fnv = { workspace = true }
 rand = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ],
+  optional = true
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  features = [
     "frozen-abi",
-] }
+  ],
+  optional = true
+}
 solana-sanitize = { workspace = true }
 solana-time-utils = { workspace = true }
 wincode = { workspace = true, features = ["bv"] }
@@ -50,9 +53,14 @@ solana-hash = { workspace = true, features = ["atomic", "wincode"] }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signature = { workspace = true, features = ["std"] }
 
-[[bench]]
-name = "bloom"
-harness = false
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+frozen-abi = [
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-hash/frozen-abi",
+]
 
 [lints]
 workspace = true

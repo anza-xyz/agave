@@ -1,19 +1,19 @@
 [package]
 name = "gen-syscall-list"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
-
-[features]
-agave-unstable-api = []
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+publish = false
 
 [build-dependencies]
 regex = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

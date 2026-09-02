@@ -1,22 +1,19 @@
 [package]
 name = "agave-watchtower"
-documentation = "https://docs.rs/agave-watchtower"
 version = { workspace = true }
 authors = { workspace = true }
-description = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = { workspace = true }
+documentation = "https://docs.rs/agave-watchtower"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -36,6 +33,9 @@ solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-interface = { workspace = true }
+
+[features]
+agave-unstable-api = []
 
 [lints]
 workspace = true

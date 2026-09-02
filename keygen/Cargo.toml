@@ -1,14 +1,14 @@
 [package]
 name = "solana-keygen"
-description = "Solana key generation utility"
-documentation = "https://docs.rs/solana-keygen"
 version = { workspace = true }
 authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = "Solana key generation utility"
+documentation = "https://docs.rs/solana-keygen"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -21,12 +21,6 @@ rustdoc-args = ["--cfg=docsrs"]
 [[bin]]
 name = "solana-keygen"
 path = "src/keygen.rs"
-
-[features]
-default = ["remote-wallet-hidraw"]
-agave-unstable-api = []
-remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
-remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 agave-votor-messages = { workspace = true }
@@ -52,6 +46,12 @@ solana-version = { workspace = true }
 [dev-dependencies]
 solana-pubkey = { workspace = true, features = ["rand"] }
 tempfile = { workspace = true }
+
+[features]
+default = ["remote-wallet-hidraw"]
+agave-unstable-api = []
+remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
+remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [lints]
 workspace = true

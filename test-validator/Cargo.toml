@@ -2,25 +2,17 @@
 name = "solana-test-validator"
 version = { workspace = true }
 authors = { workspace = true }
-description = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
+description = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-agave-unstable-api = []
-dev-context-only-utils = [
-    "solana-core/dev-context-only-utils",
-    "solana-ledger/dev-context-only-utils",
-    "solana-runtime/dev-context-only-utils",
-]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -77,6 +69,14 @@ tokio = { workspace = true, features = ["full"] }
 [dev-dependencies]
 solana-sdk-ids = { workspace = true }
 solana-test-validator = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+  "solana-core/dev-context-only-utils",
+  "solana-ledger/dev-context-only-utils",
+  "solana-runtime/dev-context-only-utils",
+]
 
 [lints]
 workspace = true
