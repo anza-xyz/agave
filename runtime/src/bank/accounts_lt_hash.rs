@@ -17,7 +17,7 @@ use {
         array,
         collections::hash_map::Entry,
         hint,
-        mem::size_of,
+        mem::{self, size_of},
         sync::{
             Arc, LazyLock, Mutex,
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -217,8 +217,7 @@ impl Bank {
         self.accounts_lt_hash_async_progress.set_is_at_end_of_slot();
         let num_jobs_total = {
             let mut accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
-            self.accounts_lt_hash_async_progress
-                .finish(&mut accounts_lt_hash.0)
+            Arc::clone(&self.accounts_lt_hash_async_progress).finish(&mut accounts_lt_hash.0)
         };
         self.accounts_lt_hash_async_progress
             .clear_is_at_end_of_slot();
@@ -270,6 +269,8 @@ struct ThreadAcc {
     plus: Accumulator,
     /// Previous-version accounts, mixed *out* of the bank hash.
     minus: Accumulator,
+    /// `Σ curr − Σ prev`, once `drain()` has hashed whatever was still staged.
+    delta: LtHash,
 }
 
 impl ThreadAcc {
@@ -277,7 +278,18 @@ impl ThreadAcc {
         Self {
             plus: Accumulator::new(),
             minus: Accumulator::new(),
+            delta: LtHash::identity(),
         }
+    }
+
+    /// Hashes the staged remainder and folds it into `delta`.
+    fn drain(&mut self) {
+        self.delta.mix_in(&self.plus.take_lt_hash());
+        self.delta.mix_out(&self.minus.take_lt_hash());
+    }
+
+    fn take_delta(&mut self) -> LtHash {
+        mem::replace(&mut self.delta, LtHash::identity())
     }
 
     /// Stages `update`'s previous and current account versions into `minus` and
@@ -306,6 +318,8 @@ pub struct AccountsLtHashAsyncProgress {
     /// straddle a worker's lock word and its neighbor's staging state.
     accumulators: [CachePadded<Mutex<ThreadAcc>>; NUM_ACCOUNTS_HASHER_THREADS],
     num_jobs_pending: AtomicUsize,
+    /// Drains not yet completed, once end-of-slot has spawned them.
+    num_drains_pending: AtomicUsize,
     num_jobs_total: AtomicU64,
     /// Flag to indicate if the bank has reached the end of the slot.
     /// When true, this causes the manager to send account updates to
@@ -320,6 +334,7 @@ impl AccountsLtHashAsyncProgress {
         Self {
             accumulators: array::from_fn(|_| CachePadded::new(Mutex::new(ThreadAcc::new()))),
             num_jobs_pending: AtomicUsize::new(0),
+            num_drains_pending: AtomicUsize::new(0),
             num_jobs_total: AtomicU64::new(0),
             is_at_end_of_slot: AtomicBool::new(false),
         }
@@ -360,19 +375,38 @@ impl AccountsLtHashAsyncProgress {
     ///
     /// Note: Since an LtHash is large, `lt_hash` is passed as an in-out parameter.
     /// This it to avoid Rust compiler bug that fails to perform return value optimization.
-    fn finish(&self, lt_hash: &mut LtHash) -> u64 {
+    fn finish(self: Arc<Self>, lt_hash: &mut LtHash) -> u64 {
         while self.num_jobs_pending.load(Ordering::Relaxed) > 0 {
             // Spin, do not yield! This is called by Bank::freeze() and we want to be fast.
             hint::spin_loop();
         }
 
+        // Only now that no job can stage anything more is it safe to drain.
+        Self::spawn_drains(&self);
+        while self.num_drains_pending.load(Ordering::Relaxed) > 0 {
+            hint::spin_loop();
+        }
+
         for thread_accumulator in self.accumulators.iter() {
-            let mut thread_accumulator = thread_accumulator.lock().unwrap();
-            // fold this worker's delta, Σ curr − Σ prev, into the bank hash
-            lt_hash.mix_in(&thread_accumulator.plus.take_lt_hash());
-            lt_hash.mix_out(&thread_accumulator.minus.take_lt_hash());
+            lt_hash.mix_in(&thread_accumulator.lock().unwrap().take_delta());
         }
         self.num_jobs_total.load(Ordering::Relaxed)
+    }
+
+    /// Parallelizes the hashing of whatever did not fill a batch, one job per worker.
+    ///
+    /// Must not be called while any job may still stage a message.
+    fn spawn_drains(progress: &Arc<Self>) {
+        progress
+            .num_drains_pending
+            .store(NUM_ACCOUNTS_HASHER_THREADS, Ordering::Relaxed);
+        let progress = Arc::clone(progress);
+        accounts_hasher_thread_pool().spawn_broadcast(move |ctx| {
+            progress.accumulators[ctx.index()].lock().unwrap().drain();
+            // Releasing the lock above is what publishes the drained delta;
+            // this only reports that it happened.
+            progress.num_drains_pending.fetch_sub(1, Ordering::Relaxed);
+        });
     }
 
     /// Signals to the accounts lt hash manager that this bank has reached the end
