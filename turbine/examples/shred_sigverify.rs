@@ -435,6 +435,8 @@ struct ReplayReport<'a> {
 
 impl Display for ReplayReport<'_> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        let shreds_per_second =
+            self.result.sent_shreds as f64 / self.result.end_to_end_elapsed.as_secs_f64();
         writeln!(formatter, "Shred sigverify result")?;
         writeln!(
             formatter,
@@ -478,6 +480,7 @@ impl Display for ReplayReport<'_> {
             "  ingress elapsed:      {:?}",
             self.result.ingress_elapsed
         )?;
+        writeln!(formatter, "  shreds/s:             {shreds_per_second:.0}")?;
         write!(
             formatter,
             "  end-to-end elapsed:   {:?}",
