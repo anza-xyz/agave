@@ -17,8 +17,8 @@ use {
 /// Creates a vote account
 /// `set_bls_pubkey`: controls whether the bls pubkey is None or Some
 #[cfg(feature = "dev-context-only-utils")]
-pub fn new_rand_vote_account<R: Rng, F>(
-    rng: &mut R,
+pub fn new_rand_vote_account<F>(
+    lamports: u64,
     node_pubkey: Option<Pubkey>,
     set_bls_pubkey: bool,
     pending_delegator_rewards_from_account_lamports: F,
@@ -27,7 +27,7 @@ where
     F: Fn(u64) -> u64,
 {
     let owner = solana_sdk_ids::vote::id();
-    let mut account = AccountSharedData::new(rng.random(), VoteStateV4::size_of(), &owner);
+    let mut account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &owner);
 
     let bls_pubkey_compressed = set_bls_pubkey.then(|| {
         let bls_pubkey: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
@@ -62,7 +62,7 @@ pub fn new_rand_vote_accounts<R: Rng>(
     let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(num_nodes).collect();
     repeat_with(move || {
         let node = nodes[rng.random_range(0..nodes.len())];
-        let account = new_rand_vote_account(rng, Some(node), true, |_| 0);
+        let account = new_rand_vote_account(rng.random(), Some(node), true, |_| 0);
         let stake = rng.random_range(0..max_stake_for_staked_account);
         let vote_account = VoteAccount::try_from(account).unwrap();
         (Pubkey::new_unique(), (stake, vote_account))
@@ -99,13 +99,12 @@ where
         let set_bls_pubkey = index < num_nodes_with_bls_pubkeys;
         let pending_delegator_rewards_fn =
             pending_delegator_rewards_from_account_lamports_generator(index);
-        let mut account = new_rand_vote_account(
-            rng,
+        let account = new_rand_vote_account(
+            lamports_per_node(index),
             Some(node_pubkey),
             set_bls_pubkey,
             pending_delegator_rewards_fn,
         );
-        account.set_lamports(lamports_per_node(index));
         vote_accounts.insert(pubkey, VoteAccount::try_from(account).unwrap(), || stake);
     }
     vote_accounts
