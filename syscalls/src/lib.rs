@@ -34,7 +34,6 @@ use {
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
-        declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
         program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
         vm::Config,
@@ -173,7 +172,7 @@ impl From<CpiError> for SyscallError {
 
 type Error = Box<dyn std::error::Error>;
 
-trait HasherImpl {
+pub trait HasherImpl {
     const NAME: &'static str;
     type Output: AsRef<[u8]>;
 
@@ -185,10 +184,10 @@ trait HasherImpl {
     fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64;
 }
 
-struct Sha256Hasher(Hasher);
-struct Blake3Hasher(blake3::Hasher);
-struct Keccak256Hasher(keccak::Hasher);
-struct Sha512Hasher(sha512::Hasher);
+pub struct Sha256Hasher(Hasher);
+pub struct Blake3Hasher(blake3::Hasher);
+pub struct Keccak256Hasher(keccak::Hasher);
+pub struct Sha512Hasher(sha512::Hasher);
 
 impl HasherImpl for Sha256Hasher {
     const NAME: &'static str = "Sha256";
@@ -712,35 +711,37 @@ macro_rules! translate_mut {
     };
 }
 
-declare_builtin_function!(
-    /// Abort syscall functions, called when the SBF program calls `abort()`
-    /// LLVM will insert calls to `abort()` if it detects an untenable situation,
-    /// `abort()` is not intended to be called explicitly by the program.
-    /// Causes the SBF program to be halted immediately
-    SyscallAbort,
+/// Abort syscall functions, called when the SBF program calls `abort()`
+/// LLVM will insert calls to `abort()` if it detects an untenable situation,
+/// `abort()` is not intended to be called explicitly by the program.
+/// Causes the SBF program to be halted immediately
+pub struct SyscallAbort {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAbort {
+    type Error = Error;
     fn rust(
-        _invoke_context: &mut InvokeContext<'_, '_>,
-        _arg1: u64,
-        _arg2: u64,
-        _arg3: u64,
-        _arg4: u64,
-        _arg5: u64,
-    ) -> Result<u64, Error> {
+        _: &mut InvokeContext<'_, '_>,
+        _: u64,
+        _: u64,
+        _: u64,
+        _: u64,
+        _: u64,
+    ) -> Result<u64, Self::Error> {
         Err(SyscallError::Abort.into())
     }
-);
+}
 
-declare_builtin_function!(
-    /// Panic syscall function, called when the SBF program calls 'sol_panic_()`
-    /// Causes the SBF program to be halted immediately
-    SyscallPanic,
+/// Panic syscall function, called when the SBF program calls 'sol_panic_()`
+/// Causes the SBF program to be halted immediately
+pub struct SyscallPanic {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPanic {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         file: u64,
         len: u64,
         line: u64,
         column: u64,
-        _arg5: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         invoke_context.compute_meter.consume_checked(len)?;
 
@@ -753,23 +754,24 @@ declare_builtin_function!(
             &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Dynamic memory allocation syscall called when the SBF program calls
-    /// `sol_alloc_free_()`.  The allocator is expected to allocate/free
-    /// from/to a given chunk of memory and enforce size restrictions.  The
-    /// memory chunk is given to the allocator during allocator creation and
-    /// information about that memory (start address and size) is passed
-    /// to the VM to use for enforcement.
-    SyscallAllocFree,
+/// Dynamic memory allocation syscall called when the SBF program calls
+/// `sol_alloc_free_()`.  The allocator is expected to allocate/free
+/// from/to a given chunk of memory and enforce size restrictions.  The
+/// memory chunk is given to the allocator during allocator creation and
+/// information about that memory (start address and size) is passed
+/// to the VM to use for enforcement.
+pub struct SyscallAllocFree {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAllocFree {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         size: u64,
         free_addr: u64,
-        _arg3: u64,
-        _arg4: u64,
-        _arg5: u64,
+        _: u64,
+        _: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         let align = if invoke_context.get_check_aligned() {
             BPF_ALIGN_OF_U128
@@ -779,7 +781,10 @@ declare_builtin_function!(
         let Ok(layout) = Layout::from_size_align(size as usize, align) else {
             return Ok(0);
         };
-        let allocator = &mut invoke_context.memory_contexts.memory_context_mut_abi_v1()?.allocator;
+        let allocator = &mut invoke_context
+            .memory_contexts
+            .memory_context_mut_abi_v1()?
+            .allocator;
         if free_addr == 0 {
             match allocator.alloc(layout) {
                 Ok(addr) => Ok(addr),
@@ -790,7 +795,7 @@ declare_builtin_function!(
             Ok(0)
         }
     }
-);
+}
 
 fn translate_and_check_program_address_inputs(
     seeds_addr: u64,
@@ -817,16 +822,17 @@ fn translate_and_check_program_address_inputs(
     Ok((seeds, program_id))
 }
 
-declare_builtin_function!(
-    /// Create a program address
-    SyscallCreateProgramAddress,
+/// Create a program address
+pub struct SyscallCreateProgramAddress {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCreateProgramAddress {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         seeds_addr: u64,
         seeds_len: u64,
         program_id_addr: u64,
         address_addr: u64,
-        _arg5: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         let cost = invoke_context
             .get_execution_cost()
@@ -854,11 +860,12 @@ declare_builtin_function!(
         address.write_copy_of_slice(new_address.as_ref());
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Create a program address
-    SyscallTryFindProgramAddress,
+/// Find a program address
+pub struct SyscallTryFindProgramAddress {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallTryFindProgramAddress {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         seeds_addr: u64,
@@ -907,18 +914,19 @@ declare_builtin_function!(
         }
         Ok(1)
     }
-);
+}
 
-declare_builtin_function!(
-    /// secp256k1_recover
-    SyscallSecp256k1Recover,
+/// secp256k1_recover
+pub struct SyscallSecp256k1Recover {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSecp256k1Recover {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         hash_addr: u64,
         recovery_id_val: u64,
         signature_addr: u64,
         result_addr: u64,
-        _arg5: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         let cost = invoke_context.get_execution_cost().secp256k1_recover_cost;
         invoke_context.compute_meter.consume_checked(cost)?;
@@ -976,22 +984,23 @@ declare_builtin_function!(
         result.write_copy_of_slice(&public_key[1..65]);
         Ok(SUCCESS)
     }
-);
+}
 
-declare_builtin_function!(
-    // Elliptic Curve Point Validation
-    //
-    // Currently, the following curves are supported:
-    // - Curve25519 Edwards and Ristretto representations
-    // - BLS12-381
-    SyscallCurvePointValidation,
+/// Elliptic Curve Point Validation
+///
+/// Currently, the following curves are supported:
+/// - Curve25519 Edwards and Ristretto representations
+/// - BLS12-381
+pub struct SyscallCurvePointValidation {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValidation {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         point_addr: u64,
-        _arg3: u64,
-        _arg4: u64,
-        _arg5: u64,
+        _: u64,
+        _: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         use {
             solana_curve25519::{edwards, ristretto},
@@ -1112,21 +1121,22 @@ declare_builtin_function!(
             }
         }
     }
-);
+}
 
-declare_builtin_function!(
-    // Elliptic Curve Point Decompression
-    //
-    // Currently, the following curves are supported:
-    // - BLS12-381
-    SyscallCurveDecompress,
+/// Elliptic Curve Point Decompression
+///
+/// Currently, the following curves are supported:
+/// - BLS12-381
+pub struct SyscallCurveDecompress {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         point_addr: u64,
         result_addr: u64,
-        _arg4: u64,
-        _arg5: u64,
+        _: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         use {
             solana_bls12_381_syscall::{
@@ -1211,15 +1221,16 @@ declare_builtin_function!(
             _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
-);
+}
 
-declare_builtin_function!(
-    // Elliptic Curve Group Operations
-    //
-    // Currently, the following curves are supported:
-    // - Curve25519 Edwards and Ristretto representations
-    // - BLS12-381
-    SyscallCurveGroupOps,
+/// Elliptic Curve Group Operations
+///
+/// Currently, the following curves are supported:
+/// - Curve25519 Edwards and Ristretto representations
+/// - BLS12-381
+pub struct SyscallCurveGroupOps {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
@@ -1705,14 +1716,15 @@ declare_builtin_function!(
             }
         }
     }
-);
+}
 
-declare_builtin_function!(
-    // Elliptic Curve Multiscalar Multiplication
-    //
-    // Currently, the following curves are supported:
-    // - Curve25519 Edwards and Ristretto representations
-    SyscallCurveMultiscalarMultiplication,
+/// Elliptic Curve Multiscalar Multiplication
+///
+/// Currently, the following curves are supported:
+/// - Curve25519 Edwards and Ristretto representations
+pub struct SyscallCurveMultiscalarMultiplication {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscalarMultiplication {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
@@ -1827,14 +1839,15 @@ declare_builtin_function!(
             }
         }
     }
-);
+}
 
-declare_builtin_function!(
-    /// Elliptic Curve Pairing Map
-    ///
-    // Currently, the following curves are supported:
-    // - BLS12-381
-    SyscallCurvePairingMap,
+/// Elliptic Curve Pairing Map
+///
+/// Currently, the following curves are supported:
+/// - BLS12-381
+pub struct SyscallCurvePairingMap {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePairingMap {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
@@ -1844,24 +1857,22 @@ declare_builtin_function!(
         result_addr: u64,
     ) -> Result<u64, Error> {
         use {
-            solana_define_syscall::curve_constants::*,
             solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point,
                 PodGtElement as PodBLSGtElement,
             },
+            solana_define_syscall::curve_constants::*,
         };
 
         let check_aligned = invoke_context.get_check_aligned();
         match curve_id {
             BLS12_381_LE | BLS12_381_BE => {
                 let execution_cost = invoke_context.get_execution_cost();
-                let cost = execution_cost
-                    .bls12_381_one_pair_cost
-                    .saturating_add(
-                        execution_cost
-                            .bls12_381_additional_pair_cost
-                            .saturating_mul(num_pairs.saturating_sub(1)),
-                    );
+                let cost = execution_cost.bls12_381_one_pair_cost.saturating_add(
+                    execution_cost
+                        .bls12_381_additional_pair_cost
+                        .saturating_mul(num_pairs.saturating_sub(1)),
+                );
                 invoke_context.compute_meter.consume_checked(cost)?;
 
                 let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -1902,16 +1913,15 @@ declare_builtin_function!(
                     Ok(1)
                 }
             }
-            _ => {
-                Err(SyscallError::InvalidAttribute.into())
-            }
+            _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
-);
+}
 
-declare_builtin_function!(
-    /// Set return data
-    SyscallSetReturnData,
+/// Set return data
+pub struct SyscallSetReturnData {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSetReturnData {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         addr: u64,
@@ -1937,30 +1947,23 @@ declare_builtin_function!(
         } else {
             let check_aligned = invoke_context.get_check_aligned();
             let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-            translate_slice::<u8>(
-                memory_mapping,
-                addr,
-                len,
-                check_aligned,
-            )?
-            .to_vec()
+            translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?.to_vec()
         };
         let transaction_context = &mut invoke_context.transaction_context;
         let program_id = *transaction_context
             .get_current_instruction_context()
-            .and_then(|instruction_context| {
-                instruction_context.get_program_key()
-            })?;
+            .and_then(|instruction_context| instruction_context.get_program_key())?;
 
         transaction_context.set_return_data(program_id, return_data)?;
 
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get return data
-    SyscallGetReturnData,
+/// Get return data
+pub struct SyscallGetReturnData {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         return_data_addr: u64,
@@ -1971,7 +1974,9 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
         let length = length.min(return_data.len() as u64);
@@ -2003,11 +2008,12 @@ declare_builtin_function!(
         // Return the actual length, rather the length returned
         Ok(return_data.len() as u64)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a processed sigling instruction
-    SyscallGetProcessedSiblingInstruction,
+/// Get a processed sigling instruction
+pub struct SyscallGetProcessedSiblingInstruction {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSiblingInstruction {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         index: u64,
@@ -2018,19 +2024,29 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         let stack_height = invoke_context.get_stack_height();
         let mut reverse_index_at_stack_height = 0;
         let mut found_instruction_context = None;
-        let current_ix_caller = invoke_context.transaction_context.get_current_instruction_context()?.get_index_of_caller();
+        let current_ix_caller = invoke_context
+            .transaction_context
+            .get_current_instruction_context()?
+            .get_index_of_caller();
 
         // Either we only search for top level instructions or CPIs, depending on the stack height.
         let range = if stack_height == 1 {
-            0..invoke_context.transaction_context.next_top_level_instruction_index()
+            0..invoke_context
+                .transaction_context
+                .next_top_level_instruction_index()
         } else {
-            let end = invoke_context.transaction_context.get_instruction_trace_length();
-            let start = end.saturating_sub(invoke_context.transaction_context.number_of_cpis_in_trace());
+            let end = invoke_context
+                .transaction_context
+                .get_instruction_trace_length();
+            let start =
+                end.saturating_sub(invoke_context.transaction_context.number_of_cpis_in_trace());
             start..end
         };
 
@@ -2085,7 +2101,8 @@ declare_builtin_function!(
                 let account_metas = (0..instruction_context.get_number_of_instruction_accounts())
                     .map(|instruction_account_index| {
                         Ok(AccountMeta {
-                            pubkey: *instruction_context.get_key_of_instruction_account(instruction_account_index)?,
+                            pubkey: *instruction_context
+                                .get_key_of_instruction_account(instruction_account_index)?,
                             is_signer: instruction_context
                                 .is_instruction_account_signer(instruction_account_index)?,
                             is_writable: instruction_context
@@ -2103,11 +2120,12 @@ declare_builtin_function!(
         }
         Ok(false as u64)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get current call stack height
-    SyscallGetStackHeight,
+/// Get current call stack height
+pub struct SyscallGetStackHeight {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetStackHeight {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
@@ -2118,15 +2136,18 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         Ok(invoke_context.get_stack_height() as u64)
     }
-);
+}
 
-declare_builtin_function!(
-    /// alt_bn128 group operations
-    SyscallAltBn128,
+/// alt_bn128 group operations
+pub struct SyscallAltBn128 {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         group_op: u64,
@@ -2136,32 +2157,31 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         use solana_bn254::versioned::{
-            alt_bn128_versioned_g1_addition, alt_bn128_versioned_g1_multiplication,
-            alt_bn128_versioned_g2_addition, alt_bn128_versioned_g2_multiplication,
-            alt_bn128_versioned_pairing, Endianness, VersionedG1Addition,
-            VersionedG1Multiplication, VersionedG2Addition, VersionedG2Multiplication,
-            VersionedPairing, ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE,
-            ALT_BN128_G1_ADD_BE, ALT_BN128_G1_MUL_BE, ALT_BN128_PAIRING_BE,
-            ALT_BN128_PAIRING_ELEMENT_SIZE, ALT_BN128_PAIRING_OUTPUT_SIZE, ALT_BN128_G1_ADD_LE,
-            ALT_BN128_G1_MUL_LE, ALT_BN128_PAIRING_LE, ALT_BN128_G2_ADD_BE, ALT_BN128_G2_ADD_LE,
-            ALT_BN128_G2_MUL_BE, ALT_BN128_G2_MUL_LE,
+            ALT_BN128_G1_ADD_BE, ALT_BN128_G1_ADD_LE, ALT_BN128_G1_MUL_BE, ALT_BN128_G1_MUL_LE,
+            ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_ADD_BE, ALT_BN128_G2_ADD_LE, ALT_BN128_G2_MUL_BE,
+            ALT_BN128_G2_MUL_LE, ALT_BN128_G2_POINT_SIZE, ALT_BN128_PAIRING_BE,
+            ALT_BN128_PAIRING_ELEMENT_SIZE, ALT_BN128_PAIRING_LE, ALT_BN128_PAIRING_OUTPUT_SIZE,
+            Endianness, VersionedG1Addition, VersionedG1Multiplication, VersionedG2Addition,
+            VersionedG2Multiplication, VersionedPairing, alt_bn128_versioned_g1_addition,
+            alt_bn128_versioned_g1_multiplication, alt_bn128_versioned_g2_addition,
+            alt_bn128_versioned_g2_multiplication, alt_bn128_versioned_pairing,
         };
 
         // SIMD-0284: Block LE ops if the feature is not active.
-        if !invoke_context.get_feature_set().alt_bn128_little_endian &&
-            matches!(
+        if !invoke_context.get_feature_set().alt_bn128_little_endian
+            && matches!(
                 group_op,
-                ALT_BN128_G1_ADD_LE
-                    | ALT_BN128_G1_MUL_LE
-                    | ALT_BN128_PAIRING_LE
+                ALT_BN128_G1_ADD_LE | ALT_BN128_G1_MUL_LE | ALT_BN128_PAIRING_LE
             )
         {
             return Err(SyscallError::InvalidAttribute.into());
         }
 
         // SIMD-0302: Block G2 ops if the feature is not active.
-        if !invoke_context.get_feature_set().enable_alt_bn128_g2_syscalls &&
-            matches!(
+        if !invoke_context
+            .get_feature_set()
+            .enable_alt_bn128_g2_syscalls
+            && matches!(
                 group_op,
                 ALT_BN128_G2_ADD_BE
                     | ALT_BN128_G2_ADD_LE
@@ -2223,12 +2243,7 @@ declare_builtin_function!(
                 let _result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
             );
         }
-        let input = translate_slice::<u8>(
-            memory_mapping,
-            input_addr,
-            input_size,
-            check_aligned,
-        )?;
+        let input = translate_slice::<u8>(memory_mapping, input_addr, input_size, check_aligned)?;
 
         let result_point = match group_op {
             ALT_BN128_G1_ADD_BE => {
@@ -2243,34 +2258,26 @@ declare_builtin_function!(
             ALT_BN128_G2_ADD_LE => {
                 alt_bn128_versioned_g2_addition(VersionedG2Addition::V0, input, Endianness::LE)
             }
-            ALT_BN128_G1_MUL_BE => {
-                alt_bn128_versioned_g1_multiplication(
-                    VersionedG1Multiplication::V1,
-                    input,
-                    Endianness::BE
-                )
-            }
-            ALT_BN128_G1_MUL_LE => {
-                alt_bn128_versioned_g1_multiplication(
-                    VersionedG1Multiplication::V1,
-                    input,
-                    Endianness::LE
-                )
-            }
-            ALT_BN128_G2_MUL_BE => {
-                alt_bn128_versioned_g2_multiplication(
-                    VersionedG2Multiplication::V0,
-                    input,
-                    Endianness::BE
-                )
-            }
-            ALT_BN128_G2_MUL_LE => {
-                alt_bn128_versioned_g2_multiplication(
-                    VersionedG2Multiplication::V0,
-                    input,
-                    Endianness::LE
-                )
-            }
+            ALT_BN128_G1_MUL_BE => alt_bn128_versioned_g1_multiplication(
+                VersionedG1Multiplication::V1,
+                input,
+                Endianness::BE,
+            ),
+            ALT_BN128_G1_MUL_LE => alt_bn128_versioned_g1_multiplication(
+                VersionedG1Multiplication::V1,
+                input,
+                Endianness::LE,
+            ),
+            ALT_BN128_G2_MUL_BE => alt_bn128_versioned_g2_multiplication(
+                VersionedG2Multiplication::V0,
+                input,
+                Endianness::BE,
+            ),
+            ALT_BN128_G2_MUL_LE => alt_bn128_versioned_g2_multiplication(
+                VersionedG2Multiplication::V0,
+                input,
+                Endianness::LE,
+            ),
             ALT_BN128_PAIRING_BE => {
                 alt_bn128_versioned_pairing(VersionedPairing::V1, input, Endianness::BE)
             }
@@ -2292,12 +2299,10 @@ declare_builtin_function!(
                 result.write_copy_of_slice(&point);
                 Ok(SUCCESS)
             }
-            Err(_) => {
-                Ok(1)
-            }
+            Err(_) => Ok(1),
         }
     }
-);
+}
 
 fn big_mod_exp_mult_complexity(input_len: u64) -> Option<u128> {
     let input_len = input_len as u128;
@@ -2372,9 +2377,10 @@ fn big_mod_exp_operation_cost(
     u64::try_from(operation_cost).ok()
 }
 
-declare_builtin_function!(
-    /// Big integer modular exponentiation
-    SyscallBigModExp,
+/// Big integer modular exponentiation
+pub struct SyscallBigModExp {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallBigModExp {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         params_addr: u64,
@@ -2420,12 +2426,8 @@ declare_builtin_function!(
         };
         invoke_context.compute_meter.consume_checked(cost)?;
 
-        let base = translate_slice::<u8>(
-            memory_mapping,
-            params.base,
-            params.base_len,
-            check_aligned,
-        )?;
+        let base =
+            translate_slice::<u8>(memory_mapping, params.base, params.base_len, check_aligned)?;
         let modulus = translate_slice::<u8>(
             memory_mapping,
             params.modulus,
@@ -2447,11 +2449,12 @@ declare_builtin_function!(
 
         Ok(SUCCESS)
     }
-);
+}
 
-declare_builtin_function!(
-    // Poseidon
-    SyscallPoseidon,
+/// Poseidon
+pub struct SyscallPoseidon {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPoseidon {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         parameters: u64,
@@ -2517,11 +2520,12 @@ declare_builtin_function!(
 
         Ok(SUCCESS)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Read remaining compute units
-    SyscallRemainingComputeUnits,
+/// Read remaining compute units
+pub struct SyscallRemainingComputeUnits {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallRemainingComputeUnits {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
@@ -2531,16 +2535,19 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         use solana_sbpf::vm::ContextObject;
         Ok(invoke_context.get_remaining())
     }
-);
+}
 
-declare_builtin_function!(
-    /// alt_bn128 g1 and g2 compression and decompression
-    SyscallAltBn128Compression,
+/// alt_bn128 g1 and g2 compression and decompression
+pub struct SyscallAltBn128Compression {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compression {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         op: u64,
@@ -2550,23 +2557,21 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         use solana_bn254::{
-            prelude::{ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE},
             compression::prelude::{
-                alt_bn128_g1_compress_be, alt_bn128_g1_decompress_be,
-                alt_bn128_g2_compress_be, alt_bn128_g2_decompress_be,
-                alt_bn128_g1_compress_le, alt_bn128_g1_decompress_le,
-                alt_bn128_g2_compress_le, alt_bn128_g2_decompress_le,
-                ALT_BN128_G1_COMPRESS_BE, ALT_BN128_G1_DECOMPRESS_BE,
-                ALT_BN128_G2_COMPRESS_BE, ALT_BN128_G2_DECOMPRESS_BE,
-                ALT_BN128_G1_COMPRESSED_POINT_SIZE, ALT_BN128_G2_COMPRESSED_POINT_SIZE,
-                ALT_BN128_G1_COMPRESS_LE, ALT_BN128_G2_COMPRESS_LE,
-                ALT_BN128_G1_DECOMPRESS_LE, ALT_BN128_G2_DECOMPRESS_LE,
-            }
+                ALT_BN128_G1_COMPRESS_BE, ALT_BN128_G1_COMPRESS_LE,
+                ALT_BN128_G1_COMPRESSED_POINT_SIZE, ALT_BN128_G1_DECOMPRESS_BE,
+                ALT_BN128_G1_DECOMPRESS_LE, ALT_BN128_G2_COMPRESS_BE, ALT_BN128_G2_COMPRESS_LE,
+                ALT_BN128_G2_COMPRESSED_POINT_SIZE, ALT_BN128_G2_DECOMPRESS_BE,
+                ALT_BN128_G2_DECOMPRESS_LE, alt_bn128_g1_compress_be, alt_bn128_g1_compress_le,
+                alt_bn128_g1_decompress_be, alt_bn128_g1_decompress_le, alt_bn128_g2_compress_be,
+                alt_bn128_g2_compress_le, alt_bn128_g2_decompress_be, alt_bn128_g2_decompress_le,
+            },
+            prelude::{ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE},
         };
 
         // SIMD-0284: Block LE ops if the feature is not active.
-        if !invoke_context.get_feature_set().alt_bn128_little_endian &&
-            matches!(
+        if !invoke_context.get_feature_set().alt_bn128_little_endian
+            && matches!(
                 op,
                 ALT_BN128_G1_COMPRESS_LE
                     | ALT_BN128_G2_COMPRESS_LE
@@ -2584,16 +2589,18 @@ declare_builtin_function!(
                 base_cost.saturating_add(execution_cost.alt_bn128_g1_compress),
                 ALT_BN128_G1_COMPRESSED_POINT_SIZE,
             ),
-            ALT_BN128_G1_DECOMPRESS_BE | ALT_BN128_G1_DECOMPRESS_LE => {
-                (base_cost.saturating_add(execution_cost.alt_bn128_g1_decompress), ALT_BN128_G1_POINT_SIZE)
-            }
+            ALT_BN128_G1_DECOMPRESS_BE | ALT_BN128_G1_DECOMPRESS_LE => (
+                base_cost.saturating_add(execution_cost.alt_bn128_g1_decompress),
+                ALT_BN128_G1_POINT_SIZE,
+            ),
             ALT_BN128_G2_COMPRESS_BE | ALT_BN128_G2_COMPRESS_LE => (
                 base_cost.saturating_add(execution_cost.alt_bn128_g2_compress),
                 ALT_BN128_G2_COMPRESSED_POINT_SIZE,
             ),
-            ALT_BN128_G2_DECOMPRESS_BE | ALT_BN128_G2_DECOMPRESS_LE => {
-                (base_cost.saturating_add(execution_cost.alt_bn128_g2_decompress), ALT_BN128_G2_POINT_SIZE)
-            }
+            ALT_BN128_G2_DECOMPRESS_BE | ALT_BN128_G2_DECOMPRESS_LE => (
+                base_cost.saturating_add(execution_cost.alt_bn128_g2_decompress),
+                ALT_BN128_G2_POINT_SIZE,
+            ),
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
             }
@@ -2611,12 +2618,7 @@ declare_builtin_function!(
                 let _result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
             );
         }
-        let input = translate_slice::<u8>(
-            memory_mapping,
-            input_addr,
-            input_size,
-            check_aligned,
-        )?;
+        let input = translate_slice::<u8>(memory_mapping, input_addr, input_size, check_aligned)?;
 
         match op {
             ALT_BN128_G1_COMPRESS_BE => {
@@ -2712,11 +2714,14 @@ declare_builtin_function!(
 
         Ok(SUCCESS)
     }
-);
+}
 
-declare_builtin_function!(
-    // Generic Hashing Syscall
-    SyscallHash<H: HasherImpl>,
+/// Generic Hashing Syscall
+pub struct SyscallHash<H: HasherImpl> {
+    hasher: std::marker::PhantomData<H>,
+}
+impl<H: HasherImpl> BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallHash<H> {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         vals_addr: u64,
@@ -2741,7 +2746,9 @@ declare_builtin_function!(
             return Err(SyscallError::TooManySlices.into());
         }
 
-        invoke_context.compute_meter.consume_checked(hash_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(hash_base_cost)?;
         let check_aligned = invoke_context.get_check_aligned();
         let mem_op_base_cost = compute_cost.mem_op_base_cost;
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -2756,22 +2763,15 @@ declare_builtin_function!(
         }
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice::<VmSlice<u8>>(
-                memory_mapping,
-                vals_addr,
-                vals_len,
-                check_aligned,
-            )?;
+            let vals =
+                translate_slice::<VmSlice<u8>>(memory_mapping, vals_addr, vals_len, check_aligned)?;
 
             for val in vals.iter() {
                 let bytes = translate_vm_slice(val, memory_mapping, check_aligned)?;
-                let cost = mem_op_base_cost.max(
-                    hash_byte_cost.saturating_mul(
-                        val.len()
-                            .checked_div(2)
-                            .expect("div by non-zero literal"),
-                    ),
-                );
+                let cost = mem_op_base_cost
+                    .max(hash_byte_cost.saturating_mul(
+                        val.len().checked_div(2).expect("div by non-zero literal"),
+                    ));
                 invoke_context.compute_meter.consume_checked(cost)?;
                 hasher.hash(bytes);
             }
@@ -2785,11 +2785,12 @@ declare_builtin_function!(
         result.write_copy_of_slice(hasher.result().as_ref());
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    // Get Epoch Stake Syscall
-    SyscallGetEpochStake,
+/// Get Epoch Stake Syscall
+pub struct SyscallGetEpochStake {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochStake {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -2857,7 +2858,7 @@ declare_builtin_function!(
             Ok(invoke_context.get_epoch_stake_for_vote_account(vote_address))
         }
     }
-);
+}
 
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]

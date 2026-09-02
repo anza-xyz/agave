@@ -7,9 +7,10 @@ use {
     },
 };
 
-declare_builtin_function!(
-    /// Cross-program invocation called from Rust
-    SyscallInvokeSignedRust,
+/// Cross-program invocation called from Rust
+pub struct SyscallInvokeSignedRust {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallInvokeSignedRust {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         instruction_addr: u64,
@@ -27,7 +28,7 @@ declare_builtin_function!(
             signers_seeds_len,
         )
     }
-);
+}
 
 impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     fn translate_instruction(
@@ -46,9 +47,10 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     }
 }
 
-declare_builtin_function!(
-    /// Cross-program invocation called from C
-    SyscallInvokeSignedC,
+/// Cross-program invocation called from C
+pub struct SyscallInvokeSignedC {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallInvokeSignedC {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         instruction_addr: u64,
@@ -66,7 +68,7 @@ declare_builtin_function!(
             signers_seeds_len,
         )
     }
-);
+}
 
 impl SyscallInvokeSigned for SyscallInvokeSignedC {
     fn translate_instruction(

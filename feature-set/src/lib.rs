@@ -29,7 +29,6 @@ pub struct FeatureSnapshot {
     pub simplify_alt_bn128_syscall_error_codes: bool,
     pub enable_big_mod_exp_syscall: bool,
     pub remove_bpf_loader_incorrect_program_id: bool,
-    pub syscall_parameter_address_restrictions: bool,
     pub virtual_address_space_adjustments: bool,
     pub account_data_direct_mapping: bool,
     pub last_restart_slot_sysvar: bool,
@@ -110,9 +109,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_big_mod_exp_syscall: is_active(&enable_big_mod_exp_syscall::ID),
             remove_bpf_loader_incorrect_program_id: is_active(
                 &remove_bpf_loader_incorrect_program_id::ID,
-            ),
-            syscall_parameter_address_restrictions: is_active(
-                &syscall_parameter_address_restrictions::ID,
             ),
             virtual_address_space_adjustments: is_active(&virtual_address_space_adjustments::ID),
             account_data_direct_mapping: is_active(&account_data_direct_mapping::ID),
@@ -296,7 +292,6 @@ impl FeatureSet {
         let snapshot = &self.snapshot;
         SVMFeatureSet {
             move_precompile_verification_to_svm: snapshot.move_precompile_verification_to_svm,
-            syscall_parameter_address_restrictions: snapshot.syscall_parameter_address_restrictions,
             virtual_address_space_adjustments: snapshot.virtual_address_space_adjustments,
             account_data_direct_mapping: snapshot.account_data_direct_mapping,
             enable_bpf_loader_set_authority_checked_ix: snapshot

@@ -2,9 +2,10 @@ use {
     super::*, solana_program_runtime::memory::translate_vm_slice, solana_sbpf::vm::ContextObject,
 };
 
-declare_builtin_function!(
-    /// Log a user's info message
-    SyscallLog,
+/// Log a user's info message
+pub struct SyscallLog {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLog {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         addr: u64,
@@ -33,11 +34,12 @@ declare_builtin_function!(
         )?;
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Log 5 64-bit values
-    SyscallLogU64,
+/// Log 5 64-bit values
+pub struct SyscallLogU64 {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogU64 {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         arg1: u64,
@@ -55,11 +57,12 @@ declare_builtin_function!(
         );
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Log current compute consumption
-    SyscallLogBpfComputeUnits,
+/// Log current compute consumption
+pub struct SyscallLogBpfComputeUnits {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogBpfComputeUnits {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
@@ -78,11 +81,12 @@ declare_builtin_function!(
         );
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Log a [`Pubkey`] as a base58 string
-    SyscallLogPubkey,
+/// Log a [`Pubkey`] as a base58 string
+pub struct SyscallLogPubkey {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogPubkey {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         pubkey_addr: u64,
@@ -96,19 +100,16 @@ declare_builtin_function!(
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        let pubkey = translate_type::<Pubkey>(
-            memory_mapping,
-            pubkey_addr,
-            check_aligned,
-        )?;
+        let pubkey = translate_type::<Pubkey>(memory_mapping, pubkey_addr, check_aligned)?;
         stable_log::program_log(&invoke_context.get_log_collector(), &pubkey.to_string());
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Log data handling
-    SyscallLogData,
+/// Log data handling
+pub struct SyscallLogData {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogData {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         addr: u64,
@@ -119,16 +120,14 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        let untranslated_fields = translate_slice::<VmSlice<u8>>(
-            memory_mapping,
-            addr,
-            len,
-            check_aligned,
-        )?;
+        let untranslated_fields =
+            translate_slice::<VmSlice<u8>>(memory_mapping, addr, len, check_aligned)?;
 
         let cost = execution_cost
             .syscall_base_cost
@@ -142,7 +141,11 @@ declare_builtin_function!(
         let mut fields = Vec::with_capacity(untranslated_fields.len());
 
         for untranslated_field in untranslated_fields {
-            fields.push(translate_vm_slice(untranslated_field, memory_mapping, check_aligned)?);
+            fields.push(translate_vm_slice(
+                untranslated_field,
+                memory_mapping,
+                check_aligned,
+            )?);
         }
 
         let log_collector = invoke_context.get_log_collector();
@@ -151,4 +154,4 @@ declare_builtin_function!(
 
         Ok(0)
     }
-);
+}

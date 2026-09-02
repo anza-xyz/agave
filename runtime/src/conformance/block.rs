@@ -451,13 +451,13 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
         .chain(acct_states_from_proto.iter().cloned())
         .collect();
 
-    accounts.store_accounts_seq(
+    accounts.store_accounts(
         (parent_slot, &accounts_to_store[..]),
         BankId::default(),
         None,
         &Ancestors::default(),
     );
-    accounts.store_accounts_seq(
+    accounts.store_accounts(
         (current_slot, &accounts_to_store[..]),
         BankId::default(),
         None,

@@ -6362,11 +6362,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     // 1. Insert a single zero-lamport account and verify it is not added to the index or the
     //    write cache. Since this is the first write to this slot, the slot cache should not be
     //    created.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey1, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    accounts_db.store_accounts_unfrozen((slot, [(&pubkey1, &zero_account)].as_slice()), &ancestors);
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(accounts_db.accounts_cache.slot_cache(slot).is_none());
 
@@ -6383,7 +6379,6 @@ fn test_new_zero_lamport_accounts_skipped() {
             ]
             .as_slice(),
         ),
-        UpdateIndexThreadSelection::Inline,
         &ancestors,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
@@ -6416,11 +6411,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     // 3. Insert a zero-lamport update for pubkey2, which already has a non-zero entry in the
     //    write cache. The update is stored rather than skipped, overwriting the cache entry
     //    with zero lamports.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey2, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    accounts_db.store_accounts_unfrozen((slot, [(&pubkey2, &zero_account)].as_slice()), &ancestors);
     assert_eq!(
         accounts_db
             .accounts_cache
@@ -6442,20 +6433,12 @@ fn test_new_zero_lamport_accounts_skipped() {
     //    (pubkey1) and verify the pubkey is added to the write cache.
     let slot = slot + 1;
     ancestors.insert(slot);
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey1, &account)].as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    accounts_db.store_accounts_unfrozen((slot, [(&pubkey1, &account)].as_slice()), &ancestors);
     assert!(accounts_db.accounts_cache.contains_pubkey(&pubkey1));
 
     // 6. Set pubkey3 to zero lamports and flush. The flush deletes zero-lamport accounts from the
     // index, so pubkey3 is no longer present afterwards.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey3, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    accounts_db.store_accounts_unfrozen((slot, [(&pubkey3, &zero_account)].as_slice()), &ancestors);
     accounts_db.add_root_and_flush_write_cache(slot);
 
     // Verify pubkey3 is no longer in the index
@@ -6513,27 +6496,15 @@ fn test_write_accounts_to_cache_scenarios(
         }
         InitialState::WithLamports(lamports) => {
             let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
-            db.store_accounts_unfrozen(
-                (slot, [(&key, &account)].as_slice()),
-                UpdateIndexThreadSelection::Inline,
-                &ancestors,
-            );
+            db.store_accounts_unfrozen((slot, [(&key, &account)].as_slice()), &ancestors);
         }
         InitialState::WithoutLamports => {
             let account = AccountSharedData::new(1, 0, &Pubkey::default());
             let account_zero = AccountSharedData::new(0, 0, &Pubkey::default());
             // Store a non-zero account first to create the index entry
-            db.store_accounts_unfrozen(
-                (slot, [(&key, &account)].as_slice()),
-                UpdateIndexThreadSelection::Inline,
-                &ancestors,
-            );
+            db.store_accounts_unfrozen((slot, [(&key, &account)].as_slice()), &ancestors);
             // Overwrite with a zero-lamport account to simulate ephemeral setup
-            db.store_accounts_unfrozen(
-                (slot, [(&key, &account_zero)].as_slice()),
-                UpdateIndexThreadSelection::Inline,
-                &ancestors,
-            );
+            db.store_accounts_unfrozen((slot, [(&key, &account_zero)].as_slice()), &ancestors);
         }
     }
 
@@ -6546,11 +6517,7 @@ fn test_write_accounts_to_cache_scenarios(
         .collect();
     let batch: Vec<_> = accounts.iter().map(|account| (&key, account)).collect();
 
-    db.store_accounts_unfrozen(
-        (slot, batch.as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    db.store_accounts_unfrozen((slot, batch.as_slice()), &ancestors);
 
     // Verify results
     let loaded = db.do_load_for_tests(&ancestors, &key);

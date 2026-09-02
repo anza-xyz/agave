@@ -27,13 +27,13 @@ use {
     agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::VerifiedVoterSlotsSender,
     agave_xdp::transmitter::XdpSender,
-    crossbeam_channel::{Receiver, bounded, unbounded},
+    crossbeam_channel::{Receiver, bounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
     solana_poh::{
-        poh_recorder::{PohRecorder, WorkingBankEntryOrMarker},
+        poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankEntryOrMarker},
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
@@ -348,7 +348,10 @@ impl Tpu {
 
         let (entry_receiver, tpu_entry_notifier) =
             if let Some(entry_notification_sender) = entry_notification_sender {
-                let (broadcast_entry_sender, broadcast_entry_receiver) = unbounded();
+                // Preserve every entry while bounding memory. If BroadcastStage falls behind,
+                // the notifier blocks here and propagates backpressure to PohRecorder.
+                let (broadcast_entry_sender, broadcast_entry_receiver) =
+                    bounded(WORKING_BANK_CHANNEL_CAPACITY);
                 let tpu_entry_notifier = TpuEntryNotifier::new(
                     entry_receiver,
                     entry_notification_sender,

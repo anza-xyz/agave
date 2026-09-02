@@ -1273,9 +1273,9 @@ mod tests {
             };
 
             let signature = if rank == invalid_rank {
-                SignatureAffine::from(bls_keypair.sign(&invalid_payload)) // Invalid signature
+                bls_keypair.sign(&invalid_payload).into() // Invalid signature
             } else {
-                SignatureAffine::from(bls_keypair.sign(payload))
+                bls_keypair.sign(payload).into()
             };
 
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
@@ -1336,9 +1336,9 @@ mod tests {
             let bls_keypair = &validator_keypair.bls_keypair;
 
             let signature = if rank == invalid_rank {
-                SignatureAffine::from(bls_keypair.sign(&invalid_vote_payload)) // Invalid signature
+                bls_keypair.sign(&invalid_vote_payload).into() // Invalid signature
             } else {
-                SignatureAffine::from(bls_keypair.sign(&valid_vote_payload)) // Valid signature
+                bls_keypair.sign(&valid_vote_payload).into() // Valid signature
             };
 
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
@@ -1541,7 +1541,7 @@ mod tests {
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
-            let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
+            let signature = bls_keypair.sign(&vote_payload).into();
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
                 vote,
                 signature,
@@ -1935,9 +1935,9 @@ mod tests {
             .take(5)
             .map(|(i, keypair)| {
                 let signature = if invalid_indexes.contains(&i) {
-                    SignatureAffine::from(keypair.bls_keypair.sign(&invalid_payload))
+                    keypair.bls_keypair.sign(&invalid_payload).into()
                 } else {
-                    SignatureAffine::from(keypair.bls_keypair.sign(&valid_payload))
+                    keypair.bls_keypair.sign(&valid_payload).into()
                 };
                 let message = ConsensusMessage::Vote(VoteMessage {
                     vote,

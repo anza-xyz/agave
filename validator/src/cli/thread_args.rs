@@ -422,6 +422,6 @@ impl ThreadArg for TvuBlsShredSigverifyThreadsArg {
                                 verification of received Alpenglow consensus messages";
 
     fn default() -> usize {
-        num_cpus::get() * 3 / 4
+        get_thread_count()
     }
 }

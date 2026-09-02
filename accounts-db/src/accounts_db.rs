@@ -1394,13 +1394,6 @@ impl AccountsDb {
         }
     }
 
-    fn count_pubkeys(candidates: &[RwLock<CleaningCandidatesBin>]) -> u64 {
-        candidates
-            .iter()
-            .map(|x| x.read().unwrap().len())
-            .sum::<usize>() as u64
-    }
-
     /// Construct a list of candidates for cleaning from:
     /// - uncleaned_pubkeys -- the delta set of updated pubkeys in rooted slots from the last clean
     fn construct_candidate_clean_keys(
@@ -1622,12 +1615,12 @@ impl AccountsDb {
         measure_construct_candidates.stop();
         drop(active_guard);
 
-        let num_candidates = Self::count_pubkeys(&candidates);
+        let num_candidates = candidates.iter().map(|x| x.read().unwrap().len()).sum();
         let found_not_zero_accum = AtomicU64::new(0);
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
         let useful_accum = AtomicU64::new(0);
-        let reclaims = ReclaimsWithNewestSlot::with_capacity(num_candidates as usize);
+        let reclaims = ReclaimsWithNewestSlot::with_capacity(num_candidates);
         let reclaims = Mutex::new(reclaims);
         // parallel scan the index.
         let do_clean_scan = || {
@@ -4229,46 +4222,20 @@ impl AccountsDb {
         &self,
         accounts: &impl StorableAccounts<'a>,
         store_account: &BitVec,
-        update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         if !self.account_indexes.is_empty() {
-            let len = accounts.len();
             assert_eq!(accounts.len() as u64, store_account.len());
-
-            // Cache writes do not upsert the accounts index; it only ever holds storage entries,
-            // populated on flush. Readers find cache-only accounts through the write cache. Only
-            // the secondary indexes are updated here.
-            let update = |start, end| {
-                (start..end).for_each(|i| {
-                    if store_account[i as u64] {
-                        accounts.account(i, |account| {
-                            self.accounts_index.update_secondary_indexes(
-                                account.pubkey(),
-                                &account,
-                                &self.account_indexes,
-                            );
-                        });
-                    }
-                });
-            };
-
-            let threshold = 1;
-            if matches!(
-                update_index_thread_selection,
-                UpdateIndexThreadSelection::PoolWithThreshold,
-            ) && len > threshold
-            {
-                let chunk_size = len.div_ceil(self.thread_pool_foreground.current_num_threads());
-                let batches = 1 + len / chunk_size;
-                self.thread_pool_foreground.install(|| {
-                    (0..batches).into_par_iter().for_each(|batch| {
-                        let start = batch * chunk_size;
-                        let end = std::cmp::min(start + chunk_size, len);
-                        update(start, end)
-                    })
-                });
-            } else {
-                update(0, len);
+            for i in 0..accounts.len() {
+                if store_account[i as u64] {
+                    let pubkey = accounts.pubkey(i);
+                    accounts.account(i, |account| {
+                        self.accounts_index.update_secondary_indexes(
+                            pubkey,
+                            &account,
+                            &self.account_indexes,
+                        );
+                    });
+                }
             }
         }
     }
@@ -4576,7 +4543,6 @@ impl AccountsDb {
     pub(crate) fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        update_index_thread_selection: UpdateIndexThreadSelection,
         ancestors: &Ancestors,
     ) {
         // If all transactions in a batch are errored,
@@ -4594,11 +4560,7 @@ impl AccountsDb {
         // Update the secondary index
         if !self.account_indexes.is_empty() {
             let update_secondary_index_time = Measure::start("update_secondary_index");
-            self.update_secondary_index_cached_accounts(
-                &accounts,
-                &store_account,
-                update_index_thread_selection,
-            );
+            self.update_secondary_index_cached_accounts(&accounts, &store_account);
             let update_secondary_index_us = update_secondary_index_time.end_as_us();
             self.store_accounts_unfrozen_stats
                 .update_secondary_index_us
@@ -5765,13 +5727,6 @@ enum MarkAccountsObsolete {
     No,
 }
 
-pub enum UpdateIndexThreadSelection {
-    /// Use current thread only
-    Inline,
-    /// Use a thread-pool if the number of updates exceeds a threshold
-    PoolWithThreshold,
-}
-
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountStorageEntry {
@@ -5901,18 +5856,10 @@ impl AccountsDb {
         }
 
         // Pre-populate new zero-lamport accounts with single-lamport placeholders.
-        self.store_accounts_unfrozen(
-            (slot, pre_populate_zero_lamport.as_slice()),
-            UpdateIndexThreadSelection::PoolWithThreshold,
-            &ancestors,
-        );
+        self.store_accounts_unfrozen((slot, pre_populate_zero_lamport.as_slice()), &ancestors);
 
         // Then store the actual accounts provided by the caller.
-        self.store_accounts_unfrozen(
-            accounts,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-            &ancestors,
-        );
+        self.store_accounts_unfrozen(accounts, &ancestors);
     }
 
     #[allow(clippy::needless_range_loop)]

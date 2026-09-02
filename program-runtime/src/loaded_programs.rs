@@ -539,7 +539,14 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             let relation =
                                 fork_graph.relationship(entry.deployment_slot, new_root_slot);
                             if entry.deployment_slot >= new_root_slot {
-                                matches!(relation, BlockRelation::Equal | BlockRelation::Descendant)
+                                let keep = matches!(
+                                    relation,
+                                    BlockRelation::Equal | BlockRelation::Descendant
+                                );
+                                if !keep {
+                                    self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
+                                }
+                                keep
                             } else if matches!(relation, BlockRelation::Ancestor)
                                 || entry.deployment_slot <= self.latest_root_slot
                             {
@@ -1870,6 +1877,7 @@ pub(crate) mod tests {
             IndexImplementation::V1 { entries, .. } => assert!(!entries.contains_key(&emptied)),
         }
         assert_eq!(cache.stats.empty_entries.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.stats.prunes_orphan.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -2011,6 +2019,39 @@ pub(crate) mod tests {
         assert_eq!(slot_versions.len(), 1);
         assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &entry));
         assert_eq!(cache.stats.prunes_orphan.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_prune_orphan_newer_than_root() {
+        // Fork graph created for the test
+        //                50  ?  100
+        //                ^^     ^^^
+        //                |      the entry is deployed here
+        //                the new root
+        //
+        // Here we want to test the other side of the root from the test above:
+        // an entry deployed past it, which the graph cannot place either.
+        // Therefore it is pruned, where the one behind the root was kept.
+        let (mut cache, fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Unknown);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+        let orphan = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(env.clone()),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&orphan));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 1);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &orphan));
+
+        cache.prune(50, None, &fork_graph.read().unwrap());
+
+        // Past the root there is no `deployment_slot <= latest_root_slot`
+        // fallback to keep it, so the entry the graph cannot place goes.
+        assert!(cache.get_slot_versions_for_tests(&program_id).is_empty());
+        assert_eq!(cache.stats.prunes_orphan.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -2253,6 +2294,164 @@ pub(crate) mod tests {
         assert!(matches!(
             &slot_versions.first().unwrap().program,
             ProgramCacheEntryType::Loaded(_)
+        ));
+    }
+
+    #[test_matrix(
+        (
+            new_closed_entry,
+            new_builtin_entry,
+            new_failed_verification_entry,
+            new_unloaded_entry,
+            new_loaded_entry,
+        ),
+        (false, true)
+    )]
+    fn test_prune_environment_sweep_by_entry_type(
+        new_program: fn(ProgramRuntimeEnvironment) -> ProgramCacheEntryType,
+        on_new_environment: bool,
+    ) {
+        // Fork graph created for the test
+        //                40 - 50
+        //
+        // The entry is deployed after the root the sweep runs at, so the fork
+        // graph keeps it and the environment decides the rest.
+        //
+        // Here we want to test which entry types the sweep can reach.
+        // Therefore only one which carries an environment, and not the
+        // incoming one, is taken - and taken outright, rather than unloaded.
+        let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
+        let mut fork_graph = TestForkGraphSpecific::default();
+        fork_graph.insert_fork(&[40, 50]);
+        let fork_graph = Arc::new(RwLock::new(fork_graph));
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
+
+        let env = get_mock_program_runtime_environment();
+        let new_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let entry_env = if on_new_environment {
+            new_env.clone()
+        } else {
+            env.clone()
+        };
+        let program_id = Pubkey::new_unique();
+        let entry = new_test_entry_with_owner(
+            50,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_program(entry_env.clone()),
+        );
+        let carries_an_environment = entry.program.get_environment().is_some();
+        cache.assign_program(&entry_env, program_id, 50, Arc::clone(&entry));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 1);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &entry));
+
+        cache.prune(40, Some(new_env.clone()), &fork_graph.read().unwrap());
+
+        // Only an entry which carries an environment, and one which is not
+        // the incoming one, is swept - and it is removed, not unloaded.
+        let swept = carries_an_environment && !on_new_environment;
+        assert_eq!(
+            cache.stats.prunes_environment.load(Ordering::Relaxed),
+            u64::from(swept)
+        );
+        if swept {
+            assert!(cache.get_slot_versions_for_tests(&program_id).is_empty());
+        } else {
+            let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+            assert_eq!(slot_versions.len(), 1);
+            assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &entry));
+        }
+    }
+
+    #[test]
+    fn test_prune_environment_sweep_keeps_tombstones() {
+        // Fork graph created for the test
+        //                0 - 40 - 50 - 60 - 70 - 100
+        //
+        // Every entry is deployed after the root the sweep runs at, so `prune`
+        // keeps all of them on the fork graph alone and the environment is the
+        // only thing which takes any of them out.
+        //
+        // Here we want to test that the sweep can only take an entry which
+        // carries an environment. Therefore the two built for the outgoing one
+        // go, and the tombstone survives because it has none to compare
+        // against.
+        let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
+        let mut fork_graph = TestForkGraphSpecific::default();
+        fork_graph.insert_fork(&[0, 40, 50, 60, 70, 100]);
+        let fork_graph = Arc::new(RwLock::new(fork_graph));
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
+        let env = get_mock_program_runtime_environment();
+        let new_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let program_id = Pubkey::new_unique();
+        let closed = new_test_entry_with_owner(
+            50,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_closed_entry(env.clone()),
+        );
+        let failed_verification = new_test_entry_with_owner(
+            60,
+            ProgramCacheEntryOwner::LoaderV3,
+            // `FailedVerification` carries an environment, so it gets pruned.
+            new_failed_verification_entry(env.clone()),
+        );
+        let loaded = new_test_entry_with_owner(
+            70,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(env.clone()),
+        );
+        cache.assign_program(&env, program_id, 50, Arc::clone(&closed));
+        cache.assign_program(&env, program_id, 60, Arc::clone(&failed_verification));
+        cache.assign_program(&env, program_id, 70, Arc::clone(&loaded));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 3);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &closed));
+        assert!(Arc::ptr_eq(
+            slot_versions.get(1).unwrap(),
+            &failed_verification
+        ));
+        assert!(Arc::ptr_eq(slot_versions.get(2).unwrap(), &loaded));
+
+        // The epoch boundary. Both entries which carry an environment are on
+        // the outgoing one and are swept away.
+        cache.prune(40, Some(new_env.clone()), &fork_graph.read().unwrap());
+        assert_eq!(cache.stats.prunes_environment.load(Ordering::Relaxed), 2);
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 1);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &closed));
+
+        // The `Closed` tombstone survives because it carries no environment.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 50,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+        cache.extract(&mut search_for, &mut extracted, &new_env, true, true);
+        assert!(search_for.is_empty());
+        assert!(Arc::ptr_eq(
+            extracted.entries.get(&program_id).unwrap(),
+            &closed
+        ));
+
+        // Try the same search again with the outgoing environment. That would
+        // not happen in production, since the sweep has just rooted the new
+        // one, but exercise it anyway.
+        let mut search_for = vec![ProgramToLoad {
+            program_id: &program_id,
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 50,
+            last_modification_slot: 0,
+        }];
+        let mut extracted = ProgramCacheForTxBatch::new(100);
+        cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert!(search_for.is_empty());
+        assert!(Arc::ptr_eq(
+            extracted.entries.get(&program_id).unwrap(),
+            &closed
         ));
     }
 
