@@ -188,7 +188,7 @@ agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }
-solana-account = "4.6.0"
+solana-account = "4.7.0"
 solana-account-info = "3.1.0"
 solana-client-traits = "4.0.0"
 solana-clock = { workspace = true }
