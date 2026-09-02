@@ -1549,7 +1549,7 @@ fn test_fully_tombstoned_storage_reclaim() {
     // Shrink routes the fully-dead slot to clean; clean retains the storage because the latest full
     // snapshot is older than the slot, so the slot is not yet eligible for shrink.
     accounts_db.shrink_slot_forced(slot);
-    accounts_db.clean_accounts(Some(slot), false);
+    accounts_db.clean_accounts(slot, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot).is_some());
     // Verify that the slot is not queued for shrink at this time
     assert!(
@@ -1563,7 +1563,7 @@ fn test_fully_tombstoned_storage_reclaim() {
     // Advance the latest full snapshot past the slot so its tombstones become purgeable. Clean then
     // cleans the storage and it is reclaimed.
     accounts_db.set_latest_full_snapshot_slot(slot + 1);
-    accounts_db.clean_accounts(Some(slot + 1), false);
+    accounts_db.clean_accounts(slot + 1, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot).is_none());
 }
 
@@ -2030,7 +2030,7 @@ fn test_clean_max_slot_zero_lamport_account() {
 
     accounts.set_latest_full_snapshot_slot(2);
     // Now the account can be cleaned up
-    accounts.clean_accounts(Some(1), false);
+    accounts.clean_accounts(1, false);
     assert_eq!(accounts.alive_account_count_in_slot(0), 0);
     assert_eq!(accounts.alive_account_count_in_slot(1), 0);
 
@@ -2593,7 +2593,7 @@ fn test_verify_index_small_dataset_detects_mismatch() {
         (false, ())
     });
 
-    accounts.verify_index(Some(slot + 1));
+    accounts.verify_index(slot + 1);
 }
 
 #[test]
@@ -3222,7 +3222,7 @@ fn test_clean_does_not_tombstone_zero_lamport_above_clean_root() {
     db.flush_rooted_accounts_cache_without_clean();
 
     // Only clean zero lamport accounts up to slot 1
-    db.clean_accounts(Some(1), false);
+    db.clean_accounts(1, false);
 
     // The slot 2 entry is above the clean root: still indexed, no tombstone, loadable
     assert!(db.accounts_index.contains(&account_key));
@@ -3233,7 +3233,7 @@ fn test_clean_does_not_tombstone_zero_lamport_above_clean_root() {
     );
 
     // Once the clean root passes slot 2, the classic zero-lamport purge path removes it
-    db.clean_accounts(Some(2), false);
+    db.clean_accounts(2, false);
     assert!(!db.accounts_index.contains(&account_key));
     assert_eq!(
         db.do_load_for_tests(&Ancestors::default(), &account_key),
@@ -4265,7 +4265,7 @@ fn test_zero_lamport_single_ref_resweep_respects_last_swept(set_last_swept: bool
     // The sweep range is (0, 4] when not set, queueing both slot 2 and slot 3.
     // The sweep range is (2, 4] when set, queueing only slot 3.
     db.set_latest_full_snapshot_slot(full_snapshot_slot);
-    db.clean_accounts(Some(full_snapshot_slot), false);
+    db.clean_accounts(full_snapshot_slot, false);
 
     let queued = db.shrink_candidate_slots.lock().unwrap();
     assert_eq!(queued.contains(&slot_at_last_swept), !set_last_swept);
@@ -4683,7 +4683,7 @@ fn test_shrink_unref() {
     db.flush_rooted_accounts_cache_without_clean();
 
     // Clean to remove outdated entry from slot 0
-    db.clean_accounts(Some(1), false);
+    db.clean_accounts(1, false);
 
     // Shrink Slot 0
     {
@@ -4701,7 +4701,7 @@ fn test_shrink_unref() {
 
     // Should be one store before clean for slot 0
     db.get_and_assert_single_storage(0);
-    db.clean_accounts(Some(2), false);
+    db.clean_accounts(2, false);
 
     // No stores should exist for slot 0 after clean
     assert_no_storages_at_slot(&db, 0);
@@ -4733,7 +4733,7 @@ fn test_clean_drop_dead_zero_lamport_single_ref_accounts() {
     accounts_db.flush_accounts_cache(true, None);
 
     // run clean
-    accounts_db.clean_accounts(Some(1), false);
+    accounts_db.clean_accounts(1, false);
 
     // After clean, both slot0 and slot1 should be marked dead and dropped
     // from the store map.
@@ -4763,7 +4763,7 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
 
     // account_key1's zero-lamport write in slot 1 was deleted from the index and tombstoned at
     // flush, leaving its slot 0 version dead. Clean drops the now-empty slot 0.
-    db.clean_accounts(Some(1), false);
+    db.clean_accounts(1, false);
 
     // Assert that after clean, slot 0 is dropped.
     assert!(db.storage.get_slot_storage_entry(0).is_none());
@@ -4811,7 +4811,7 @@ fn test_clean_tombstones_zero_lamport_single_ref_at_reclaim() {
 
     // Clean reclaims the outdated slot 0 entries, removing them from the slot lists at
     // reclaim. That leaves each zero-lamport update as its account's only slot list entry.
-    db.clean_accounts(Some(3), false);
+    db.clean_accounts(3, false);
 
     // The reclaim leaves account_key1 zero-lamport single-ref, so it is tombstoned:
     // removed from the index, and slot 1's storage, now holding only the tombstone and
@@ -4829,7 +4829,7 @@ fn test_clean_tombstones_zero_lamport_single_ref_at_reclaim() {
     // Once the full snapshot advances past slot 3, clean drops the tombstone-only
     // storage.
     db.set_latest_full_snapshot_slot(3);
-    db.clean_accounts(Some(3), false);
+    db.clean_accounts(3, false);
     assert_no_storages_at_slot(&db, 3);
 
     // Slot 0 still holds the live account_key2; the other records there are obsolete.
@@ -4842,7 +4842,7 @@ fn test_clean_tombstones_zero_lamport_single_ref_at_reclaim() {
     // Flushes all roots
     db.flush_accounts_cache(true, None);
 
-    db.clean_accounts(Some(4), false);
+    db.clean_accounts(4, false);
 
     // No stores should exist for slot 0. Slot 0 stores are cleaned when
     // slot 4 is flushed; the older accounts are marked obsolete.
@@ -5161,9 +5161,9 @@ fn test_collect_uncleaned_slots_up_to_slot() {
     db.uncleaned_pubkeys.insert(slot2, vec![pubkey2]);
     db.uncleaned_pubkeys.insert(slot3, vec![pubkey3]);
 
-    let mut uncleaned_slots1 = db.collect_uncleaned_slots_up_to_slot(Some(slot1));
-    let mut uncleaned_slots2 = db.collect_uncleaned_slots_up_to_slot(Some(slot2));
-    let mut uncleaned_slots3 = db.collect_uncleaned_slots_up_to_slot(Some(slot3));
+    let mut uncleaned_slots1 = db.collect_uncleaned_slots_up_to_slot(slot1);
+    let mut uncleaned_slots2 = db.collect_uncleaned_slots_up_to_slot(slot2);
+    let mut uncleaned_slots3 = db.collect_uncleaned_slots_up_to_slot(slot3);
 
     uncleaned_slots1.sort_unstable();
     uncleaned_slots2.sort_unstable();
@@ -5207,7 +5207,7 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
         iter::repeat_with(|| RwLock::new(CleaningCandidatesBin::default()))
             .take(num_bins)
             .collect();
-    db.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(Some(slot3), &candidates);
+    db.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(slot3, &candidates);
 
     let candidates_contain = |pubkey: &Pubkey| {
         candidates
@@ -5604,15 +5604,15 @@ fn test_clean_accounts_with_latest_full_snapshot_slot() {
     accounts_db.add_root_and_flush_write_cache(slot3);
 
     accounts_db.set_latest_full_snapshot_slot(slot2);
-    accounts_db.clean_accounts(Some(slot2), false);
+    accounts_db.clean_accounts(slot2, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot3).is_some());
 
     accounts_db.set_latest_full_snapshot_slot(slot2);
-    accounts_db.clean_accounts(None, false);
+    accounts_db.clean_accounts(slot3, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot3).is_some());
 
     accounts_db.set_latest_full_snapshot_slot(slot3);
-    accounts_db.clean_accounts(None, false);
+    accounts_db.clean_accounts(slot3, false);
     // The full snapshot now covers slot3, so clean reclaims the tombstone-only storage
     assert!(accounts_db.storage.get_slot_storage_entry(slot3).is_none());
 }
