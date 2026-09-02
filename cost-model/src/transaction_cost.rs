@@ -1,7 +1,4 @@
-use {
-    solana_pubkey::Pubkey, solana_runtime_transaction::transaction_meta::TransactionMeta,
-    solana_svm_transaction::svm_message::SVMMessage,
-};
+use {solana_pubkey::Pubkey, solana_svm_transaction::svm_message::SVMMessage};
 
 // Costs are stored in compute units.
 #[derive(Debug)]
@@ -57,32 +54,6 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
             .iter()
             .enumerate()
             .filter_map(|(index, key)| transaction.is_writable(index).then_some(key))
-    }
-}
-
-impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
-    pub fn num_transaction_signatures(&self) -> u64 {
-        self.transaction
-            .signature_details()
-            .num_transaction_signatures()
-    }
-
-    pub fn num_secp256k1_instruction_signatures(&self) -> u64 {
-        self.transaction
-            .signature_details()
-            .num_secp256k1_instruction_signatures()
-    }
-
-    pub fn num_ed25519_instruction_signatures(&self) -> u64 {
-        self.transaction
-            .signature_details()
-            .num_ed25519_instruction_signatures()
-    }
-
-    pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
-        self.transaction
-            .signature_details()
-            .num_secp256r1_instruction_signatures()
     }
 }
 
@@ -273,7 +244,9 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::SimpleAddressLoader,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
+        },
         solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::TowerSync,
