@@ -2878,11 +2878,13 @@ impl Bank {
         }
 
         let my_balance = vote_account.lamports();
-        let minimum_vote_account_balance_for_vat = self.minimum_vote_account_balance_for_vat();
-        if vote_account.lamports() < minimum_vote_account_balance_for_vat {
+        let minimum_required_balance = self
+            .minimum_vote_account_balance_for_vat()
+            .saturating_add(vote_account.vote_state_view().pending_delegator_rewards());
+        if vote_account.lamports() < minimum_required_balance {
             return Err(VATHealthError::InsufficientFundsInVoteAccount(
                 my_balance,
-                minimum_vote_account_balance_for_vat,
+                minimum_required_balance,
             ));
         }
 
