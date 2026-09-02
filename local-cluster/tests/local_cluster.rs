@@ -48,7 +48,7 @@ use {
         blockstore_processor::{self, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
-            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred, Shredder,
             filter::{TurbineMode, TurbineModeKind},
         },
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
@@ -5796,7 +5796,6 @@ fn test_invalid_forks_persisted_on_restart() {
                 Hash::default(), // chained_merkle_root
                 0,               // next_shred_index,
                 0,               // next_code_index
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .0;

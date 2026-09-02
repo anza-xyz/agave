@@ -37,7 +37,7 @@ use {
         bigtable_upload::ConfirmedBlockUploadConfig,
         blockstore::Blockstore,
         blockstore_options::AccessType,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{ProcessShredsStats, Shred, Shredder},
     },
     solana_pubkey::Pubkey,
     solana_shred_version::compute_shred_version,
@@ -587,7 +587,6 @@ async fn shreds(
                 Hash::default(), // chained_merkle_root
                 0,               // next_shred_index
                 0,               // next_code_index
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .into_iter()

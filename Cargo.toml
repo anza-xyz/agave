@@ -168,6 +168,7 @@ new_without_default = "allow"
 
 [workspace.dependencies]
 Inflector = "0.11.4"
+additive-fft-reed-solomon = { version = "0.1.2", default-features = false }
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
 agave-bls-sigverify = { path = "bls-sigverify", version = "=4.4.0-alpha.2", features = ["agave-unstable-api"] }
@@ -317,7 +318,6 @@ quinn = "0.11.11"
 rand = "0.9.4"
 rand_chacha = "0.9.0"
 rayon = "1.12.0"
-reed-solomon-erasure = "6.0.0"
 regex = "1.13.1"
 reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"

@@ -953,7 +953,7 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
-        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        solana_ledger::shred::{ProcessShredsStats, Shredder},
     };
 
     fn get_keypair() -> Keypair {
@@ -971,7 +971,6 @@ mod tests {
     fn test_shred_deduper() {
         let keypair = get_keypair();
         let entries = create_ticks(10, 1, Hash::new_unique());
-        let rsc = ReedSolomonCache::default();
         let make_shreds_for_slot = |slot, parent, code_index| {
             let shredder = Shredder::new(slot, parent, 1, 0).unwrap();
             shredder.entries_to_merkle_shreds_for_tests(
@@ -982,7 +981,6 @@ mod tests {
                 Hash::new_from_array(rand::rng().random()),
                 0,
                 code_index,
-                &rsc,
                 &mut ProcessShredsStats::default(),
             )
         };

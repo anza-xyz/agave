@@ -16,10 +16,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{
-            ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder,
-            merkle_tree::MerkleTree,
-        },
+        shred::{ProcessShredsStats, Shred, ShredType, Shredder, merkle_tree::MerkleTree},
     },
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
@@ -59,7 +56,6 @@ pub struct StandardBroadcastRun {
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
     max_data_shreds_per_slot: u32,
@@ -106,7 +102,6 @@ impl StandardBroadcastRun {
             num_batches: 0,
             cluster_nodes_cache,
             leader_schedule_cache,
-            reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
             max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
@@ -207,7 +202,6 @@ impl StandardBroadcastRun {
                 self.chained_merkle_root,
                 self.next_shred_index,
                 self.next_code_index,
-                &self.reed_solomon_cache,
                 &mut self.process_shreds_stats,
             );
         // These shreds will finish the slot so no need to update
@@ -241,7 +235,6 @@ impl StandardBroadcastRun {
                     self.chained_merkle_root,
                     self.next_shred_index,
                     self.next_code_index,
-                    &self.reed_solomon_cache,
                     process_stats,
                 );
         shreds.iter().for_each(|shred| {

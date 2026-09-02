@@ -329,7 +329,7 @@ pub mod test {
             blockstore,
             blockstore::Blockstore,
             get_tmp_ledger_path_auto_delete,
-            shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
+            shred::{ProcessShredsStats, Shredder, max_ticks_per_n_shreds},
         },
         solana_message::{
             Message, VersionedMessage,
@@ -658,7 +658,6 @@ pub mod test {
                     Hash::new_unique(),
                     shred_index,
                     shred_index,
-                    &ReedSolomonCache::default(),
                     &mut ProcessShredsStats::default(),
                 )
         };

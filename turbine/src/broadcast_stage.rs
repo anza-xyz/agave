@@ -659,7 +659,7 @@ pub mod test {
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
-            shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
+            shred::{ProcessShredsStats, Shredder, max_ticks_per_n_shreds},
         },
         solana_runtime::bank::Bank,
         solana_signer::Signer,
@@ -696,7 +696,6 @@ pub mod test {
             Hash::new_from_array(rand::rng().random()),
             0, // next_shred_index,
             0, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         (

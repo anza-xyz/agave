@@ -1,19 +1,18 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    bencher::{Bencher, benchmark_group, benchmark_main},
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::Rng,
-    solana_entry::entry::{Entry, create_ticks},
+    solana_entry::entry::{create_ticks, Entry},
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats,
-            ReedSolomonCache, Shred, Shredder, filter::ShredRecoveryContext,
-            get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred,
-            max_ticks_per_n_shreds,
+            filter::ShredRecoveryContext, get_data_shred_bytes_per_batch_typical,
+            max_entries_per_n_shred, max_ticks_per_n_shreds, ProcessShredsStats, Shred, Shredder,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
         },
     },
     solana_perf::test_tx,
@@ -30,7 +29,6 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     ShredRecoveryContext::new(
-        ReedSolomonCache::default(),
         dummy_retransmit_sender,
         root_bank,
         shreds.first().map(Shred::version).unwrap_or_default(),
@@ -61,7 +59,6 @@ fn bench_shredder_ticks(bencher: &mut Bencher) {
     // ~1Mb
     let num_ticks = max_ticks_per_n_shreds(1, Some(SHRED_SIZE_TYPICAL)) * num_shreds as u64;
     let entries = create_ticks(num_ticks, 0, Hash::default());
-    let reed_solomon_cache = ReedSolomonCache::default();
     let chained_merkle_root = Hash::new_from_array(rand::rng().random());
     bencher.iter(|| {
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
@@ -72,7 +69,6 @@ fn bench_shredder_ticks(bencher: &mut Bencher) {
             chained_merkle_root,
             0,
             0,
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
     })
@@ -90,7 +86,6 @@ fn bench_shredder_large_entries(bencher: &mut Bencher) {
     );
     let entries = make_large_unchained_entries(txs_per_entry, num_entries);
     let chained_merkle_root = Hash::new_from_array(rand::rng().random());
-    let reed_solomon_cache = ReedSolomonCache::default();
     // 1Mb
     bencher.iter(|| {
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
@@ -101,7 +96,6 @@ fn bench_shredder_large_entries(bencher: &mut Bencher) {
             chained_merkle_root,
             0,
             0,
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
     })
@@ -123,7 +117,6 @@ fn bench_deshredder(bencher: &mut Bencher) {
         chained_merkle_root,
         0,
         0,
-        &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
     bencher.iter(|| {
@@ -138,7 +131,6 @@ fn bench_deserialize_hdr(bencher: &mut Bencher) {
     let shredder = Shredder::new(2, 1, 0, 0).unwrap();
     let merkle_root = Hash::new_from_array(rand::rng().random());
     let mut stats = ProcessShredsStats::default();
-    let reed_solomon_cache = ReedSolomonCache::default();
     let mut shreds = shredder
         .make_merkle_shreds_from_entries(
             &keypair,
@@ -147,7 +139,6 @@ fn bench_deserialize_hdr(bencher: &mut Bencher) {
             merkle_root,
             1, // next_shred_index
             0, // next_code_index
-            &reed_solomon_cache,
             &mut stats,
         )
         .into_iter()
@@ -170,7 +161,6 @@ fn make_entries() -> Vec<Entry> {
 fn bench_shredder_coding(bencher: &mut Bencher) {
     let entries = make_entries();
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-    let reed_solomon_cache = ReedSolomonCache::default();
     let merkle_root = Hash::new_from_array(rand::rng().random());
     bencher.iter(|| {
         let shreds = shredder.make_merkle_shreds_from_entries(
@@ -180,7 +170,6 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
             merkle_root,
             0, // next_shred_index
             0, // next_code_index
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
         black_box(shreds);
@@ -190,7 +179,6 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
 fn bench_shredder_decoding(bencher: &mut Bencher) {
     let entries = make_entries();
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-    let reed_solomon_cache = ReedSolomonCache::default();
     let merkle_root = Hash::new_from_array(rand::rng().random());
     let (_data_shreds, mut coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
         &Keypair::new(),
@@ -199,7 +187,6 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
         merkle_root,
         0, // next_shred_index
         0, // next_code_index
-        &reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
     coding_shreds.truncate(CODING_SHREDS_PER_FEC_BLOCK);

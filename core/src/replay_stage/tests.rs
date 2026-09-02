@@ -48,7 +48,7 @@ use {
         entry_notifier_service::EntryNotification,
         genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
         get_tmp_ledger_path, get_tmp_ledger_path_auto_delete,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{ProcessShredsStats, Shred, Shredder},
     },
     solana_net_utils::SocketAddrSpace,
     solana_poh::poh_recorder::create_test_recorder,
@@ -232,7 +232,6 @@ fn block_marker_shreds_with_last(
             Hash::new_unique(),
             shred_index,
             shred_index,
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
 }
@@ -993,7 +992,6 @@ fn test_dead_fork_entry_deserialize_failure() {
 
         let shredder = Shredder::new(bank.slot(), bank.parent_slot(), 0, 0).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
 
         shredder
             .make_shreds_from_data_slice(
@@ -1003,7 +1001,6 @@ fn test_dead_fork_entry_deserialize_failure() {
                 Hash::default(),
                 0,
                 0,
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             )
             .unwrap()

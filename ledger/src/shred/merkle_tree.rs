@@ -91,8 +91,12 @@ impl MerkleTree {
         }
         std::iter::from_fn(move || {
             if size > 1 {
-                let Some(node) = self.nodes.get(offset + (index ^ 1).min(size - 1)) else {
-                    return Some(Err(Error::InvalidMerkleProof));
+                let node_index = offset + (index ^ 1).min(size - 1);
+                let Some(node) = self.nodes.get(node_index) else {
+                    return Some(Err(Error::InvalidMerkleProofNode(
+                        node_index,
+                        self.nodes.len(),
+                    )));
                 };
                 offset += size;
                 size = (size + 1) >> 1;
@@ -101,7 +105,10 @@ impl MerkleTree {
             } else if offset + 1 == self.nodes.len() {
                 None
             } else {
-                Some(Err(Error::InvalidMerkleProof))
+                Some(Err(Error::InvalidMerkleProofShape(
+                    offset,
+                    self.nodes.len(),
+                )))
             }
         })
     }
@@ -245,7 +252,7 @@ mod tests {
         for index in size..size + 3 {
             assert_matches!(
                 tree.make_merkle_proof(index, size).next(),
-                Some(Err(Error::InvalidMerkleProof))
+                Some(Err(Error::InvalidMerkleProofShape(..)))
             );
         }
     }

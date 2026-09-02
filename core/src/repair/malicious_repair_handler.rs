@@ -11,7 +11,7 @@ use {
     solana_ledger::{
         blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{Nonce, ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{Nonce, ProcessShredsStats, Shred, Shredder},
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler},
     solana_signer::Signer,
@@ -33,7 +33,6 @@ pub struct MaliciousRepairHandler {
     keypair: Arc<Keypair>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     config: MaliciousRepairConfig,
-    reed_solomon_cache: ReedSolomonCache,
     standard_repair_handler: StandardRepairHandler,
 }
 
@@ -50,7 +49,6 @@ impl MaliciousRepairHandler {
             keypair,
             leader_schedule_cache,
             config,
-            reed_solomon_cache: ReedSolomonCache::default(),
         }
     }
 
@@ -123,7 +121,6 @@ impl MaliciousRepairHandler {
             chained_merkle_root,
             shred_index as u32, // next_shred_index
             0,                  // next_code_index
-            &self.reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
 

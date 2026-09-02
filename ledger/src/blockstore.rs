@@ -18,8 +18,8 @@ use {
         },
         next_slots_iterator::NextSlotsIterator,
         shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats,
-            ReedSolomonCache, Shred, ShredFlags, ShredId, ShredType, Shredder,
+            self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats, Shred,
+            ShredFlags, ShredId, ShredType, Shredder,
             filter::ShredRecoveryContext,
             merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
@@ -793,7 +793,6 @@ impl Blockstore {
         let mut walk = TreeWalk::from(forks);
         let mut blockhashes = HashMap::new();
         let mut merkle_roots: HashMap<Slot, Hash> = HashMap::new();
-        let reed_solomon_cache = shred::ReedSolomonCache::default();
         while let Some(visit) = walk.get() {
             let slot = *visit.node().data();
             if self.meta(slot).unwrap().is_some() && self.orphan(slot).unwrap().is_none() {
@@ -831,7 +830,6 @@ impl Blockstore {
                         chained_merkle_root,
                         0,
                         0,
-                        &reed_solomon_cache,
                         &mut ProcessShredsStats::default(),
                     )
                     .into_iter()
@@ -3882,7 +3880,6 @@ impl Blockstore {
         let mut shredder = Shredder::new(current_slot, parent_slot, 0, version).unwrap();
         let mut all_shreds = vec![];
         let mut slot_entries = vec![];
-        let reed_solomon_cache = ReedSolomonCache::default();
         let mut chained_merkle_root = self
             .get_last_shred_merkle_root(parent_slot)
             .unwrap()
@@ -3909,7 +3906,6 @@ impl Blockstore {
                         chained_merkle_root,
                         start_index, // next_shred_index
                         start_index, // next_code_index
-                        &reed_solomon_cache,
                         &mut ProcessShredsStats::default(),
                     );
                 let next_chained_merkle_root = coding_shreds
@@ -3942,7 +3938,6 @@ impl Blockstore {
                 chained_merkle_root,
                 0, // next_shred_index
                 0, // next_code_index
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             ));
         }
@@ -6522,7 +6517,6 @@ pub fn create_new_ledger(
         chained_merkle_root,
         0, // next_shred_index
         0, // next_code_index
-        &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
     assert!(shreds.last().unwrap().last_in_slot());
@@ -6739,7 +6733,6 @@ pub fn entries_to_test_shreds(
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index,
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
         .into_iter()

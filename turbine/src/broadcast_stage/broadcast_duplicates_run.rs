@@ -8,7 +8,7 @@ use {
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, ShredId, Shredder},
+    solana_ledger::shred::{ProcessShredsStats, ShredId, Shredder},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
@@ -58,7 +58,6 @@ pub(super) struct BroadcastDuplicatesRun {
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     original_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
     partition_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
-    reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
 }
@@ -88,7 +87,6 @@ impl BroadcastDuplicatesRun {
             cluster_nodes_cache,
             original_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
             partition_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
-            reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
         }
@@ -211,7 +209,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             self.chained_merkle_root,
             self.next_shred_index,
             self.next_code_index,
-            &self.reed_solomon_cache,
             &mut stats,
         );
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
@@ -230,7 +227,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     self.chained_merkle_root,
                     self.next_shred_index,
                     self.next_code_index,
-                    &self.reed_solomon_cache,
                     &mut stats,
                 );
                 // Don't mark the last shred as last so that validators won't
@@ -243,7 +239,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     self.chained_merkle_root,
                     self.next_shred_index,
                     self.next_code_index,
-                    &self.reed_solomon_cache,
                     &mut stats,
                 );
                 let sigs: Vec<_> = partition_last_data_shred
@@ -481,7 +476,6 @@ mod tests {
     fn test_special_shred_key_distinguishes_shreds_with_shared_signature() {
         let keypair = Keypair::new();
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let mut stats = ProcessShredsStats::default();
         let (data_shreds, _) = shredder.component_to_merkle_shreds_for_tests(
             &keypair,
@@ -490,7 +484,6 @@ mod tests {
             Hash::default(),
             0,
             0,
-            &reed_solomon_cache,
             &mut stats,
         );
         let (duplicate_data_shreds, _) = shredder.component_to_merkle_shreds_for_tests(
@@ -500,7 +493,6 @@ mod tests {
             Hash::default(),
             0,
             0,
-            &reed_solomon_cache,
             &mut stats,
         );
 

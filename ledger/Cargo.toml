@@ -30,6 +30,7 @@ agave-unstable-api = []
 shuttle-test = ["dep:shuttle"]
 
 [dependencies]
+additive-fft-reed-solomon = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
@@ -62,7 +63,6 @@ qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
-reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 shuttle = { workspace = true, optional = true }
