@@ -908,6 +908,19 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         false
     }
 
+    /// Check if the plugin wants semantic dedup applied to contact info
+    /// updates. Default is true: redundant gossip republishes (same
+    /// sockets/version/outset, only wallclock advanced) are suppressed.
+    /// Return false to receive every accepted republish, e.g. to serve
+    /// the gossip topology to downstream consumers where a subscriber
+    /// joining mid-stream needs to observe nodes that are not changing.
+    ///
+    /// Only consulted when `contact_info_notifications_enabled()`
+    /// returns true. Removal events are unaffected.
+    fn contact_info_dedup_enabled(&self) -> bool {
+        true
+    }
+
     /// Called when a transaction is deshredded (entries formed from shreds).
     /// This is triggered before any execution occurs. Unlike notify_transaction,
     /// this does not include execution metadata (TransactionStatusMeta).
