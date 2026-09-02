@@ -341,6 +341,10 @@ impl LocalCluster {
             !config.skip_warmup_slots,
         );
         genesis_config.poh_config = config.poh_config.clone();
+        // Local-cluster tests may use custom slot timing. SIMD-0607 rewards are
+        // only defined for protocol slot-time regimes, so leave those custom
+        // clusters on the legacy reward path.
+        Self::deactivate_unsupported_fixed_point_rewards_features(&mut genesis_config);
 
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
         let (leader_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
@@ -509,6 +513,30 @@ impl LocalCluster {
 
     pub fn shred_version(&self) -> u16 {
         self.shred_version
+    }
+
+    fn deactivate_unsupported_fixed_point_rewards_features(genesis_config: &mut GenesisConfig) {
+        if Self::genesis_timing_supports_fixed_point_inflation_rewards(genesis_config) {
+            return;
+        }
+
+        genesis_config
+            .accounts
+            .remove(&agave_feature_set::remove_runtime_float_ops::id());
+    }
+
+    fn genesis_timing_supports_fixed_point_inflation_rewards(
+        genesis_config: &GenesisConfig,
+    ) -> bool {
+        let slots_per_year = genesis_config.slots_per_year().to_bits();
+        match genesis_config.ns_per_slot() {
+            400_000_000 => slots_per_year == 78_892_314.984f64.to_bits(),
+            350_000_000 => slots_per_year == 90_162_645.696f64.to_bits(),
+            300_000_000 => slots_per_year == 105_189_753.312f64.to_bits(),
+            250_000_000 => slots_per_year == 126_227_703.974f64.to_bits(),
+            200_000_000 => slots_per_year == 157_784_629.968f64.to_bits(),
+            _ => false,
+        }
     }
 
     pub fn set_shred_version(&mut self, shred_version: u16) {
@@ -1380,5 +1408,52 @@ impl Cluster for LocalCluster {
 impl Drop for LocalCluster {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*, agave_feature_set::remove_runtime_float_ops,
+        solana_runtime::genesis_utils::activate_feature, std::time::Duration,
+    };
+
+    #[test]
+    fn test_genesis_timing_supports_fixed_point_inflation_rewards() {
+        let mut genesis_config = GenesisConfig::default();
+        assert!(
+            LocalCluster::genesis_timing_supports_fixed_point_inflation_rewards(&genesis_config)
+        );
+
+        genesis_config.ticks_per_slot = 16;
+        assert!(
+            !LocalCluster::genesis_timing_supports_fixed_point_inflation_rewards(&genesis_config)
+        );
+
+        genesis_config.poh_config = PohConfig::new_sleep(Duration::from_millis(25));
+        assert!(
+            LocalCluster::genesis_timing_supports_fixed_point_inflation_rewards(&genesis_config)
+        );
+    }
+
+    #[test]
+    fn test_deactivate_unsupported_fixed_point_rewards_features() {
+        let mut genesis_config = GenesisConfig::default();
+        activate_feature(&mut genesis_config, remove_runtime_float_ops::id());
+
+        LocalCluster::deactivate_unsupported_fixed_point_rewards_features(&mut genesis_config);
+        assert!(
+            genesis_config
+                .accounts
+                .contains_key(&remove_runtime_float_ops::id())
+        );
+
+        genesis_config.ticks_per_slot = 16;
+        LocalCluster::deactivate_unsupported_fixed_point_rewards_features(&mut genesis_config);
+        assert!(
+            !genesis_config
+                .accounts
+                .contains_key(&remove_runtime_float_ops::id())
+        );
     }
 }

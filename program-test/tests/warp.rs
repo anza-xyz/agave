@@ -4,6 +4,7 @@ mod setup;
 mod shared;
 
 use {
+    agave_feature_set as feature_set,
     bincode::deserialize,
     setup::{setup_stake, setup_vote},
     shared::from_account_info,
@@ -30,6 +31,18 @@ use {
 // Use a big number to be sure that we get the right error
 const WRONG_SLOT_ERROR: u32 = 123456;
 
+fn deactivate_fixed_point_rewards_for_synthetic_clock(program_test: &mut ProgramTest) {
+    // These tests warp across epoch boundaries with ProgramTest's fast synthetic
+    // clock, which is not a supported fixed-point rewards regime.
+    program_test.deactivate_feature(feature_set::remove_runtime_float_ops::id());
+}
+
+fn stake_rewards_program_test() -> ProgramTest {
+    let mut program_test = ProgramTest::default();
+    deactivate_fixed_point_rewards_for_synthetic_clock(&mut program_test);
+    program_test
+}
+
 fn process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -50,11 +63,12 @@ fn process_instruction(
 async fn clock_sysvar_updated_from_warp() {
     let program_id = Pubkey::new_unique();
     // Initialize and start the test network
-    let program_test = ProgramTest::new(
+    let mut program_test = ProgramTest::new(
         "program-test-warp",
         program_id,
         processor!(process_instruction),
     );
+    deactivate_fixed_point_rewards_for_synthetic_clock(&mut program_test);
 
     let mut context = program_test.start_with_context().await;
     let mut expected_slot = 100_000;
@@ -130,7 +144,7 @@ async fn clock_sysvar_updated_from_warp() {
 #[tokio::test]
 async fn stake_rewards_from_warp() {
     // Initialize and start the test network
-    let program_test = ProgramTest::default();
+    let program_test = stake_rewards_program_test();
     let mut context = program_test.start_with_context().await;
 
     context.warp_to_slot(100).unwrap();
@@ -223,7 +237,7 @@ async fn check_credits_observed(
 }
 #[tokio::test]
 async fn stake_merge_immediately_after_activation() {
-    let program_test = ProgramTest::default();
+    let program_test = stake_rewards_program_test();
     let mut context = program_test.start_with_context().await;
 
     context.warp_to_slot(100).unwrap();

@@ -6194,6 +6194,7 @@ pub mod tests {
         } = create_genesis_config(10_000);
         let ticks_per_slot = 1;
         genesis_config.ticks_per_slot = ticks_per_slot;
+        genesis_config.epoch_schedule = EpochSchedule::custom(64, 64, false);
         genesis_utils::activate_feature(&mut genesis_config, agave_feature_set::alpenglow::id());
 
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);

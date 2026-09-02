@@ -616,9 +616,10 @@ mod tests {
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
-        // Disable slot time reduction features as they will override the custom
-        // stores per block provided in this test helper.
-        let features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
+        // Disable features that would change this helper's reward math or
+        // override the custom stores per block provided by callers.
+        let mut features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
+        features_to_deactivate.push(agave_feature_set::remove_runtime_float_ops::id());
         let validator_keypairs = (0..stakes.len())
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();

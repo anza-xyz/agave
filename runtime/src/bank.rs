@@ -56,6 +56,7 @@ use {
             BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
             VersionedEpochStakes,
         },
+        fixed_point_inflation::{self, InflationKind, Taper},
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         leader_schedule_utils::leader_schedule_from_vote_accounts,
@@ -3107,10 +3108,148 @@ impl Bank {
         capitalization: u64,
         epoch: Epoch,
     ) -> u64 {
+        if self.use_fixed_point_inflation_rewards() {
+            return self
+                .calculate_epoch_inflation_rewards_fixed_point(capitalization, epoch)
+                .expect(
+                    "fixed-point inflation rewards must be supported when \
+                     remove_runtime_float_ops is active",
+                );
+        }
+
+        self.calculate_epoch_inflation_rewards_legacy(capitalization, epoch)
+    }
+
+    fn calculate_epoch_inflation_rewards_legacy(&self, capitalization: u64, epoch: Epoch) -> u64 {
         let slot_in_year = self.slot_in_year_for_inflation();
         let validator_rate = self.inflation.read().unwrap().validator(slot_in_year);
         let epoch_duration_in_years = self.epoch_duration_in_years(epoch);
         (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64
+    }
+
+    fn use_fixed_point_inflation_rewards(&self) -> bool {
+        self.feature_set.snapshot().remove_runtime_float_ops
+    }
+
+    fn calculate_epoch_inflation_rewards_fixed_point(
+        &self,
+        capitalization: u64,
+        epoch: Epoch,
+    ) -> Option<u64> {
+        let validator_rate = self.fixed_point_validator_rate()?;
+        if validator_rate == 0 {
+            return Some(0);
+        }
+
+        let epoch_start_slot = self.epoch_schedule().get_first_slot_in_epoch(epoch);
+        let slots_per_year =
+            fixed_point_inflation::slots_per_year(self.slot_params_at_slot(epoch_start_slot))?;
+        Some(fixed_point_inflation::epoch_reward(
+            capitalization,
+            validator_rate,
+            self.epoch_schedule().get_slots_in_epoch(epoch),
+            slots_per_year,
+        ))
+    }
+
+    fn fixed_point_validator_rate(&self) -> Option<u64> {
+        let inflation = *self.inflation.read().unwrap();
+        let full_inflation_active = !self
+            .feature_set
+            .full_inflation_features_enabled()
+            .is_empty();
+        match fixed_point_inflation::inflation_kind(&inflation, full_inflation_active)? {
+            InflationKind::Disabled => Some(0),
+            InflationKind::Fixed { validator_rate } => Some(validator_rate),
+            InflationKind::Tapered => {
+                let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
+                let reward_slot = self.epoch_schedule().get_first_slot_in_epoch(self.epoch());
+
+                // SIMD-0607 requires activation before, or at the same
+                // boundary as, SIMD-0550. If SIMD-0550 is active, anchor the
+                // 30% taper to its activation slot using the pre-0550 integer
+                // 15% schedule; do not use the f64 `initial` re-anchor.
+                let Some(double_disinflation_activation_slot) = self
+                    .feature_set
+                    .activated_slot(&feature_set::double_disinflation_rate::id())
+                    .filter(|activation_slot| *activation_slot <= reward_slot)
+                else {
+                    let decay = self.fixed_point_decay_for_slot_range(
+                        inflation_start_slot,
+                        reward_slot,
+                        Taper::FifteenPercent,
+                    )?;
+                    return Some(fixed_point_inflation::tapered_validator_rate(
+                        fixed_point_inflation::INITIAL_RATE,
+                        decay,
+                    ));
+                };
+
+                let anchor_slot = double_disinflation_activation_slot.max(inflation_start_slot);
+                let anchor_decay = self.fixed_point_decay_for_slot_range(
+                    inflation_start_slot,
+                    anchor_slot,
+                    Taper::FifteenPercent,
+                )?;
+                let anchor_rate = fixed_point_inflation::tapered_validator_rate(
+                    fixed_point_inflation::INITIAL_RATE,
+                    anchor_decay,
+                );
+                let decay_since_anchor = self.fixed_point_decay_for_slot_range(
+                    anchor_slot,
+                    reward_slot,
+                    Taper::ThirtyPercent,
+                )?;
+                Some(fixed_point_inflation::tapered_validator_rate(
+                    anchor_rate,
+                    decay_since_anchor,
+                ))
+            }
+        }
+    }
+
+    fn fixed_point_decay_for_slot_range(
+        &self,
+        start_slot: Slot,
+        end_slot: Slot,
+        taper: Taper,
+    ) -> Option<u64> {
+        if start_slot >= end_slot {
+            return Some(fixed_point_inflation::RATE_SCALE);
+        }
+
+        let mut cursor = start_slot;
+        let mut params = self.slot_params_at_slot(start_slot);
+        let mut decay = fixed_point_inflation::RATE_SCALE;
+
+        for (effective_slot, effective_params) in self.slot_params.param_transitions() {
+            if effective_slot <= start_slot {
+                params = effective_params;
+                continue;
+            }
+            if effective_slot >= end_slot {
+                break;
+            }
+
+            // SIMD-0607 specifies right-to-left binary exponentiation for each
+            // contiguous slot-time range; `pow_scaled_floor` encodes that
+            // consensus rule, including the floor after every scaled multiply.
+            let range_decay = fixed_point_inflation::pow_scaled_floor(
+                fixed_point_inflation::decay_per_slot(params, taper)?,
+                effective_slot - cursor,
+            );
+            decay = fixed_point_inflation::mul_scaled_floor(decay, range_decay);
+            cursor = effective_slot;
+            params = effective_params;
+        }
+
+        // Keep this final span on the same SIMD-0607 fixed-point path as the
+        // transition spans above.
+        let range_decay = fixed_point_inflation::pow_scaled_floor(
+            fixed_point_inflation::decay_per_slot(params, taper)?,
+            end_slot - cursor,
+        );
+        Some(fixed_point_inflation::mul_scaled_floor(decay, range_decay))
     }
 
     fn update_recent_blockhashes_locked(&self, locked_blockhash_queue: &BlockhashQueue) {
@@ -6323,15 +6462,18 @@ impl Bank {
         self.apply_activated_features();
     }
 
-    /// SIMD-0550: double the taper, re-anchoring `initial` so the inflation
-    /// rate stays continuous at the point of activation.
+    /// SIMD-0550: double the taper. The legacy path re-anchors `initial` as
+    /// f64; after SIMD-0607, reward calculation ignores that presentation field
+    /// and performs the activation-slot anchor in fixed-point arithmetic.
     fn apply_double_disinflation_rate(&mut self) {
-        let year = self.slot_in_year_for_inflation();
         let mut inflation = *self.inflation.read().unwrap();
-        let anchor_rate = inflation.total(year);
         let taper = feature_set::double_disinflation_rate::TAPER;
+        if !self.use_fixed_point_inflation_rewards() {
+            let year = self.slot_in_year_for_inflation();
+            let anchor_rate = inflation.total(year);
+            inflation.initial = anchor_rate / (1.0 - taper).powf(year);
+        }
         inflation.taper = taper;
-        inflation.initial = anchor_rate / (1.0 - taper).powf(year);
         // The lock is shared with parent and sibling banks; replace it instead
         // of writing through it so every boundary bank anchors off the
         // pre-activation schedule and other forks never observe the change.

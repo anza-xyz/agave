@@ -1,6 +1,7 @@
 mod shared;
 
 use {
+    agave_feature_set as feature_set,
     shared::from_account_info,
     solana_account_info::AccountInfo,
     solana_clock::Slot,
@@ -74,11 +75,14 @@ async fn check_with_program(
 #[tokio::test]
 async fn get_sysvar_last_restart_slot() {
     let program_id = Pubkey::new_unique();
-    let program_test = ProgramTest::new(
+    let mut program_test = ProgramTest::new(
         "sysvar_last_restart_slot_process",
         program_id,
         processor!(sysvar_last_restart_slot_process_instruction),
     );
+    // This sysvar test warps across epoch boundaries with ProgramTest's fast
+    // synthetic clock, which is not a supported fixed-point rewards regime.
+    program_test.deactivate_feature(feature_set::remove_runtime_float_ops::id());
 
     let mut context = program_test.start_with_context().await;
 

@@ -19,6 +19,7 @@ pub mod commitment;
 pub mod conformance;
 pub mod dependency_tracker;
 pub mod epoch_stakes;
+pub(crate) mod fixed_point_inflation;
 pub mod genesis_utils;
 pub mod inflation_rewards;
 pub mod installed_scheduler_pool;

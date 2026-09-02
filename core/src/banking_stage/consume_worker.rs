@@ -2134,10 +2134,13 @@ mod tests {
         ConsumeWorker<RuntimeTransaction<SanitizedTransaction>>,
     ) {
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
+        genesis_config
+            .accounts
+            .remove(&agave_feature_set::remove_runtime_float_ops::id());
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // Warp to next epoch for MaxAge tests.
         let bank = Bank::new_from_parent(

@@ -1,6 +1,7 @@
 mod shared;
 
 use {
+    agave_feature_set as feature_set,
     shared::from_account_info,
     solana_account_info::{AccountInfo, next_account_info},
     solana_clock::Clock,
@@ -21,6 +22,12 @@ use {
     solana_sysvar::Sysvar,
     solana_transaction::Transaction,
 };
+
+fn deactivate_fixed_point_rewards_for_synthetic_clock(program_test: &mut ProgramTest) {
+    // These sysvar tests warp across epoch boundaries with ProgramTest's fast
+    // synthetic clock, which is not a supported fixed-point rewards regime.
+    program_test.deactivate_feature(feature_set::remove_runtime_float_ops::id());
+}
 
 // Process instruction to invoke into another program
 fn sysvar_getter_process_instruction(
@@ -62,11 +69,12 @@ fn sysvar_getter_process_instruction(
 #[tokio::test]
 async fn get_sysvar() {
     let program_id = Pubkey::new_unique();
-    let program_test = ProgramTest::new(
+    let mut program_test = ProgramTest::new(
         "sysvar_getter",
         program_id,
         processor!(sysvar_getter_process_instruction),
     );
+    deactivate_fixed_point_rewards_for_synthetic_clock(&mut program_test);
 
     let mut context = program_test.start_with_context().await;
     context.warp_to_slot(42).unwrap();
@@ -114,11 +122,12 @@ fn epoch_reward_sysvar_getter_process_instruction(
 #[tokio::test]
 async fn get_epoch_rewards_sysvar() {
     let program_id = Pubkey::new_unique();
-    let program_test = ProgramTest::new(
+    let mut program_test = ProgramTest::new(
         "epoch_reward_sysvar_getter",
         program_id,
         processor!(epoch_reward_sysvar_getter_process_instruction),
     );
+    deactivate_fixed_point_rewards_for_synthetic_clock(&mut program_test);
 
     let mut context = program_test.start_with_context().await;
 
@@ -186,11 +195,12 @@ fn clock_sol_get_sysvar_process_instruction(
 #[tokio::test]
 async fn clock_sol_get_sysvar() {
     let program_id = Pubkey::new_unique();
-    let program_test = ProgramTest::new(
+    let mut program_test = ProgramTest::new(
         "clock_sol_get_sysvar",
         program_id,
         processor!(clock_sol_get_sysvar_process_instruction),
     );
+    deactivate_fixed_point_rewards_for_synthetic_clock(&mut program_test);
 
     let mut context = program_test.start_with_context().await;
     context.warp_to_slot(42).unwrap();
@@ -211,10 +221,12 @@ async fn clock_sol_get_sysvar() {
 }
 
 async fn process_transaction(
-    program_test: ProgramTest,
+    mut program_test: ProgramTest,
     program_id: Pubkey,
     accounts: Vec<AccountMeta>,
 ) {
+    deactivate_fixed_point_rewards_for_synthetic_clock(&mut program_test);
+
     let mut context = program_test.start_with_context().await;
     context.warp_to_slot(42).unwrap();
 

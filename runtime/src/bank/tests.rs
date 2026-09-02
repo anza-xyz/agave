@@ -10,6 +10,7 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         epoch_stakes::VersionedEpochStakes,
+        fixed_point_inflation::{self, Taper},
         genesis_utils::{
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
@@ -329,7 +330,7 @@ fn test_bank_new() {
 
     genesis_config.rent = Rent {
         lamports_per_byte: 5,
-        exemption_threshold: 1.2f64.to_le_bytes(),
+        exemption_threshold: 2.0f64.to_le_bytes(),
         ..Rent::default()
     };
 
@@ -346,7 +347,7 @@ fn test_bank_new() {
 
     assert_eq!(rent.burn_percent, Rent::default().burn_percent);
     assert_eq!(rent.exemption_threshold, 1.0f64.to_le_bytes());
-    assert_eq!(rent.lamports_per_byte, 6);
+    assert_eq!(rent.lamports_per_byte, 10);
 }
 
 pub(crate) fn create_simple_test_bank(lamports: u64) -> Bank {
@@ -5376,9 +5377,14 @@ fn test_fuzz_instructions() {
 // test matrix that tests the bank hash calculation with and without your
 // added feature.
 #[allow(deprecated)]
-#[test_case(false ; "legacy")]
-#[test_case(true ; "deprecate rent exemption threshold")]
-fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
+#[test_case(false, false ; "legacy")]
+#[test_case(true, false ; "deprecate rent exemption threshold")]
+#[test_case(false, true ; "remove runtime float ops")]
+#[test_case(true, true ; "deprecate rent exemption threshold and remove runtime float ops")]
+fn test_bank_hash_consistency(
+    deprecate_rent_exemption_threshold: bool,
+    remove_runtime_float_ops: bool,
+) {
     const VALIDATOR_STAKE_LAMPORTS: u64 = 100 * LAMPORTS_PER_SOL;
 
     let mut genesis_config = GenesisConfig {
@@ -5433,6 +5439,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
 
     if !deprecate_rent_exemption_threshold {
         feature_set.deactivate(&feature_set::deprecate_rent_exemption_threshold::id());
+    }
+    if !remove_runtime_float_ops {
+        feature_set.deactivate(&feature_set::remove_runtime_float_ops::id());
     }
 
     let (mut bank, _bank_forks) = Bank::new_from_genesis(
@@ -5517,10 +5526,11 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "G1rANcscD2mdoaAwdXn29ERibx3o7Ks1Nk7h1C6Sfhk2"
-                } else {
-                    "6gnFRPMgyQ1fj2xLKoQFwHqMCQ6HPPYLG7TUZFmuCen9"
+                match (deprecate_rent_exemption_threshold, remove_runtime_float_ops) {
+                    (false, false) => "6gnFRPMgyQ1fj2xLKoQFwHqMCQ6HPPYLG7TUZFmuCen9",
+                    (true, false) => "G1rANcscD2mdoaAwdXn29ERibx3o7Ks1Nk7h1C6Sfhk2",
+                    (false, true) => "6gnFRPMgyQ1fj2xLKoQFwHqMCQ6HPPYLG7TUZFmuCen9",
+                    (true, true) => "G1rANcscD2mdoaAwdXn29ERibx3o7Ks1Nk7h1C6Sfhk2",
                 },
             );
         }
@@ -5529,10 +5539,11 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "TDnXLFxaMVtN4KFKmdSc28zTfQjd2sPVazrVkfUFv3G"
-                } else {
-                    "9HL7PKa6Xt6CPqJFmdM4zWziH2YZzA7U92cbhLvTuubF"
+                match (deprecate_rent_exemption_threshold, remove_runtime_float_ops) {
+                    (false, false) => "9HL7PKa6Xt6CPqJFmdM4zWziH2YZzA7U92cbhLvTuubF",
+                    (true, false) => "TDnXLFxaMVtN4KFKmdSc28zTfQjd2sPVazrVkfUFv3G",
+                    (false, true) => "5dbXpswXDuZrKZ6txT7PLbVBTy6BypWCBrt5TrQmPT9S",
+                    (true, true) => "AArHrZt6eeUGQearc9LTFZopBkMciVQRNpZm6oqUXU4g",
                 },
             );
         }
@@ -5540,10 +5551,11 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "G8mgrJ1vGXTfjRS8mmjYeHzkGwRLN5jvyirpApzB6Box"
-                } else {
-                    "6wrhEo1vT3P6bH8SuJrs7orouw7ivBkWs2XetuneH3hT"
+                match (deprecate_rent_exemption_threshold, remove_runtime_float_ops) {
+                    (false, false) => "6wrhEo1vT3P6bH8SuJrs7orouw7ivBkWs2XetuneH3hT",
+                    (true, false) => "G8mgrJ1vGXTfjRS8mmjYeHzkGwRLN5jvyirpApzB6Box",
+                    (false, true) => "6fT1vyJCqW33fEcbWDLPSCPf7Aeak92JmTtrm8UK4vWv",
+                    (true, true) => "ALkRr7RtoCf9jG5gNX17oTj83U9neDwYAALV33YP44SZ",
                 },
             );
             break;
@@ -5845,7 +5857,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "9agm2yVmnQmfwLy1jBV4kgf26Fk6q2gtJ2q9nWRTFs37",
+        "9LHs65jT3mUdAVrMJ297bmVekjGvdZcAD9fRbxzcr93D",
     );
 }
 
@@ -7237,8 +7249,125 @@ fn test_rent_feature_gates_epoch_transition() {
 }
 
 #[test]
+fn test_remove_runtime_float_ops_epoch_rewards_activation_boundary() {
+    const SLOTS_PER_EPOCH: Slot = 432_000;
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
+    genesis_config.inflation = Inflation::full();
+    genesis_config
+        .accounts
+        .remove(&feature_set::remove_runtime_float_ops::id());
+    genesis_config
+        .accounts
+        .remove(&feature_set::double_disinflation_rate::id());
+    for feature_id in slot_time_feature_ids() {
+        genesis_config.accounts.remove(&feature_id);
+    }
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    assert!(
+        !bank
+            .feature_set
+            .is_active(&feature_set::remove_runtime_float_ops::id())
+    );
+
+    bank.store_account(
+        &feature_set::remove_runtime_float_ops::id(),
+        &feature::create_account(
+            &Feature { activated_at: None },
+            std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1),
+        ),
+    );
+
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::remove_runtime_float_ops::id())
+    );
+
+    // SIMD-0607 applies in the boundary bank, so rewards paid for epoch 0
+    // during epoch 1 use fixed-point math. The rate has decayed over the
+    // completed epoch before reward proration applies.
+    assert_eq!(
+        bank.calculate_epoch_inflation_rewards(
+            1_000_000_000 * LAMPORTS_PER_SOL,
+            bank.epoch().saturating_sub(1),
+        ),
+        437_675_810_411_759
+    );
+}
+
+#[test]
+fn test_remove_runtime_float_ops_disabled_inflation_allows_custom_slot_timing() {
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    genesis_config.inflation = Inflation::new_disabled();
+    genesis_config.poh_config = PohConfig::new_sleep(Duration::from_micros(100));
+    genesis_config.ticks_per_slot = 1;
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
+
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    assert_eq!(
+        bank.calculate_epoch_inflation_rewards(1_000_000 * LAMPORTS_PER_SOL, bank.epoch()),
+        0
+    );
+}
+
+#[test]
+#[should_panic(expected = "fixed-point inflation rewards must be supported when \
+                           remove_runtime_float_ops is active")]
+fn test_remove_runtime_float_ops_epoch_rewards_does_not_fall_back_to_legacy() {
+    const SLOTS_PER_EPOCH: Slot = 432_000;
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
+    let mut inflation = Inflation::full();
+    inflation.foundation = 0.05;
+    inflation.foundation_term = 7.0;
+    genesis_config.inflation = inflation;
+    genesis_config
+        .accounts
+        .remove(&feature_set::full_inflation::devnet_and_testnet::id());
+    for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
+        genesis_config.accounts.remove(&pair.vote_id);
+        genesis_config.accounts.remove(&pair.enable_id);
+    }
+    for feature_id in slot_time_feature_ids() {
+        genesis_config.accounts.remove(&feature_id);
+    }
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
+
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::remove_runtime_float_ops::id())
+    );
+    assert!(
+        bank.feature_set
+            .full_inflation_features_enabled()
+            .is_empty()
+    );
+    assert!(
+        bank.calculate_epoch_inflation_rewards_legacy(
+            1_000_000_000 * LAMPORTS_PER_SOL,
+            bank.epoch(),
+        ) > 0
+    );
+
+    bank.calculate_epoch_inflation_rewards(1_000_000_000 * LAMPORTS_PER_SOL, bank.epoch());
+}
+
+#[test]
 fn test_double_disinflation_rate_epoch_transition() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    genesis_config
+        .accounts
+        .remove(&feature_set::remove_runtime_float_ops::id());
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let feature_id = feature_set::double_disinflation_rate::id();
@@ -7330,6 +7459,95 @@ fn test_double_disinflation_rate_epoch_transition() {
     assert_eq!(
         later_inflation.initial.to_bits(),
         inflation.initial.to_bits()
+    );
+}
+
+#[test]
+fn test_fixed_point_double_disinflation_rate_anchors_to_activation_slot() {
+    const SLOTS_PER_EPOCH: Slot = 432_000;
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
+    genesis_config.inflation = Inflation::full();
+    genesis_config
+        .accounts
+        .remove(&feature_set::double_disinflation_rate::id());
+    for feature_id in slot_time_feature_ids() {
+        genesis_config.accounts.remove(&feature_id);
+    }
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::remove_runtime_float_ops::id())
+    );
+    assert!(
+        !bank
+            .feature_set
+            .is_active(&feature_set::double_disinflation_rate::id())
+    );
+
+    let old_inflation = *bank.inflation.read().unwrap();
+    bank.store_account(
+        &feature_set::double_disinflation_rate::id(),
+        &feature::create_account(
+            &Feature { activated_at: None },
+            std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1),
+        ),
+    );
+
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::double_disinflation_rate::id())
+    );
+    let inflation = *bank.inflation.read().unwrap();
+    assert_eq!(
+        inflation.initial.to_bits(),
+        old_inflation.initial.to_bits(),
+        "SIMD-0607 fixed-point rewards must not depend on an f64 re-anchor"
+    );
+    assert_eq!(
+        bank.calculate_epoch_inflation_rewards(
+            1_000_000_000 * LAMPORTS_PER_SOL,
+            bank.epoch().saturating_sub(1),
+        ),
+        437_675_810_411_759
+    );
+
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    let anchor_decay = fixed_point_inflation::pow_scaled_floor(
+        fixed_point_inflation::decay_per_slot(LEGACY_SLOT_PARAMS, Taper::FifteenPercent).unwrap(),
+        SLOTS_PER_EPOCH,
+    );
+    let anchor_rate = fixed_point_inflation::tapered_validator_rate(
+        fixed_point_inflation::INITIAL_RATE,
+        anchor_decay,
+    );
+    let decay_since_anchor = fixed_point_inflation::pow_scaled_floor(
+        fixed_point_inflation::decay_per_slot(LEGACY_SLOT_PARAMS, Taper::ThirtyPercent).unwrap(),
+        SLOTS_PER_EPOCH,
+    );
+    let validator_rate =
+        fixed_point_inflation::tapered_validator_rate(anchor_rate, decay_since_anchor);
+    let expected_epoch_rewards = fixed_point_inflation::epoch_reward(
+        1_000_000_000 * LAMPORTS_PER_SOL,
+        validator_rate,
+        SLOTS_PER_EPOCH,
+        fixed_point_inflation::slots_per_year(LEGACY_SLOT_PARAMS).unwrap(),
+    );
+    assert_eq!(expected_epoch_rewards, 436_821_825_623_254);
+    assert_eq!(
+        bank.calculate_epoch_inflation_rewards(
+            1_000_000_000 * LAMPORTS_PER_SOL,
+            bank.epoch().saturating_sub(1),
+        ),
+        expected_epoch_rewards
     );
 }
 
@@ -8631,6 +8849,10 @@ fn test_get_inflation_num_slots_with_activations() {
         genesis_config.accounts.remove(&pair.vote_id).unwrap();
         genesis_config.accounts.remove(&pair.enable_id).unwrap();
     }
+    genesis_config
+        .accounts
+        .remove(&feature_set::remove_runtime_float_ops::id())
+        .unwrap();
 
     let (bank0, _bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();

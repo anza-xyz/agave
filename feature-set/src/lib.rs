@@ -83,6 +83,7 @@ pub struct FeatureSnapshot {
     pub upgrade_bpf_stake_program_to_v5_1: bool,
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
+    pub remove_runtime_float_ops: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -184,6 +185,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
             remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
+            remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
         }
     }
 }
@@ -1537,6 +1539,10 @@ pub mod double_disinflation_rate {
     pub const TAPER: f64 = 0.30;
 }
 
+pub mod remove_runtime_float_ops {
+    solana_pubkey::declare_id!("S6o78jV2Hpn95wEW9CjSUkEdNwQCj1edYpCD4tGQLo3");
+}
+
 pub mod remove_inactive_stakes {
     solana_pubkey::declare_id!("RMsTKfD6hZnBhhNvgGBeKNrqCNkeoP3DYYxNtcuWtRg");
 }
@@ -2630,6 +2636,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_inactive_stakes::id(),
             "SIMD-0599: Remove inactive stakes from stake delegations",
+        ),
+        (
+            remove_runtime_float_ops::id(),
+            "SIMD-0607: Remove floating point from runtime",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
