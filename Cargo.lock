@@ -8526,6 +8526,7 @@ dependencies = [
  "num_cpus",
  "prost 0.14.4",
  "protosol",
+ "qualifier_attr",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",

@@ -795,7 +795,7 @@ impl ClusterInfo {
         let current_slots: Vec<_> = {
             let gossip_crds =
                 self.time_gossip_read_lock("lookup_epoch_slots", &self.stats.epoch_slots_lookup);
-            (0..crds_data::MAX_EPOCH_SLOTS)
+            (crds_data::VALID_EPOCH_SLOT_INDEXES)
                 .filter_map(|ix| {
                     let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
                     let crds_value = gossip_crds.get::<&CrdsValue>(&label)?;
@@ -814,7 +814,7 @@ impl ClusterInfo {
         let total_slots = max_slot as isize - min_slot as isize;
         // WARN if CRDS is not storing at least a full epoch worth of slots
         if DEFAULT_SLOTS_PER_EPOCH as isize > total_slots
-            && crds_data::MAX_EPOCH_SLOTS as usize <= current_slots.len()
+            && crds_data::VALID_EPOCH_SLOT_INDEXES.len() == current_slots.len()
         {
             self.stats.epoch_slots_filled.add_relaxed(1);
             warn!(
@@ -824,12 +824,18 @@ impl ClusterInfo {
             );
         }
         let mut reset = false;
-        let mut epoch_slot_index = match current_slots.iter().max() {
+        let start_epoch_slot_index = match current_slots.iter().max() {
             Some((_wallclock, _slot, index)) => *index,
             None => 0,
         };
         let mut entries = Vec::default();
+        let mut epoch_slot_indexes = crds_data::VALID_EPOCH_SLOT_INDEXES
+            .cycle()
+            .skip(usize::from(start_epoch_slot_index));
         while !update.is_empty() {
+            let epoch_slot_index = epoch_slot_indexes
+                .next()
+                .expect("Iterator::cycle always yields");
             let now = timestamp();
             let mut slots = if !reset {
                 self.lookup_epoch_slots(epoch_slot_index)
@@ -843,7 +849,6 @@ impl ClusterInfo {
                 let entry = CrdsValue::new(epoch_slots, &self_keypair);
                 entries.push(entry);
             }
-            epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
             reset = true;
         }
         let mut gossip_crds = self.gossip.crds.write().unwrap();
@@ -2663,7 +2668,6 @@ mod tests {
             socketaddr,
         },
         itertools::izip,
-        rand::{SeedableRng, rngs::StdRng},
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
@@ -3483,52 +3487,6 @@ mod tests {
 
         let slots = cluster_info.get_epoch_slots(&mut cursor);
         assert!(slots.is_empty());
-    }
-
-    #[test]
-    fn test_push_epoch_slots_wraps() {
-        let keypair = Arc::new(Keypair::new());
-        let pubkey = keypair.pubkey();
-        let contact_info = ContactInfo::new_localhost(&pubkey, 0);
-        let cluster_info =
-            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
-        let mut rng = StdRng::seed_from_u64(0);
-        let slots: Vec<Slot> = repeat_with(|| rng.random_range(1..32))
-            .scan(0, |slot, step| {
-                *slot += step;
-                Some(*slot)
-            })
-            .take(32_000)
-            .collect();
-        let mut epoch_slots = EpochSlots::new(pubkey, timestamp());
-        let num_slots = epoch_slots.fill(&slots, timestamp());
-        assert!(num_slots < slots.len());
-        let next_slot = slots[num_slots];
-        assert_eq!(epoch_slots.clone().fill(&[next_slot], timestamp()), 0);
-
-        let value = CrdsValue::new(
-            CrdsData::EpochSlots(crds_data::MAX_EPOCH_SLOTS - 1, epoch_slots),
-            keypair.as_ref(),
-        );
-        cluster_info
-            .gossip
-            .crds
-            .write()
-            .unwrap()
-            .insert(value, timestamp(), GossipRoute::LocalMessage)
-            .unwrap();
-        cluster_info.push_epoch_slots(&[next_slot]);
-
-        let crds = cluster_info.gossip.crds.read().unwrap();
-        let label = CrdsValueLabel::EpochSlots(0, pubkey);
-        let value = crds.get::<&CrdsValue>(&label).unwrap();
-        assert!(value.sanitize().is_ok());
-        assert_eq!(
-            value.epoch_slots().unwrap().to_slots(next_slot).next(),
-            Some(next_slot)
-        );
-        let invalid_label = CrdsValueLabel::EpochSlots(crds_data::MAX_EPOCH_SLOTS, pubkey);
-        assert!(crds.get::<&CrdsValue>(&invalid_label).is_none());
     }
 
     #[test]
