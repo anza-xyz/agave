@@ -295,8 +295,8 @@ impl Display for HarnessConfig {
         )?;
         writeln!(
             formatter,
-            "  {:<22}{}",
-            "intentionally invalid:", self.expected_invalid_shreds
+            "  intentionally invalid:{}",
+            self.expected_invalid_shreds
         )?;
         writeln!(
             formatter,
@@ -451,8 +451,8 @@ impl Display for ReplayReport<'_> {
         )?;
         writeln!(
             formatter,
-            "  {:<22}{}",
-            "intentionally invalid:", self.config.expected_invalid_shreds
+            "  intentionally invalid:{}",
+            self.config.expected_invalid_shreds
         )?;
         writeln!(
             formatter,
@@ -599,24 +599,13 @@ fn make_slot_shreds(leader_keypair: &Keypair, slot: u64, shreds_per_slot: usize)
 
     // Interleave data and coding shreds instead of putting all data traffic
     // first and all coding traffic second.
-    let mut data_shreds = data_shreds.into_iter().take(target_data_shreds);
     let mut coding_shreds = coding_shreds.into_iter().take(target_coding_shreds);
     let mut shreds = Vec::with_capacity(shreds_per_slot);
 
-    loop {
-        let mut pushed = false;
-
-        if let Some(shred) = data_shreds.next() {
-            shreds.push(shred);
-            pushed = true;
-        }
-        if let Some(shred) = coding_shreds.next() {
-            shreds.push(shred);
-            pushed = true;
-        }
-
-        if !pushed {
-            break;
+    for data_shred in data_shreds.into_iter().take(target_data_shreds) {
+        shreds.push(data_shred);
+        if let Some(coding_shred) = coding_shreds.next() {
+            shreds.push(coding_shred);
         }
     }
 
