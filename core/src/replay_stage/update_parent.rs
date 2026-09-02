@@ -202,12 +202,12 @@ fn try_restart_slot_from_update_parent(
     ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
     if let Some(transaction_status_sender) = transaction_status_sender {
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(
+            .enqueue_purge_transaction_history_for_slot(
                 slot,
                 source,
                 TransactionHistoryPurgeInput::ReplayStage,
             )
-            .expect("TransactionStatusService failed to purge UpdateParent transaction history")
+            .expect("failed to enqueue UpdateParent transaction-history purge")
     }
     if let Some(cleared_bank_id) = cleared_bank_id {
         let update_parent = UpdateParentInfo::from_slot_meta(slot, &slot_meta)
@@ -439,12 +439,12 @@ pub(super) fn handle_abandoned_bank(
         .as_ref()
     {
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(
+            .enqueue_purge_transaction_history_for_slot(
                 bank_slot,
                 TransactionHistoryPurgeSource::AbandonedBank,
                 TransactionHistoryPurgeInput::ReplayStage,
             )
-            .expect("TransactionStatusService failed to purge UpdateParent transaction history");
+            .expect("failed to enqueue UpdateParent transaction-history purge");
     }
 
     notify_entry_update_parent(
