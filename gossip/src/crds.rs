@@ -51,7 +51,7 @@ use {
         cmp::Ordering,
         collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
         ops::{Bound, Index, IndexMut},
-        sync::Mutex,
+        sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
     },
 };
 
@@ -64,6 +64,78 @@ const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // target: 1 signature reported per minute
 // log2(680k) = ~19.375.
 pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
+
+/// Owns the lock around the CRDS table.
+///
+/// Guard acquisition lives here so call sites do not repeat the poisoning
+/// `unwrap`, and so operations that must span several table mutations have one
+/// place to live. Callers still choose read or write access explicitly.
+#[derive(Default)]
+pub struct CrdsStore {
+    inner: RwLock<Crds>,
+}
+
+impl CrdsStore {
+    #[inline]
+    pub fn read(&self) -> RwLockReadGuard<'_, Crds> {
+        self.inner.read().unwrap()
+    }
+
+    #[inline]
+    pub fn write(&self) -> RwLockWriteGuard<'_, Crds> {
+        self.inner.write().unwrap()
+    }
+
+    /// Inserts a value produced by this node and reports how it affected the
+    /// store without treating an expected duplicate or stale value as an
+    /// error.
+    pub fn insert_local(&self, value: CrdsValue, now: u64) -> InsertOutcome {
+        self.write()
+            .insert_with_outcome(value, now, GossipRoute::LocalMessage)
+    }
+
+    /// Atomically inserts a batch of values produced by this node.
+    ///
+    /// Values sharing a label are coalesced to the last one given. The batch is
+    /// rejected without changing the store if any survivor would fail to update
+    /// the current table.
+    pub fn insert_local_batch(&self, values: Vec<CrdsValue>, now: u64) -> LocalBatchOutcome {
+        let values: Vec<CrdsValue> = values
+            .into_iter()
+            .map(|value| (value.label(), value))
+            .collect::<IndexMap<_, _>>()
+            .into_values()
+            .collect();
+        let mut crds = self.write();
+        if values.iter().any(|value| !crds.upserts(value)) {
+            return LocalBatchOutcome::Rejected;
+        }
+
+        let mut inserted = 0;
+        let mut replaced = 0;
+        for value in values {
+            match crds.insert_with_outcome(value, now, GossipRoute::LocalMessage) {
+                InsertOutcome::Inserted => inserted += 1,
+                InsertOutcome::Replaced => replaced += 1,
+                // Labels are unique after coalescing and the write lock is
+                // held throughout, so the preflight above still holds.
+                outcome => debug_assert!(
+                    false,
+                    "preflight accepted local value but insert returned {outcome:?}"
+                ),
+            }
+        }
+        LocalBatchOutcome::Committed { inserted, replaced }
+    }
+}
+
+impl From<Crds> for CrdsStore {
+    fn from(crds: Crds) -> Self {
+        Self {
+            inner: RwLock::new(crds),
+        }
+    }
+}
 
 pub struct Crds {
     /// Stores the map of labels and values
@@ -96,6 +168,40 @@ pub struct Crds {
 pub enum CrdsError {
     DuplicatePush(/*num dups:*/ u8),
     InsertFailed,
+}
+
+/// The result of merging a value into CRDS.
+///
+/// Duplicate and stale values are normal gossip outcomes, so callers that
+/// need to distinguish them can use [`Crds::insert_with_outcome`] instead of
+/// interpreting them as errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InsertOutcome {
+    Inserted,
+    Replaced,
+    DuplicatePush(/*num dups:*/ u8),
+    /// The table already holds this value, or a newer one for its label.
+    Rejected,
+}
+
+impl InsertOutcome {
+    pub fn was_applied(self) -> bool {
+        matches!(self, Self::Inserted | Self::Replaced)
+    }
+
+    fn into_result(self) -> Result<(), CrdsError> {
+        match self {
+            Self::Inserted | Self::Replaced => Ok(()),
+            Self::DuplicatePush(num_dups) => Err(CrdsError::DuplicatePush(num_dups)),
+            Self::Rejected => Err(CrdsError::InsertFailed),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalBatchOutcome {
+    Committed { inserted: usize, replaced: usize },
+    Rejected,
 }
 
 #[derive(Clone, Copy)]
@@ -264,6 +370,15 @@ impl Crds {
         now: u64,
         route: GossipRoute,
     ) -> Result<(), CrdsError> {
+        self.insert_with_outcome(value, now, route).into_result()
+    }
+
+    pub fn insert_with_outcome(
+        &mut self,
+        value: CrdsValue,
+        now: u64,
+        route: GossipRoute,
+    ) -> InsertOutcome {
         let label = value.label();
         let pubkey = value.pubkey();
         let value = VersionedCrdsValue::new(value, self.cursor, now, route);
@@ -296,7 +411,7 @@ impl Crds {
                 self.records.entry(pubkey).or_default().insert(entry_index);
                 self.cursor.consume(value.ordinal);
                 entry.insert(value);
-                Ok(())
+                InsertOutcome::Inserted
             }
             Entry::Occupied(mut entry) if overrides(&value.value, entry.get()) => {
                 stats.record_insert(&value, route);
@@ -335,7 +450,7 @@ impl Crds {
                 self.cursor.consume(value.ordinal);
                 self.purged.push_back((*entry.get().value.hash(), now));
                 entry.insert(value);
-                Ok(())
+                InsertOutcome::Replaced
             }
             Entry::Occupied(mut entry) => {
                 stats.record_fail(&value, route);
@@ -348,7 +463,7 @@ impl Crds {
                 // duplicate) by comparing value hashes.
                 if entry.get().value.hash() != value.value.hash() {
                     self.purged.push_back((*value.value.hash(), now));
-                    Err(CrdsError::InsertFailed)
+                    InsertOutcome::Rejected
                 } else if matches!(route, GossipRoute::PushMessage(_)) {
                     let entry = entry.get_mut();
                     if entry.num_push_recv == Some(0) {
@@ -358,9 +473,9 @@ impl Crds {
                     }
                     let num_push_dups = entry.num_push_recv.unwrap_or_default();
                     entry.num_push_recv = Some(num_push_dups.saturating_add(1));
-                    Err(CrdsError::DuplicatePush(num_push_dups))
+                    InsertOutcome::DuplicatePush(num_push_dups)
                 } else {
-                    Err(CrdsError::InsertFailed)
+                    InsertOutcome::Rejected
                 }
             }
         }
@@ -879,6 +994,89 @@ mod tests {
         assert_eq!(crds.table.len(), 1);
         assert!(crds.table.contains_key(&val.label()));
         assert_eq!(crds.table[&val.label()].local_timestamp, 0);
+    }
+
+    #[test]
+    fn test_insert_with_outcome() {
+        let mut crds = Crds::default();
+        let pubkey = Pubkey::new_unique();
+        let mut contact_info = ContactInfo::new_rand(&mut rng(), Some(pubkey));
+        contact_info.set_wallclock(10);
+        let original = CrdsValue::new_unsigned(CrdsData::from(contact_info.clone()));
+        assert_eq!(
+            crds.insert_with_outcome(original.clone(), 10, GossipRoute::LocalMessage),
+            InsertOutcome::Inserted
+        );
+        assert_eq!(
+            crds.insert_with_outcome(original, 11, GossipRoute::LocalMessage),
+            InsertOutcome::Rejected
+        );
+
+        contact_info.set_wallclock(20);
+        let replacement = CrdsValue::new_unsigned(CrdsData::from(contact_info.clone()));
+        assert_eq!(
+            crds.insert_with_outcome(replacement, 20, GossipRoute::LocalMessage),
+            InsertOutcome::Replaced
+        );
+
+        contact_info.set_wallclock(15);
+        let stale = CrdsValue::new_unsigned(CrdsData::from(contact_info));
+        assert_eq!(
+            crds.insert_with_outcome(stale, 21, GossipRoute::LocalMessage),
+            InsertOutcome::Rejected
+        );
+    }
+
+    #[test]
+    fn test_insert_local_batch_is_atomic() {
+        let store = CrdsStore::default();
+        let existing_pubkey = Pubkey::new_unique();
+        let mut existing_contact_info = ContactInfo::new_rand(&mut rng(), Some(existing_pubkey));
+        existing_contact_info.set_wallclock(10);
+        let existing = CrdsValue::new_unsigned(CrdsData::from(existing_contact_info.clone()));
+        assert_eq!(
+            store.insert_local(existing.clone(), 10),
+            InsertOutcome::Inserted
+        );
+
+        let fresh_pubkey = Pubkey::new_unique();
+        let fresh = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &fresh_pubkey,
+            10,
+        )));
+        existing_contact_info.set_wallclock(5);
+        let stale = CrdsValue::new_unsigned(CrdsData::from(existing_contact_info));
+        assert_eq!(
+            store.insert_local_batch(vec![fresh.clone(), stale], 11),
+            LocalBatchOutcome::Rejected
+        );
+
+        let crds = store.read();
+        assert!(crds.table.contains_key(&existing.label()));
+        assert!(!crds.table.contains_key(&fresh.label()));
+    }
+
+    #[test]
+    fn test_insert_local_batch_reports_changes() {
+        let store = CrdsStore::default();
+        let pubkey = Pubkey::new_unique();
+        let original =
+            CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&pubkey, 10)));
+        assert_eq!(store.insert_local(original, 10), InsertOutcome::Inserted);
+
+        let replacement =
+            CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&pubkey, 20)));
+        let additional = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &Pubkey::new_unique(),
+            20,
+        )));
+        assert_eq!(
+            store.insert_local_batch(vec![replacement, additional], 20),
+            LocalBatchOutcome::Committed {
+                inserted: 1,
+                replaced: 1,
+            }
+        );
     }
 
     #[test]
