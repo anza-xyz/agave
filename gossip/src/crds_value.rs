@@ -1,7 +1,7 @@
 use {
     crate::{
         contact_info::ContactInfo,
-        crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
+        crds_data::{CrdsData, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
         sigverify_cache::SigVerifyCache,
@@ -84,7 +84,7 @@ impl Signable for CrdsValue {
 pub enum CrdsValueLabel {
     Vote(VoteIndex, Pubkey),
     LowestSlot(Pubkey),
-    EpochSlots(EpochSlotsIndex, Pubkey),
+    EpochSlots(u8, Pubkey),
     DuplicateShred(DuplicateShredIndex, Pubkey),
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),

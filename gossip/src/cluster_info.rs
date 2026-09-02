@@ -18,7 +18,7 @@ use {
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
-        crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
+        crds_data::{CrdsData, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
@@ -576,7 +576,7 @@ impl ClusterInfo {
         self.my_contact_info.read().unwrap().shred_version()
     }
 
-    fn lookup_epoch_slots(&self, ix: EpochSlotsIndex) -> EpochSlots {
+    fn lookup_epoch_slots(&self, ix: u8) -> EpochSlots {
         let self_pubkey = self.id();
         let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
         let gossip_crds = self.gossip.crds.read().unwrap();
@@ -791,11 +791,13 @@ impl ClusterInfo {
     // race condition and the threads will overwrite each other in crds table.
     pub fn push_epoch_slots(&self, mut update: &[Slot]) {
         let self_keypair = self.keypair();
+        let epoch_slots_indices = u8::MIN..=u8::MAX;
+        let num_epoch_slots = epoch_slots_indices.len();
         let self_pubkey = self_keypair.pubkey();
         let current_slots: Vec<_> = {
             let gossip_crds =
                 self.time_gossip_read_lock("lookup_epoch_slots", &self.stats.epoch_slots_lookup);
-            (0..crds_data::MAX_EPOCH_SLOTS)
+            epoch_slots_indices
                 .filter_map(|ix| {
                     let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
                     let crds_value = gossip_crds.get::<&CrdsValue>(&label)?;
@@ -813,8 +815,7 @@ impl ClusterInfo {
         let max_slot: Slot = update.iter().max().cloned().unwrap_or(0);
         let total_slots = max_slot as isize - min_slot as isize;
         // WARN if CRDS is not storing at least a full epoch worth of slots
-        if DEFAULT_SLOTS_PER_EPOCH as isize > total_slots
-            && crds_data::MAX_EPOCH_SLOTS as usize <= current_slots.len()
+        if DEFAULT_SLOTS_PER_EPOCH as isize > total_slots && current_slots.len() == num_epoch_slots
         {
             self.stats.epoch_slots_filled.add_relaxed(1);
             warn!(
@@ -843,7 +844,7 @@ impl ClusterInfo {
                 let entry = CrdsValue::new(epoch_slots, &self_keypair);
                 entries.push(entry);
             }
-            epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
+            epoch_slot_index = epoch_slot_index.wrapping_add(1);
             reset = true;
         }
         let mut gossip_crds = self.gossip.crds.write().unwrap();
@@ -3506,10 +3507,7 @@ mod tests {
         let next_slot = slots[num_slots];
         assert_eq!(epoch_slots.clone().fill(&[next_slot], timestamp()), 0);
 
-        let value = CrdsValue::new(
-            CrdsData::EpochSlots(crds_data::MAX_EPOCH_SLOTS - 1, epoch_slots),
-            keypair.as_ref(),
-        );
+        let value = CrdsValue::new(CrdsData::EpochSlots(u8::MAX, epoch_slots), keypair.as_ref());
         cluster_info
             .gossip
             .crds
@@ -3527,8 +3525,9 @@ mod tests {
             value.epoch_slots().unwrap().to_slots(next_slot).next(),
             Some(next_slot)
         );
-        let invalid_label = CrdsValueLabel::EpochSlots(crds_data::MAX_EPOCH_SLOTS, pubkey);
-        assert!(crds.get::<&CrdsValue>(&invalid_label).is_none());
+        let max_label = CrdsValueLabel::EpochSlots(u8::MAX, pubkey);
+        let value = crds.get::<&CrdsValue>(&max_label).unwrap();
+        assert!(value.sanitize().is_ok());
     }
 
     #[test]
