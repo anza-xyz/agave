@@ -343,7 +343,9 @@ impl TransactionStatusService {
                 );
 
                 purge_result?;
-                let _ = done_sender.send(());
+                if let Some(done_sender) = done_sender {
+                    let _ = done_sender.send(());
+                }
             }
         }
         Ok(())
