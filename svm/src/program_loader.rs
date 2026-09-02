@@ -500,16 +500,11 @@ mod tests {
             .insert(program_key, (program_account.clone(), 50));
 
         // Fail: programdata account missing
-        // This is a bit of a footgun. The programdata account is missing, but
-        // we get a modification slot of 0. This is okay as long as we know 0
-        // means "not available" or null.
         let result = load_program_accounts(&mock_bank, &program_key);
         unwrap_as!(result, InvalidAccountData(owner));
         assert_eq!(owner, ProgramCacheEntryOwner::LoaderV3);
 
         // Fail: programdata wrong owner
-        // We also need to be careful here as well, since the load fails but
-        // we still get the *actual* last modified slot.
         let mut programdata_account = loader_v3_programdata_account(7, &[]);
         programdata_account.set_owner(Pubkey::new_unique());
         mock_bank
@@ -1385,9 +1380,7 @@ mod tests {
                 .insert(key, (empty, 40));
             assert!(filter_executable_program_accounts(&mock_bank, &batch, keys.iter()).is_empty());
 
-            // Any non-empty data is considered to *maybe* be a program, and
-            // both loaders always use deployment slot 0. The modification slot
-            // is the program account's own.
+            // Any non-empty data is considered to *maybe* be a program.
             let mut account = AccountSharedData::default();
             account.set_owner(owner);
             account.set_data_from_slice(&[1u8; 4]);
@@ -1442,8 +1435,6 @@ mod tests {
         assert!(filter_executable_program_accounts(&mock_bank, &batch, keys.iter()).is_empty());
 
         // Successfully queued.
-        // Both fields come from the programdata account: the deployment slot
-        // *and* the modification slot.
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -1495,8 +1486,6 @@ mod tests {
         assert!(filter_executable_program_accounts(&mock_bank, &batch, keys.iter()).is_empty());
 
         // Successfully queued.
-        // Both fields come from the program account: the deployment slot from
-        // its state, the modification slot from the account itself.
         mock_bank.account_shared_data.borrow_mut().insert(
             key,
             (loader_v4_account(9, LoaderV4Status::Deployed, &[]), 100),
