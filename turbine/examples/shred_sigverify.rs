@@ -6,7 +6,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 use {
     clap::{App, Arg, ArgMatches, ErrorKind},
-    crossbeam_channel::bounded,
+    crossbeam_channel::{TrySendError, bounded},
     rand::{Rng, SeedableRng},
     rand_chacha::ChaCha8Rng,
     solana_entry::entry::create_ticks,
@@ -27,7 +27,7 @@ use {
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
-    solana_streamer::evicting_sender::EvictingSender,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_time_utils::timestamp,
     solana_turbine::sigverify_shreds::{RepairNonceLocationLookup, spawn_shred_sigverify},
     std::{
@@ -316,6 +316,7 @@ struct ReplayResult {
     sent_shreds: usize,
     verified_shreds: usize,
     additional_discards: usize,
+    overflow_shreds: usize,
     max_observed_input_queue_depth: usize,
     ingress_elapsed: Duration,
     end_to_end_elapsed: Duration,
@@ -469,6 +470,11 @@ impl Display for ReplayReport<'_> {
             self.result.additional_discards
         )?;
         if matches!(self.config.replay_mode, ReplayMode::Paced) {
+            writeln!(
+                formatter,
+                "  input overflow:       {}",
+                self.result.overflow_shreds
+            )?;
             writeln!(
                 formatter,
                 "  max input queue depth: {}",
@@ -818,6 +824,9 @@ fn run_sigverify(
 
     let (shred_fetch_sender, shred_fetch_receiver) = bounded::<PacketBatch>(CHANNEL_CAPACITY);
 
+    let evicting_shred_fetch_sender =
+        EvictingSender::new(shred_fetch_sender.clone(), shred_fetch_receiver.clone());
+
     // Retransmit output is intentionally ignored by this harness. EvictingSender
     // retains the receiver it needs to evict old messages from a full channel.
     let (retransmit_sender, _) = EvictingSender::new_bounded(1);
@@ -848,6 +857,7 @@ fn run_sigverify(
 
     let replay_start = Instant::now();
     let mut sent_shreds = 0usize;
+    let mut overflow_shreds = 0usize;
     let mut max_observed_input_queue_depth = 0usize;
 
     for ScheduledBatch { batch, emit_offset } in workload {
@@ -856,11 +866,19 @@ fn run_sigverify(
         match config.replay_mode {
             ReplayMode::Paced => {
                 sleep_until(replay_start + emit_offset);
-                shred_fetch_sender
-                    .try_send(batch)
-                    .expect("shred sigverify input channel must not be full");
+                match evicting_shred_fetch_sender.try_send(batch) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(evicted_batch)) => {
+                        overflow_shreds = overflow_shreds
+                            .checked_add(evicted_batch.len())
+                            .expect("input overflow shred count overflowed");
+                    }
+                    Err(TrySendError::Disconnected(_)) => {
+                        unreachable!("evicting sender retains the channel receiver")
+                    }
+                }
                 max_observed_input_queue_depth =
-                    max_observed_input_queue_depth.max(shred_fetch_sender.len());
+                    max_observed_input_queue_depth.max(evicting_shred_fetch_sender.len());
             }
             ReplayMode::Saturate => {
                 shred_fetch_sender
@@ -878,6 +896,7 @@ fn run_sigverify(
     assert_eq!(sent_shreds, config.expected_shreds);
 
     // Closing ingress lets sigverify drain all queued batches and terminate.
+    drop(evicting_shred_fetch_sender);
     drop(shred_fetch_sender);
     sigverify_handle
         .join()
@@ -900,19 +919,26 @@ fn run_sigverify(
         .expect("verified shred count exceeds expected-valid count");
 
     // Deduper false positives are expected, but dropping more than 1% of
-    // otherwise valid shreds indicates a broken benchmark or sigverify regression.
-    let max_additional_discards = config.expected_valid_shreds.div_ceil(100);
+    // otherwise valid shreds beyond input overflow indicates a broken benchmark
+    // or sigverify regression. An evicted batch can contain intentionally invalid
+    // shreds, so overflow_shreds is a conservative upper bound here.
+    let max_additional_discards = config
+        .expected_valid_shreds
+        .div_ceil(100)
+        .checked_add(overflow_shreds)
+        .expect("maximum additional discard count overflowed");
 
     assert!(
         additional_discards <= max_additional_discards,
-        "sigverify discarded {additional_discards} valid shreds; maximum allowed is \
-         {max_additional_discards} (1%)"
+        "lost {additional_discards} expected-valid shreds; maximum allowed is \
+         {max_additional_discards} ({overflow_shreds} input overflow + 1%)"
     );
 
     ReplayResult {
         sent_shreds,
         verified_shreds,
         additional_discards,
+        overflow_shreds,
         max_observed_input_queue_depth,
         ingress_elapsed,
         end_to_end_elapsed,
