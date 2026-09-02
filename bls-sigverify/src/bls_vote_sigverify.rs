@@ -38,11 +38,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::BLSPubkeyToRankMap},
-    std::{
-        collections::{HashMap, hash_map::Entry},
-        num::NonZero,
-        sync::Arc,
-    },
+    std::{collections::HashMap, num::NonZero, sync::Arc},
 };
 
 #[derive(Default)]
@@ -51,29 +47,6 @@ struct ProcessedVotes {
     repair_msg: HashMap<Slot, Vec<Pubkey>>,
     vote_aggregates_for_pool: Vec<VoteAggregate>,
     metrics_msg: Vec<ConsensusMetricsEvent>,
-}
-
-impl ProcessedVotes {
-    fn merge(&mut self, other: Self) {
-        let Self {
-            mut reward_msg,
-            repair_msg,
-            mut vote_aggregates_for_pool,
-            mut metrics_msg,
-        } = other;
-        self.reward_msg.append(&mut reward_msg);
-        for (pubkey, mut slots) in repair_msg {
-            match self.repair_msg.entry(pubkey) {
-                Entry::Vacant(e) => {
-                    e.insert(slots);
-                }
-                Entry::Occupied(e) => e.into_mut().append(&mut slots),
-            }
-        }
-        self.vote_aggregates_for_pool
-            .append(&mut vote_aggregates_for_pool);
-        self.metrics_msg.append(&mut metrics_msg);
-    }
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -176,13 +149,7 @@ pub(super) fn verify_and_send_votes(
         unverified_votes
             .into_par_iter()
             .fold(
-                || {
-                    (
-                        0u64,
-                        VoteVerificationStats::default(),
-                        ProcessedVotes::default(),
-                    )
-                },
+                || (0u64, VoteVerificationStats::default(), vec![]),
                 |(mut acc_total_votes, mut acc_verification_stats, mut acc_processed_votes),
                  (vote_payload_to_sign, unverified_votes)| {
                     let (unverified_votes_len, vote_verification_stats, processed_votes) =
@@ -198,22 +165,16 @@ pub(super) fn verify_and_send_votes(
                         );
                     acc_total_votes = acc_total_votes.saturating_add(unverified_votes_len);
                     acc_verification_stats.merge(vote_verification_stats);
-                    acc_processed_votes.merge(processed_votes);
+                    acc_processed_votes.push(processed_votes);
                     (acc_total_votes, acc_verification_stats, acc_processed_votes)
                 },
             )
             .reduce(
-                || {
-                    (
-                        0,
-                        VoteVerificationStats::default(),
-                        ProcessedVotes::default(),
-                    )
-                },
-                |mut left, right| {
+                || (0, VoteVerificationStats::default(), vec![]),
+                |mut left, mut right| {
                     left.0 = left.0.saturating_add(right.0);
                     left.1.merge(right.1);
-                    left.2.merge(right.2);
+                    left.2.append(&mut right.2);
                     left
                 },
             )
@@ -301,33 +262,35 @@ fn process_verified_votes(
 fn send_msgs(
     my_pubkey: &Pubkey,
     channels: &SigVerifierChannels,
-    processed_votes: ProcessedVotes,
+    processed_votes: Vec<ProcessedVotes>,
 ) -> Result<VoteSenderStats, SigVerifyVoteError> {
     let mut sender_stats = VoteSenderStats::default();
-    send_sig_verified_batch_to_pool(
-        my_pubkey,
-        SigVerifiedBatch::Votes(processed_votes.vote_aggregates_for_pool),
-        &channels.channel_to_pool,
-        &mut sender_stats,
-    )?;
-    send_votes_to_repair(
-        my_pubkey,
-        processed_votes.repair_msg,
-        &channels.channel_to_repair,
-        &mut sender_stats,
-    );
-    send_votes_to_rewards(
-        my_pubkey,
-        processed_votes.reward_msg,
-        &channels.channel_to_reward,
-        &mut sender_stats,
-    );
-    send_votes_to_metrics(
-        my_pubkey,
-        processed_votes.metrics_msg,
-        &channels.channel_to_metrics,
-        &mut sender_stats,
-    );
+    for vote in processed_votes {
+        send_sig_verified_batch_to_pool(
+            my_pubkey,
+            SigVerifiedBatch::Votes(vote.vote_aggregates_for_pool),
+            &channels.channel_to_pool,
+            &mut sender_stats,
+        )?;
+        send_votes_to_repair(
+            my_pubkey,
+            vote.repair_msg,
+            &channels.channel_to_repair,
+            &mut sender_stats,
+        );
+        send_votes_to_rewards(
+            my_pubkey,
+            vote.reward_msg,
+            &channels.channel_to_reward,
+            &mut sender_stats,
+        );
+        send_votes_to_metrics(
+            my_pubkey,
+            vote.metrics_msg,
+            &channels.channel_to_metrics,
+            &mut sender_stats,
+        );
+    }
     Ok(sender_stats)
 }
 

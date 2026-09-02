@@ -1206,20 +1206,23 @@ mod tests {
 
         ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
-        assert_eq!(batches.len(), 1);
-        let total_votes_verified = batches
+        assert_eq!(batches.len(), 2);
+        let (total_aggregates, total_votes_verified) = batches
             .into_iter()
             .map(|batch| match batch {
                 SigVerifiedBatch::Votes(aggregates) => {
-                    assert_eq!(aggregates.len(), 2);
-                    aggregates
+                    let total_votes = aggregates
                         .iter()
                         .map(|aggregate| aggregate.num_votes())
-                        .sum::<usize>()
+                        .sum::<usize>();
+                    (aggregates.len(), total_votes)
                 }
                 rest => panic!("unexpected type: {rest:?}"),
             })
-            .sum::<usize>();
+            .fold((0, 0), |(num_aggregates, num_votes), batch| {
+                (num_aggregates + batch.0, num_votes + batch.1)
+            });
+        assert_eq!(total_aggregates, 2);
         assert_eq!(total_votes_verified, num_votes);
         assert_eq!(
             ctx.verifier.stats.vote_stats.distinct_votes_stats.count(),
@@ -1287,12 +1290,11 @@ mod tests {
 
         ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
-        assert_eq!(batches.len(), 1);
-        let total_votes_verified = batches
+        assert_eq!(batches.len(), 2);
+        let (total_aggregates, total_votes_verified) = batches
             .into_iter()
             .map(|batch| match batch {
                 SigVerifiedBatch::Votes(aggregates) => {
-                    assert_eq!(aggregates.len(), 3);
                     for aggregate in &aggregates {
                         if aggregate.vote() == &vote2
                             && *aggregate.ranks().get(invalid_rank as usize).unwrap()
@@ -1300,11 +1302,15 @@ mod tests {
                             panic!("invalid vote verified");
                         }
                     }
-                    aggregates.iter().map(|v| v.num_votes()).sum::<usize>()
+                    let total_votes = aggregates.iter().map(|v| v.num_votes()).sum::<usize>();
+                    (aggregates.len(), total_votes)
                 }
                 rest => panic!("unexpected type: {rest:?}"),
             })
-            .sum::<usize>();
+            .fold((0, 0), |(num_aggregates, num_votes), batch| {
+                (num_aggregates + batch.0, num_votes + batch.1)
+            });
+        assert_eq!(total_aggregates, 3);
         assert_eq!(total_votes_verified, num_votes - 1);
     }
 
@@ -2225,16 +2231,21 @@ mod tests {
 
         assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 2);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 2);
-        let SigVerifiedBatch::Votes(aggregates) = ctx.pool_receiver.try_recv().unwrap() else {
-            panic!("expected a vote batch");
-        };
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 2);
+        let aggregates = batches
+            .into_iter()
+            .flat_map(|batch| match batch {
+                SigVerifiedBatch::Votes(aggregates) => aggregates,
+                rest => panic!("unexpected type: {rest:?}"),
+            })
+            .collect::<Vec<_>>();
         assert_eq!(aggregates.len(), 2);
         assert!(
             aggregates
                 .iter()
                 .all(|aggregate| aggregate.vote().is_genesis_vote())
         );
-        expect_no_receive(&ctx.pool_receiver);
         expect_no_receive(&ctx.repair_receiver);
     }
 
