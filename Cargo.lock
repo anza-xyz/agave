@@ -7949,7 +7949,6 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "ahash 0.8.12",
- "itertools 0.15.0",
  "log",
  "solana-bincode",
  "solana-compute-budget",

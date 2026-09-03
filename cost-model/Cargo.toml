@@ -61,7 +61,6 @@ solana-vote-program = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
-itertools = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-cost-model = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-hash = { workspace = true, features = ["atomic"] }
