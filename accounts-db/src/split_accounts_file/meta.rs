@@ -114,7 +114,7 @@ use {
 pub const META_HEADER_SIZE: usize = 64;
 
 const META_MAGIC: &[u8; 16] = b"agave meta file\0";
-const META_FORMAT_VERSION: Version = Version::new(1, 0, 0);
+const META_FORMAT_VERSION: Version = Version::new(0, 1, 0);
 
 /// meta entries are always written at offsets that are multiples of this alignment
 pub const META_ENTRY_OFFSET_ALIGNMENT: usize = 1 << META_ENTRY_OFFSET_ALIGNMENT_LOG2;

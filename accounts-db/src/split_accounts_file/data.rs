@@ -78,7 +78,7 @@ use {
 pub const DATA_HEADER_SIZE: usize = 64;
 
 const DATA_MAGIC: &[u8; 16] = b"agave data file\0";
-const DATA_FORMAT_VERSION: Version = Version::new(1, 0, 0);
+const DATA_FORMAT_VERSION: Version = Version::new(0, 1, 0);
 
 /// data entries are always written at offsets that are multiples of this alignment
 pub const DATA_ENTRY_OFFSET_ALIGNMENT: usize = 1 << DATA_ENTRY_OFFSET_ALIGNMENT_LOG2;
