@@ -1327,6 +1327,10 @@ impl JsonRpcRequestProcessor {
             .map(|config| config.convert_to_current())
             .unwrap_or_default();
         let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
+        validate_max_supported_transaction_version_for_encoding(
+            encoding,
+            config.max_supported_transaction_version,
+        )?;
         let encoding_options = BlockEncodingOptions {
             transaction_details: config.transaction_details.unwrap_or_default(),
             show_rewards: config.rewards.unwrap_or(true),
@@ -1780,6 +1784,10 @@ impl JsonRpcRequestProcessor {
             .unwrap_or_default();
         let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
         let max_supported_transaction_version = config.max_supported_transaction_version;
+        validate_max_supported_transaction_version_for_encoding(
+            encoding,
+            max_supported_transaction_version,
+        )?;
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
@@ -2547,6 +2555,23 @@ pub(crate) fn check_is_at_least_confirmed(commitment: CommitmentConfig) -> Resul
     if !commitment.is_at_least_confirmed() {
         return Err(Error::invalid_params(
             "Method does not support commitment below `confirmed`",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_max_supported_transaction_version_for_encoding(
+    encoding: UiTransactionEncoding,
+    max_supported_transaction_version: Option<u8>,
+) -> Result<()> {
+    // `binary` is the legacy alias for base58 transaction encoding.
+    if matches!(
+        encoding,
+        UiTransactionEncoding::Binary | UiTransactionEncoding::Base58
+    ) && max_supported_transaction_version.is_some_and(|version| version >= 1)
+    {
+        return Err(Error::invalid_params(
+            "base58 encoding is not supported with maxSupportedTransactionVersion >= 1",
         ));
     }
     Ok(())
@@ -7453,6 +7478,54 @@ pub mod tests {
             ),
         );
         assert_eq!(response, expected);
+    }
+
+    #[test]
+    fn test_base58_transaction_encoding_rejects_version_1_or_higher() {
+        let rpc = RpcHandler::start();
+        let signature = rpc.create_test_transactions_and_populate_blockstore()[0].to_string();
+        let expected = (
+            ErrorCode::InvalidParams.code(),
+            String::from(
+                "base58 encoding is not supported with maxSupportedTransactionVersion >= 1",
+            ),
+        );
+
+        for max_supported_transaction_version in [1, u8::MAX] {
+            for encoding in ["base58", "binary"] {
+                let config = json!({
+                    "encoding": encoding,
+                    "maxSupportedTransactionVersion": max_supported_transaction_version,
+                });
+                for request in [
+                    create_test_request("getBlock", Some(json!([0u64, config.clone()]))),
+                    create_test_request(
+                        "getTransaction",
+                        Some(json!([signature.clone(), config.clone()])),
+                    ),
+                ] {
+                    assert_eq!(
+                        parse_failure_response(rpc.handle_request_sync(request)),
+                        expected
+                    );
+                }
+            }
+        }
+
+        for encoding in ["base58", "binary"] {
+            let config = json!({
+                "encoding": encoding,
+                "maxSupportedTransactionVersion": 0,
+            });
+            let _: Value = parse_success_result(rpc.handle_request_sync(create_test_request(
+                "getBlock",
+                Some(json!([0u64, config.clone()])),
+            )));
+            let _: Value = parse_success_result(rpc.handle_request_sync(create_test_request(
+                "getTransaction",
+                Some(json!([signature.clone(), config])),
+            )));
+        }
     }
 
     #[test]
