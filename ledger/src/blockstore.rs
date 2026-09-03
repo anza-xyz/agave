@@ -99,6 +99,8 @@ use {
     wincode::config::DefaultConfig,
 };
 
+#[cfg(feature = "dev-context-only-utils")]
+pub mod admin;
 pub mod blockstore_purge;
 pub mod cleanup_service;
 pub mod column;

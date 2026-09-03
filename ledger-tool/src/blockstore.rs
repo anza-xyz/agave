@@ -28,7 +28,6 @@ use {
         shred::Shred,
     },
     std::{
-        borrow::Cow,
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
         io::{BufRead, BufReader},
@@ -333,6 +332,12 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .value_name("DIR")
                     .takes_value(true)
                     .help("Target ledger directory to write inner \"rocksdb\" within."),
+            )
+            .arg(
+                Arg::with_name("copy_block_metadata")
+                    .long("copy-block-metadata")
+                    .takes_value(false)
+                    .help("Copy block and transaction metadata (if available)"),
             ),
         SubCommand::with_name("dead-slots")
             .about("Print all the dead slots in the ledger")
@@ -623,6 +628,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
             let target_ledger =
                 PathBuf::from(value_t_or_exit!(arg_matches, "target_ledger", String));
+            let copy_block_metadata = arg_matches.is_present("copy_block_metadata");
 
             let source = crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let target = crate::open_blockstore(
@@ -630,20 +636,16 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 arg_matches,
                 AccessType::PrimaryForMaintenance,
             );
-            let mut pinnable_slice = target.new_pinnable_slice();
-            let mut write_batch = target.get_write_batch();
 
-            for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
-                if slot > ending_slot {
-                    break;
-                }
-                let shreds = source.get_data_shreds_for_slot(slot, 0)?;
-                let shreds = shreds.into_iter().map(Cow::Owned);
-                if target
-                    .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
-                    .is_err()
-                {
-                    warn!("error inserting shreds for slot {slot}");
+            for (slot, _meta) in source
+                .slot_meta_iterator(starting_slot)?
+                .take_while(|(slot, _meta)| *slot <= ending_slot)
+            {
+                match source.copy_slot(&target, slot, copy_block_metadata) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        warn!("Error copying slot {slot}: {err}");
+                    }
                 }
             }
         }
