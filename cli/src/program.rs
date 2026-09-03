@@ -63,7 +63,7 @@ use {
         elf::{ElfError, Executable, get_sbpf_version},
         error::EbpfError,
         program::SBPFVersion,
-        verifier::{LocalVerifier, RequisiteVerifier},
+        verifier::{RequisiteVerifier},
         vm::Config,
     },
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
@@ -91,6 +91,7 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
+use crate::local_verifier::LocalVerifier;
 
 pub const CLOSE_PROGRAM_WARNING: &str = "WARNING! Closed programs cannot be recreated at the same \
                                          program id. Once a program is closed, it can never be \
