@@ -3,8 +3,7 @@
 #[cfg(feature = "conformance")]
 use {
     crate::conformance::{
-        account_state::account_to_proto_hashed, err::serialized_error_code,
-        fd_hash::fd_hash_or_zero,
+        account_state::account_to_proto, err::serialized_error_code, fd_hash::fd_hash_or_zero,
     },
     protosol::protos::InstrEffects as ProtoInstrEffects,
 };
@@ -50,7 +49,7 @@ impl From<InstrEffects> for ProtoInstrEffects {
             custom_err: custom_err.unwrap_or_default(),
             modified_accounts: resulting_accounts
                 .into_iter()
-                .map(account_to_proto_hashed)
+                .map(account_to_proto)
                 .collect(),
             cu_avail,
             return_data_hash: fd_hash_or_zero(&return_data),

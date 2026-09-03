@@ -42,28 +42,9 @@ pub fn account_from_proto(value: ProtoAccount) -> (Pubkey, Account) {
     )
 }
 
-/// Convert a `(Pubkey, Account)` pair into a protobuf account state.
+/// Convert a `(Pubkey, Account)` pair into a protobuf account state for
+/// effects, summarizing the account data as a hash.
 pub fn account_to_proto(value: (Pubkey, Account)) -> ProtoAccount {
-    let Account {
-        lamports,
-        data,
-        owner,
-        executable,
-        ..
-    } = value.1;
-
-    ProtoAccount {
-        address: value.0.to_bytes().to_vec(),
-        owner: owner.to_bytes().to_vec(),
-        lamports,
-        data_repr: Some(DataRepr::Data(data)),
-        executable,
-    }
-}
-
-/// Convert a `(Pubkey, Account)` pair into a protobuf account state, summarizing
-/// the account data as a hash.
-pub fn account_to_proto_hashed(value: (Pubkey, Account)) -> ProtoAccount {
     let Account {
         lamports,
         data,
