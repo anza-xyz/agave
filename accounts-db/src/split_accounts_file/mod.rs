@@ -365,7 +365,7 @@ impl SplitAccountsFile {
                 (&inner.meta_file, inner.meta_len.load(Ordering::Relaxed))
             }
         };
-        let file_offset = file_offset_from_logical(offset)?;
+        let file_offset = file_offset_from_logical(offset);
         let ret = read_meta_entry(
             meta_file,
             meta_file_len,
@@ -389,7 +389,7 @@ impl SplitAccountsFile {
                 (&inner.meta_file, inner.meta_len.load(Ordering::Relaxed))
             }
         };
-        let file_offset = file_offset_from_logical(offset)?;
+        let file_offset = file_offset_from_logical(offset);
         read_meta_entry(
             meta_file,
             meta_file_len,

@@ -1,5 +1,5 @@
 use {
-    super::{FileOffset, LogicalOffset},
+    super::FileOffset,
     semver::Version,
     solana_pubkey::Pubkey,
     std::{io, path::PathBuf},
@@ -46,9 +46,6 @@ pub enum Error {
 
     #[error("failed to read data entry: {0}")]
     ReadDataEntry(#[from] ReadDataEntryError),
-
-    #[error("logical offset is invalid: {}", .0.0)]
-    InvalidLogicalOffset(LogicalOffset),
 
     #[error("file offset is invalid: {}", .0.0)]
     InvalidFileOffset(FileOffset),
