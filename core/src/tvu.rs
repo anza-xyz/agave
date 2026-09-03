@@ -35,6 +35,7 @@ use {
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         peer_list_updater::PeerListService,
         slot_clock::SharedAlpenglowSlotClock,
+        standstill::StandstillSignal,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::{VotingService as BLSVotingService, votor_rate_limit_pps},
@@ -454,6 +455,10 @@ impl Tvu {
             completed_slots_receiver,
         };
 
+        // Shared standstill state, read by both votor (vote timeouts) and
+        // repair (retry timeouts).
+        let standstill_signal = Arc::new(StandstillSignal::new());
+
         // Shared latest switch-bank request from Votor to ReplayStage.
         let latest_switch_request = LatestSwitchRequest::default();
 
@@ -472,6 +477,7 @@ impl Tvu {
                 repair_whitelist: tvu_config.repair_whitelist,
                 cluster_info: cluster_info.clone(),
                 cluster_slots: cluster_slots.clone(),
+                standstill_signal: standstill_signal.clone(),
             };
             let repair_service_channels = RepairServiceChannels::new(
                 verified_voter_slots_receiver,
@@ -558,6 +564,7 @@ impl Tvu {
             own_votes_receiver,
             footer_certs_receiver,
             consensus_metrics_receiver,
+            standstill_signal,
         };
         let votor = Votor::new(votor_config);
 

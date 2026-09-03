@@ -17,6 +17,7 @@ use {
             },
         },
     },
+    agave_votor::standstill::StandstillSignal,
     agave_votor_messages::{VerifiedVoterSlotsReceiver, migration::MigrationStatus},
     ahash::AHashMap,
     bytes::Bytes,
@@ -541,6 +542,10 @@ pub struct RepairInfo {
     pub repair_validators: Option<HashSet<Pubkey>>,
     // Validators which should be given priority when serving
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
+    /// Shared standstill state. Repair retry timeouts derived from network
+    /// DELTA are scaled by [`agave_votor::standstill::scale_standstill_timeout`]
+    /// while the signal is active, to recover liveness under unknown DELTA.
+    pub standstill_signal: Arc<StandstillSignal>,
 }
 
 pub struct RepairSlotRange {

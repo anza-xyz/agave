@@ -257,7 +257,7 @@ impl ConsensusPool {
         events: &mut Vec<VotorEvent>,
     ) -> (Option<Slot>, Vec<Arc<Certificate>>) {
         let current_highest_finalized_slot = self.highest_finalized_slot();
-        let new_certficates_to_send = match msg {
+        let new_certificates_to_send = match msg {
             PoolMessage::Votes(msgs) => {
                 let mut new_certs = vec![];
                 for msg in msgs {
@@ -288,7 +288,7 @@ impl ConsensusPool {
         };
         (
             new_finalized_slot.map(|s| s.slot()),
-            new_certficates_to_send,
+            new_certificates_to_send,
         )
     }
 

@@ -28,9 +28,6 @@ pub const DELTA: Duration = Duration::from_millis(250);
 /// `TimeoutCrashedLeader(s)` and `Timeout(s)` at 800ms after `ParentReady`.
 pub(crate) const DELTA_TIMEOUT: Duration = Duration::from_millis(400);
 
-/// Timeout for standstill detection mechanism.
-pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
-
 /// Wrapper to do non-blocking send and drop msg if channel is full.
 /// Returns:
 /// - Err(channel_name) on channel disconnect.
