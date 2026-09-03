@@ -22,11 +22,11 @@ rustdoc-args = ["--cfg=docsrs"]
 default = ["linux-static-hidraw"]
 agave-unstable-api = []
 keystone = [
-    "dep:hex",
-    "dep:rusb",
-    "dep:serde_json",
-    "dep:ur-parse-lib",
-    "dep:ur-registry",
+  "dep:hex",
+  "dep:rusb",
+  "dep:serde_json",
+  "dep:ur-parse-lib",
+  "dep:ur-registry",
 ]
 linux-shared-hidraw = ["hidapi/linux-shared-hidraw"]
 linux-shared-libusb = ["hidapi/linux-shared-libusb"]

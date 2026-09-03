@@ -23,9 +23,9 @@ name = "solana_program_runtime"
 agave-unstable-api = []
 conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
 dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "dep:solana-message",
-    "solana-epoch-schedule/wincode",
+  "dep:qualifier_attr",
+  "dep:solana-message",
+  "solana-epoch-schedule/wincode",
 ]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
@@ -49,12 +49,20 @@ solana-clock = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-structure = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ]
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
+  ]
+}
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-last-restart-slot = { workspace = true }
@@ -98,11 +106,14 @@ solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { path = "../transaction-context", features = [
+solana-transaction-context = {
+  path = "../transaction-context",
+  features = [
     "agave-unstable-api",
     "bincode",
     "dev-context-only-utils",
-] }
+  ]
+}
 test-case = { workspace = true }
 
 [lints]

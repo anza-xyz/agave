@@ -23,50 +23,50 @@ name = "solana_svm"
 default = ["metrics"]
 agave-unstable-api = []
 conformance = [
-    "dep:agave-precompiles",
-    "dep:prost",
-    "dep:protosol",
-    "dep:solana-poseidon",
-    "dep:solana-signature",
-    "dep:solana-transaction",
-    "dep:solana-vote-program",
-    "dep:solana-zk-elgamal-proof-program",
-    "dep:xxhash-rust",
-    "dev-context-only-utils",
-    "solana-instruction-error/serde",
-    "solana-pubkey/default",
-    "solana-transaction-error/serde",
+  "dep:agave-precompiles",
+  "dep:prost",
+  "dep:protosol",
+  "dep:solana-poseidon",
+  "dep:solana-signature",
+  "dep:solana-transaction",
+  "dep:solana-vote-program",
+  "dep:solana-zk-elgamal-proof-program",
+  "dep:xxhash-rust",
+  "dev-context-only-utils",
+  "solana-instruction-error/serde",
+  "solana-pubkey/default",
+  "solana-transaction-error/serde",
 ]
 dev-context-only-utils = [
-    "dep:agave-feature-set",
-    "dep:qualifier_attr",
-    "dep:solana-address-lookup-table-interface",
-    "dep:solana-bpf-loader-program",
-    "dep:solana-compute-budget",
-    "dep:solana-compute-budget-instruction",
-    "dep:solana-compute-budget-program",
-    "dep:solana-instruction-error",
-    "dep:solana-precompile-error",
-    "dep:solana-slot-hashes",
-    "dep:solana-syscalls",
-    "dep:solana-system-program",
-    "solana-program-runtime/dev-context-only-utils",
+  "dep:agave-feature-set",
+  "dep:qualifier_attr",
+  "dep:solana-address-lookup-table-interface",
+  "dep:solana-bpf-loader-program",
+  "dep:solana-compute-budget",
+  "dep:solana-compute-budget-instruction",
+  "dep:solana-compute-budget-program",
+  "dep:solana-instruction-error",
+  "dep:solana-precompile-error",
+  "dep:solana-slot-hashes",
+  "dep:solana-syscalls",
+  "dep:solana-system-program",
+  "solana-program-runtime/dev-context-only-utils",
 ]
 dummy-for-ci-check = ["conformance", "metrics"]
 frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-program-runtime/frozen-abi",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-program-runtime/frozen-abi",
 ]
 metrics = [
-    "solana-bpf-loader-program/metrics",
-    "solana-program-runtime/metrics",
+  "solana-bpf-loader-program/metrics",
+  "solana-program-runtime/metrics",
 ]
 shuttle-test = [
-    "dep:shuttle",
-    "solana-bpf-loader-program/shuttle-test",
-    "solana-program-runtime/shuttle-test",
-    "solana-svm-type-overrides/shuttle-test",
+  "dep:shuttle",
+  "solana-bpf-loader-program/shuttle-test",
+  "solana-program-runtime/shuttle-test",
+  "solana-svm-type-overrides/shuttle-test",
 ]
 svm-internal = ["dep:qualifier_attr"]
 
@@ -82,22 +82,34 @@ qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true, features = ["wincode"] }
-solana-address-lookup-table-interface = { workspace = true, optional = true, features = [
+solana-address-lookup-table-interface = {
+  workspace = true,
+  optional = true,
+  features = [
     "bincode",
     "bytemuck",
-] }
+  ]
+}
 solana-bpf-loader-program = { workspace = true, optional = true }
 solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true, optional = true }
 solana-compute-budget-instruction = { workspace = true, optional = true }
 solana-compute-budget-program = { workspace = true, optional = true }
 solana-fee-structure = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ]
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
+  ]
+}
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instruction-error = { workspace = true, optional = true }
@@ -143,30 +155,46 @@ env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 rand = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
-solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
+solana-bpf-loader-program = {
+  path = "../programs/bpf_loader",
+  default-features = false,
+  features = ["agave-unstable-api"]
+}
 solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
 solana-compute-budget-interface = { workspace = true }
-solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
+solana-compute-budget-program = {
+  path = "../programs/compute-budget",
+  features = ["agave-unstable-api"]
+}
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
 solana-native-token = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
-solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-program-runtime = {
+  path = "../program-runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
-solana-svm = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils", "svm-internal"] }
+solana-svm = {
+  path = ".",
+  features = ["agave-unstable-api", "dev-context-only-utils", "svm-internal"]
+}
 solana-syscalls = { path = "../syscalls", features = ["agave-unstable-api"] }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = {
+  path = "../transaction-context",
+  features = ["agave-unstable-api", "bincode", "dev-context-only-utils"]
+}
 spl-token-interface = { workspace = true }
 test-case = { workspace = true }
 wincode = { workspace = true }

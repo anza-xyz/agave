@@ -48,9 +48,15 @@ solana-clock = { workspace = true }
 solana-entry = { path = "../entry", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-system-transaction = { workspace = true }
-solana-unified-scheduler-pool = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-unified-scheduler-pool = {
+  path = ".",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 test-case = { workspace = true }
 
 [lints]

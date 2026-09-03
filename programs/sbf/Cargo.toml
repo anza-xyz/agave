@@ -13,65 +13,66 @@ edition = { workspace = true }
 
 [workspace]
 members = [
-    "rust/128bit",
-    "rust/128bit_dep",
-    "rust/account_mem",
-    "rust/account_mem_deprecated",
-    "rust/alloc",
-    "rust/alt_bn128",
-    "rust/alt_bn128_compression",
-    "rust/big_mod_exp",
-    "rust/call_args",
-    "rust/call_depth",
-    "rust/caller_access",
-    "rust/curve25519",
-    "rust/custom_heap",
-    "rust/dep_crate",
-    "rust/deprecated_loader",
-    "rust/direct_account_pointers_in_program_input",
-    "rust/divide_by_zero",
-    "rust/dup_accounts",
-    "rust/error_handling",
-    "rust/external_spend",
-    "rust/inner_instruction_alignment_check",
-    "rust/instruction_introspection",
-    "rust/invoke",
-    "rust/invoke_and_error",
-    "rust/invoke_and_ok",
-    "rust/invoke_and_return",
-    "rust/invoked",
-    "rust/iter",
-    "rust/log_data",
-    "rust/many_args",
-    "rust/many_args_dep",
-    "rust/mem",
-    "rust/mem_dep",
-    "rust/membuiltins",
-    "rust/noop",
-    "rust/panic",
-    "rust/param_passing",
-    "rust/param_passing_dep",
-    "rust/poseidon",
-    "rust/r2_instruction_data_pointer",
-    "rust/rand",
-    "rust/realloc",
-    "rust/realloc_invoke",
-    "rust/remaining_compute_units",
-    "rust/ro_account_modify",
-    "rust/ro_modify",
-    "rust/sanity",
-    "rust/secp256k1_recover",
-    "rust/sha",
-    "rust/sibling_inner_instructions",
-    "rust/sibling_instructions",
-    "rust/simulation",
-    "rust/spoof1",
-    "rust/spoof1_system",
-    "rust/syscall-get-epoch-stake",
-    "rust/sysvar",
-    "rust/upgradeable",
-    "rust/upgraded",
+  "rust/128bit",
+  "rust/128bit_dep",
+  "rust/account_mem",
+  "rust/account_mem_deprecated",
+  "rust/alloc",
+  "rust/alt_bn128",
+  "rust/alt_bn128_compression",
+  "rust/big_mod_exp",
+  "rust/call_args",
+  "rust/call_depth",
+  "rust/caller_access",
+  "rust/curve25519",
+  "rust/custom_heap",
+  "rust/dep_crate",
+  "rust/deprecated_loader",
+  "rust/direct_account_pointers_in_program_input",
+  "rust/divide_by_zero",
+  "rust/dup_accounts",
+  "rust/error_handling",
+  "rust/external_spend",
+  "rust/inner_instruction_alignment_check",
+  "rust/instruction_introspection",
+  "rust/invoke",
+  "rust/invoke_and_error",
+  "rust/invoke_and_ok",
+  "rust/invoke_and_return",
+  "rust/invoked",
+  "rust/iter",
+  "rust/log_data",
+  "rust/many_args",
+  "rust/many_args_dep",
+  "rust/mem",
+  "rust/mem_dep",
+  "rust/membuiltins",
+  "rust/noop",
+  "rust/panic",
+  "rust/param_passing",
+  "rust/param_passing_dep",
+  "rust/poseidon",
+  "rust/r2_instruction_data_pointer",
+  "rust/rand",
+  "rust/realloc",
+  "rust/realloc_invoke",
+  "rust/remaining_compute_units",
+  "rust/ro_account_modify",
+  "rust/ro_modify",
+  "rust/sanity",
+  "rust/secp256k1_recover",
+  "rust/sha",
+  "rust/sibling_inner_instructions",
+  "rust/sibling_instructions",
+  "rust/simulation",
+  "rust/spoof1",
+  "rust/spoof1_system",
+  "rust/syscall-get-epoch-stake",
+  "rust/sysvar",
+  "rust/upgradeable",
+  "rust/upgraded",
 ]
+
 [workspace.package]
 version = "4.4.0-alpha.2"
 description = "Solana SBF test program written in Rust"
@@ -84,9 +85,9 @@ edition = "2024"
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
-    'cfg(target_os, values("solana"))',
-    'cfg(feature, values("custom-panic", "custom-heap", "sbpf-v3"))',
-    'cfg(target_feature, values("dynamic-frames"))',
+  'cfg(target_os, values("solana"))',
+  'cfg(feature, values("custom-panic", "custom-heap", "sbpf-v3"))',
+  'cfg(target_feature, values("dynamic-frames"))',
 ]
 
 # Keep in sync with the root [workspace.lints.clippy].
@@ -124,7 +125,10 @@ solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.2.1"
 solana-clock = { version = "=3.2.0", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.4.0-alpha.2" }
-solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.4.0-alpha.2" }
+solana-compute-budget-instruction = {
+  path = "../../compute-budget-instruction",
+  version = "=4.4.0-alpha.2"
+}
 solana-cpi = "=3.1.0"
 solana-curve25519 = "=4.0.1"
 solana-define-syscall = "=3.0.0"
@@ -151,7 +155,10 @@ solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=4.4.0
 solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=4.4.0-alpha.2" }
 solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=4.4.0-alpha.2" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.4.0-alpha.2" }
-solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.4.0-alpha.2" }
+solana-sbf-rust-realloc-invoke-dep = {
+  path = "rust/realloc_invoke_dep",
+  version = "=4.4.0-alpha.2"
+}
 solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.3.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
@@ -194,9 +201,12 @@ solana-client-traits = "4.0.0"
 solana-clock = { workspace = true }
 solana-cluster-type = "3.0.0"
 solana-compute-budget = { workspace = true }
-solana-compute-budget-instruction = { workspace = true, features = [
+solana-compute-budget-instruction = {
+  workspace = true,
+  features = [
     "dev-context-only-utils",
-] }
+  ]
+}
 solana-compute-budget-interface = "3.1.0"
 solana-fee = { workspace = true }
 solana-fee-calculator = "3.2.0"
@@ -211,9 +221,12 @@ solana-program-runtime = { workspace = true, features = ["dev-context-only-utils
 solana-pubkey = "4.2.0"
 solana-rent = "4.1.0"
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime-transaction = { workspace = true, features = [
+solana-runtime-transaction = {
+  workspace = true,
+  features = [
     "dev-context-only-utils",
-] }
+  ]
+}
 solana-sbf-rust-invoke-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }
@@ -227,7 +240,10 @@ solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = "4.3.0"
-solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-test-validator = {
+  workspace = true,
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-transaction = "4.1.0"
 solana-transaction-error = "3.3.0"
 solana-vote = { workspace = true }
@@ -256,5 +272,11 @@ strip = true
 workspace = true
 
 [patch.crates-io]
-librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
-rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
+librocksdb-sys = {
+  git = "https://github.com/anza-xyz/rust-rocksdb",
+  rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7"
+}
+rocksdb = {
+  git = "https://github.com/anza-xyz/rust-rocksdb",
+  rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7"
+}

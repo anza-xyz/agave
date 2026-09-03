@@ -22,11 +22,11 @@ name = "solana_rpc"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "agave-votor-messages/dev-context-only-utils",
-    "dep:solana-unified-scheduler-pool",
-    "solana-ledger/dev-context-only-utils",
-    "solana-rpc/dev-context-only-utils",
-    "solana-unified-scheduler-pool/dev-context-only-utils",
+  "agave-votor-messages/dev-context-only-utils",
+  "dep:solana-unified-scheduler-pool",
+  "solana-ledger/dev-context-only-utils",
+  "solana-rpc/dev-context-only-utils",
+  "solana-unified-scheduler-pool/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -109,7 +109,10 @@ tokio-util = { workspace = true, features = ["codec", "compat"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = {
+  path = "../reserved-account-keys",
+  features = ["agave-unstable-api"]
+}
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-address-lookup-table-interface = { workspace = true }
@@ -127,10 +130,19 @@ solana-program-option = { workspace = true }
 solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api"] }
 solana-rent = { workspace = true }
 solana-rpc = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
+solana-runtime-transaction = {
+  path = "../runtime-transaction",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-sdk-ids = { workspace = true }
-solana-send-transaction-service = { path = "../send-transaction-service", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-send-transaction-service = {
+  path = "../send-transaction-service",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { path = "../svm-log-collector", features = ["agave-unstable-api"] }

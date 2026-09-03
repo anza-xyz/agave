@@ -18,19 +18,19 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "agave-bls-sigverify/dev-context-only-utils",
-    "agave-votor-messages/dev-context-only-utils",
-    "solana-runtime/dev-context-only-utils",
+  "agave-bls-sigverify/dev-context-only-utils",
+  "agave-votor-messages/dev-context-only-utils",
+  "solana-runtime/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dep:serde",
-    "dep:serde_bytes",
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-ledger/frozen-abi",
-    "solana-runtime/frozen-abi",
-    "solana-signature/frozen-abi",
-    "agave-votor-messages/frozen-abi",
+  "dep:serde",
+  "dep:serde_bytes",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-ledger/frozen-abi",
+  "solana-runtime/frozen-abi",
+  "solana-signature/frozen-abi",
+  "agave-votor-messages/frozen-abi",
 ]
 
 [dependencies]
@@ -52,12 +52,20 @@ smallvec = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ]
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
+  ]
+}
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
@@ -86,7 +94,10 @@ agave-votor-transport = { workspace = true, features = ["dev-context-only-utils"
 rand = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { workspace = true }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = {
+  path = "../runtime",
+  features = ["agave-unstable-api", "dev-context-only-utils"]
+}
 tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }

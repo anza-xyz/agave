@@ -23,7 +23,11 @@ agave-feature-set = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 solana-account = { workspace = true }
-solana-bpf-loader-program = { path = "../bpf_loader", default-features = false, features = ["agave-unstable-api"] }
+solana-bpf-loader-program = {
+  path = "../bpf_loader",
+  default-features = false,
+  features = ["agave-unstable-api"]
+}
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }

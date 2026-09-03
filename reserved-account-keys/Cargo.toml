@@ -21,12 +21,20 @@ frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ]
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
+  ]
+}
 solana-pubkey = { workspace = true, default-features = false }
 solana-sdk-ids = { workspace = true }
 

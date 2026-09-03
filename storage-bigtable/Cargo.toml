@@ -21,11 +21,11 @@ name = "solana_storage_bigtable"
 
 [features]
 frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-signature/frozen-abi",
-    "solana-transaction/frozen-abi",
-    "solana-transaction-error/frozen-abi",
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-signature/frozen-abi",
+  "solana-transaction/frozen-abi",
+  "solana-transaction-error/frozen-abi",
 ]
 agave-unstable-api = []
 
@@ -46,12 +46,20 @@ serde = { workspace = true }
 smpl_jwt = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+  ]
+}
+solana-frozen-abi-macro = {
+  workspace = true,
+  optional = true,
+  features = [
     "frozen-abi",
-] }
+  ]
+}
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -74,7 +82,10 @@ solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode"] }
+solana-transaction-context = {
+  path = "../transaction-context",
+  features = ["agave-unstable-api", "bincode"]
+}
 
 [lints]
 workspace = true

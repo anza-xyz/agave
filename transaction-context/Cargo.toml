@@ -43,10 +43,13 @@ solana-account-info = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true }
-solana-transaction-context = { path = ".", features = [
+solana-transaction-context = {
+  path = ".",
+  features = [
     "agave-unstable-api",
     "dev-context-only-utils",
-] }
+  ]
+}
 static_assertions = { workspace = true }
 
 [lints]
