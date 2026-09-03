@@ -1,8 +1,7 @@
 //! Transaction cost conformance harness.
 
-#[cfg(not(test))]
-use {prost::Message, std::ffi::c_int};
 use {
+    prost::Message,
     protosol::protos::{
         CostContext as ProtoCostContext, CostResult as ProtoCostResult,
         SanitizedTransaction as ProtoSanitizedTransaction, TxnCostMode as ProtoTxnCostMode,
@@ -20,6 +19,7 @@ use {
         sanitized::{MessageHash, SanitizedTransaction},
         versioned::VersionedTransaction,
     },
+    std::ffi::c_int,
 };
 
 fn runtime_transaction_from_proto(
@@ -136,11 +136,6 @@ pub fn execute_cost(input: &ProtoCostContext) -> ProtoCostResult {
 /// `in_ptr` must point to `in_sz` initialized bytes. `out_ptr` must point
 /// to a writable buffer of at least `*out_psz` bytes. On return, `*out_psz`
 /// is updated to the number of bytes written.
-//
-// Excluded from `test` builds: the symbol would otherwise be defined both here
-// and in the `path = "."` dev-dependency rlib, producing a duplicate-symbol link
-// error. Tests call `execute_cost` directly.
-#[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_txn_cost_v1(
     out_ptr: *mut u8,
