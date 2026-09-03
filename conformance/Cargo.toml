@@ -18,6 +18,11 @@ crate-type = ["lib", "cdylib"]
 bench = false
 
 [[bin]]
+name = "test_exec_cost"
+path = "src/bin/test_exec_cost.rs"
+required-features = ["cli", "ffi"]
+
+[[bin]]
 name = "test_exec_gossip"
 path = "src/bin/test_exec_gossip.rs"
 required-features = ["cli", "ffi"]
