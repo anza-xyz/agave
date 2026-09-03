@@ -1,6 +1,8 @@
 use {
-    super::*, crate::blockstore::error::BlockstoreManualPurgeError, crossbeam_channel::Sender,
-    solana_message::AccountKeys,
+    super::*,
+    crate::blockstore::error::BlockstoreManualPurgeError,
+    crossbeam_channel::Sender,
+    solana_message::{AccountKeys, v0::LoadedAddresses},
 };
 
 #[derive(Default)]
@@ -473,6 +475,43 @@ impl Blockstore {
         Ok(transaction_status_empty && address_signatures_empty)
     }
 
+    fn stage_transaction_history_deletes(
+        &self,
+        write_batch: &mut WriteBatch,
+        slot: Slot,
+        transaction_index: usize,
+        signature: Signature,
+        static_account_keys: &[Pubkey],
+        loaded_addresses: Option<&LoadedAddresses>,
+        stats: &mut TransactionHistoryPurgeStats,
+    ) -> Result<()> {
+        let transaction_index = u32::try_from(transaction_index)
+            .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
+
+        self.transaction_status_cf
+            .delete_in_batch(write_batch, (signature, slot));
+        stats.transaction_status_deletion_keys_staged = stats
+            .transaction_status_deletion_keys_staged
+            .saturating_add(1);
+
+        self.transaction_memos_cf
+            .delete_in_batch(write_batch, (signature, slot));
+        stats.transaction_memos_deletion_keys_staged = stats
+            .transaction_memos_deletion_keys_staged
+            .saturating_add(1);
+
+        let account_keys = AccountKeys::new(static_account_keys, loaded_addresses);
+        for pubkey in account_keys.iter() {
+            self.address_signatures_cf
+                .delete_in_batch(write_batch, (*pubkey, slot, transaction_index, signature));
+            stats.address_signatures_deletion_keys_staged = stats
+                .address_signatures_deletion_keys_staged
+                .saturating_add(1);
+        }
+
+        Ok(())
+    }
+
     /// Removes transaction history written before the UpdateParent boundary
     /// recorded in SlotMeta. All deletes are staged before the write batch is
     /// committed.
@@ -502,35 +541,15 @@ impl Blockstore {
                         if let Some(&signature) = transaction.signatures().first()
                             && let Some(meta) = self.read_transaction_status((signature, slot))?
                         {
-                            let loaded_addresses = meta.loaded_addresses;
-                            let account_keys = AccountKeys::new(
+                            self.stage_transaction_history_deletes(
+                                &mut write_batch,
+                                slot,
+                                transaction_index,
+                                signature,
                                 transaction.static_account_keys(),
-                                Some(&loaded_addresses),
-                            );
-                            let transaction_index_u32 = u32::try_from(transaction_index)
-                                .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
-
-                            self.transaction_status_cf
-                                .delete_in_batch(&mut write_batch, (signature, slot));
-                            stats.transaction_status_deletion_keys_staged = stats
-                                .transaction_status_deletion_keys_staged
-                                .saturating_add(1);
-
-                            self.transaction_memos_cf
-                                .delete_in_batch(&mut write_batch, (signature, slot));
-                            stats.transaction_memos_deletion_keys_staged = stats
-                                .transaction_memos_deletion_keys_staged
-                                .saturating_add(1);
-
-                            for pubkey in account_keys.iter() {
-                                self.address_signatures_cf.delete_in_batch(
-                                    &mut write_batch,
-                                    (*pubkey, slot, transaction_index_u32, signature),
-                                );
-                                stats.address_signatures_deletion_keys_staged = stats
-                                    .address_signatures_deletion_keys_staged
-                                    .saturating_add(1);
-                            }
+                                Some(&meta.loaded_addresses),
+                                &mut stats,
+                            )?;
                         }
                         transaction_index = transaction_index
                             .checked_add(1)
@@ -574,35 +593,15 @@ impl Blockstore {
                 let meta = self
                     .read_transaction_status((signature, slot))?
                     .ok_or(BlockstoreError::MissingTransactionMetadata)?;
-                let loaded_addresses = meta.loaded_addresses;
-                let account_keys = AccountKeys::new(
+                self.stage_transaction_history_deletes(
+                    &mut write_batch,
+                    slot,
+                    transaction_index,
+                    signature,
                     transaction.message.static_account_keys(),
-                    Some(&loaded_addresses),
-                );
-                let transaction_index_u32 = u32::try_from(transaction_index)
-                    .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
-
-                self.transaction_status_cf
-                    .delete_in_batch(&mut write_batch, (signature, slot));
-                stats.transaction_status_deletion_keys_staged = stats
-                    .transaction_status_deletion_keys_staged
-                    .saturating_add(1);
-
-                self.transaction_memos_cf
-                    .delete_in_batch(&mut write_batch, (signature, slot));
-                stats.transaction_memos_deletion_keys_staged = stats
-                    .transaction_memos_deletion_keys_staged
-                    .saturating_add(1);
-
-                for pubkey in account_keys.iter() {
-                    self.address_signatures_cf.delete_in_batch(
-                        &mut write_batch,
-                        (*pubkey, slot, transaction_index_u32, signature),
-                    );
-                    stats.address_signatures_deletion_keys_staged = stats
-                        .address_signatures_deletion_keys_staged
-                        .saturating_add(1);
-                }
+                    Some(&meta.loaded_addresses),
+                    &mut stats,
+                )?;
             }
             stats.transactions_processed = stats.transactions_processed.saturating_add(1);
         }
@@ -679,35 +678,16 @@ impl Blockstore {
                         for transaction in entries.into_iter().flat_map(|entry| entry.transactions)
                         {
                             if let Some(&signature) = transaction.signatures().first() {
-                                self.transaction_status_cf
-                                    .delete_in_batch(batch, (signature, slot));
-                                stats.transaction_status_deletion_keys_staged = stats
-                                    .transaction_status_deletion_keys_staged
-                                    .saturating_add(1);
-                                self.transaction_memos_cf
-                                    .delete_in_batch(batch, (signature, slot));
-                                stats.transaction_memos_deletion_keys_staged = stats
-                                    .transaction_memos_deletion_keys_staged
-                                    .saturating_add(1);
-
                                 let meta = self.read_transaction_status((signature, slot))?;
-                                let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
-                                let account_keys = AccountKeys::new(
+                                self.stage_transaction_history_deletes(
+                                    batch,
+                                    slot,
+                                    transaction_index,
+                                    signature,
                                     transaction.static_account_keys(),
-                                    loaded_addresses.as_ref(),
-                                );
-
-                                let transaction_index = u32::try_from(transaction_index)
-                                    .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
-                                for pubkey in account_keys.iter() {
-                                    self.address_signatures_cf.delete_in_batch(
-                                        batch,
-                                        (*pubkey, slot, transaction_index, signature),
-                                    );
-                                    stats.address_signatures_deletion_keys_staged = stats
-                                        .address_signatures_deletion_keys_staged
-                                        .saturating_add(1);
-                                }
+                                    meta.as_ref().map(|meta| &meta.loaded_addresses),
+                                    &mut stats,
+                                )?;
                             }
                             transaction_index += 1;
                             stats.transactions_processed =
