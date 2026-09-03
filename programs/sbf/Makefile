@@ -1,6 +1,6 @@
 SRC_DIR := c/src
 OUT_DIR := target/deploy
-TOOLCHAIN := 1.89.0-sbpf-solana-v1.54
+TOOLCHAIN := 1.95.0-sbpf-solana-v1.57
 
 test-v3:
 	mkdir -p target/deploy ; \
