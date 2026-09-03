@@ -114,6 +114,7 @@ version = "4.4.0-alpha.2"
 dependencies = [
  "bincode",
  "bv",
+ "clap 4.6.1",
  "prost",
  "protosol",
  "solana-bloom",
