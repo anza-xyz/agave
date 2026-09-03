@@ -72,6 +72,7 @@ pub enum TransactionHistoryPurgeSource {
     UpdateParentSignal,
     AbandonedBank,
     SwitchBank,
+    StartupReplay,
 }
 
 impl TransactionHistoryPurgeSource {
@@ -82,6 +83,7 @@ impl TransactionHistoryPurgeSource {
             Self::UpdateParentSignal => "update_parent_signal",
             Self::AbandonedBank => "abandoned_bank",
             Self::SwitchBank => "switch_bank",
+            Self::StartupReplay => "startup_replay",
         }
     }
 }
