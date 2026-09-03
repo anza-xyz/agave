@@ -22,7 +22,7 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::{BankId, DEFAULT_MS_PER_SLOT, Slot},
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::bank_forks::SharableBanks,
@@ -53,9 +53,11 @@ enum SchedulingSlotStatus {
     WaitingForInFlight,
 }
 
+// Keyed on (slot, bank_id) rather than slot alone, so a bank replaced mid-slot
+// (e.g. during a sad leader handover) is still treated as a transition.
 fn update_scheduling_slot(
-    scheduling_slot: &mut Option<Slot>,
-    decision_slot: Option<Slot>,
+    scheduling_slot: &mut Option<(Slot, BankId)>,
+    decision_slot: Option<(Slot, BankId)>,
     has_in_flight_transactions: bool,
 ) -> SchedulingSlotStatus {
     if *scheduling_slot == decision_slot {
@@ -232,15 +234,20 @@ where
                 timing_metrics.decision_time_us += decision_time_us;
             });
             let new_leader_slot = decision.bank().map(|b| b.slot());
+            let new_leader_bank_id = decision.bank().map(|b| b.bank_id());
             self.count_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
             self.receive_completed()?;
+            // Keyed on (slot, bank_id) rather than slot alone: during a sad leader
+            // handover a new Bank can replace the old one for the same slot, and we
+            // still need to transition (flush held transactions, recreate cost_pacer)
+            // in that case rather than keep pacing off the discarded bank.
             let scheduling_slot_status = update_scheduling_slot(
                 &mut scheduling_slot,
-                new_leader_slot,
+                new_leader_slot.zip(new_leader_bank_id),
                 self.scheduler.has_in_flight_transactions(),
             );
             let scheduling_enabled =
@@ -635,28 +642,48 @@ mod tests {
 
     #[test]
     fn test_scheduling_slot_waits_for_in_flight_and_adopts_latest_slot() {
-        let mut scheduling_slot = Some(10);
+        let mut scheduling_slot = Some((10, 100));
 
         assert_eq!(
-            update_scheduling_slot(&mut scheduling_slot, Some(11), true),
+            update_scheduling_slot(&mut scheduling_slot, Some((11, 101)), true),
             SchedulingSlotStatus::WaitingForInFlight
         );
-        assert_eq!(scheduling_slot, Some(10));
+        assert_eq!(scheduling_slot, Some((10, 100)));
 
         // Ingestion may observe a newer slot while old work is still in flight.
         assert_eq!(
-            update_scheduling_slot(&mut scheduling_slot, Some(12), true),
+            update_scheduling_slot(&mut scheduling_slot, Some((12, 102)), true),
             SchedulingSlotStatus::WaitingForInFlight
         );
-        assert_eq!(scheduling_slot, Some(10));
+        assert_eq!(scheduling_slot, Some((10, 100)));
 
         assert_eq!(
-            update_scheduling_slot(&mut scheduling_slot, Some(12), false),
+            update_scheduling_slot(&mut scheduling_slot, Some((12, 102)), false),
             SchedulingSlotStatus::Transitioned
         );
-        assert_eq!(scheduling_slot, Some(12));
+        assert_eq!(scheduling_slot, Some((12, 102)));
         assert_eq!(
-            update_scheduling_slot(&mut scheduling_slot, Some(12), true),
+            update_scheduling_slot(&mut scheduling_slot, Some((12, 102)), true),
+            SchedulingSlotStatus::Ready
+        );
+    }
+
+    #[test]
+    fn test_scheduling_slot_transitions_on_bank_change_within_same_slot() {
+        // A sad leader handover can replace the bank for the same slot. Even
+        // though the slot number is unchanged, this must still be treated as
+        // a transition so cost_pacer gets recreated from the new bank rather
+        // than continuing to pace off the discarded one.
+        let mut scheduling_slot = Some((10, 100));
+
+        assert_eq!(
+            update_scheduling_slot(&mut scheduling_slot, Some((10, 200)), false),
+            SchedulingSlotStatus::Transitioned
+        );
+        assert_eq!(scheduling_slot, Some((10, 200)));
+
+        assert_eq!(
+            update_scheduling_slot(&mut scheduling_slot, Some((10, 200)), false),
             SchedulingSlotStatus::Ready
         );
     }
