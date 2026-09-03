@@ -10633,6 +10633,7 @@ version = "4.4.0-alpha.2"
 dependencies = [
  "agave-logger",
  "agave-xdp",
+ "ahash 0.8.12",
  "anyhow",
  "assert_matches",
  "bytes",
