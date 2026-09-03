@@ -226,7 +226,7 @@ impl Accumulator {
         fn select_mix_in_fn() -> (usize, Option<BatchMixInFn>) {
             #[cfg(target_arch = "x86_64")]
             {
-                if is_x86_feature_detected!("avx512f") {
+                if is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") {
                     return (16, Some(arch::mix_in_avx512));
                 }
                 if is_x86_feature_detected!("avx2") {
