@@ -54,10 +54,7 @@ solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-un
 solana-system-program = { path = ".", features = ["agave-unstable-api"] }
 solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-sysvar-id = { workspace = true }
-solana-transaction-context = {
-  path = "../../transaction-context",
-  features = ["agave-unstable-api", "bincode", "dev-context-only-utils"]
-}
+solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 wincode = { workspace = true }
 
 [[bench]]

@@ -20,10 +20,7 @@ crate-type = ["lib"]
 name = "solana_ledger"
 
 [features]
-dev-context-only-utils = [
-  "solana-perf/dev-context-only-utils",
-  "solana-runtime/dev-context-only-utils"
-]
+dev-context-only-utils = ["solana-perf/dev-context-only-utils", "solana-runtime/dev-context-only-utils"]
 frozen-abi = [
   "dep:solana-frozen-abi",
   "dep:solana-frozen-abi-macro",
@@ -154,22 +151,13 @@ proptest = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bls-signatures = { workspace = true }
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
-solana-net-utils = {
-  path = "../net-utils",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
-solana-runtime = {
-  path = "../runtime",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
-solana-unified-scheduler-pool = {
-  path = "../unified-scheduler-pool",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
 test-case = { workspace = true }

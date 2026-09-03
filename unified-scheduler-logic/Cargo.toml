@@ -33,10 +33,7 @@ bytes = { workspace = true }
 solana-instruction = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-runtime-transaction = {
-  path = "../runtime-transaction",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode"] }
 test-case = { workspace = true }

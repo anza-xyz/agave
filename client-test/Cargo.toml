@@ -49,14 +49,8 @@ log = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-packet = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = {
-  path = "../runtime",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
-solana-test-validator = {
-  path = "../test-validator",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 

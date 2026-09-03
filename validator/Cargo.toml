@@ -118,10 +118,7 @@ solana-account-decoder = { path = "../account-decoder", features = ["agave-unsta
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
-solana-runtime = {
-  path = "../runtime",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-time-utils = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }

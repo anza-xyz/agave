@@ -56,10 +56,7 @@ solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-conte
 solana-keypair = { workspace = true }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-poh = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = {
-  path = "../runtime",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }

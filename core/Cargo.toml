@@ -200,40 +200,24 @@ jemalloc-ctl = { workspace = true }
 sysctl = { workspace = true }
 
 [dev-dependencies]
-agave-reserved-account-keys = {
-  path = "../reserved-account-keys",
-  features = ["agave-unstable-api"]
-}
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 bencher = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["bincode", "wincode"] }
-solana-bpf-loader-program = {
-  path = "../programs/bpf_loader",
-  default-features = false,
-  features = ["agave-unstable-api", "svm-internal"]
-}
+solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api", "svm-internal"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
-solana-compute-budget-program = {
-  path = "../programs/compute-budget",
-  features = ["agave-unstable-api"]
-}
+solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
 solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-cost-model = {
-  path = "../cost-model",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-cost-model = { path = "../cost-model", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-loader-v3-interface = { workspace = true }
-solana-net-utils = {
-  path = "../net-utils",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-poh = { path = "../poh", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
@@ -241,15 +225,9 @@ solana-rent = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer-store = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
-solana-unified-scheduler-pool = {
-  path = "../unified-scheduler-pool",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-vote-program = {
-  path = "../programs/vote",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-vote-program = { path = "../programs/vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }

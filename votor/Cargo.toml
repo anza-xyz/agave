@@ -94,10 +94,7 @@ agave-votor-transport = { workspace = true, features = ["dev-context-only-utils"
 rand = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { workspace = true }
-solana-runtime = {
-  path = "../runtime",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }

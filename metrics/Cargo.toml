@@ -25,10 +25,7 @@ agave-unstable-api = []
 crossbeam-channel = { workspace = true }
 gethostname = { workspace = true }
 log = { workspace = true }
-reqwest = {
-  workspace = true,
-  features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"]
-}
+reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 solana-cluster-type = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-time-utils = { workspace = true }

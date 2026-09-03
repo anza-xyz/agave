@@ -48,18 +48,7 @@ humantime = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
 pretty-hex = { workspace = true }
-reqwest = {
-  workspace = true,
-  features = [
-    "blocking",
-    "brotli",
-    "deflate",
-    "gzip",
-    "rustls-tls",
-    "rustls-tls-native-roots",
-    "json"
-  ]
-}
+reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "rustls-tls-native-roots", "json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
@@ -132,10 +121,7 @@ solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-presigner = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api"] }
 solana-sha256-hasher = { workspace = true }
-solana-test-validator = {
-  path = "../test-validator",
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 

@@ -23,10 +23,7 @@ bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }
-reqwest = {
-  workspace = true,
-  features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"]
-}
+reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-net-utils = { workspace = true }
@@ -48,10 +45,7 @@ solana-rent = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
-solana-test-validator = {
-  workspace = true,
-  features = ["agave-unstable-api", "dev-context-only-utils"]
-}
+solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction = { workspace = true }
 tokio-util = { workspace = true }

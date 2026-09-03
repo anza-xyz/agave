@@ -5,7 +5,6 @@ comment-style = "preserve"
 date-time-delimiter = "preserve"
 indent-width = 2
 key-quote-style = "preserve"
-line-width = 100
 string-quote-style = "preserve"
 
 [[schemas]]
