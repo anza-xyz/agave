@@ -38,7 +38,7 @@ jobs:
 
           source ci/env.sh
           echo "tag=$CI_TAG" >> $GITHUB_OUTPUT
-          eval "$(ci/channel-info.sh)"
+          CHANNEL="$(cargo xtask channel-info --json | jq -r '.CHANNEL')"
           echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
 
           # print the info

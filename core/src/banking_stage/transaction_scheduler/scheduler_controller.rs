@@ -12,6 +12,7 @@ use {
         banking_stage::{
             TOTAL_BUFFERED_PACKETS,
             consume_worker::ConsumeWorkerMetrics,
+            consumer::Consumer,
             decision_maker::{BufferedPacketsDecision, DecisionMaker},
             transaction_scheduler::{
                 receive_and_buffer::ReceivingStats, transaction_priority_id::TransactionPriorityId,
@@ -466,11 +467,11 @@ where
         };
         let lock_results = [const { Ok(()) }; CHECK_CHUNK];
         let mut error_counters = TransactionErrorMetrics::default();
-        let results = bank.check_transactions::<R::Transaction>(
+        let results = Consumer::check_transactions_for_scheduling::<R::Transaction>(
+            &bank,
             &txs,
             &lock_results[..txs.len()],
             bank.max_processing_age(),
-            true,
             &mut error_counters,
         );
 

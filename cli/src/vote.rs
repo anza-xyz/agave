@@ -475,7 +475,8 @@ impl VoteSubCommands for App<'_, '_> {
                         .validator(is_amount_or_all)
                         .help(
                             "The amount to withdraw, in SOL; accepts keyword ALL, which for this \
-                             command means account balance minus rent-exempt minimum",
+                             command means account balance minus rent-exempt minimum and any \
+                             rewards pending distribution to delegators",
                         ),
                 )
                 .arg(
@@ -1580,14 +1581,20 @@ pub(crate) async fn get_vote_account(
         ))
         .into());
     }
-    let vote_state =
-        VoteStateV4::deserialize(&vote_account.data, vote_account_pubkey).map_err(|_| {
-            CliError::RpcRequestError(
-                "Account data could not be deserialized to vote state".to_string(),
-            )
-        })?;
+    let vote_state = deserialize_vote_state(&vote_account, vote_account_pubkey)?;
 
     Ok((vote_account, vote_state))
+}
+
+/// Rewards held by the vote account for distribution to its stake delegators.
+///
+/// The vote program reserves these lamports on top of the rent-exempt minimum,
+/// so they are not withdrawable.
+pub(crate) fn get_pending_delegator_rewards(
+    vote_account: &Account,
+    vote_account_pubkey: &Pubkey,
+) -> Result<u64, CliError> {
+    Ok(deserialize_vote_state(vote_account, vote_account_pubkey)?.pending_delegator_rewards)
 }
 
 pub async fn process_show_vote_account(
@@ -1747,22 +1754,18 @@ pub async fn process_withdraw_from_vote_account(
     )
     .await?;
 
-    if !sign_only {
-        let current_balance = rpc_client.get_balance(vote_account_pubkey).await?;
-        let minimum_balance = rpc_client
-            .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())
+    if !sign_only && let SpendAmount::Some(withdraw_amount) = withdraw_amount {
+        let (vote_account, vote_state) =
+            get_vote_account(rpc_client, vote_account_pubkey, config.commitment).await?;
+        let rent_exempt_minimum = rpc_client
+            .get_minimum_balance_for_rent_exemption(vote_account.data.len())
             .await?;
-        if let SpendAmount::Some(withdraw_amount) = withdraw_amount {
-            let balance_remaining = current_balance.saturating_sub(withdraw_amount);
-            if balance_remaining < minimum_balance && balance_remaining != 0 {
-                return Err(CliError::BadParameter(format!(
-                    "Withdraw amount too large. The vote account balance must be at least {} SOL \
-                     to remain rent exempt",
-                    build_balance_message(minimum_balance, false, false)
-                ))
-                .into());
-            }
-        }
+        check_remaining_balance(
+            vote_account.lamports,
+            withdraw_amount,
+            rent_exempt_minimum,
+            vote_state.pending_delegator_rewards,
+        )?;
     }
 
     let mut tx = Transaction::new_unsigned(message);
@@ -1874,6 +1877,62 @@ pub async fn process_close_vote_account(
         )
         .await;
     log_instruction_custom_error::<VoteError>(result, config)
+}
+
+fn deserialize_vote_state(
+    vote_account: &Account,
+    vote_account_pubkey: &Pubkey,
+) -> Result<VoteStateV4, CliError> {
+    VoteStateV4::deserialize(&vote_account.data, vote_account_pubkey).map_err(|_| {
+        CliError::RpcRequestError(
+            "Account data could not be deserialized to vote state".to_string(),
+        )
+    })
+}
+
+/// Mirrors the balance constraints enforced by the vote program's `Withdraw`
+/// instruction: the balance left in the vote account must either be zero with no
+/// rewards pending distribution to delegators, or cover both the rent-exempt
+/// minimum and those pending rewards.
+fn check_remaining_balance(
+    current_balance: u64,
+    withdraw_amount: u64,
+    rent_exempt_minimum: u64,
+    pending_delegator_rewards: u64,
+) -> Result<(), CliError> {
+    let balance_remaining = current_balance.saturating_sub(withdraw_amount);
+    if balance_remaining == 0 {
+        if pending_delegator_rewards > 0 {
+            return Err(CliError::BadParameter(format!(
+                "Withdraw amount too large. The vote account cannot be closed while {} SOL of \
+                 rewards are pending distribution to delegators",
+                build_balance_message(pending_delegator_rewards, false, false)
+            )));
+        }
+        return Ok(());
+    }
+
+    let minimum_balance = rent_exempt_minimum.saturating_add(pending_delegator_rewards);
+    if balance_remaining < minimum_balance {
+        let requirement = if pending_delegator_rewards > 0 {
+            format!(
+                "{} SOL to remain rent exempt, plus {} SOL of rewards pending distribution to \
+                 delegators",
+                build_balance_message(rent_exempt_minimum, false, false),
+                build_balance_message(pending_delegator_rewards, false, false)
+            )
+        } else {
+            format!(
+                "{} SOL to remain rent exempt",
+                build_balance_message(rent_exempt_minimum, false, false)
+            )
+        };
+        return Err(CliError::BadParameter(format!(
+            "Withdraw amount too large. The vote account balance must be at least {requirement}"
+        )));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2965,5 +3024,46 @@ mod tests {
                 ],
             }
         );
+    }
+
+    #[test]
+    fn test_check_remaining_balance() {
+        const RENT_EXEMPT_MINIMUM: u64 = 27_000_000;
+        const PENDING_DELEGATOR_REWARDS: u64 = 5_000_000;
+        const BALANCE: u64 = 33_000_000;
+        // Largest withdrawal leaving the rent-exempt minimum behind, and the
+        // largest also leaving the pending delegator rewards behind.
+        const MAX_WITHDRAWAL: u64 = BALANCE - RENT_EXEMPT_MINIMUM;
+        const MAX_WITHDRAWAL_WITH_PENDING_REWARDS: u64 = MAX_WITHDRAWAL - PENDING_DELEGATOR_REWARDS;
+
+        // Without pending rewards, only the rent-exempt minimum must remain.
+        check_remaining_balance(BALANCE, MAX_WITHDRAWAL, RENT_EXEMPT_MINIMUM, 0).unwrap();
+        check_remaining_balance(BALANCE, MAX_WITHDRAWAL + 1, RENT_EXEMPT_MINIMUM, 0).unwrap_err();
+
+        // Pending rewards must remain in the account too.
+        check_remaining_balance(
+            BALANCE,
+            MAX_WITHDRAWAL_WITH_PENDING_REWARDS,
+            RENT_EXEMPT_MINIMUM,
+            PENDING_DELEGATOR_REWARDS,
+        )
+        .unwrap();
+        check_remaining_balance(
+            BALANCE,
+            MAX_WITHDRAWAL_WITH_PENDING_REWARDS + 1,
+            RENT_EXEMPT_MINIMUM,
+            PENDING_DELEGATOR_REWARDS,
+        )
+        .unwrap_err();
+
+        // The account may only be closed once no rewards are pending.
+        check_remaining_balance(BALANCE, BALANCE, RENT_EXEMPT_MINIMUM, 0).unwrap();
+        check_remaining_balance(
+            BALANCE,
+            BALANCE,
+            RENT_EXEMPT_MINIMUM,
+            PENDING_DELEGATOR_REWARDS,
+        )
+        .unwrap_err();
     }
 }

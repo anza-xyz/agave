@@ -354,7 +354,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 program_id,
                 loader: ProgramCacheEntryOwner::NativeLoader,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         self.global_program_cache.read().unwrap().extract(
@@ -958,7 +957,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let program_to_store = program_to_load.map(|key| {
                 // Load, verify and compile one program.
-                let (program, last_modification_slot) = load_program_with_pubkey(
+                let program = load_program_with_pubkey(
                     account_loader,
                     program_runtime_environment_for_execution,
                     &key,
@@ -966,10 +965,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     execute_timings,
                 )
                 .expect("called load_program_with_pubkey() with nonexistent account");
-                (key, program, last_modification_slot)
+                (key, program)
             });
 
-            if let Some((key, program, last_modification_slot)) = program_to_store {
+            if let Some((key, program)) = program_to_store {
                 program_cache_for_tx_batch.loaded_missing = true;
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
@@ -977,7 +976,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     program_runtime_environment_for_execution,
                     self.slot,
                     key,
-                    last_modification_slot,
                     program,
                 ) && limit_to_load_programs
                 {
@@ -1034,7 +1032,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // Maybe the enqueued program was already loaded and can be skipped.
         if let Some(key) = program_to_load {
             // Load, verify and compile one program.
-            let (recompiled, last_modification_slot) = load_program_with_pubkey(
+            let recompiled = load_program_with_pubkey(
                 account_loader,
                 upcoming_environment,
                 &key,
@@ -1050,7 +1048,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 upcoming_environment,
                 self.slot,
                 key,
-                last_modification_slot,
                 recompiled,
             );
         }
@@ -1374,7 +1371,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         callbacks: &CB,
     ) {
         sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
-            if let Some((account, _slot)) = callbacks.get_account_shared_data(pubkey) {
+            if let Some(account) = callbacks.get_account_shared_data(pubkey) {
                 set_sysvar(account.data());
             }
         });
@@ -1531,12 +1528,12 @@ mod tests {
     impl InvokeContextCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
             self.account_shared_data
                 .read()
                 .unwrap()
                 .get(pubkey)
-                .map(|account| (account.clone(), 0))
+                .cloned()
         }
 
         fn inspect_account(
@@ -2146,7 +2143,6 @@ mod tests {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::NativeLoader,
                     deployment_slot: 0,
-                    last_modification_slot: 0,
                 }],
                 &mut loaded_programs_for_tx_batch,
                 &program_runtime_environment,
@@ -2377,7 +2373,6 @@ mod tests {
             program_id: &key,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: MIGRATION_SLOT,
-            last_modification_slot: MIGRATION_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(MIGRATION_SLOT);
         batch_processor
@@ -2415,7 +2410,6 @@ mod tests {
             program_id: &key,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: MIGRATION_SLOT,
-            last_modification_slot: MIGRATION_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
         next_slot.global_program_cache.read().unwrap().extract(
@@ -2434,7 +2428,6 @@ mod tests {
             program_id: &key,
             loader: ProgramCacheEntryOwner::NativeLoader,
             deployment_slot: BUILTIN_SLOT,
-            last_modification_slot: BUILTIN_SLOT,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(NEXT_SLOT);
         next_slot.global_program_cache.read().unwrap().extract(
@@ -3222,7 +3215,6 @@ mod tests {
                 program_id: &program_id,
                 loader,
                 deployment_slot: expected_deployment_slot,
-                last_modification_slot: 0,
             }]
         );
 
@@ -3276,7 +3268,6 @@ mod tests {
                     program_id: &program_id,
                     loader,
                     deployment_slot: 0,
-                    last_modification_slot: 0,
                 }],
                 &environment,
                 &mut program_cache_for_tx_batch,
@@ -3336,7 +3327,6 @@ mod tests {
                     program_id: &program_id,
                     loader,
                     deployment_slot: 0,
-                    last_modification_slot: 0,
                 }],
                 &environment,
                 &mut program_cache_for_tx_batch,
@@ -3490,7 +3480,6 @@ mod tests {
                     program_id: &program_id,
                     loader: ProgramCacheEntryOwner::LoaderV3,
                     deployment_slot: DEPLOYMENT_SLOT,
-                    last_modification_slot: 100, // Don't care
                 }],
                 &environment,
                 &mut program_cache_for_tx_batch,
@@ -3558,7 +3547,6 @@ mod tests {
                     program_id: &program_id,
                     loader: ProgramCacheEntryOwner::LoaderV4,
                     deployment_slot: if just_zeroes { 0 } else { 9 },
-                    last_modification_slot: 0,
                 }],
                 &environment,
                 &mut program_cache_for_tx_batch,

@@ -369,7 +369,6 @@ impl SvmTestEnvironment<'_> {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot,
-                last_modification_slot: deployment_slot,
             }],
             self.processing_environment
                 .program_runtime_environments

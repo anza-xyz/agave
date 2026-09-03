@@ -68,11 +68,7 @@ pub struct CostTrackerStats {
     pub costliest_account: Pubkey,
     pub costliest_account_cost: u64,
     pub allocated_accounts_data_size: u64,
-    pub transaction_signature_count: u64,
-    pub secp256k1_instruction_signature_count: u64,
-    pub ed25519_instruction_signature_count: u64,
     pub in_flight_transaction_count: usize,
-    pub secp256r1_instruction_signature_count: u64,
     pub number_of_contended_accounts: usize,
 }
 
@@ -116,14 +112,10 @@ pub struct CostTracker {
     block_cost: SharedBlockCost,
     transaction_count: Saturating<u64>,
     allocated_accounts_data_size: SharedAllocatedAccountsDataSize,
-    transaction_signature_count: Saturating<u64>,
-    secp256k1_instruction_signature_count: Saturating<u64>,
-    ed25519_instruction_signature_count: Saturating<u64>,
     /// The number of transactions that have had their estimated cost added to
     /// the tracker, but are still waiting for an update with actual usage or
     /// removal if the transaction does not end up getting committed.
     in_flight_transaction_count: Saturating<usize>,
-    secp256r1_instruction_signature_count: Saturating<u64>,
 }
 
 impl Default for CostTracker {
@@ -137,11 +129,7 @@ impl Default for CostTracker {
             block_cost: SharedBlockCost::new(0),
             transaction_count: Saturating(0),
             allocated_accounts_data_size: SharedAllocatedAccountsDataSize::new(0),
-            transaction_signature_count: Saturating(0),
-            secp256k1_instruction_signature_count: Saturating(0),
-            ed25519_instruction_signature_count: Saturating(0),
             in_flight_transaction_count: Saturating(0),
-            secp256r1_instruction_signature_count: Saturating(0),
         }
     }
 }
@@ -259,12 +247,6 @@ impl CostTracker {
         self.allocated_accounts_data_size
             .store(allocated_accounts_data_size);
         self.transaction_count += 1;
-        self.transaction_signature_count += tx_cost.num_transaction_signatures();
-        self.secp256k1_instruction_signature_count +=
-            tx_cost.num_secp256k1_instruction_signatures();
-        self.ed25519_instruction_signature_count += tx_cost.num_ed25519_instruction_signatures();
-        self.secp256r1_instruction_signature_count +=
-            tx_cost.num_secp256r1_instruction_signatures();
         self.block_cost.fetch_add(cost);
 
         Ok(UpdatedCosts {
@@ -351,11 +333,7 @@ impl CostTracker {
             costliest_account,
             costliest_account_cost,
             allocated_accounts_data_size: self.allocated_accounts_data_size.load(),
-            transaction_signature_count: self.transaction_signature_count.0,
-            secp256k1_instruction_signature_count: self.secp256k1_instruction_signature_count.0,
-            ed25519_instruction_signature_count: self.ed25519_instruction_signature_count.0,
             in_flight_transaction_count: self.in_flight_transaction_count.0,
-            secp256r1_instruction_signature_count: self.secp256r1_instruction_signature_count.0,
             number_of_contended_accounts: self.find_number_of_contended_accounts(),
         }
     }
@@ -391,12 +369,6 @@ impl CostTracker {
                 .saturating_sub(tx_cost.allocated_accounts_data_size()),
         );
         self.transaction_count -= 1;
-        self.transaction_signature_count -= tx_cost.num_transaction_signatures();
-        self.secp256k1_instruction_signature_count -=
-            tx_cost.num_secp256k1_instruction_signatures();
-        self.ed25519_instruction_signature_count -= tx_cost.num_ed25519_instruction_signatures();
-        self.secp256r1_instruction_signature_count -=
-            tx_cost.num_secp256r1_instruction_signatures();
     }
 
     /// Apply additional actual execution units to cost_tracker.
@@ -1070,11 +1042,7 @@ mod tests {
         assert_eq!(stats.costliest_account, transaction.writable_keys[0]);
         assert_eq!(stats.costliest_account_cost, 0);
         assert_eq!(stats.allocated_accounts_data_size, 0);
-        assert_eq!(stats.transaction_signature_count, 0);
-        assert_eq!(stats.secp256k1_instruction_signature_count, 0);
-        assert_eq!(stats.ed25519_instruction_signature_count, 0);
         assert_eq!(stats.in_flight_transaction_count, 0);
-        assert_eq!(stats.secp256r1_instruction_signature_count, 0);
         assert_eq!(stats.number_of_contended_accounts, 0);
     }
 
@@ -1088,10 +1056,6 @@ mod tests {
         let mut cost_tracker = CostTracker::new(100, 1_000);
         cost_tracker.try_add(&tx_cost).unwrap();
         cost_tracker.add_transactions_in_flight(2);
-        cost_tracker.transaction_signature_count = Saturating(1);
-        cost_tracker.secp256k1_instruction_signature_count = Saturating(2);
-        cost_tracker.ed25519_instruction_signature_count = Saturating(3);
-        cost_tracker.secp256r1_instruction_signature_count = Saturating(4);
 
         let stats = cost_tracker.stats();
         assert_eq!(stats.block_cost, 95);
@@ -1100,11 +1064,7 @@ mod tests {
         assert_eq!(stats.costliest_account, mint_keypair.pubkey());
         assert_eq!(stats.costliest_account_cost, 95);
         assert_eq!(stats.allocated_accounts_data_size, 7);
-        assert_eq!(stats.transaction_signature_count, 1);
-        assert_eq!(stats.secp256k1_instruction_signature_count, 2);
-        assert_eq!(stats.ed25519_instruction_signature_count, 3);
         assert_eq!(stats.in_flight_transaction_count, 2);
-        assert_eq!(stats.secp256r1_instruction_signature_count, 4);
         assert_eq!(stats.number_of_contended_accounts, 1);
 
         cost_tracker.update_execution_cost(&tx_cost, 90, 0);

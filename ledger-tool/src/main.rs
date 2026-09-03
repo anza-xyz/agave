@@ -55,6 +55,7 @@ use {
         blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
         blockstore_processor::ProcessSlotCallback,
+        leader_schedule_cache::LeaderScheduleCache,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
@@ -2208,8 +2209,17 @@ fn main() {
                         || bootstrap_validator_pubkeys.is_some();
 
                     if child_bank_required {
-                        let mut child_bank =
-                            Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
+                        let child_slot = bank.slot() + 1;
+                        let child_leader = LeaderScheduleCache::new_from_bank(&bank)
+                            .slot_leader_at(child_slot, Some(&bank))
+                            .unwrap_or_else(|| {
+                                eprintln!(
+                                    "Error: Unable to determine the leader of child slot \
+                                     {child_slot}"
+                                );
+                                exit(1);
+                            });
+                        let mut child_bank = Bank::new_from_parent(bank, child_leader, child_slot);
 
                         if let Ok(rent_burn_percentage) = rent_burn_percentage {
                             child_bank.set_rent_burn_percentage(rent_burn_percentage);

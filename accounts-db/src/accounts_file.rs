@@ -128,7 +128,7 @@ impl AccountsFile {
     /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
     pub fn get_stored_account_without_data_callback<Ret>(
         &self,
-        offset: usize,
+        offset: Offset,
         callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
     ) -> Option<Ret> {
         match self {
@@ -145,7 +145,7 @@ impl AccountsFile {
     /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
-        offset: usize,
+        offset: Offset,
         callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> Option<Ret> {
         match self {
@@ -154,7 +154,7 @@ impl AccountsFile {
     }
 
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
-    pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
+    pub(crate) fn get_account_shared_data(&self, offset: Offset) -> Option<AccountSharedData> {
         match self {
             Self::AppendVec(av) => av.get_account_shared_data(offset),
         }
@@ -297,7 +297,7 @@ impl AsRef<File> for OpenFileForArchive<'_> {
 #[derive(Debug)]
 pub struct StoredAccountsInfo {
     /// offset in the storage where each account was stored
-    pub offsets: Vec<usize>,
+    pub offsets: Vec<Offset>,
     /// total size of all the stored accounts
     pub size: usize,
 }

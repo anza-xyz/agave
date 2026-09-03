@@ -1035,10 +1035,7 @@ mod tests {
     fn test_initialize_migration_status() {
         let ff_activation_slot = 5;
         let genesis_cert = GenesisCert {
-            block: Block {
-                slot: 1,
-                block_id: Hash::default(),
-            },
+            block: Block::new_unique(1),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],

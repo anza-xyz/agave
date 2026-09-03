@@ -330,6 +330,30 @@ pub struct VotesAggregate {
 }
 
 impl VotesAggregate {
+    /// Creates a new `VotesAggregate` from a compressed signature and bitmap.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new(signature: BLSSignatureCompressed, bitmap: Vec<u8>) -> Self {
+        Self { signature, bitmap }
+    }
+
+    /// Returns a reference to the compressed signature.
+    pub fn signature(&self) -> &BLSSignatureCompressed {
+        &self.signature
+    }
+
+    /// Returns a reference to the bitmap.
+    pub fn bitmap(&self) -> &[u8] {
+        &self.bitmap
+    }
+
+    /// Returns every field of the aggregate. Callers that must not silently
+    /// ignore new fields (e.g. the geyser boundary conversion) bind this
+    /// tuple exhaustively, so growing it breaks them at compile time.
+    pub fn as_parts(&self) -> (&BLSSignatureCompressed, &[u8]) {
+        let Self { signature, bitmap } = self;
+        (signature, bitmap)
+    }
+
     /// Creates a VotesAggregate from a Certificate's signature and bitmap.
     ///
     /// # Panics

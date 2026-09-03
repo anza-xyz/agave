@@ -876,7 +876,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         slot_list: &mut SlotListWriteGuard<T>,
         reclaims: &mut ReclaimsWithNewestSlot<T>,
-        max_clean_root_inclusive: Option<Slot>,
+        max_clean_root_inclusive: Slot,
     ) -> bool {
         if slot_list.len() <= 1 {
             self.purge_older_root_entries_one_slot_list
@@ -886,7 +886,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let newest_slot = slot_list
             .iter()
             .map(|(slot, _)| *slot)
-            .filter(|slot| slot <= &max_clean_root_inclusive.unwrap_or(Slot::MAX))
+            .filter(|slot| slot <= &max_clean_root_inclusive)
             .max()
             .unwrap_or_default();
 
@@ -911,7 +911,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         pubkey: &Pubkey,
         reclaims: &mut ReclaimsWithNewestSlot<T>,
-        max_clean_root_inclusive: Option<Slot>,
+        max_clean_root_inclusive: Slot,
     ) -> bool {
         let map = self.get_bin(pubkey);
         // `None` means the pubkey is not in the index; nothing was removed.
@@ -2048,7 +2048,7 @@ mod tests {
         let mut reclaims = ReclaimsWithNewestSlot::new();
 
         // No max clean root: keep the newest slot (9), reclaim everything older.
-        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, None));
+        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, Slot::MAX));
         assert_eq!(
             reclaims,
             ReclaimsWithNewestSlot::from([((1, true), 9), ((2, true), 9), ((5, true), 9)])
@@ -2059,7 +2059,7 @@ mod tests {
         // outcome
         slot_list.assign([(1, true), (2, true), (5, true), (9, true)]);
         reclaims = ReclaimsWithNewestSlot::new();
-        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, Some(6)));
+        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, 6));
         assert_eq!(
             reclaims,
             ReclaimsWithNewestSlot::from([((1, true), 5), ((2, true), 5)])
@@ -2072,7 +2072,7 @@ mod tests {
         // Pass a max root, earlier slots should be reclaimed
         slot_list.assign([(1, true), (2, true), (5, true), (9, true)]);
         reclaims = ReclaimsWithNewestSlot::new();
-        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, Some(5)));
+        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, 5));
         assert_eq!(
             reclaims,
             ReclaimsWithNewestSlot::from([((1, true), 5), ((2, true), 5)])
@@ -2085,7 +2085,7 @@ mod tests {
         // Max clean root 2: newest slot <= 2 is 2, so only slot 1 is older and reclaimed.
         slot_list.assign([(1, true), (2, true), (5, true), (9, true)]);
         reclaims = ReclaimsWithNewestSlot::new();
-        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, Some(2)));
+        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, 2));
         assert_eq!(reclaims, ReclaimsWithNewestSlot::from([((1, true), 2)]));
         assert_eq!(
             slot_list.clone_list(),
@@ -2096,7 +2096,7 @@ mod tests {
         // is reclaimed.
         slot_list.assign([(1, true), (2, true), (5, true), (9, true)]);
         reclaims = ReclaimsWithNewestSlot::new();
-        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, Some(1)));
+        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, 1));
         assert!(reclaims.is_empty());
         assert_eq!(
             slot_list.clone_list(),
@@ -2107,7 +2107,7 @@ mod tests {
         // some of the roots in the list, shouldn't return those smaller roots
         slot_list.assign([(1, true), (2, true), (5, true), (9, true)]);
         reclaims = ReclaimsWithNewestSlot::new();
-        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, Some(7)));
+        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, 7));
         assert_eq!(
             reclaims,
             ReclaimsWithNewestSlot::from([((1, true), 5), ((2, true), 5)])
@@ -2410,7 +2410,8 @@ mod tests {
         // If we set a root at `later_slot`, and clean, then even though the account with secondary_key1
         // was outdated by the update in the later slot, the primary account key is still alive,
         // so both secondary keys will still be kept alive.
-        let _ = index.clean_rooted_entries(&account_key, &mut ReclaimsWithNewestSlot::new(), None);
+        let _ =
+            index.clean_rooted_entries(&account_key, &mut ReclaimsWithNewestSlot::new(), Slot::MAX);
 
         check_secondary_index_mapping_correct(
             secondary_index,
@@ -2503,11 +2504,11 @@ mod tests {
 
         let mut gc = ReclaimsWithNewestSlot::new();
         // an unknown key has no index entry, so nothing is removed
-        assert!(!index.clean_rooted_entries(&key_unknown, &mut gc, None));
+        assert!(!index.clean_rooted_entries(&key_unknown, &mut gc, Slot::MAX));
 
         index.upsert_simple_test(&key, slot1, value);
 
-        assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot2)));
+        assert!(!index.clean_rooted_entries(&key, &mut gc, slot2));
         index.upsert_simple_test(&key, slot2, value);
 
         index.get_and_then(&key, |entry| {
@@ -2517,7 +2518,7 @@ mod tests {
             assert_eq!(&[(slot1, value), (slot2, value)], slot_list.as_ref());
             (false, ())
         });
-        assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot1)));
+        assert!(!index.clean_rooted_entries(&key, &mut gc, slot1));
         assert_eq!(
             2,
             index.get_and_then(&key, |entry| (
@@ -2527,7 +2528,7 @@ mod tests {
         );
 
         assert!(gc.is_empty());
-        assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot2)));
+        assert!(!index.clean_rooted_entries(&key, &mut gc, slot2));
         // The slot1 entry was reclaimed, updated by the surviving slot2 entry
         assert_eq!(gc, ReclaimsWithNewestSlot::from([((slot1, value), slot2)]));
         // The slot1 entry was removed at reclaim, leaving only the slot2 entry in the slot list
