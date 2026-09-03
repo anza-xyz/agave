@@ -5,7 +5,7 @@ use {
         vote::Vote,
     },
     serde::{Deserialize, Serialize},
-    solana_bls_signatures::Signature as BLSSignature,
+    solana_bls_signatures::{Signature as BLSSignature, signature::SignatureAffine},
     solana_clock::Slot,
     solana_hash::Hash,
     std::num::NonZero,
@@ -44,6 +44,7 @@ fn sample_hash(rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized)) -> Ha
     SchemaWrite,
     SchemaRead,
 )]
+#[serde(rename_all = "camelCase")]
 pub struct Block {
     /// The slot in the block.
     pub slot: Slot,
@@ -52,13 +53,24 @@ pub struct Block {
     pub block_id: Hash,
 }
 
+impl Block {
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Builds a new Block with the given slot and a unique block id
+    pub fn new_unique(slot: Slot) -> Self {
+        Self {
+            slot,
+            block_id: Hash::new_unique(),
+        }
+    }
+}
+
 /// A consensus vote.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VoteMessage {
     /// The type of the vote.
     pub vote: Vote,
     /// The signature.
-    pub signature: BLSSignature,
+    pub signature: SignatureAffine,
     /// The rank of the validator.
     pub rank: u16,
     /// The stake of the validator
@@ -66,7 +78,7 @@ pub struct VoteMessage {
 }
 
 /// A consensus message sent between validators.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {
     /// A vote from a single party.
@@ -77,7 +89,12 @@ pub enum ConsensusMessage {
 
 impl ConsensusMessage {
     /// Create a new vote message
-    pub fn new_vote(vote: Vote, signature: BLSSignature, rank: u16, stake: NonZero<u64>) -> Self {
+    pub fn new_vote(
+        vote: Vote,
+        signature: SignatureAffine,
+        rank: u16,
+        stake: NonZero<u64>,
+    ) -> Self {
         Self::Vote(VoteMessage {
             vote,
             signature,

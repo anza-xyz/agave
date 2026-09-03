@@ -4,7 +4,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     crate::{
-        connection_workers_scheduler::extract_send_leaders,
         logging::{debug, error, info, warn},
         node_address_service::SlotReceiver,
     },
@@ -68,14 +67,18 @@ pub struct LeaderUpdateReceiver {
 }
 
 impl LeaderUpdateReceiver {
-    pub fn leaders(&self, lookahead_leaders: usize) -> Vec<SocketAddr> {
-        let NodesTpuInfo { leaders, extend } = self.receiver.borrow().clone();
-        let lookahead_leaders = if extend {
-            lookahead_leaders.saturating_add(1)
+    pub fn next_leaders(
+        &self,
+        num_lookahead_leaders: usize,
+        lookahead_leaders: &mut Vec<SocketAddr>,
+    ) {
+        let tpu_info = self.receiver.borrow();
+        let num_lookahead_leaders = if tpu_info.extend {
+            num_lookahead_leaders.saturating_add(1)
         } else {
-            lookahead_leaders
+            num_lookahead_leaders
         };
-        extract_send_leaders(&leaders, lookahead_leaders)
+        lookahead_leaders.extend(tpu_info.leaders.iter().take(num_lookahead_leaders).copied());
     }
 }
 
@@ -196,7 +199,10 @@ impl LeaderTpuCacheService {
                     );
                     let leaders = leader_sockets(current_slot, lookahead_leaders, &slot_leaders, &leader_tpu_map);
 
-                    if let Err(e) = leaders_sender.send(NodesTpuInfo { leaders, extend: config.lookahead_leaders != lookahead_leaders }) {
+                    if let Err(e) = leaders_sender.send(NodesTpuInfo {
+                        leaders,
+                        extend: config.lookahead_leaders != lookahead_leaders
+                    }) {
                         warn!("Unexpectedly dropped leaders_sender: {e}");
                         return Err(Error::ChannelClosed);
                     }

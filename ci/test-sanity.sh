@@ -71,16 +71,9 @@ EOF
 fi
 
 # Disallow (re)introduction of solana sdk dependencies
-(
-  if git diff "$target" | grep -v '+++' | grep '^+.*solana[-_]sdk[: =]'; then
-    cat <<'EOF' 1>&2
-
-Error: solana sdk crate dependencies (re)introduced.
-This crate is DEPRECATED. Please use the standalone crates for the corresponding modules
-EOF
-    exit 1
-  fi
-)
+cargo_deny_config="$PWD/deny.toml"
+scripts/cargo-for-all-lock-files.sh -- \
+  deny --config "$cargo_deny_config" --all-features check bans
 
 # Disallow adding new files under docs/ — docs now live in a separate repo
 (

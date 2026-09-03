@@ -26,6 +26,7 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
+itertools = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 quinn = { workspace = true }

@@ -20,7 +20,7 @@
 mod arch;
 
 use {
-    crate::lt_hash::LtHash,
+    crate::lt_hash::{LtHash, SingleLtHashUpdater},
     blake3::{BLOCK_LEN, CHUNK_LEN},
 };
 
@@ -388,6 +388,12 @@ impl MessageBuilder<'_> {
         self.acc.commit_message();
         // Committed — skip the discarding `Drop`.
         core::mem::forget(self);
+    }
+}
+
+impl SingleLtHashUpdater for MessageBuilder<'_> {
+    fn write_part(&mut self, bytes: &[u8]) {
+        self.add_part(bytes);
     }
 }
 

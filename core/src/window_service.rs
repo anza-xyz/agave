@@ -178,9 +178,18 @@ fn run_check_duplicate(
             &root_bank,
         );
 
-        let Some((shred1, shred2)) =
-            check_duplicate_shred(blockstore, shred, no_verify_chained_merkle_root)?
-        else {
+        let duplicate = check_duplicate_shred(blockstore, shred, no_verify_chained_merkle_root)?;
+
+        let should_mark_dead = migration_status
+            .genesis_block()
+            .is_some_and(|genesis| shred_slot > genesis.slot);
+        if should_mark_dead {
+            // Apart from Exists all existing cases mark dead inline in blockstore.
+            // Once Alpenglow is active we can fully remove this thread and move Exists to inline as well.
+            blockstore.set_dead_slot_if_duplicate_and_not_full(shred_slot)?;
+        }
+
+        let Some((shred1, shred2)) = duplicate else {
             return Ok(());
         };
 
@@ -442,7 +451,7 @@ impl WindowService {
                     shred_version,
                 );
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
-                let mut write_batch = blockstore.get_write_batch().unwrap();
+                let mut write_batch = blockstore.get_write_batch();
 
                 while !exit.load(Ordering::Relaxed) {
                     shred_recovery_context.maybe_update(sharable_banks.root());

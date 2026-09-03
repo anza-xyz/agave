@@ -719,7 +719,7 @@ pub fn execute(
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
         skip_initial_hash_calc: false,
-        exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        verify_index: matches.is_present("accounts_db_verify_index"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
@@ -1411,17 +1411,12 @@ fn build_xdp_config(
             "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
         );
     }
-    let xdp_interface = matches
-        .value_of("xdp_interface")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-        || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let xdp_interface = matches.value_of("xdp_interface");
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy");
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-    let xdp_cpu_cores = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+    let xdp_cpu_cores = matches.value_of("xdp_cpu_cores");
     let cpus = if let Some(cpu_str) = xdp_cpu_cores {
         let parsed =
             parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");

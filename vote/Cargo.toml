@@ -75,7 +75,7 @@ bencher = { workspace = true }
 bincode = { workspace = true }
 rand = { workspace = true }
 solana-keypair = { workspace = true }
-solana-sha256-hasher = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode", "dev-context-only-utils"] }

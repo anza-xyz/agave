@@ -235,6 +235,7 @@ pub(crate) fn report_loaded_programs_stats<T: ForkGraph>(cache: &ProgramCache<T>
     let lost_insertions = stats.lost_insertions.load(Ordering::Relaxed);
     let replacements = stats.replacements.load(Ordering::Relaxed);
     let one_hit_wonders = stats.one_hit_wonders.load(Ordering::Relaxed);
+    let prunes_stale = stats.prunes_stale.load(Ordering::Relaxed);
     let prunes_orphan = stats.prunes_orphan.load(Ordering::Relaxed);
     let prunes_environment = stats.prunes_environment.load(Ordering::Relaxed);
     let empty_entries = stats.empty_entries.load(Ordering::Relaxed);
@@ -250,6 +251,7 @@ pub(crate) fn report_loaded_programs_stats<T: ForkGraph>(cache: &ProgramCache<T>
         ("lost_insertions", lost_insertions, i64),
         ("replace_entry", replacements, i64),
         ("one_hit_wonders", one_hit_wonders, i64),
+        ("prunes_stale", prunes_stale, i64),
         ("prunes_orphan", prunes_orphan, i64),
         ("prunes_environment", prunes_environment, i64),
         ("empty_entries", empty_entries, i64),

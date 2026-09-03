@@ -3,7 +3,7 @@ use {
         checks::{check_account_for_balance_with_commitment, get_fee_for_messages},
         cli::CliError,
         compute_budget::{UpdateComputeUnitLimitResult, simulate_and_update_compute_unit_limit},
-        stake,
+        stake, vote,
     },
     clap::ArgMatches,
     solana_clap_utils::{
@@ -134,6 +134,13 @@ where
             } else {
                 0
             };
+        if amount == SpendAmount::RentExempt && account.owner == solana_sdk_ids::vote::id() {
+            // On top of the rent-exempt minimum, the vote program also reserves the rewards that
+            // are pending distribution to the account's stake delegators.
+            let pending_delegator_rewards =
+                vote::get_pending_delegator_rewards(&account, from_pubkey)?;
+            from_balance = from_balance.saturating_sub(pending_delegator_rewards);
+        }
         if amount == SpendAmount::Available && account.owner == solana_sdk_ids::stake::id() {
             let state = stake::get_account_stake_state(
                 rpc_client,
@@ -310,4 +317,134 @@ where
         message.instructions[ix_index].data = ix_data;
     }
     Ok((message, spend_and_fee))
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        serde_json::json,
+        solana_account::Account,
+        solana_account_decoder::{UiAccountEncoding, encode_ui_account},
+        solana_rpc_client_api::{
+            request::RpcRequest,
+            response::{Response, RpcResponseContext},
+        },
+        solana_vote_program::{
+            vote_instruction::withdraw,
+            vote_state::{VoteStateV4, VoteStateVersions},
+        },
+        std::collections::HashMap,
+    };
+
+    fn vote_account(lamports: u64, pending_delegator_rewards: u64) -> Account {
+        let vote_state = VoteStateV4 {
+            pending_delegator_rewards,
+            ..VoteStateV4::default()
+        };
+        let mut data = vec![0; VoteStateV4::size_of()];
+        VoteStateV4::serialize(&VoteStateVersions::new_v4(vote_state), &mut data).unwrap();
+        Account {
+            lamports,
+            data,
+            owner: solana_sdk_ids::vote::id(),
+            ..Account::default()
+        }
+    }
+
+    /// Resolves the amount that `withdraw-from-vote-account ALL` withdraws from
+    /// `vote_account`, with the fee paid by another account.
+    async fn resolve_rent_exempt_spend(vote_account: Account, rent_exempt_minimum: u64) -> u64 {
+        let vote_account_pubkey = Pubkey::new_unique();
+        let account_response = json!(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None
+            },
+            value: json!(encode_ui_account(
+                &vote_account_pubkey,
+                &vote_account,
+                UiAccountEncoding::Base64,
+                None,
+                None,
+            )),
+        });
+        let mut mocks = HashMap::new();
+        mocks.insert(RpcRequest::GetAccountInfo, account_response);
+        mocks.insert(
+            RpcRequest::GetMinimumBalanceForRentExemption,
+            json!(rent_exempt_minimum),
+        );
+        let rpc_client = RpcClient::new_mock_with_mocks("".to_string(), mocks);
+
+        let withdraw_authority = Pubkey::new_unique();
+        let destination_pubkey = Pubkey::new_unique();
+        let fee_payer = Pubkey::new_unique();
+        let (_message, spend) = resolve_spend_tx_and_check_account_balances(
+            &rpc_client,
+            false,
+            SpendAmount::RentExempt,
+            &Hash::default(),
+            &vote_account_pubkey,
+            &fee_payer,
+            ComputeUnitLimit::Default,
+            |lamports| {
+                Message::new(
+                    &[withdraw(
+                        &vote_account_pubkey,
+                        &withdraw_authority,
+                        lamports,
+                        &destination_pubkey,
+                    )],
+                    Some(&fee_payer),
+                )
+            },
+            CommitmentConfig::processed(),
+        )
+        .await
+        .unwrap();
+        spend
+    }
+
+    #[tokio::test]
+    async fn test_rent_exempt_spend_reserves_pending_delegator_rewards() {
+        const RENT_EXEMPT_MINIMUM: u64 = 27_000_000;
+        const PENDING_DELEGATOR_REWARDS: u64 = 5_000_000;
+        const WITHDRAWABLE: u64 = 1_000_000;
+        const RESERVED_BALANCE: u64 = RENT_EXEMPT_MINIMUM + PENDING_DELEGATOR_REWARDS;
+        const BALANCE: u64 = RESERVED_BALANCE + WITHDRAWABLE;
+        const BALANCE_WITHOUT_PENDING_REWARDS: u64 = RENT_EXEMPT_MINIMUM + WITHDRAWABLE;
+
+        // Without pending rewards, everything in excess of the rent-exempt
+        // minimum is withdrawable.
+        assert_eq!(
+            resolve_rent_exempt_spend(
+                vote_account(BALANCE_WITHOUT_PENDING_REWARDS, 0),
+                RENT_EXEMPT_MINIMUM,
+            )
+            .await,
+            WITHDRAWABLE
+        );
+
+        // Pending delegator rewards are reserved as well, matching the balance
+        // the vote program requires the account to retain.
+        assert_eq!(
+            resolve_rent_exempt_spend(
+                vote_account(BALANCE, PENDING_DELEGATOR_REWARDS),
+                RENT_EXEMPT_MINIMUM,
+            )
+            .await,
+            WITHDRAWABLE
+        );
+
+        // Nothing is withdrawable when the balance only covers the reserves.
+        assert_eq!(
+            resolve_rent_exempt_spend(
+                vote_account(RESERVED_BALANCE, PENDING_DELEGATOR_REWARDS),
+                RENT_EXEMPT_MINIMUM,
+            )
+            .await,
+            0
+        );
+    }
 }

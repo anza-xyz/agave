@@ -1,16 +1,22 @@
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use solana_entry::entry::{Entry, entry_views_for_tests};
 use {
     crate::{
         block_error::BlockError,
         blockstore::{Blockstore, BlockstoreError},
         blockstore_meta::SlotMeta,
-        entry_notifier_service::{EntryNotification, EntryNotifierSender},
+        entry_notifier_service::{EntryNotification, EntryNotifierSender, send_entry_notification},
         leader_schedule_cache::LeaderScheduleCache,
         shred::MAX_FEC_SETS_PER_SLOT,
         thread_pool::{WorkerJob, WorkerPool},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
+    agave_transaction_view::{
+        transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
+    },
     agave_votor_messages::{certificate::Certificate, migration::MigrationStatus},
+    bytes::Bytes,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
@@ -24,8 +30,11 @@ use {
     },
     solana_clock::{BankId, Slot},
     solana_entry::{
-        block_component::{BlockComponent, VersionedBlockMarker},
-        entry::{self, Entry, EntrySlice, EntryType, UnverifiedSignatures, create_ticks},
+        block_component::{ParsedBlockComponent, VersionedBlockMarker},
+        entry::{
+            self, EntrySliceTickCheck as _, EntryType, EntryView, UnverifiedSignatures,
+            create_ticks,
+        },
     },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -44,14 +53,11 @@ use {
         transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_shred_version::compute_shred_version,
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction::{
-        TransactionVerificationMode, sanitized::SanitizedTransaction,
-        versioned::VersionedTransaction,
-    },
+    solana_transaction::TransactionVerificationMode,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
     std::{
@@ -74,7 +80,7 @@ use {
 use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
 
 struct ReplayEntry {
-    entry: EntryType<RuntimeTransaction<SanitizedTransaction>>,
+    entry: EntryType<ReplayTransaction>,
     starting_index: usize,
 }
 
@@ -140,6 +146,7 @@ impl ExecuteBatchesInternalMetrics {
 ///
 /// This method is for use testing against a single Bank, and assumes `Bank::transaction_count()`
 /// represents the number of transactions executed in this Bank
+#[cfg(feature = "dev-context-only-utils")]
 pub fn process_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> Result<()> {
     let result = schedule_entries_for_tests(bank, entries);
 
@@ -153,21 +160,17 @@ pub fn process_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) 
     result.and(wait_result)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> Result<()> {
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction,
-              serialized_message: &[u8]|
-              -> Result<RuntimeTransaction<SanitizedTransaction>> {
-            bank.verify_transaction_with_serialized_message(
-                versioned_tx,
-                serialized_message,
-                TransactionVerificationMode::HashOnly,
-            )
+        move |unsanitized: UnsanitizedTransactionView<Bytes>| {
+            bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)
         }
     };
 
     let num_txs = entries.iter().map(|entry| entry.transactions.len()).sum();
+    let entries = entry_views_for_tests(entries);
     let entry::ValidatedHashedTransactions {
         entries,
         unverified_signatures,
@@ -244,7 +247,7 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
 /// Validate an entry's transactions before scheduling: each transaction's account
 /// locks (count and duplicates). Does not take account locks - the unified scheduler orders conflicts.
 fn validate_entry_transactions(
-    transactions: &[RuntimeTransaction<SanitizedTransaction>],
+    transactions: &[ReplayTransaction],
     tx_account_lock_limit: usize,
 ) -> Result<()> {
     for transaction in transactions {
@@ -504,9 +507,9 @@ pub fn process_blockstore_from_root(
 
 /// Verify that a segment of entries has the correct number of ticks and hashes
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn verify_ticks(
+fn verify_ticks<D: TransactionData>(
     bank: &Bank,
-    entries: &[Entry],
+    entries: &[EntryView<D>],
     slot_full: bool,
     tick_hash_count: &mut u64,
     migration_status: &MigrationStatus,
@@ -1066,7 +1069,7 @@ impl PohVerificationJob {
 }
 
 struct SignaturesVerificationJob {
-    signatures: Arc<VerificationBatch<UnverifiedSignatures>>,
+    signatures: Arc<VerificationBatch<UnverifiedSignatures<Bytes>>>,
     range: Range<usize>,
     slot: Slot,
     bank_id: BankId,
@@ -1217,7 +1220,7 @@ impl AsyncVerificationProgress {
     fn spawn_signature_verification(
         &mut self,
         worker_pool: &ReplayVerificationWorkerPool,
-        signatures: UnverifiedSignatures,
+        signatures: UnverifiedSignatures<Bytes>,
         slot: Slot,
         bank_id: BankId,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -1376,7 +1379,7 @@ pub fn confirm_slot(
     let (slot_components, completed_ranges, slot_full) = {
         let mut load_elapsed = Measure::start("load_elapsed");
         let load_result = blockstore
-            .get_slot_components_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
+            .get_slot_component_views_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
             .map_err(BlockstoreProcessorError::FailedToLoadEntries);
         load_elapsed.stop();
         if load_result.is_err() {
@@ -1419,7 +1422,7 @@ pub fn confirm_slot(
     // Find the index of the last EntryBatch in slot_components
     let last_entry_batch_index = slot_components
         .iter()
-        .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
+        .rposition(|bc| matches!(bc, ParsedBlockComponent::EntryBatch(_)));
 
     for (ix, (completed_range, component)) in
         completed_ranges.iter().zip(slot_components).enumerate()
@@ -1428,7 +1431,7 @@ pub fn confirm_slot(
         let is_final = slot_full && ix == completed_ranges.len() - 1;
 
         match component {
-            BlockComponent::EntryBatch(entries) => {
+            ParsedBlockComponent::EntryBatch(entries) => {
                 let slot_full = slot_full && ix == last_entry_batch_index.unwrap();
 
                 // Skip block component validation for genesis block. Slot 0 is handled specially,
@@ -1456,7 +1459,7 @@ pub fn confirm_slot(
                     migration_status,
                 )?;
             }
-            BlockComponent::BlockMarker(marker) => {
+            ParsedBlockComponent::BlockMarker(marker) => {
                 let block_footer = match &marker {
                     VersionedBlockMarker::V1(marker) => marker.as_block_footer().cloned(),
                 };
@@ -1495,12 +1498,14 @@ pub fn confirm_slot(
                         })?;
                     if let Some(block_footer) = block_footer
                         && let Some(entry_notification_sender) = entry_notification_sender
-                        && let Err(err) =
-                            entry_notification_sender.send(EntryNotification::BlockFooter {
+                        && let Err(err) = send_entry_notification(
+                            entry_notification_sender,
+                            EntryNotification::BlockFooter {
                                 slot,
                                 bank_id: bank.bank_id(),
                                 block_footer: Box::new(block_footer),
-                            })
+                            },
+                        )
                     {
                         warn!(
                             "Slot {slot} block footer entry_notification_sender send failed: \
@@ -1527,7 +1532,7 @@ pub fn confirm_slot(
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_verification_worker_pool: &ReplayVerificationWorkerPool,
-    slot_entries_load_result: (Vec<Entry>, u64, bool),
+    slot_entries_load_result: (Vec<EntryView<Bytes>>, u64, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
@@ -1563,13 +1568,16 @@ fn confirm_slot_entries(
         .map(|(i, entry)| {
             if let Some(entry_notification_sender) = entry_notification_sender {
                 let entry_index = progress.num_entries.saturating_add(i);
-                if let Err(err) = entry_notification_sender.send(EntryNotification::Entry {
-                    slot,
-                    bank_id,
-                    index: entry_index,
-                    entry: entry.into(),
-                    starting_transaction_index: entry_tx_starting_index,
-                }) {
+                if let Err(err) = send_entry_notification(
+                    entry_notification_sender,
+                    EntryNotification::Entry {
+                        slot,
+                        bank_id,
+                        index: entry_index,
+                        entry: entry.into(),
+                        starting_transaction_index: entry_tx_starting_index,
+                    },
+                ) {
                     warn!(
                         "Slot {slot}, entry {entry_index} entry_notification_sender send failed: \
                          {err:?}"
@@ -1612,7 +1620,7 @@ fn confirm_slot_entries(
     let last_entry_hash = entries.last().map(|e| e.hash);
     if !skip_verification {
         let start_hash = progress.last_entry;
-        let verify_entries = entry::entries_to_verification_data(&entries);
+        let verify_entries = entry::entry_views_to_verification_data(&entries);
         datapoint_debug!(
             "verify-batch-size",
             ("size", verify_entries.len() as i64, i64)
@@ -1629,12 +1637,8 @@ fn confirm_slot_entries(
 
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction, serialized_message: &[u8]| {
-            bank.verify_transaction_with_serialized_message(
-                versioned_tx,
-                serialized_message,
-                TransactionVerificationMode::HashOnly,
-            )
+        move |unsanitized: UnsanitizedTransactionView<Bytes>| {
+            bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)
         }
     };
 
@@ -2488,6 +2492,7 @@ pub mod tests {
             },
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
@@ -2526,10 +2531,11 @@ pub mod tests {
             },
             transaction_execution::TransactionStatusMessage,
         },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::error::SystemError,
         solana_system_transaction as system_transaction,
-        solana_transaction::Transaction,
+        solana_transaction::{Transaction, sanitized::MessageHash},
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_pool::DefaultSchedulerPool,
         solana_vote::{vote_account::VoteAccount, vote_transaction},
@@ -5017,10 +5023,7 @@ pub mod tests {
 
         // After the migrationary phase, no vote-account root may be inferred, including a root
         // whose slot predates migration.
-        let genesis_block = Block {
-            slot: migration_slot - 1,
-            block_id: Hash::new_unique(),
-        };
+        let genesis_block = Block::new_unique(migration_slot - 1);
         migration_status.set_genesis_block(genesis_block);
         migration_status.set_genesis_certificate(genesis_certificate(genesis_block));
         assert!(migration_status.is_ready_to_enable());
@@ -5050,7 +5053,7 @@ pub mod tests {
         let result = confirm_slot_entries(
             &bank,
             &replay_verification_worker_pool,
-            (slot_entries, 0, slot_full),
+            (entry_views_for_tests(slot_entries), 0, slot_full),
             &mut ConfirmationTiming::default(),
             progress,
             false,
@@ -5084,7 +5087,7 @@ pub mod tests {
     fn create_test_transactions(
         mint_keypair: &Keypair,
         genesis_hash: &Hash,
-    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> Vec<ReplayTransaction> {
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
         let pubkey2 = solana_pubkey::new_rand();
@@ -5092,19 +5095,19 @@ pub mod tests {
         let pubkey3 = solana_pubkey::new_rand();
 
         vec![
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            ReplayTransaction::from(system_transaction::transfer(
                 mint_keypair,
                 &pubkey,
                 1,
                 *genesis_hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            ReplayTransaction::from(system_transaction::transfer(
                 &keypair2,
                 &pubkey2,
                 1,
                 *genesis_hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            ReplayTransaction::from(system_transaction::transfer(
                 &keypair3,
                 &pubkey3,
                 1,
@@ -5310,13 +5313,25 @@ pub mod tests {
                     )
                     .unwrap();
                 let unverified_signatures = entry::validate_and_hash_transactions(
-                    vec![entry.clone()],
+                    entry_views_for_tests(vec![entry.clone()]),
                     num_items,
                     transaction_hash_verify_thread_pool(),
-                    |transaction, _| {
-                        Ok(RuntimeTransaction::from_transaction_for_tests(
-                            transaction.into_legacy_transaction().unwrap(),
-                        ))
+                    |unsanitized: UnsanitizedTransactionView<Bytes>| {
+                        let sanitized = unsanitized
+                            .sanitize(
+                                &solana_runtime_transaction::sanitize_config::sanitize_config(),
+                            )
+                            .map_err(|_| TransactionError::SanitizeFailure)?;
+                        let statically_loaded = RuntimeTransaction::<
+                            SanitizedTransactionView<Bytes>,
+                        >::try_new(
+                            sanitized, MessageHash::Compute, None
+                        )?;
+                        ReplayTransaction::try_new(
+                            statically_loaded,
+                            None,
+                            &agave_reserved_account_keys::ReservedAccountKeys::empty_key_set(),
+                        )
                     },
                 )
                 .unwrap()
@@ -5700,6 +5715,7 @@ pub mod tests {
                 &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             )
+            .into_iter()
             .filter(Shred::is_data)
             .collect();
         next_shred_index = header_shreds.last().unwrap().index() + 1;
@@ -5718,6 +5734,7 @@ pub mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
                 .filter(Shred::is_data)
                 .collect();
             next_shred_index = footer_shreds.last().unwrap().index() + 1;
@@ -5733,6 +5750,7 @@ pub mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
                 .filter(Shred::is_data)
                 .collect();
 
@@ -5750,6 +5768,7 @@ pub mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
                 .filter(Shred::is_data)
                 .collect();
             next_shred_index = entry_shreds.last().unwrap().index() + 1;
@@ -5765,6 +5784,7 @@ pub mod tests {
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
+                .into_iter()
                 .filter(Shred::is_data)
                 .collect();
 
@@ -5954,6 +5974,7 @@ pub mod tests {
                         &ReedSolomonCache::default(),
                         &mut ProcessShredsStats::default(),
                     )
+                    .into_iter()
                     .filter(Shred::is_data)
                     .collect();
                 blockstore.insert_shreds(shreds, true).unwrap();
@@ -6315,13 +6336,13 @@ pub mod tests {
         let payer = Keypair::new();
         let hash = Hash::new_unique();
         let txs = vec![
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            ReplayTransaction::from(system_transaction::transfer(
                 &payer,
                 &Pubkey::new_unique(),
                 1,
                 hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            ReplayTransaction::from(system_transaction::transfer(
                 &payer,
                 &Pubkey::new_unique(),
                 1,
@@ -6333,14 +6354,12 @@ pub mod tests {
 
     #[test]
     fn test_validate_entry_transactions_too_many_locks() {
-        let txs = vec![RuntimeTransaction::from_transaction_for_tests(
-            system_transaction::transfer(
-                &Keypair::new(),
-                &Pubkey::new_unique(),
-                1,
-                Hash::new_unique(),
-            ),
-        )];
+        let txs = vec![ReplayTransaction::from(system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            Hash::new_unique(),
+        ))];
         // transfer touches >1 account; limit of 1 must reject
         assert_eq!(
             validate_entry_transactions(&txs, 1),
@@ -6368,9 +6387,11 @@ pub mod tests {
             recent_blockhash: Hash::new_unique(),
             instructions: vec![CompiledInstruction::new(2, &(), vec![0, 1])],
         };
-        let txs = vec![RuntimeTransaction::from_transaction_for_tests(
-            Transaction::new(&[&payer], message, Hash::new_unique()),
-        )];
+        let txs = vec![ReplayTransaction::from(Transaction::new(
+            &[&payer],
+            message,
+            Hash::new_unique(),
+        ))];
         assert_eq!(
             validate_entry_transactions(&txs, 10),
             Err(TransactionError::AccountLoadedTwice)

@@ -1178,25 +1178,16 @@ mod tests {
 
         for slot in base_slot..base_slot + MAX_PENDING_REPAIR_EVENTS as Slot {
             state.push_pending_repair_event(RepairEvent::FetchBlock {
-                block: Block {
-                    slot,
-                    block_id: Hash::new_unique(),
-                },
+                block: Block::new_unique(slot),
             });
             assert!(state.pending_repair_events.len() <= MAX_PENDING_REPAIR_EVENTS);
         }
 
         state.push_pending_repair_event(RepairEvent::FetchBlock {
-            block: Block {
-                slot: 1,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(1),
         });
         state.push_pending_repair_event(RepairEvent::FetchBlock {
-            block: Block {
-                slot: base_slot + MAX_PENDING_REPAIR_EVENTS as Slot,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(base_slot + MAX_PENDING_REPAIR_EVENTS as Slot),
         });
 
         assert_eq!(state.pending_repair_events.len(), MAX_PENDING_REPAIR_EVENTS);
@@ -1882,10 +1873,7 @@ mod tests {
 
         // Fill up requested_blocks with MAX_ALTERNATE_BLOCKS_PER_SLOT blocks for this slot
         for _ in 0..MAX_ALTERNATE_BLOCKS_PER_SLOT {
-            state.requested_blocks.insert(Block {
-                slot,
-                block_id: Hash::new_unique(),
-            });
+            state.requested_blocks.insert(Block::new_unique(slot));
         }
 
         let new_block_id = Hash::new_unique();

@@ -1,9 +1,15 @@
 use {
     crate::transaction_meta::TransactionMeta,
-    solana_svm_transaction::svm_transaction::{SVMStaticTransaction, SVMTransaction},
+    solana_svm_transaction::{
+        svm_message::SVMStaticMessage,
+        svm_transaction::{SVMStaticTransaction, SVMTransaction},
+    },
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     std::borrow::Cow,
 };
+
+pub trait StaticMessageWithMeta: TransactionMeta + SVMStaticMessage {}
+impl<T: TransactionMeta + SVMStaticMessage> StaticMessageWithMeta for T {}
 
 pub trait StaticTransactionWithMeta: TransactionMeta + SVMStaticTransaction {
     /// Required to interact with several legacy interfaces that require

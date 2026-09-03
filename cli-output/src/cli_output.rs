@@ -2970,25 +2970,23 @@ pub fn return_signers_with_config(
 }
 
 pub fn return_signers_data(tx: &Transaction, config: &ReturnSignersConfig) -> CliSignOnlyData {
-    let verify_results = tx.verify_with_results();
+    let message_data = tx.message_data();
     let mut signers = Vec::new();
     let mut absent = Vec::new();
     let mut bad_sig = Vec::new();
     tx.signatures
         .iter()
         .zip(tx.message.account_keys.iter())
-        .zip(verify_results)
-        .for_each(|((sig, key), res)| {
-            if res {
-                signers.push(format!("{key}={sig}"))
-            } else if *sig == Signature::default() {
+        .for_each(|(sig, key)| {
+            if *sig == Signature::default() {
                 absent.push(key.to_string());
+            } else if sig.verify(key.as_ref(), &message_data) {
+                signers.push(format!("{key}={sig}"));
             } else {
                 bad_sig.push(key.to_string());
             }
         });
     let message = if config.dump_transaction_message {
-        let message_data = tx.message_data();
         Some(BASE64_STANDARD.encode(message_data))
     } else {
         None
@@ -3073,13 +3071,19 @@ pub enum CliSignatureVerificationStatus {
 
 impl CliSignatureVerificationStatus {
     pub fn verify_transaction(tx: &VersionedTransaction) -> Vec<Self> {
-        tx.verify_with_results()
+        let message_bytes = tx.message.serialize();
+        tx.message
+            .static_account_keys()
             .iter()
             .zip(&tx.signatures)
-            .map(|(stat, sig)| match stat {
-                true => CliSignatureVerificationStatus::Pass,
-                false if sig == &Signature::default() => CliSignatureVerificationStatus::None,
-                false => CliSignatureVerificationStatus::Fail,
+            .map(|(key, sig)| {
+                if sig == &Signature::default() {
+                    CliSignatureVerificationStatus::None
+                } else if sig.verify(key.as_ref(), &message_bytes) {
+                    CliSignatureVerificationStatus::Pass
+                } else {
+                    CliSignatureVerificationStatus::Fail
+                }
             })
             .collect()
     }

@@ -4,7 +4,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_nohash_hasher::BuildNoHashHasher,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     std::{
         collections::BTreeSet,
         ops::Deref,
@@ -38,7 +38,7 @@ impl MaxFlushedRoot {
 
 #[derive(Debug)]
 pub struct SlotCache {
-    cache: DashMap<Pubkey, Arc<CachedAccount>, PubkeyHasherBuilder>,
+    cache: DashMap<Pubkey, Arc<CachedAccount>, ahash::RandomState>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
     unique_account_writes_size: AtomicU64,
@@ -158,7 +158,7 @@ impl SlotCache {
 }
 
 impl Deref for SlotCache {
-    type Target = DashMap<Pubkey, Arc<CachedAccount>, PubkeyHasherBuilder>;
+    type Target = DashMap<Pubkey, Arc<CachedAccount>, ahash::RandomState>;
     fn deref(&self) -> &Self::Target {
         &self.cache
     }
@@ -182,7 +182,7 @@ impl CachedAccount {
 /// look-up miss on max_slot by falling back to scanning all slots in the cache (see load_latest)
 #[derive(Debug, Default)]
 struct AccountsCacheIndex {
-    entries: DashMap<Pubkey, (Slot, u32), PubkeyHasherBuilder>,
+    entries: DashMap<Pubkey, (Slot, u32), ahash::RandomState>,
     // The number of unique pubkeys in the index, for reporting purposes. This is to avoid having to
     // lock each shard of the entries dashmap to count unique keys on demand
     num_unique_pubkeys: AtomicU64,

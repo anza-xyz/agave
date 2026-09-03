@@ -50,16 +50,11 @@ impl WarmQuicCacheService {
     }
 
     pub fn new(
-        tpu_connection_cache: Option<Arc<ConnectionCache>>,
         vote_connection_cache: Option<Arc<ConnectionCache>>,
         cluster_info: Arc<ClusterInfo>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        assert!(matches!(
-            tpu_connection_cache.as_deref(),
-            None | Some(ConnectionCache::Quic(_))
-        ));
         assert!(matches!(
             vote_connection_cache.as_deref(),
             None | Some(ConnectionCache::Quic(_))
@@ -78,14 +73,6 @@ impl WarmQuicCacheService {
                         && maybe_last_leader != Some(leader_pubkey)
                     {
                         maybe_last_leader = Some(leader_pubkey);
-                        // Warm cache for regular transactions
-                        Self::warmup_connection(
-                            tpu_connection_cache.as_deref(),
-                            &cluster_info,
-                            &leader_pubkey,
-                            |node| node.tpu(Protocol::QUIC),
-                            "tpu",
-                        );
                         // Warm cache for vote
                         Self::warmup_connection(
                             vote_connection_cache.as_deref(),

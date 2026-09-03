@@ -63,6 +63,19 @@ impl fmt::Display for LtHash {
     }
 }
 
+/// Receives the input of one [`LtHash`]. Only the concatenation of the parts
+/// matters, so an implementor may consume each part as it arrives or coalesce them
+/// first.
+pub trait SingleLtHashUpdater {
+    fn write_part(&mut self, bytes: &[u8]);
+}
+
+impl SingleLtHashUpdater for blake3::Hasher {
+    fn write_part(&mut self, bytes: &[u8]) {
+        self.update(bytes);
+    }
+}
+
 /// A smaller "checksum" of the LtHash, useful when 2 KiB is too large
 //
 // Developer notes:

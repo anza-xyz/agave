@@ -2638,7 +2638,6 @@ fn test_program_sbf_realloc() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -3923,7 +3922,6 @@ fn test_cpi_account_ownership_writability() {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4025,16 +4023,9 @@ fn test_cpi_account_ownership_writability() {
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
-            if virtual_address_space_adjustments {
-                // We move the data pointer, virtual_address_space_adjustments doesn't allow it
-                // anymore so it errors out earlier. See
-                // test_cpi_invalid_account_info_pointers.
-                TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
-            } else {
-                // We managed to make CPI write into the account data, but the
-                // usual checks still apply and we get an error.
-                TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
-            }
+            // We move the data pointer, syscall_parameter_address_restrictions doesn't allow it
+            // anymore so it errors out earlier. See test_cpi_invalid_account_info_pointers.
+            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
         );
 
         // We're going to try and make CPI write ref_to_len_in_vm into a 2nd
@@ -4064,30 +4055,17 @@ fn test_cpi_account_ownership_writability() {
             let message = Message::new(&[instruction], Some(&mint_pubkey));
             let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
             let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-            if virtual_address_space_adjustments {
-                assert_eq!(
-                    result.unwrap_err(),
-                    TransactionError::InstructionError(
-                        0,
-                        InstructionError::ProgramFailedToComplete
-                    )
-                );
-                // We haven't moved the data pointer, but ref_to_len_vm _is_ in
-                // the account data vm range and that's not allowed either.
-                assert!(
-                    logs.iter().any(|log| log.contains("Invalid pointer")),
-                    "{logs:?}"
-                );
-            } else {
-                // we expect this to succeed as after updating `ref_to_len_in_vm`,
-                // CPI will sync the actual account data between the callee and the
-                // caller, _always_ writing over the location pointed by
-                // `ref_to_len_in_vm`. To verify this, we check that the account
-                // data is in fact all zeroes like it is in the callee.
-                result.unwrap();
-                let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-                assert_eq!(account.data(), vec![0; 40]);
-            }
+            assert_eq!(
+                result.unwrap_err(),
+                TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
+            );
+            // We haven't moved the data pointer, but ref_to_len_vm _is_ in
+            // the account data vm range and that's not allowed either.
+            assert!(
+                logs.iter().any(|log| log.contains("Invalid pointer")),
+                "{logs:?}"
+            );
+            assert!(account.data().is_empty());
         }
 
         // Test that the caller can write to an account which it received from the callee
@@ -4121,7 +4099,6 @@ fn test_cpi_account_data_updates() {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4194,8 +4171,8 @@ fn test_cpi_account_data_updates() {
                     if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
-                        InstructionError::ModifiedProgramId
-                    }
+                        InstructionError::InvalidRealloc
+                    },
                 )
             );
         } else {
@@ -4228,14 +4205,7 @@ fn test_cpi_account_data_updates() {
         } else if deprecated_caller {
             assert_eq!(
                 result.unwrap_err().unwrap(),
-                TransactionError::InstructionError(
-                    0,
-                    if virtual_address_space_adjustments {
-                        InstructionError::InvalidRealloc
-                    } else {
-                        InstructionError::ExternalAccountDataModified
-                    }
-                )
+                TransactionError::InstructionError(0, InstructionError::InvalidRealloc),
             );
         } else {
             assert!(result.is_ok(), "{result:?}");
@@ -4273,11 +4243,11 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if virtual_address_space_adjustments && deprecated_callee {
+                    if deprecated_callee {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::ExternalAccountDataModified
-                    }
+                    },
                 )
             );
         } else {
@@ -4315,8 +4285,8 @@ fn test_cpi_account_data_updates() {
                     if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
-                        InstructionError::ModifiedProgramId
-                    }
+                        InstructionError::InvalidRealloc
+                    },
                 )
             );
         } else {
@@ -4352,8 +4322,8 @@ fn test_cpi_account_data_updates() {
                     if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
-                        InstructionError::ModifiedProgramId
-                    }
+                        InstructionError::InvalidRealloc
+                    },
                 )
             );
         } else {
@@ -4433,6 +4403,86 @@ fn test_cpi_invalid_account_info_pointers() {
                 logs.iter().any(|log| log.contains("Invalid pointer")),
                 "{logs:?}"
             );
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_cpi_invalid_account_info_rc() {
+    agave_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(100_123_456_789);
+    let account_keypair = Keypair::new();
+
+    for virtual_address_space_adjustments in [false, true] {
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        let feature_set = Arc::make_mut(&mut bank.feature_set);
+        // by default test banks have all features enabled, so we only need to
+        // disable when needed
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+        }
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+        let mint_pubkey = mint_keypair.pubkey();
+        let mut account_metas = vec![
+            AccountMeta::new(mint_pubkey, true),
+            AccountMeta::new(account_keypair.pubkey(), false),
+        ];
+
+        let mut program_ids: Vec<Pubkey> = Vec::with_capacity(2);
+
+        #[cfg(feature = "sbf_rust")]
+        {
+            let invoke_program_id = create_program(
+                &bank,
+                &bpf_loader_upgradeable::id(),
+                "solana_sbf_rust_invoke",
+            );
+            account_metas.push(AccountMeta::new_readonly(invoke_program_id, false));
+            program_ids.push(invoke_program_id);
+        }
+
+        let mut bank_client = BankClient::new_shared(bank.clone());
+        let bank = bank_client
+            .advance_slot(1, &bank_forks, SlotLeader::default())
+            .unwrap();
+
+        for invoke_program_id in &program_ids {
+            for ix in [TEST_CPI_INVALID_LAMPORTS_RC, TEST_CPI_INVALID_DATA_RC] {
+                let account = AccountSharedData::new(42, 5, invoke_program_id);
+                bank.store_account(&account_keypair.pubkey(), &account);
+                let instruction = Instruction::new_with_bytes(
+                    *invoke_program_id,
+                    &[ix, 42, 42, 42],
+                    account_metas.clone(),
+                );
+
+                let message = Message::new(&[instruction], Some(&mint_pubkey));
+                let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+                let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+                if virtual_address_space_adjustments {
+                    assert_eq!(
+                        result.unwrap_err(),
+                        TransactionError::InstructionError(
+                            0,
+                            InstructionError::ExternalAccountDataModified,
+                        ),
+                    );
+                } else {
+                    assert!(result.is_err(), "{result:?}");
+                    assert!(
+                        logs.iter().any(|log| log.contains("Invalid pointer")),
+                        "{logs:?}"
+                    );
+                }
+            }
         }
     }
 }
@@ -4546,7 +4596,6 @@ fn test_deny_access_beyond_current_length() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4616,7 +4665,6 @@ fn test_deny_executable_write() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4672,7 +4720,6 @@ fn test_update_callee_account() {
         // by default test banks have all features enabled, so we only need to
         // disable when needed
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
@@ -4902,193 +4949,24 @@ fn test_update_callee_account() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        assert!(result.is_ok());
 
-        if virtual_address_space_adjustments {
-            // changing the data pointer is not permitted
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok());
-
-            let data = bank_client
-                .get_account_data(&account_keypair.pubkey())
-                .unwrap()
-                .unwrap();
-
-            assert_eq!(data.len(), 10240);
-
-            data.iter().enumerate().for_each(|(i, v)| {
-                let expected = match i {
-                    // since the data is was cloned, the write to 8191 was lost
-                    8190 => (i as u8) ^ 0xe5,
-                    ..=10240 => i as u8,
-                    _ => 0,
-                };
-
-                assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
-            });
-        }
-    }
-}
-
-#[test]
-fn test_account_info_in_account() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    let mut programs = Vec::new();
-    #[cfg(feature = "sbf_c")]
-    {
-        programs.push("invoke");
-    }
-    #[cfg(feature = "sbf_rust")]
-    {
-        programs.push("solana_sbf_rust_invoke");
-    }
-
-    for program in programs {
-        for syscall_parameter_address_restrictions in [false, true] {
-            let mut bank = Bank::new_for_tests(&genesis_config);
-            let feature_set = Arc::make_mut(&mut bank.feature_set);
-            // by default test banks have all features enabled, so we only need to
-            // disable when needed
-            if !syscall_parameter_address_restrictions {
-                feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-                feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-                feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-            }
-
-            let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-            let invoke_program_id = create_program(&bank, &bpf_loader_upgradeable::id(), program);
-            let mut bank_client = BankClient::new_shared(bank.clone());
-            let bank = bank_client
-                .advance_slot(1, &bank_forks, SlotLeader::default())
-                .unwrap();
-
-            let account_keypair = Keypair::new();
-
-            let mint_pubkey = mint_keypair.pubkey();
-
-            let account_metas = vec![
-                AccountMeta::new(mint_pubkey, true),
-                AccountMeta::new(account_keypair.pubkey(), false),
-                AccountMeta::new_readonly(invoke_program_id, false),
-            ];
-
-            let mut instruction_data = vec![TEST_ACCOUNT_INFO_IN_ACCOUNT];
-            instruction_data.extend_from_slice(32usize.to_le_bytes().as_ref());
-
-            let instruction =
-                Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
-
-            let account = AccountSharedData::new(42, 10240, &invoke_program_id);
-
-            bank.store_account(&account_keypair.pubkey(), &account);
-
-            let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if syscall_parameter_address_restrictions {
-                assert!(result.is_err());
-            } else {
-                assert!(result.is_ok());
-            }
-        }
-    }
-}
-
-#[test]
-fn test_account_info_rc_in_account() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    for syscall_parameter_address_restrictions in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !syscall_parameter_address_restrictions {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
-
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
-        );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
+        let data = bank_client
+            .get_account_data(&account_keypair.pubkey())
+            .unwrap()
             .unwrap();
 
-        let account_keypair = Keypair::new();
+        assert_eq!(data.len(), 10240);
 
-        let mint_pubkey = mint_keypair.pubkey();
+        data.iter().enumerate().for_each(|(i, v)| {
+            let expected = match i {
+                8190 | 8191 => (i as u8) ^ 0xe5,
+                ..=10240 => i as u8,
+                _ => 0,
+            };
 
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new(account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(invoke_program_id, false),
-        ];
-
-        let instruction_data = vec![TEST_ACCOUNT_INFO_LAMPORTS_RC, 0, 0, 0];
-
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
-        );
-
-        let account = AccountSharedData::new(42, 10240, &invoke_program_id);
-
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let message = Message::new(&[instruction], Some(&mint_pubkey));
-        let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-        let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-
-        if syscall_parameter_address_restrictions {
-            assert!(
-                logs.last().unwrap().ends_with(" failed: Invalid pointer"),
-                "{logs:?}"
-            );
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok(), "{logs:?}");
-        }
-
-        let instruction_data = vec![TEST_ACCOUNT_INFO_DATA_RC, 0, 0, 0];
-
-        let instruction =
-            Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
-
-        let account = AccountSharedData::new(42, 10240, &invoke_program_id);
-
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let message = Message::new(&[instruction], Some(&mint_pubkey));
-        let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-        let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-
-        if syscall_parameter_address_restrictions {
-            assert!(
-                logs.last().unwrap().ends_with(" failed: Invalid pointer"),
-                "{logs:?}"
-            );
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok(), "{logs:?}");
-        }
+            assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
+        });
     }
 }
 
@@ -5103,131 +4981,142 @@ fn test_clone_account_data() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    let feature_set = Arc::make_mut(&mut bank.feature_set);
-
-    feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-    feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-    feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let invoke_program_id = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
-        "solana_sbf_rust_invoke",
-    );
-    let invoke_program_id2 = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
-        "solana_sbf_rust_invoke",
-    );
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeader::default())
-        .unwrap();
-
     let account_keypair = Keypair::new();
-
     let mint_pubkey = mint_keypair.pubkey();
 
-    let account_metas = vec![
-        AccountMeta::new(mint_pubkey, true),
-        AccountMeta::new(account_keypair.pubkey(), false),
-        AccountMeta::new_readonly(invoke_program_id2, false),
-        AccountMeta::new_readonly(invoke_program_id, false),
-    ];
+    for virtual_address_space_adjustments in [false, true] {
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        let feature_set = Arc::make_mut(&mut bank.feature_set);
+        // by default test banks have all features enabled, so we only need to
+        // disable when needed
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+        }
 
-    // I. clone data and CPI; modify data in callee.
-    // Now the original data in the caller is unmodified, and we get a "instruction modified data of an account it does not own"
-    // error in the caller
-    let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
-    let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data_from_slice(&data);
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let invoke_program_id = create_program(
+            &bank,
+            &bpf_loader_upgradeable::id(),
+            "solana_sbf_rust_invoke",
+        );
+        let invoke_program_id2 = create_program(
+            &bank,
+            &bpf_loader_upgradeable::id(),
+            "solana_sbf_rust_invoke",
+        );
+        let account_metas = vec![
+            AccountMeta::new(mint_pubkey, true),
+            AccountMeta::new(account_keypair.pubkey(), false),
+            AccountMeta::new_readonly(invoke_program_id2, false),
+            AccountMeta::new_readonly(invoke_program_id, false),
+        ];
+        let mut bank_client = BankClient::new_shared(bank.clone());
+        let bank = bank_client
+            .advance_slot(1, &bank_forks, SlotLeader::default())
+            .unwrap();
 
-    bank.store_account(&account_keypair.pubkey(), &account);
+        // I. clone data and CPI; modify data in callee
+        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
+        let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
+        account.set_data_from_slice(&data);
 
-    let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        bank.store_account(&account_keypair.pubkey(), &account);
 
-    // instruction data for inner CPI: modify account
-    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
+        let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
 
-    let instruction =
-        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
+        // instruction data for inner CPI: modify account
+        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
 
-    let message = Message::new(&[instruction], Some(&mint_pubkey));
-    let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-    let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-    assert!(result.is_err(), "{result:?}");
-    let error = format!(
-        "Program {invoke_program_id} failed: instruction modified data of an account it does not \
-         own"
-    );
-    assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
+        let instruction = Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        );
+        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        if virtual_address_space_adjustments {
+            assert_eq!(
+                result.unwrap_err().unwrap(),
+                TransactionError::InstructionError(
+                    0,
+                    InstructionError::ExternalAccountDataModified,
+                ),
+            );
+        } else {
+            assert!(result.is_ok());
+        }
 
-    // II. clone data, modify and then CPI
-    // The deserialize checks should verify that we're not allowed to modify an account we don't own, even though
-    // we have only modified a copy of the data. Fails in caller
-    let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
-    let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data_from_slice(&data);
+        // II. clone data, modify and then CPI
+        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
+        let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
+        account.set_data_from_slice(&data);
 
-    bank.store_account(&account_keypair.pubkey(), &account);
+        bank.store_account(&account_keypair.pubkey(), &account);
 
-    let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
 
-    // instruction data for inner CPI
-    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        // instruction data for inner CPI
+        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
 
-    let instruction =
-        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        );
+        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified),
+        );
 
-    let message = Message::new(&[instruction], Some(&mint_pubkey));
-    let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-    let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-    assert!(result.is_err(), "{result:?}");
-    let error = format!(
-        "Program {invoke_program_id} failed: instruction modified data of an account it does not \
-         own"
-    );
-    assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
+        // III. Clone data, call, modifiy in callee and then make the same change in the caller
+        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
+        let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
+        account.set_data_from_slice(&data);
 
-    // II. Clone data, call, modifiy in callee and then make the same change in the caller - transaction succeeds
-    // Note the caller needs to modify the original account data, not the copy
-    let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
-    let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data_from_slice(&data);
+        bank.store_account(&account_keypair.pubkey(), &account);
 
-    bank.store_account(&account_keypair.pubkey(), &account);
+        let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
 
-    let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
+        // instruction data for inner CPI
+        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+        instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
 
-    // instruction data for inner CPI
-    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-    instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
-
-    let instruction =
-        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-
-    // works because the account is exactly the same in caller as callee
-    assert!(result.is_ok(), "{result:?}");
+        let instruction = Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        );
+        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        if virtual_address_space_adjustments {
+            assert_eq!(
+                result.unwrap_err().unwrap(),
+                TransactionError::InstructionError(
+                    0,
+                    InstructionError::ExternalAccountDataModified
+                ),
+            );
+        } else {
+            assert!(result.is_ok());
+        }
+    }
 }
 
 #[test]
@@ -5451,7 +5340,6 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
         if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
             feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }

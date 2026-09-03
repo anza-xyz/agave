@@ -201,6 +201,7 @@ pub fn check_and_handle_new_root<CB>(
 }
 
 /// Sets the bank forks root:
+/// - Quiesce and synchronously purge banks orphaned by the new root
 /// - Prune the program cache
 /// - Prune bank forks and drop the removed banks
 /// - Calls the callback for use in replay stage and tests
@@ -217,13 +218,45 @@ pub fn set_bank_forks_root<CB>(
 {
     let banks_to_remove: Vec<_> = {
         let bank_forks = bank_forks.read().unwrap();
+        let old_root = bank_forks.root();
+        let new_root_ancestors = bank_forks
+            .get(new_root)
+            .expect("Root bank doesn't exist")
+            .proper_ancestors_set();
         bank_forks
             .get_non_rooted(new_root, highest_super_majority_root)
-            .filter_map(|slot| bank_forks.get_with_scheduler(slot))
+            .filter_map(|slot| {
+                bank_forks.get_with_scheduler(slot).map(|bank| {
+                    let is_orphaned = slot > old_root && !new_root_ancestors.contains(&slot);
+                    (bank, is_orphaned)
+                })
+            })
             .collect()
     };
-    for bank in banks_to_remove {
+
+    let mut orphaned_slot_bank_ids = Vec::new();
+    for (bank, is_orphaned) in &banks_to_remove {
+        // Quiesce all banks whose shared slot state will be purged before waiting on schedulers.
+        // Banks removed because they are rooted ancestors are already frozen and do not need the
+        // retirement barrier.
+        if *is_orphaned {
+            bank.quiesce_transaction_execution();
+            orphaned_slot_bank_ids.push((bank.slot(), bank.bank_id()));
+        }
+    }
+    for (bank, _) in &banks_to_remove {
         let _ = bank.wait_for_completed_scheduler();
+    }
+
+    if !orphaned_slot_bank_ids.is_empty() {
+        // Purge these banks inline so we are not waiting on the lazy Accounts Background Service for cleanup.
+        // Waiting could stall replay if we recreate a bank for this slot.
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        root_bank.remove_unrooted_slots(&orphaned_slot_bank_ids);
+        for (slot, _) in &orphaned_slot_bank_ids {
+            root_bank.clear_slot_signatures(*slot);
+            root_bank.prune_program_cache_by_deployment_slot(*slot);
+        }
     }
 
     bank_forks.read().unwrap().prune_program_cache(new_root);

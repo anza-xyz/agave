@@ -112,6 +112,9 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         let bank = leader_state
             .working_bank()
             .expect("active_leader_state should only return an active bank");
+        if bank.slot() != work.target_slot {
+            return Ok(ProcessingStatus::CouldNotProcess(work));
+        }
         self.metrics
             .count_metrics
             .num_messages_processed
@@ -187,40 +190,25 @@ pub(crate) mod external {
             },
         },
         agave_scheduler_bindings::{
-            MAX_TRANSACTIONS_PER_MESSAGE, PackToWorkerMessage, SharablePubkeys,
-            TransactionResponseRegion, WorkerToPackMessage,
-            pack_message_flags::{self, check_flags, execution_flags},
-            processed_codes,
-            worker_message_types::{
-                CheckResponse, ExecutionResponse, fee_payer_balance_flags, not_included_reasons,
-                parsing_and_sanitization_flags, resolve_flags, status_check_flags,
-            },
+            ExecutionResponseRegion, ExecutionWorkerToPackMessage, MAX_TRANSACTIONS_PER_MESSAGE,
+            PackToExecutionWorkerMessage, execution_message_flags,
+            worker_message_types::{ExecutionResponse, not_included_reasons},
         },
         agave_scheduling_utils::{
             error::transaction_error_to_not_included_reason,
-            responses_region::{allocate_check_response_region, execution_responses_from_iter},
+            responses_region::execution_responses_from_iter,
             transaction_ptr::{TransactionPtr, TransactionPtrBatch},
         },
         agave_transaction_view::{
-            resolved_transaction_view::ResolvedTransactionView, result::TransactionViewError,
-            sanitize::SanitizeConfig, transaction_data::TransactionData,
-            transaction_view::SanitizedTransactionView,
+            resolved_transaction_view::ResolvedTransactionView, sanitize::SanitizeConfig,
         },
         arrayvec::ArrayVec,
-        solana_account::ReadableAccount,
-        solana_clock::Slot,
         solana_cost_model::cost_model::CostModel,
-        solana_pubkey::Pubkey,
-        solana_runtime::{
-            bank::Bank,
-            bank_forks::{BankPair, SharableBanks},
-        },
+        solana_runtime::bank::Bank,
         solana_runtime_transaction::{
             runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
         },
-        solana_svm_transaction::svm_message::SVMMessage,
-        solana_transaction::TransactionError,
-        std::ptr::NonNull,
+        std::num::NonZeroUsize,
     };
 
     #[derive(Debug, Error)]
@@ -234,17 +222,14 @@ pub(crate) mod external {
     pub(crate) struct ExternalWorker {
         exit: Arc<AtomicBool>,
         consumer: Consumer,
-        sender: shaq::spsc::Producer<WorkerToPackMessage>,
+        sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
         allocator: rts_alloc::Allocator,
 
         shared_leader_state: SharedLeaderState,
-        sharable_banks: SharableBanks,
         metrics: Arc<ConsumeWorkerMetrics>,
     }
 
     type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
-    type TxView = SanitizedTransactionView<TransactionPtr>;
-
     enum IterationResult {
         ProcessedMessage,
         Idle,
@@ -255,10 +240,9 @@ pub(crate) mod external {
             id: u32,
             exit: Arc<AtomicBool>,
             consumer: Consumer,
-            sender: shaq::spsc::Producer<WorkerToPackMessage>,
+            sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
             allocator: rts_alloc::Allocator,
             shared_leader_state: SharedLeaderState,
-            sharable_banks: SharableBanks,
         ) -> Self {
             Self {
                 exit,
@@ -266,7 +250,6 @@ pub(crate) mod external {
                 sender,
                 allocator,
                 shared_leader_state,
-                sharable_banks,
                 metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
             }
         }
@@ -277,7 +260,7 @@ pub(crate) mod external {
 
         pub fn run(
             mut self,
-            mut receiver: shaq::spsc::Consumer<PackToWorkerMessage>,
+            mut receiver: shaq::spsc::Consumer<PackToExecutionWorkerMessage>,
         ) -> Result<(), ExternalConsumeWorkerError> {
             let mut should_drain_executes = false;
             let mut did_work = false;
@@ -307,39 +290,29 @@ pub(crate) mod external {
 
         fn iterate(
             &mut self,
-            receiver: &mut shaq::spsc::Consumer<PackToWorkerMessage>,
+            receiver: &mut shaq::spsc::Consumer<PackToExecutionWorkerMessage>,
             should_drain_executes: &mut bool,
         ) -> Result<IterationResult, ExternalConsumeWorkerError> {
-            self.allocator.clean_remote_free_lists();
-            if receiver.is_empty() {
-                receiver.sync();
-                *should_drain_executes = false;
+            self.allocator.clean_remote_frees();
+            let capacity = NonZeroUsize::new(receiver.capacity())
+                .expect("shaq queue capacity must be non-zero");
+            let Some(messages) = receiver.try_reserve_read_batch(capacity) else {
+                return Ok(IterationResult::Idle);
+            };
+
+            *should_drain_executes = false;
+            for message in messages {
+                // If the bank is unavailable, drain executes for the remainder of the batch.
+                *should_drain_executes |= self.process_message(&message, *should_drain_executes)?;
             }
 
-            match receiver.try_read() {
-                Some(message) => {
-                    self.sender.sync();
-
-                    // Process message, if bank is unavailable enable draining for the
-                    // remainder of the current batch (i.e. what our `receiver.sync()`
-                    // fetched).
-                    *should_drain_executes |=
-                        self.process_message(message, *should_drain_executes)?;
-
-                    // Publish our send & read offsets.
-                    self.sender.commit();
-                    receiver.finalize();
-
-                    Ok(IterationResult::ProcessedMessage)
-                }
-                None => Ok(IterationResult::Idle),
-            }
+            Ok(IterationResult::ProcessedMessage)
         }
 
         /// Return true if fetching a bank for execution timed out.
         fn process_message(
             &mut self,
-            message: &PackToWorkerMessage,
+            message: &PackToExecutionWorkerMessage,
             should_drain_executes: bool,
         ) -> Result<bool, ExternalConsumeWorkerError> {
             if !Self::validate_message(message) {
@@ -356,17 +329,13 @@ pub(crate) mod external {
                 .num_messages_processed
                 .fetch_add(1, Ordering::Relaxed);
 
-            if message.flags & pack_message_flags::EXECUTE != 0 {
-                self.execute_batch(message, should_drain_executes)
-            } else {
-                self.check_batch(message).map(|()| false)
-            }
+            self.execute_batch(message, should_drain_executes)
         }
 
         /// Return true if fetching a bank for execution timed out.
         fn execute_batch(
             &mut self,
-            message: &PackToWorkerMessage,
+            message: &PackToExecutionWorkerMessage,
             should_drain_executes: bool,
         ) -> Result<bool, ExternalConsumeWorkerError> {
             if should_drain_executes {
@@ -414,8 +383,8 @@ pub(crate) mod external {
 
             // Enforce all or nothing on translation_results.
             let execution_flags = ExecutionFlags {
-                drop_on_failure: message.flags & execution_flags::DROP_ON_FAILURE != 0,
-                all_or_nothing: message.flags & execution_flags::ALL_OR_NOTHING != 0,
+                drop_on_failure: message.flags & execution_message_flags::DROP_ON_FAILURE != 0,
+                all_or_nothing: message.flags & execution_message_flags::ALL_OR_NOTHING != 0,
             };
             if execution_flags.all_or_nothing && translation_results.len() != transactions.len() {
                 self.send_execution_response(
@@ -464,106 +433,14 @@ pub(crate) mod external {
             Ok(false)
         }
 
-        fn check_batch(
-            &mut self,
-            message: &PackToWorkerMessage,
-        ) -> Result<(), ExternalConsumeWorkerError> {
-            let BankPair {
-                root_bank,
-                working_bank,
-            } = self.sharable_banks.load();
-            // Prefer the leader bank over the highest working fork when leader
-            let working_bank = active_leader_state(&self.shared_leader_state)
-                .and_then(|leader_state| leader_state.working_bank().cloned())
-                .unwrap_or(working_bank);
-
-            if working_bank.slot() > message.max_working_slot {
-                return self.return_unprocessed_message(
-                    message,
-                    processed_codes::MAX_WORKING_SLOT_EXCEEDED,
-                );
-            }
-
-            // SAFETY: Assumption that external scheduler does not pass messages with batch regions
-            //         not pointing to valid regions in the allocator.
-            let batch = unsafe {
-                TransactionPtrBatch::from_sharable_transaction_batch_region(
-                    &message.batch,
-                    &self.allocator,
-                )
-            };
-
-            // Allocate space for all responses.
-            let (responses_ptr, responses) = allocate_check_response_region(
-                &self.allocator,
-                usize::from(message.batch.num_transactions),
-            )
-            .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
-
-            // SAFETY: responses_ptr is sufficiently sized and aligned.
-            let (parsing_results, parsed_transactions, response_slice) = unsafe {
-                Self::parse_transactions_and_populate_initial_check_responses(
-                    message,
-                    &batch,
-                    responses_ptr,
-                )
-            };
-
-            // Check fee-payer if requested.
-            if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
-                Self::check_load_fee_payer_balance(
-                    &parsing_results,
-                    &parsed_transactions,
-                    response_slice,
-                    &working_bank,
-                );
-            }
-
-            // Do resolving next since we (currently) need resolved transactions for status checks.
-            let (parsing_and_resolve_results, txs, max_ages) =
-                Self::translate_transaction_batch(&batch, &root_bank);
-
-            if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
-                self.check_resolve_pubkeys(
-                    &parsing_results,
-                    &parsing_and_resolve_results,
-                    &txs,
-                    &max_ages,
-                    response_slice,
-                    root_bank.slot(),
-                )?;
-            }
-
-            if message.flags & check_flags::STATUS_CHECKS != 0 {
-                Self::check_status_checks(
-                    &parsing_and_resolve_results,
-                    &txs,
-                    response_slice,
-                    &working_bank,
-                );
-            }
-
-            let response = WorkerToPackMessage {
-                batch: message.batch,
-                processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
-                responses,
-            };
-
-            self.sender
-                .try_write(response)
-                .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            Ok(())
-        }
-
         fn send_execution_response(
             &mut self,
-            message: &PackToWorkerMessage,
+            message: &PackToExecutionWorkerMessage,
             iter: impl ExactSizeIterator<Item = ExecutionResponse>,
         ) -> Result<(), ExternalConsumeWorkerError> {
             let responses = execution_responses_from_iter(&self.allocator, iter)
                 .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
-            let response = WorkerToPackMessage {
+            let response = ExecutionWorkerToPackMessage {
                 batch: message.batch,
                 processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
                 responses,
@@ -635,7 +512,7 @@ pub(crate) mod external {
         /// reason.
         fn return_not_included_with_reason(
             &mut self,
-            message: &PackToWorkerMessage,
+            message: &PackToExecutionWorkerMessage,
             reason: u8,
             execution_slot: u64,
         ) -> Result<(), ExternalConsumeWorkerError> {
@@ -650,7 +527,7 @@ pub(crate) mod external {
             )
             .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
 
-            let response_message = WorkerToPackMessage {
+            let response_message = ExecutionWorkerToPackMessage {
                 batch: message.batch,
                 processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
                 responses: response_region,
@@ -665,106 +542,19 @@ pub(crate) mod external {
             Ok(())
         }
 
-        fn check_resolve_pubkeys(
-            &self,
-            parsing_results: &[Result<(), TransactionViewError>],
-            parsing_and_resolve_results: &[Result<(), PacketHandlingError>],
-            txs: &[Tx],
-            max_ages: &[MaxAge],
-            responses: &mut [CheckResponse],
-            resolution_slot: Slot,
-        ) -> Result<(), ExternalConsumeWorkerError> {
-            assert_eq!(parsing_results.len(), parsing_and_resolve_results.len());
-            assert_eq!(parsing_results.len(), responses.len());
-
-            let mut resolved_transaction_iter = txs.iter();
-            let mut max_age_iter = max_ages.iter();
-            for (transaction_index, (parsing_result, parsing_and_resolve_results)) in
-                parsing_results
-                    .iter()
-                    .zip(parsing_and_resolve_results.iter())
-                    .enumerate()
-            {
-                if parsing_result.is_err() {
-                    continue;
-                }
-
-                let response = &mut responses[transaction_index];
-                response.resolve_flags |= resolve_flags::PERFORMED;
-                if parsing_and_resolve_results.is_err() {
-                    response.resolve_flags |= resolve_flags::FAILED;
-                    continue;
-                }
-
-                let transaction = resolved_transaction_iter.next().expect(
-                    "resolved_transaction_iter iterator must contain element for each sent parsed \
-                     transaction",
-                );
-                let max_age = max_age_iter.next().expect(
-                    "max_age_iter iterator must contain element for each sent parsed transaction",
-                );
-
-                // Address table lookups are sanitized to contain at least one account, so there
-                // are loaded keys exactly when account keys outnumber static account keys.
-                let account_keys = transaction.account_keys();
-                let num_static_account_keys = transaction.static_account_keys().len();
-                let (sharable_keys, alt_invalidation_slot) = if account_keys.len()
-                    > num_static_account_keys
-                {
-                    let num_pubkeys = account_keys.len().wrapping_sub(num_static_account_keys);
-                    let pubkeys_allocation = self
-                        .allocator
-                        .allocate(num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32)
-                        .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
-                        .cast();
-                    // SAFETY: non-overlapping and appropriately sized.
-                    unsafe {
-                        Self::copy_loaded_addresses(
-                            account_keys.iter().skip(num_static_account_keys),
-                            pubkeys_allocation,
-                        )
-                    };
-                    // SAFETY: pubkeys_allocation was allocated by allocator
-                    let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
-                    (
-                        SharablePubkeys {
-                            offset,
-                            num_pubkeys: num_pubkeys as u32,
-                        },
-                        max_age.alt_invalidation_slot,
-                    )
-                } else {
-                    (
-                        SharablePubkeys {
-                            offset: 0,
-                            num_pubkeys: 0,
-                        },
-                        u64::MAX,
-                    )
-                };
-
-                response.resolution_slot = resolution_slot;
-                response.resolved_pubkeys = sharable_keys;
-                response.min_alt_deactivation_slot = alt_invalidation_slot;
-            }
-
-            Ok(())
-        }
-
         fn return_unprocessed_message(
             &mut self,
-            message: &PackToWorkerMessage,
+            message: &PackToExecutionWorkerMessage,
             processed_code: u8,
         ) -> Result<(), ExternalConsumeWorkerError> {
             assert_ne!(
                 processed_code,
                 agave_scheduler_bindings::processed_codes::PROCESSED
             );
-            let response = WorkerToPackMessage {
+            let response = ExecutionWorkerToPackMessage {
                 batch: message.batch,
                 processed_code,
-                responses: TransactionResponseRegion {
-                    tag: 0,
+                responses: ExecutionResponseRegion {
                     num_transaction_responses: 0,
                     transaction_responses_offset: 0,
                 },
@@ -775,201 +565,6 @@ pub(crate) mod external {
                 .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
 
             Ok(())
-        }
-
-        /// # Safety:
-        /// - `responses_ptr` must be aligned and sufficiently sized.
-        unsafe fn parse_transactions_and_populate_initial_check_responses<'a>(
-            message: &PackToWorkerMessage,
-            batch: &TransactionPtrBatch,
-            responses_ptr: NonNull<CheckResponse>,
-        ) -> (
-            ArrayVec<Result<(), TransactionViewError>, MAX_TRANSACTIONS_PER_MESSAGE>,
-            ArrayVec<TxView, MAX_TRANSACTIONS_PER_MESSAGE>,
-            &'a mut [CheckResponse],
-        ) {
-            let sanitize_config = sanitize_config();
-            let mut parsing_results = ArrayVec::new();
-            let mut parsed_transactions = ArrayVec::new();
-            for (tx_ptr, _) in batch.iter() {
-                // Parsing and basic sanitization checks
-                match SanitizedTransactionView::try_new_sanitized(tx_ptr, &sanitize_config) {
-                    Ok(view) => {
-                        parsing_results.push(Ok(()));
-                        parsed_transactions.push(view);
-                    }
-                    Err(err) => {
-                        parsing_results.push(Err(err));
-                    }
-                }
-            }
-
-            // SAFETY: `response_ptr` is valid and of length message.batch.num_transactions
-            unsafe {
-                Self::check_populate_initial_messages(message, &parsing_results, responses_ptr)
-            };
-            // SAFETY: `response_ptr` is valid and of length message.batch.num_transactions
-            //         initial messages populated immediately above, so not possible to have
-            //         uninitialized values either.
-            let response_slice = unsafe {
-                core::slice::from_raw_parts_mut(
-                    responses_ptr.as_ptr(),
-                    usize::from(message.batch.num_transactions),
-                )
-            };
-
-            (parsing_results, parsed_transactions, response_slice)
-        }
-
-        /// Write initial response value for each transaction.
-        /// This allows simpler modification of individual responses in further checks.
-        /// # Safety
-        /// - `responses_ptr` is valid ptr for a slice of [`CheckResponse`] with at least
-        ///   length `message.batch.num_transactions`
-        unsafe fn check_populate_initial_messages(
-            message: &PackToWorkerMessage,
-            parsing_results: &[Result<(), TransactionViewError>],
-            responses_ptr: NonNull<CheckResponse>,
-        ) {
-            // Populate initial responses with the result of parsing/sanitization.
-            assert_eq!(
-                parsing_results.len(),
-                usize::from(message.batch.num_transactions)
-            );
-            let initial_status_check_flags = if message.flags & check_flags::STATUS_CHECKS != 0 {
-                status_check_flags::REQUESTED
-            } else {
-                0
-            };
-            let initial_fee_payer_balance_flags =
-                if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
-                    fee_payer_balance_flags::REQUESTED
-                } else {
-                    0
-                };
-            let initial_resolve_flags =
-                if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
-                    resolve_flags::REQUESTED
-                } else {
-                    0
-                };
-            // Setup initial responses with requested checks.
-            // Values only filled in when check is performed.
-            for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
-                // NOTE: this includes resolution failures since this is a necessary check for further checks.
-                let parsing_and_sanitization_flags = if parsing_result.is_err() {
-                    parsing_and_sanitization_flags::FAILED
-                } else {
-                    0
-                };
-
-                // SAFETY: transaaction_index is in bounds.
-                unsafe {
-                    responses_ptr.add(transaction_index).write(CheckResponse {
-                        parsing_and_sanitization_flags,
-                        status_check_flags: initial_status_check_flags,
-                        fee_payer_balance_flags: initial_fee_payer_balance_flags,
-                        resolve_flags: initial_resolve_flags,
-                        included_slot: 0,
-                        balance_slot: 0,
-                        fee_payer_balance: 0,
-                        resolution_slot: 0,
-                        min_alt_deactivation_slot: 0,
-                        resolved_pubkeys: SharablePubkeys {
-                            offset: 0,
-                            num_pubkeys: 0,
-                        },
-                    })
-                };
-            }
-        }
-
-        fn check_load_fee_payer_balance<D: TransactionData>(
-            parsing_results: &[Result<(), TransactionViewError>],
-            parsed_transactions: &[SanitizedTransactionView<D>],
-            responses: &mut [CheckResponse],
-            working_bank: &Bank,
-        ) {
-            assert_eq!(responses.len(), parsing_results.len());
-
-            let mut parsed_transaction_iter = parsed_transactions.iter();
-            for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
-                if parsing_result.is_err() {
-                    continue;
-                }
-
-                let transaction = parsed_transaction_iter.next().expect(
-                    "parsed_transaction_iter iterator must contain element for each sent parsed \
-                     transaction",
-                );
-
-                let fee_payer_balance = working_bank
-                    .rc
-                    .accounts
-                    .load_with_fixed_root(
-                        &working_bank.ancestors,
-                        &transaction.static_account_keys()[0],
-                    )
-                    .map(|(account, _slot)| account.lamports())
-                    .unwrap_or(0);
-
-                let response = &mut responses[transaction_index];
-                response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
-                response.fee_payer_balance = fee_payer_balance;
-                response.balance_slot = working_bank.slot();
-            }
-        }
-
-        fn check_status_checks<D: TransactionData>(
-            parsing_and_resolve_results: &[Result<(), PacketHandlingError>],
-            txs: &[RuntimeTransaction<ResolvedTransactionView<D>>],
-            responses: &mut [CheckResponse],
-            working_bank: &Bank,
-        ) {
-            assert_eq!(parsing_and_resolve_results.len(), responses.len());
-
-            let mut error_counters = TransactionErrorMetrics::default();
-            let (status_check_results, included_slots) = working_bank
-                .check_transactions_with_processed_slots(
-                    txs,
-                    &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE],
-                    working_bank.max_processing_age(),
-                    true,
-                    true,
-                    &mut error_counters,
-                );
-            let included_slots = included_slots.expect("requested to collect processed slots");
-
-            let mut status_check_results_iter =
-                status_check_results.iter().zip(included_slots.iter());
-            for (transaction_index, parsing_and_resolve_result) in
-                parsing_and_resolve_results.iter().enumerate()
-            {
-                if parsing_and_resolve_result.is_err() {
-                    continue;
-                }
-                let (status_check_result, included_slot) = status_check_results_iter
-                    .next()
-                    .expect("status check results must have element for each sent transaction");
-
-                let check_response = &mut responses[transaction_index];
-                check_response.status_check_flags |= status_check_flags::PERFORMED;
-                match status_check_result {
-                    Err(TransactionError::BlockhashNotFound) => {
-                        check_response.status_check_flags |= status_check_flags::TOO_OLD;
-                    }
-                    Err(TransactionError::AlreadyProcessed) => {
-                        check_response.status_check_flags |= status_check_flags::ALREADY_PROCESSED;
-                        check_response.included_slot =
-                            included_slot.expect("included_slot must be set for already processed");
-                    }
-                    Err(TransactionError::UnsupportedVersion) => {
-                        check_response.status_check_flags |=
-                            status_check_flags::UNSUPPORTED_VERSION;
-                    }
-                    _ => {}
-                }
-            }
         }
 
         /// Translate batch of transactions into usable
@@ -1029,40 +624,18 @@ pub(crate) mod external {
             })
         }
 
-        /// # Safety
-        /// - destination is appropriately sized
-        /// - destination does not overlap with loaded_addresses allocation
-        unsafe fn copy_loaded_addresses<'a>(
-            loaded_addresses: impl Iterator<Item = &'a Pubkey>,
-            dest: NonNull<Pubkey>,
-        ) {
-            for (index, pubkey) in loaded_addresses.enumerate() {
-                unsafe { dest.add(index).write(*pubkey) };
-            }
-        }
-
         /// Returns `true` if a message is valid and can be processed.
-        fn validate_message(message: &PackToWorkerMessage) -> bool {
+        fn validate_message(message: &PackToExecutionWorkerMessage) -> bool {
             message.batch.num_transactions > 0
                 && usize::from(message.batch.num_transactions) <= MAX_TRANSACTIONS_PER_MESSAGE
                 && Self::validate_message_flags(message.flags)
         }
 
         fn validate_message_flags(flags: u16) -> bool {
-            if flags & pack_message_flags::EXECUTE != 0 {
-                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE
-                    | execution_flags::DROP_ON_FAILURE
-                    | execution_flags::ALL_OR_NOTHING;
+            const ALLOWED_EXECUTE_FLAGS: u16 =
+                execution_message_flags::DROP_ON_FAILURE | execution_message_flags::ALL_OR_NOTHING;
 
-                flags & !ALLOWED_EXECUTE_FLAGS == 0
-            } else {
-                const ALLOWED_CHECK_BITS: u16 = pack_message_flags::CHECK
-                    | check_flags::STATUS_CHECKS
-                    | check_flags::LOAD_FEE_PAYER_BALANCE
-                    | check_flags::LOAD_ADDRESS_LOOKUP_TABLES;
-
-                flags != pack_message_flags::CHECK && flags & !ALLOWED_CHECK_BITS == 0
-            }
+            flags & !ALLOWED_EXECUTE_FLAGS == 0
         }
 
         fn response_from_commit_details(
@@ -1116,33 +689,25 @@ pub(crate) mod external {
         use {
             super::*,
             crate::banking_stage::{committer::Committer, tests::create_slow_genesis_config},
-            agave_scheduler_bindings::{SharableTransactionBatchRegion, worker_message_types},
+            agave_scheduler_bindings::{SharableTransactionBatchRegion, processed_codes},
             agave_scheduling_utils::{
                 handshake::{ClientLogon, client, server::Server},
-                responses_region::{CheckResponsesPtr, ExecutionResponsesPtr},
+                responses_region::ExecutionResponsesPtr,
             },
             crossbeam_channel::bounded,
-            solana_account::AccountSharedData,
             solana_genesis_config::GenesisConfig,
             solana_keypair::Keypair,
             solana_leader_schedule::SlotLeader,
             solana_ledger::genesis_utils::GenesisConfigInfo,
-            solana_message::v0::LoadedAddresses,
             solana_poh::{
                 record_channels::{RecordReceiver, record_channels},
                 transaction_recorder::TransactionRecorder,
             },
-            solana_runtime::{
-                bank_forks::BankForks, genesis_utils, vote_sender_types::ReplayVoteReceiver,
-            },
-            solana_sdk_ids::system_program,
-            solana_signer::Signer,
+            solana_pubkey::Pubkey,
+            solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
-            std::{
-                collections::HashSet,
-                sync::{RwLock, atomic::AtomicBool},
-            },
+            std::sync::{RwLock, atomic::AtomicBool},
             test_case::test_case,
         };
 
@@ -1155,15 +720,15 @@ pub(crate) mod external {
             mint_keypair: Keypair,
             genesis_config: GenesisConfig,
             bank: Arc<Bank>,
-            bank_forks: Arc<RwLock<BankForks>>,
+            _bank_forks: Arc<RwLock<BankForks>>,
             _replay_vote_receiver: ReplayVoteReceiver,
             record_receiver: RecordReceiver,
             allocator: rts_alloc::Allocator,
-            pack_to_worker: shaq::spsc::Producer<PackToWorkerMessage>,
-            worker_to_pack: shaq::spsc::Consumer<WorkerToPackMessage>,
+            pack_to_worker: shaq::spsc::Producer<PackToExecutionWorkerMessage>,
+            worker_to_pack: shaq::spsc::Consumer<ExecutionWorkerToPackMessage>,
             shared_leader_state: SharedLeaderState,
             worker: ExternalWorker,
-            receiver: shaq::spsc::Consumer<PackToWorkerMessage>,
+            receiver: shaq::spsc::Consumer<PackToExecutionWorkerMessage>,
             should_drain_executes: bool,
         }
 
@@ -1182,9 +747,8 @@ pub(crate) mod external {
                 self.record_receiver.restart(self.bank.bank_id());
             }
 
-            fn send_message(&mut self, message: PackToWorkerMessage) {
+            fn send_message(&mut self, message: PackToExecutionWorkerMessage) {
                 self.pack_to_worker.try_write(message).unwrap();
-                self.pack_to_worker.commit();
             }
 
             fn iterate(&mut self) -> Result<(), ExternalConsumeWorkerError> {
@@ -1195,39 +759,18 @@ pub(crate) mod external {
                 Ok(())
             }
 
-            fn recv_response(&mut self) -> WorkerToPackMessage {
-                self.worker_to_pack.sync();
-                let message = *self.worker_to_pack.try_read().unwrap();
-                self.worker_to_pack.finalize();
-                message
+            fn recv_response(&mut self) -> ExecutionWorkerToPackMessage {
+                self.worker_to_pack.try_read().unwrap()
             }
 
             fn execution_responses(
                 &self,
-                region: &TransactionResponseRegion,
+                region: &ExecutionResponseRegion,
             ) -> Vec<ExecutionResponse> {
-                assert_eq!(region.tag, worker_message_types::EXECUTION_RESPONSE);
                 unsafe {
                     // SAFETY: `region` was produced by this worker using the same shared
-                    // allocator, and the tag assertion above guarantees the pointed-to
-                    // allocation contains `ExecutionResponse` values.
+                    // allocator and contains `ExecutionResponse` values.
                     let responses = ExecutionResponsesPtr::from_transaction_response_region(
-                        region,
-                        &self.allocator,
-                    );
-                    let decoded = responses.iter().copied().collect();
-                    responses.free(&self.allocator);
-                    decoded
-                }
-            }
-
-            fn check_responses(&self, region: &TransactionResponseRegion) -> Vec<CheckResponse> {
-                assert_eq!(region.tag, worker_message_types::CHECK_RESPONSE);
-                unsafe {
-                    // SAFETY: `region` was produced by this worker using the same shared
-                    // allocator, and the tag assertion above guarantees the pointed-to
-                    // allocation contains `CheckResponse` values.
-                    let responses = CheckResponsesPtr::from_transaction_response_region(
                         region,
                         &self.allocator,
                     );
@@ -1332,6 +875,7 @@ pub(crate) mod external {
 
             let logon = ClientLogon {
                 worker_count: 1,
+                check_worker_count: 1,
                 allocator_size: 64 * 1024 * 1024,
                 allocator_handles: 1,
                 tpu_to_pack_capacity: 16,
@@ -1339,6 +883,8 @@ pub(crate) mod external {
                 pack_to_worker_capacity: 16,
                 worker_to_pack_capacity: 16,
                 flags: 0,
+                pack_to_check_worker_capacity: 16,
+                check_worker_to_pack_capacity: 16,
             };
             let (mut agave_session, files) = Server::setup_session(logon).unwrap();
             let mut client_session = client::setup_session(&logon, files).unwrap();
@@ -1360,14 +906,13 @@ pub(crate) mod external {
                 agave_worker.worker_to_pack,
                 agave_worker.allocator,
                 shared_leader_state.clone(),
-                bank_forks.read().unwrap().sharable_banks(),
             );
 
             ExternalTestFrame {
                 mint_keypair,
                 genesis_config,
                 bank,
-                bank_forks,
+                _bank_forks: bank_forks,
                 _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 allocator: client_session.allocators.pop().unwrap(),
@@ -1382,8 +927,8 @@ pub(crate) mod external {
 
         #[test]
         fn test_validate_message() {
-            let mut message = PackToWorkerMessage {
-                flags: agave_scheduler_bindings::pack_message_flags::EXECUTE,
+            let mut message = PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: u64::MAX,
                 batch: agave_scheduler_bindings::SharableTransactionBatchRegion {
                     num_transactions: 0,
@@ -1403,40 +948,23 @@ pub(crate) mod external {
             message.flags = u16::MAX;
             assert!(!ExternalWorker::validate_message(&message));
 
-            message.flags = pack_message_flags::EXECUTE;
+            message.flags = 0;
             assert!(ExternalWorker::validate_message(&message));
         }
 
         #[test]
         fn test_validate_message_flags() {
-            // Execute flags
+            assert!(ExternalWorker::validate_message_flags(0));
             assert!(ExternalWorker::validate_message_flags(
-                pack_message_flags::EXECUTE
-            ));
-            assert!(ExternalWorker::validate_message_flags(
-                pack_message_flags::EXECUTE | execution_flags::DROP_ON_FAILURE
+                execution_message_flags::DROP_ON_FAILURE
             ));
             assert!(ExternalWorker::validate_message_flags(
-                pack_message_flags::EXECUTE | execution_flags::ALL_OR_NOTHING
+                execution_message_flags::ALL_OR_NOTHING
             ));
             assert!(ExternalWorker::validate_message_flags(
-                pack_message_flags::EXECUTE
-                    | execution_flags::DROP_ON_FAILURE
-                    | execution_flags::ALL_OR_NOTHING
+                execution_message_flags::DROP_ON_FAILURE | execution_message_flags::ALL_OR_NOTHING
             ));
-            // Invalid execute flag
-            assert!(!ExternalWorker::validate_message_flags(
-                pack_message_flags::EXECUTE | (1 << 15)
-            ));
-
-            // Check flags
-            assert!(ExternalWorker::validate_message_flags(
-                pack_message_flags::CHECK
-                    | agave_scheduler_bindings::pack_message_flags::check_flags::LOAD_ADDRESS_LOOKUP_TABLES
-            ));
-            assert!(!ExternalWorker::validate_message_flags(
-                pack_message_flags::CHECK
-            ))
+            assert!(!ExternalWorker::validate_message_flags(1 << 15));
         }
 
         #[test]
@@ -1615,69 +1143,6 @@ pub(crate) mod external {
             )
         }
 
-        fn empty_check_responses(count: u8) -> Vec<CheckResponse> {
-            (0..count)
-                .map(|_| CheckResponse {
-                    parsing_and_sanitization_flags: 0,
-                    status_check_flags: 0,
-                    fee_payer_balance_flags: 0,
-                    resolve_flags: 0,
-                    included_slot: 0,
-                    balance_slot: 0,
-                    fee_payer_balance: 0,
-                    resolution_slot: 0,
-                    min_alt_deactivation_slot: 0,
-                    resolved_pubkeys: SharablePubkeys {
-                        offset: 0,
-                        num_pubkeys: 0,
-                    },
-                })
-                .collect()
-        }
-
-        #[test]
-        fn test_check_populate_initial_messages() {
-            let message = PackToWorkerMessage {
-                flags: pack_message_flags::CHECK | check_flags::LOAD_FEE_PAYER_BALANCE,
-                max_working_slot: 1,
-                batch: SharableTransactionBatchRegion {
-                    num_transactions: 3,
-                    transactions_offset: 0,
-                },
-            };
-
-            let mut responses = empty_check_responses(message.batch.num_transactions);
-            let responses_ptr = NonNull::new(responses.as_mut_ptr()).unwrap();
-
-            unsafe {
-                ExternalWorker::check_populate_initial_messages(
-                    &message,
-                    &[
-                        Ok(()),
-                        Err(TransactionViewError::ParseError),
-                        Err(TransactionViewError::SanitizeError),
-                    ],
-                    responses_ptr,
-                )
-            };
-
-            assert_eq!(responses[0].parsing_and_sanitization_flags, 0);
-            assert_eq!(
-                responses[1].parsing_and_sanitization_flags,
-                parsing_and_sanitization_flags::FAILED
-            );
-            assert_eq!(
-                responses[2].parsing_and_sanitization_flags,
-                parsing_and_sanitization_flags::FAILED
-            );
-            for response in responses.iter() {
-                assert_eq!(
-                    response.fee_payer_balance_flags,
-                    fee_payer_balance_flags::REQUESTED
-                );
-            }
-        }
-
         fn test_serialized_transaction(recent_blockhash: solana_hash::Hash) -> Vec<u8> {
             let tx = transfer(
                 &solana_keypair::Keypair::new(),
@@ -1686,128 +1151,6 @@ pub(crate) mod external {
                 recent_blockhash,
             );
             wincode::serialize(&tx).unwrap()
-        }
-
-        #[test]
-        fn test_check_load_fee_payer_balance() {
-            let genesis = genesis_utils::create_genesis_config(1_000_000_000);
-            let bank = Bank::new_for_tests(&genesis.genesis_config);
-
-            let tx1 = test_serialized_transaction(bank.confirmed_last_blockhash());
-            let tx2 = test_serialized_transaction(bank.confirmed_last_blockhash());
-
-            let parsing_results = [Ok(()), Err(TransactionViewError::ParseError), Ok(())];
-            let parsed_transactions = [
-                SanitizedTransactionView::try_new_sanitized(&tx1[..], &sanitize_config()).unwrap(),
-                SanitizedTransactionView::try_new_sanitized(&tx2[..], &sanitize_config()).unwrap(),
-            ];
-            bank.store_account(
-                &parsed_transactions[1].static_account_keys()[0],
-                &AccountSharedData::new(1_000_000_000, 0, &system_program::ID),
-            );
-            let mut responses = empty_check_responses(parsing_results.len() as u8);
-
-            ExternalWorker::check_load_fee_payer_balance(
-                &parsing_results[..],
-                &parsed_transactions[..],
-                &mut responses,
-                &bank,
-            );
-
-            // test-note: requested is not set by this function.
-            assert_eq!(
-                responses[0].fee_payer_balance_flags,
-                fee_payer_balance_flags::PERFORMED
-            );
-            assert_eq!(responses[0].balance_slot, bank.slot());
-            assert_eq!(responses[0].fee_payer_balance, 0);
-
-            assert_eq!(responses[1].fee_payer_balance_flags, 0);
-            assert_eq!(responses[1].balance_slot, 0);
-            assert_eq!(responses[1].fee_payer_balance, 0);
-
-            assert_eq!(
-                responses[2].fee_payer_balance_flags,
-                fee_payer_balance_flags::PERFORMED
-            );
-            assert_eq!(responses[2].balance_slot, bank.slot());
-            assert_eq!(responses[2].fee_payer_balance, 1_000_000_000);
-        }
-
-        #[test]
-        fn test_check_status_checks() {
-            let genesis = genesis_utils::create_genesis_config(1_000_000_000);
-            let (bank, _bank_forks) =
-                Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
-
-            let tx1 = test_serialized_transaction(bank.confirmed_last_blockhash());
-            let tx2 = test_serialized_transaction(solana_hash::Hash::new_unique());
-            let tx3 = test_serialized_transaction(bank.confirmed_last_blockhash());
-
-            fn to_resolved_view(
-                tx: &'_ [u8],
-            ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
-                RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
-                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                        SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config())
-                            .unwrap(),
-                        solana_transaction::sanitized::MessageHash::Compute,
-                        Some(false),
-                    )
-                    .unwrap(),
-                    None,
-                    &HashSet::new(),
-                )
-                .unwrap()
-            }
-
-            let parsing_and_resolve_results = [
-                Ok(()),
-                Err(PacketHandlingError::Sanitization),
-                Ok(()),
-                Ok(()),
-            ];
-            let parsed_transactions = [
-                to_resolved_view(&tx1[..]),
-                to_resolved_view(&tx2[..]),
-                to_resolved_view(&tx3[..]),
-            ];
-
-            // Process transaction 3.
-            bank.store_account(
-                &parsed_transactions[2].static_account_keys()[0],
-                &AccountSharedData::new(1_000_000_000, 0, &system_program::ID),
-            );
-            bank.process_transaction(&wincode::deserialize(&tx3).unwrap())
-                .unwrap();
-
-            let mut responses = empty_check_responses(parsing_and_resolve_results.len() as u8);
-
-            ExternalWorker::check_status_checks(
-                &parsing_and_resolve_results,
-                &parsed_transactions,
-                &mut responses,
-                &bank,
-            );
-
-            // test-note: requested is not set by this function.
-            assert_eq!(
-                responses[0].status_check_flags,
-                status_check_flags::PERFORMED
-            );
-
-            assert_eq!(responses[1].status_check_flags, 0);
-
-            assert_eq!(
-                responses[2].status_check_flags,
-                status_check_flags::PERFORMED | status_check_flags::TOO_OLD
-            );
-
-            assert_eq!(
-                responses[3].status_check_flags,
-                status_check_flags::PERFORMED | status_check_flags::ALREADY_PROCESSED
-            );
-            assert_eq!(responses[3].included_slot, bank.slot());
         }
 
         #[test]
@@ -1840,32 +1183,11 @@ pub(crate) mod external {
         }
 
         #[test]
-        fn test_copy_loaded_addresses() {
-            let loaded_addresses = LoadedAddresses {
-                writable: (0..5).map(|_| Pubkey::new_unique()).collect(),
-                readonly: (0..2).map(|_| Pubkey::new_unique()).collect(),
-            };
-            let mut buffer = vec![Pubkey::default(); 7];
-            unsafe {
-                ExternalWorker::copy_loaded_addresses(
-                    loaded_addresses
-                        .writable
-                        .iter()
-                        .chain(&loaded_addresses.readonly),
-                    NonNull::new(buffer.as_mut_ptr()).unwrap(),
-                )
-            };
-
-            assert_eq!(&loaded_addresses.writable, &buffer[0..5]);
-            assert_eq!(&loaded_addresses.readonly, &buffer[5..7]);
-        }
-
-        #[test]
         fn test_run_invalid_message() {
             let mut test_frame = setup_external_test_frame();
 
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: u64::MAX,
                 batch: SharableTransactionBatchRegion {
                     num_transactions: 0,
@@ -1881,7 +1203,7 @@ pub(crate) mod external {
             let batch = test_frame.allocate_batch(&[test_serialized_transaction(
                 test_frame.bank.confirmed_last_blockhash(),
             )]);
-            test_frame.send_message(PackToWorkerMessage {
+            test_frame.send_message(PackToExecutionWorkerMessage {
                 flags: u16::MAX,
                 max_working_slot: u64::MAX,
                 batch: batch.region,
@@ -1906,8 +1228,8 @@ pub(crate) mod external {
             ))
             .unwrap()]);
 
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: u64::MAX,
                 batch: batch.region,
             });
@@ -1936,8 +1258,8 @@ pub(crate) mod external {
                 test_frame.genesis_config.hash(),
             ))
             .unwrap()]);
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: test_frame.bank.slot() - 1,
                 batch: batch.region,
             });
@@ -1968,8 +1290,8 @@ pub(crate) mod external {
                 .unwrap(),
                 vec![0xff],
             ]);
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE | execution_flags::ALL_OR_NOTHING,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: execution_message_flags::ALL_OR_NOTHING,
                 max_working_slot: test_frame.bank.slot(),
                 batch: batch.region,
             });
@@ -1986,132 +1308,6 @@ pub(crate) mod external {
                 responses[1].not_included_reason,
                 not_included_reasons::SANITIZE_FAILURE
             );
-
-            test_frame.free_batch(batch);
-        }
-
-        #[test]
-        fn test_run_check_happy_path() {
-            let mut test_frame = setup_external_test_frame();
-            let fee_payer = Keypair::new();
-            let fee_payer_balance = 123_456;
-            test_frame.bank.store_account(
-                &fee_payer.pubkey(),
-                &AccountSharedData::new(fee_payer_balance, 0, &system_program::ID),
-            );
-
-            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
-                &fee_payer,
-                &Pubkey::new_unique(),
-                1,
-                test_frame.bank.confirmed_last_blockhash(),
-            ))
-            .unwrap()]);
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::CHECK
-                    | check_flags::STATUS_CHECKS
-                    | check_flags::LOAD_FEE_PAYER_BALANCE,
-                max_working_slot: test_frame.bank.slot(),
-                batch: batch.region,
-            });
-            test_frame.iterate().unwrap();
-            let response = test_frame.recv_response();
-            assert_eq!(response.processed_code, processed_codes::PROCESSED);
-            let responses = test_frame.check_responses(&response.responses);
-            assert_eq!(responses.len(), 1);
-            assert_eq!(
-                responses[0].status_check_flags,
-                status_check_flags::REQUESTED | status_check_flags::PERFORMED
-            );
-            assert_eq!(
-                responses[0].fee_payer_balance_flags,
-                fee_payer_balance_flags::REQUESTED | fee_payer_balance_flags::PERFORMED
-            );
-            assert_eq!(responses[0].balance_slot, test_frame.bank.slot());
-            assert_eq!(responses[0].fee_payer_balance, fee_payer_balance);
-
-            test_frame.free_batch(batch);
-        }
-
-        #[test]
-        fn test_run_check_max_working_slot_exceeded() {
-            let mut test_frame = setup_external_test_frame();
-            let batch = test_frame.allocate_batch(&[test_serialized_transaction(
-                test_frame.bank.confirmed_last_blockhash(),
-            )]);
-
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::CHECK | check_flags::STATUS_CHECKS,
-                max_working_slot: test_frame.bank.slot() - 1,
-                batch: batch.region,
-            });
-            test_frame.iterate().unwrap();
-            let response = test_frame.recv_response();
-            assert_eq!(
-                response.processed_code,
-                processed_codes::MAX_WORKING_SLOT_EXCEEDED
-            );
-            assert_eq!(response.responses.num_transaction_responses, 0);
-            assert_eq!(response.responses.transaction_responses_offset, 0);
-
-            test_frame.free_batch(batch);
-        }
-
-        #[test]
-        fn test_run_check_prefers_active_leader_bank() {
-            let mut test_frame = setup_external_test_frame();
-            let batch = test_frame.allocate_batch(&[test_serialized_transaction(
-                test_frame.bank.confirmed_last_blockhash(),
-            )]);
-
-            // Insert a higher fork bank so the highest working bank exceeds
-            // `max_working_slot` while the active leader bank does not.
-            let higher_bank = Bank::new_from_parent(
-                test_frame.bank.clone(),
-                SlotLeader::new_unique(),
-                test_frame.bank.slot() + 1,
-            );
-            test_frame.bank_forks.write().unwrap().insert(higher_bank);
-            test_frame.set_active_bank();
-
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::CHECK | check_flags::STATUS_CHECKS,
-                max_working_slot: test_frame.bank.slot(),
-                batch: batch.region,
-            });
-            test_frame.iterate().unwrap();
-            let response = test_frame.recv_response();
-            assert_eq!(response.processed_code, processed_codes::PROCESSED);
-            let responses = test_frame.check_responses(&response.responses);
-            assert_eq!(responses.len(), 1);
-
-            test_frame.free_batch(batch);
-        }
-
-        #[test]
-        fn test_run_check_resolve_without_loaded_addresses() {
-            let mut test_frame = setup_external_test_frame();
-            let batch = test_frame.allocate_batch(&[test_serialized_transaction(
-                test_frame.bank.confirmed_last_blockhash(),
-            )]);
-
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::CHECK | check_flags::LOAD_ADDRESS_LOOKUP_TABLES,
-                max_working_slot: test_frame.bank.slot(),
-                batch: batch.region,
-            });
-            test_frame.iterate().unwrap();
-            let response = test_frame.recv_response();
-            assert_eq!(response.processed_code, processed_codes::PROCESSED);
-            let responses = test_frame.check_responses(&response.responses);
-            assert_eq!(responses.len(), 1);
-            assert_eq!(
-                responses[0].resolve_flags,
-                resolve_flags::REQUESTED | resolve_flags::PERFORMED
-            );
-            assert_eq!(responses[0].resolution_slot, test_frame.bank.slot());
-            assert_eq!(responses[0].resolved_pubkeys.num_pubkeys, 0);
-            assert_eq!(responses[0].min_alt_deactivation_slot, u64::MAX);
 
             test_frame.free_batch(batch);
         }
@@ -2134,13 +1330,13 @@ pub(crate) mod external {
             ))
             .unwrap()]);
 
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: test_frame.bank.slot(),
                 batch: batch1.region,
             });
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: test_frame.bank.slot(),
                 batch: batch2.region,
             });
@@ -2154,10 +1350,6 @@ pub(crate) mod external {
                 first_responses[0].not_included_reason,
                 not_included_reasons::BANK_NOT_AVAILABLE
             );
-
-            test_frame.enable_execution();
-            test_frame.iterate().unwrap();
-            assert!(test_frame.should_drain_executes);
 
             let response = test_frame.recv_response();
             assert_eq!(response.processed_code, processed_codes::PROCESSED);
@@ -2187,8 +1379,8 @@ pub(crate) mod external {
             ))
             .unwrap()]);
 
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: test_frame.bank.slot(),
                 batch: batch.region,
             });
@@ -2237,8 +1429,8 @@ pub(crate) mod external {
                 .unwrap(),
             ]);
 
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: test_frame.bank.slot(),
                 batch: batch.region,
             });
@@ -2261,43 +1453,35 @@ pub(crate) mod external {
             let mut test_frame = setup_external_test_frame();
             test_frame.enable_execution();
 
-            let execute_batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+            let first_batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
                 &test_frame.mint_keypair,
                 &Pubkey::new_unique(),
                 1,
                 test_frame.bank.confirmed_last_blockhash(),
             ))
             .unwrap()]);
-            let fee_payer = Keypair::new();
-            let fee_payer_balance = 654_321;
-            test_frame.bank.store_account(
-                &fee_payer.pubkey(),
-                &AccountSharedData::new(fee_payer_balance, 0, &system_program::ID),
-            );
-            let check_batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
-                &fee_payer,
+            let second_batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
                 &Pubkey::new_unique(),
                 1,
                 test_frame.bank.confirmed_last_blockhash(),
             ))
             .unwrap()]);
 
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: test_frame.bank.slot(),
-                batch: execute_batch.region,
+                batch: first_batch.region,
             });
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::CHECK
-                    | check_flags::STATUS_CHECKS
-                    | check_flags::LOAD_FEE_PAYER_BALANCE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: test_frame.bank.slot(),
-                batch: check_batch.region,
+                batch: second_batch.region,
             });
 
             test_frame.iterate().unwrap();
             let first = test_frame.recv_response();
-            assert_eq!(first.batch, execute_batch.region);
+            assert_eq!(first.batch, first_batch.region);
             let first_responses = test_frame.execution_responses(&first.responses);
             assert_eq!(first_responses.len(), 1);
             assert_eq!(
@@ -2305,19 +1489,17 @@ pub(crate) mod external {
                 not_included_reasons::NONE
             );
 
-            test_frame.iterate().unwrap();
             let second = test_frame.recv_response();
-            assert_eq!(second.batch, check_batch.region);
-            let second_responses = test_frame.check_responses(&second.responses);
+            assert_eq!(second.batch, second_batch.region);
+            let second_responses = test_frame.execution_responses(&second.responses);
             assert_eq!(second_responses.len(), 1);
             assert_eq!(
-                second_responses[0].fee_payer_balance_flags,
-                fee_payer_balance_flags::REQUESTED | fee_payer_balance_flags::PERFORMED
+                second_responses[0].not_included_reason,
+                not_included_reasons::NONE
             );
-            assert_eq!(second_responses[0].fee_payer_balance, fee_payer_balance);
 
-            test_frame.free_batch(execute_batch);
-            test_frame.free_batch(check_batch);
+            test_frame.free_batch(first_batch);
+            test_frame.free_batch(second_batch);
         }
 
         #[test]
@@ -2333,8 +1515,8 @@ pub(crate) mod external {
             ))
             .unwrap()]);
 
-            test_frame.send_message(PackToWorkerMessage {
-                flags: pack_message_flags::EXECUTE,
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
                 max_working_slot: test_frame.bank.slot(),
                 batch: batch.region,
             });
@@ -3028,6 +2210,7 @@ mod tests {
             alt_invalidation_slot: bank.slot(),
         };
         let work = ConsumeWork {
+            target_slot: bank.slot(),
             batch_id: bid,
             ids: vec![id],
             transactions,
@@ -3070,6 +2253,7 @@ mod tests {
             )]);
             consume_sender
                 .send(ConsumeWork {
+                    target_slot: bank.slot(),
                     batch_id: TransactionBatchId::new(i as u64),
                     ids: vec![i],
                     transactions,
@@ -3095,6 +2279,64 @@ mod tests {
         }
 
         // Cleanup.
+        drop(test_frame);
+        let _ = worker_thread.join().unwrap();
+    }
+
+    #[test]
+    fn test_worker_consume_wrong_slot() {
+        let (mut test_frame, worker) = setup_test_frame();
+        let metrics = worker.metrics_handle();
+        let TestFrame {
+            mint_keypair,
+            genesis_config,
+            bank,
+            shared_leader_state,
+            consume_sender,
+            consumed_receiver,
+            ..
+        } = &mut test_frame;
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+            None,
+        )));
+        let worker_thread = std::thread::spawn(move || worker.run());
+
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            genesis_config.hash(),
+        )]);
+        consume_sender
+            .send(ConsumeWork {
+                target_slot: bank.slot() + 1,
+                batch_id: TransactionBatchId::new(0),
+                ids: vec![0],
+                transactions,
+                max_ages: vec![MaxAge {
+                    sanitized_epoch: bank.epoch(),
+                    alt_invalidation_slot: bank.slot(),
+                }],
+            })
+            .unwrap();
+
+        let consumed = consumed_receiver.recv().unwrap();
+        assert_eq!(consumed.work.target_slot, bank.slot() + 1);
+        assert_eq!(
+            consumed.retryable_indexes,
+            vec![RetryableIndex::new(0, true)]
+        );
+        assert_eq!(
+            metrics
+                .count_metrics
+                .num_messages_processed
+                .load(Ordering::Relaxed),
+            0
+        );
+
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
     }
@@ -3136,6 +2378,7 @@ mod tests {
             alt_invalidation_slot: bank.slot(),
         };
         let work = ConsumeWork {
+            target_slot: bank.slot(),
             batch_id: bid,
             ids: vec![id],
             transactions,
@@ -3191,6 +2434,7 @@ mod tests {
         };
         consume_sender
             .send(ConsumeWork {
+                target_slot: bank.slot(),
                 batch_id: bid,
                 ids: vec![id1, id2],
                 transactions: txs,
@@ -3257,6 +2501,7 @@ mod tests {
         };
         consume_sender
             .send(ConsumeWork {
+                target_slot: bank.slot(),
                 batch_id: bid1,
                 ids: vec![id1],
                 transactions: txs1,
@@ -3266,6 +2511,7 @@ mod tests {
 
         consume_sender
             .send(ConsumeWork {
+                target_slot: bank.slot(),
                 batch_id: bid2,
                 ids: vec![id2],
                 transactions: txs2,
@@ -3383,6 +2629,7 @@ mod tests {
 
         consume_sender
             .send(ConsumeWork {
+                target_slot: bank.slot(),
                 batch_id: TransactionBatchId::new(1),
                 ids: vec![0, 1, 2, 3, 4, 5],
                 transactions: txs,
@@ -3420,20 +2667,19 @@ mod tests {
         // all but one succeed. 6 for initial funding
         assert_eq!(bank.transaction_count(), 6 + 5);
 
-        let already_processed_results = bank
-            .check_transactions(
-                &sanitized_txs,
-                &vec![Ok(()); sanitized_txs.len()],
-                bank.max_processing_age(),
-                true,
-                &mut TransactionErrorMetrics::default(),
-            )
-            .into_iter()
-            .map(|r| match r {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            })
-            .collect::<Vec<_>>();
+        let already_processed_results = Consumer::check_transactions_for_scheduling(
+            bank,
+            &sanitized_txs,
+            &vec![Ok(()); sanitized_txs.len()],
+            bank.max_processing_age(),
+            &mut TransactionErrorMetrics::default(),
+        )
+        .into_iter()
+        .map(|r| match r {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err),
+        })
+        .collect::<Vec<_>>();
         assert_eq!(
             already_processed_results,
             vec![

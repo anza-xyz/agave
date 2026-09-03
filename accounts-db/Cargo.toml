@@ -32,7 +32,6 @@ dev-context-only-utils = [
     "solana-transaction/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dev-context-only-utils",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-fee-calculator/frozen-abi",

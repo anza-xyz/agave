@@ -615,10 +615,7 @@ mod tests {
 
         // Wrong identity keypair should return HotSpare based on rank_map.node_pubkey.
         let wrong_identity_keypair = Arc::new(Keypair::new());
-        let vote = Vote::new_notarization_vote(Block {
-            slot: 6,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_unique_notar(6);
         assert!(matches!(
             generate_vote_tx(
                 vote,
@@ -647,10 +644,7 @@ mod tests {
 
         // Wrong vote account pubkey
         voting_context.vote_account_pubkey = Pubkey::new_unique();
-        let vote = Vote::new_notarization_vote(Block {
-            slot: 7,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_unique_notar(7);
         assert!(
             generate_refresh_vote_message(vote, &mut voting_context)
                 .unwrap()
@@ -680,10 +674,7 @@ mod tests {
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // If we try to vote for a slot in the future, we should panic
-        let vote = Vote::new_notarization_vote(Block {
-            slot: 1_000_000_000,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_unique_notar(1_000_000_000);
         let _ = insert_vote_and_create_bls_message(vote, &mut voting_context);
     }
 
@@ -739,10 +730,7 @@ mod tests {
             .root()
             .epoch_schedule()
             .get_first_slot_in_epoch(1);
-        let vote = Vote::new_notarization_vote(Block {
-            slot: first_slot_in_epoch_1,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_unique_notar(first_slot_in_epoch_1);
         assert!(
             insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
@@ -755,10 +743,7 @@ mod tests {
             .root()
             .epoch_schedule()
             .get_first_slot_in_epoch(2);
-        let vote = Vote::new_notarization_vote(Block {
-            slot: first_slot_in_epoch_2,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_unique_notar(first_slot_in_epoch_2);
         assert!(
             insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()

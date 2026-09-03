@@ -8,13 +8,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v4.3](#edge-channel)
-* [alpha - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
-* [beta - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
-* [stable - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
+* [edge - v4.4](#edge-channel)
+* [beta - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
+* [stable - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 4.3.0-Unreleased
+## 4.4.0-Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+* scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
+* Previously deprecated `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`
+  and `--experimental-retransmit-xdp-zero-copy` have been removed. Use `--xdp-interface`, `--xdp-cpu-cores`
+  and `--xdp-zero-copy` instead.
+#### Changes
+
+## 4.3.0
 ### RPC
 #### Breaking
 * Failing to successfully establish a Bigtable connection will now result in a

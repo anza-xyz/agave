@@ -916,14 +916,17 @@ impl ClusterInfoVoteListener {
             return;
         }
 
+        let mut verified_voter_slots = HashMap::new();
+
         // Track all vote slots for propagated check (iterates from most recent to oldest)
         for slot in vote_slots
-            .iter()
-            .filter(|slot| **slot > root && **slot >= *latest_vote_slot)
+            .into_iter()
+            .inspect(|&slot| {
+                verified_voter_slots.insert(slot, vec![*vote_pubkey]);
+            })
+            .filter(|&slot| slot > root && slot >= *latest_vote_slot)
             .rev()
         {
-            let slot = *slot;
-
             // If we don't have stake information, ignore it
             let epoch = root_bank.epoch_schedule().get_epoch(slot);
             if root_bank.epoch_stakes(epoch).is_none() {
@@ -947,7 +950,7 @@ impl ClusterInfoVoteListener {
             }
             let _ = notifiers
                 .verified_voter_slots_sender
-                .send((*vote_pubkey, vote_slots));
+                .send(verified_voter_slots);
         }
     }
 
@@ -1452,10 +1455,11 @@ mod tests {
             .chain(replay_vote_slots.clone())
             .collect();
         let mut pubkey_to_slots: HashMap<Pubkey, BTreeSet<Slot>> = HashMap::new();
-        for (received_pubkey, new_slots) in verified_voter_slots_receiver.try_iter() {
-            let already_received_slots = pubkey_to_slots.entry(received_pubkey).or_default();
-            for new_slot in new_slots {
-                // `new_slot` should only be received once
+        for map in verified_voter_slots_receiver.try_iter() {
+            for (new_slot, received_pubkeys) in map {
+                assert_eq!(received_pubkeys.len(), 1);
+                let already_received_slots =
+                    pubkey_to_slots.entry(received_pubkeys[0]).or_default();
                 assert!(already_received_slots.insert(new_slot));
             }
         }
@@ -1635,7 +1639,10 @@ mod tests {
                 .map(|keypairs| {
                     let node_keypair = &keypairs.node_keypair;
                     let vote_keypair = &keypairs.vote_keypair;
-                    expected_voter_slots.push((vote_keypair.pubkey(), vec![i as Slot + 1]));
+                    expected_voter_slots.push(HashMap::from([(
+                        i as Slot + 1,
+                        vec![vote_keypair.pubkey()],
+                    )]));
                     let tower_sync =
                         TowerSync::new_from_slots(vec![(i as u64 + 1)], bank_hash, None);
                     vote_transaction::new_tower_sync_transaction(

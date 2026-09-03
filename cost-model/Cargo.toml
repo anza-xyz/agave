@@ -40,7 +40,6 @@ agave-feature-set = { workspace = true }
 ahash = { workspace = true }
 log = { workspace = true }
 solana-bincode = { workspace = true }
-solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -50,7 +49,6 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-hash = { workspace = true, optional = true }
 solana-message = { workspace = true, optional = true }
-solana-metrics = { workspace = true }
 solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }

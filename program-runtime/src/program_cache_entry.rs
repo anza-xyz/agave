@@ -188,7 +188,7 @@ impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
         self.deployment_slot == other.deployment_slot
             && self.account_owner == other.account_owner
-            && self.is_tombstone() == other.is_tombstone()
+            && std::mem::discriminant(&self.program) == std::mem::discriminant(&other.program)
     }
 }
 
@@ -250,7 +250,7 @@ impl ProgramCacheEntry {
             account_owner,
             deployment_slot,
             stats: Arc::default(),
-            latest_access_slot: AtomicU64::new(0),
+            latest_access_slot: AtomicU64::new(deployment_slot),
         }
     }
 
@@ -281,11 +281,11 @@ impl ProgramCacheEntry {
     }
 
     /// Creates a new built-in program
-    pub fn new_builtin(deployment_slot: Slot, register_fn: BuiltinFunctionRegisterer) -> Self {
+    pub fn new_builtin(register_fn: BuiltinFunctionRegisterer) -> Self {
         let mut program = BuiltinProgram::new_builtin();
         register_fn(&mut program, "entrypoint").unwrap();
         Self {
-            deployment_slot,
+            deployment_slot: 0, // Deployment slot is always zero
             account_owner: ProgramCacheEntryOwner::NativeLoader,
             program: ProgramCacheEntryType::Builtin(program),
             stats: Arc::default(),

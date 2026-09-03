@@ -37,7 +37,7 @@ use {
         slot_clock::SharedAlpenglowSlotClock,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
-        voting_service::{VOTOR_RATE_LIMIT_PPS, VotingService as BLSVotingService},
+        voting_service::{VotingService as BLSVotingService, votor_rate_limit_pps},
         votor::{Votor, VotorConfig},
     },
     agave_votor_messages::{
@@ -331,6 +331,7 @@ impl Tvu {
             votor_peer_list_sender,
             sharable_banks.clone(),
             votor_peer_overrides,
+            migration_status.clone(),
         );
         let (votor_egress, endpoint) = QuicDatagramEndpoint::spawn(
             &votor_rt_handle,
@@ -339,7 +340,8 @@ impl Tvu {
             votor_client_socket,
             votor_ingress_sender,
             votor_peer_list_receiver,
-            VOTOR_RATE_LIMIT_PPS,
+            *cluster_info.socket_addr_space(),
+            votor_rate_limit_pps(),
             cancel,
         )
         .map_err(|e| format!("alpenglow endpoint: {e:?}"))?;
@@ -635,13 +637,8 @@ impl Tvu {
             highest_finalized,
         );
 
-        let warm_quic_cache_service = create_cache_warmer_if_needed(
-            None,
-            vote_connection_cache,
-            cluster_info,
-            poh_recorder,
-            &exit,
-        );
+        let warm_quic_cache_service =
+            create_cache_warmer_if_needed(vote_connection_cache, cluster_info, poh_recorder, &exit);
 
         let cost_update_service = CostUpdateService::new(cost_update_receiver);
 
@@ -731,18 +728,15 @@ impl Tvu {
 }
 
 fn create_cache_warmer_if_needed(
-    connection_cache: Option<&Arc<ConnectionCache>>,
     vote_connection_cache: Arc<ConnectionCache>,
     cluster_info: &Arc<ClusterInfo>,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     exit: &Arc<AtomicBool>,
 ) -> Option<WarmQuicCacheService> {
-    let tpu_connection_cache = connection_cache.filter(|cache| cache.use_quic()).cloned();
     let vote_connection_cache = Some(vote_connection_cache).filter(|cache| cache.use_quic());
 
-    (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
+    (vote_connection_cache.is_some()).then(|| {
         WarmQuicCacheService::new(
-            tpu_connection_cache,
             vote_connection_cache,
             cluster_info.clone(),
             poh_recorder.clone(),
@@ -766,7 +760,6 @@ pub mod tests {
         },
         serial_test::serial,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::BlockstoreSignals,
@@ -848,13 +841,7 @@ pub mod tests {
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = bounded(1024);
         let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(1024);
-        let highest_parent_ready = Arc::new(RwLock::new((
-            0,
-            Block {
-                slot: 0,
-                block_id: Hash::default(),
-            },
-        )));
+        let highest_parent_ready = Arc::new(RwLock::new((0, Block::new_unique(0))));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
             bounded(1024);
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));

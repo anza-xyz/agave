@@ -17,7 +17,7 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
+dev-context-only-utils = ["agave-votor-messages/dev-context-only-utils"]
 
 [dependencies]
 agave-votor-messages = { workspace = true }

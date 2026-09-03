@@ -65,7 +65,7 @@ fn bench_shredder_ticks(bencher: &mut Bencher) {
     let chained_merkle_root = Hash::new_from_array(rand::rng().random());
     bencher.iter(|| {
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-        shredder.entries_to_merkle_shreds_for_tests(
+        shredder.make_merkle_shreds_from_entries(
             &kp,
             &entries,
             true,
@@ -150,6 +150,7 @@ fn bench_deserialize_hdr(bencher: &mut Bencher) {
             &reed_solomon_cache,
             &mut stats,
         )
+        .into_iter()
         .filter(Shred::is_data)
         .collect::<Vec<_>>();
     let shred = shreds.remove(0);
@@ -172,29 +173,7 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
     let reed_solomon_cache = ReedSolomonCache::default();
     let merkle_root = Hash::new_from_array(rand::rng().random());
     bencher.iter(|| {
-        let result: Vec<_> = shredder
-            .make_merkle_shreds_from_entries(
-                &Keypair::new(),
-                &entries,
-                true, // is_last_in_slot
-                merkle_root,
-                0, // next_shred_index
-                0, // next_code_index
-                &reed_solomon_cache,
-                &mut ProcessShredsStats::default(),
-            )
-            .collect();
-        black_box(result);
-    })
-}
-
-fn bench_shredder_decoding(bencher: &mut Bencher) {
-    let entries = make_entries();
-    let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-    let reed_solomon_cache = ReedSolomonCache::default();
-    let merkle_root = Hash::new_from_array(rand::rng().random());
-    let (_data_shreds, mut coding_shreds): (Vec<_>, Vec<_>) = shredder
-        .make_merkle_shreds_from_entries(
+        let shreds = shredder.make_merkle_shreds_from_entries(
             &Keypair::new(),
             &entries,
             true, // is_last_in_slot
@@ -203,8 +182,26 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
             0, // next_code_index
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
-        )
-        .partition(Shred::is_data);
+        );
+        black_box(shreds);
+    })
+}
+
+fn bench_shredder_decoding(bencher: &mut Bencher) {
+    let entries = make_entries();
+    let shredder = Shredder::new(1, 0, 0, 0).unwrap();
+    let reed_solomon_cache = ReedSolomonCache::default();
+    let merkle_root = Hash::new_from_array(rand::rng().random());
+    let (_data_shreds, mut coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
+        &Keypair::new(),
+        &entries,
+        true, // is_last_in_slot
+        merkle_root,
+        0, // next_shred_index
+        0, // next_code_index
+        &reed_solomon_cache,
+        &mut ProcessShredsStats::default(),
+    );
     coding_shreds.truncate(CODING_SHREDS_PER_FEC_BLOCK);
     let mut shred_recovery_context = new_shred_recovery_context(&coding_shreds);
 

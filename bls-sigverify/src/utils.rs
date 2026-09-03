@@ -101,21 +101,21 @@ pub(super) fn send_sig_verified_batch_to_pool(
 
 pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
-    votes: HashMap<Pubkey, Vec<Slot>>,
+    votes: HashMap<Slot, Vec<Pubkey>>,
     channel: &VerifiedVoterSlotsSender,
     stats: &mut VoteSenderStats,
 ) {
-    for (pubkey, slots) in votes {
-        match channel.try_send((pubkey, slots)) {
-            Ok(()) => stats.repair_sender.sent += 1,
-            Err(TrySendError::Full(_)) => {
-                warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");
-                stats.repair_sender.channel_full += 1
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" disconnected");
-                return;
-            }
+    if votes.is_empty() {
+        return;
+    }
+    match channel.try_send(votes) {
+        Ok(()) => stats.repair_sender.sent += 1,
+        Err(TrySendError::Full(_)) => {
+            warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");
+            stats.repair_sender.channel_full += 1
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" disconnected");
         }
     }
 }

@@ -64,7 +64,7 @@ solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tonic = { workspace = true, features = ["tls-ring", "transport"] }
+tonic = { workspace = true, features = ["channel", "codegen", "tls-ring"] }
 tonic-prost = { workspace = true }
 wincode = { workspace = true }
 zstd = { workspace = true }

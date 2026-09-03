@@ -54,7 +54,9 @@ pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 use rand::Rng;
 use {
     self::traits::{Shred as _, ShredData as _},
+    crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},
     bitflags::bitflags,
+    itertools::Either,
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -67,7 +69,7 @@ use {
     solana_sha256_hasher::hashv,
     solana_signature::{SIGNATURE_BYTES, Signature},
     static_assertions::const_assert_eq,
-    std::{fmt::Debug, mem::MaybeUninit},
+    std::{fmt::Debug, mem::MaybeUninit, ops::Range},
     thiserror::Error,
     wincode::{
         SchemaRead, SchemaWrite, TypeMeta,
@@ -259,10 +261,10 @@ enum ShredVariant {
     // proof_size is the number of Merkle proof entries, and is encoded in the
     // lowest 4 bits of the binary representation. The first 4 bits identify
     // the shred variant:
-    //   0b0110_????  MerkleCode chained
-    //   0b0111_????  MerkleCode chained resigned
-    //   0b1001_????  MerkleData chained
-    //   0b1011_????  MerkleData chained resigned
+    //   0b0110_???? MerkleCode
+    //   0b0111_???? MerkleCode resigned
+    //   0b1001_???? MerkleData
+    //   0b1011_???? MerkleData resigned
     MerkleCode { proof_size: u8, resigned: bool }, // 0b01??_????
     MerkleData { proof_size: u8, resigned: bool }, // 0b10??_????
 }
@@ -297,7 +299,7 @@ struct CodingShredHeader {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shred {
-    ShredCode(ShredCode),
+    ShredCode(merkle::ShredCode),
     ShredData(merkle::ShredData),
 }
 
@@ -417,29 +419,40 @@ macro_rules! dispatch {
     }
 }
 
-use {dispatch, wincode::config::ConfigCore};
+use wincode::config::ConfigCore;
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
-
-    dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
-    dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
-
-    dispatch!(pub fn into_payload(self) -> Payload);
-    dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    pub fn copy_to_packet(&self, packet: &mut Packet) {
-        let payload = self.payload();
-        let size = payload.len();
-        packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
-        packet.meta_mut().size = size;
+    dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
+
+    dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
+    dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    dispatch!(fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
+
+    dispatch!(pub fn payload(&self) -> &Payload);
+    dispatch!(pub fn into_payload(self) -> Payload);
+
+    dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
+    #[cfg(test)]
+    dispatch!(pub(crate) fn proof_size(&self) -> Result<u8, Error>);
+
+    dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
+    dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
+
+    pub(super) fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
+    where
+        Payload: From<T>,
+    {
+        match layout::get_shred_variant(shred.as_ref())? {
+            ShredVariant::MerkleCode { .. } => Ok(Self::ShredCode(ShredCode::from_payload(shred)?)),
+            ShredVariant::MerkleData { .. } => Ok(Self::ShredData(ShredData::from_payload(shred)?)),
+        }
     }
 
     pub fn new_from_serialized_shred<T>(shred: T) -> Result<Self, Error>
@@ -447,16 +460,15 @@ impl Shred {
         T: AsRef<[u8]> + Into<Payload>,
         Payload: From<T>,
     {
-        Ok(match layout::get_shred_variant(shred.as_ref())? {
-            ShredVariant::MerkleCode { .. } => {
-                let shred = merkle::ShredCode::from_payload(shred)?;
-                Self::ShredCode(shred)
-            }
-            ShredVariant::MerkleData { .. } => {
-                let shred = merkle::ShredData::from_payload(shred)?;
-                Self::ShredData(shred)
-            }
-        })
+        Self::from_payload(shred)
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn copy_to_packet(&self, packet: &mut Packet) {
+        let payload = self.payload();
+        let size = payload.len();
+        packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
+        packet.meta_mut().size = size;
     }
 
     /// Unique identifier for each shred.
@@ -606,24 +618,23 @@ impl Shred {
         }
         get_payload(self) != get_payload(other)
     }
-}
 
-impl From<merkle::Shred> for Shred {
-    fn from(shred: merkle::Shred) -> Self {
-        match shred {
-            merkle::Shred::ShredCode(shred) => Self::ShredCode(shred),
-            merkle::Shred::ShredData(shred) => Self::ShredData(shred),
+    #[inline]
+    fn set_merkle_proof<'a, I>(&mut self, proof: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = Result<&'a MerkleProofEntry, Error>>,
+    {
+        match self {
+            Self::ShredCode(shred) => shred.set_merkle_proof(proof),
+            Self::ShredData(shred) => shred.set_merkle_proof(proof),
         }
     }
-}
 
-impl TryFrom<Shred> for merkle::Shred {
-    type Error = Error;
-
-    fn try_from(shred: Shred) -> Result<Self, Self::Error> {
-        match shred {
-            Shred::ShredCode(shred) => Ok(Self::ShredCode(shred)),
-            Shred::ShredData(shred) => Ok(Self::ShredData(shred)),
+    #[inline]
+    fn merkle_proof(&self) -> Result<impl Iterator<Item = &MerkleProofEntry>, Error> {
+        match self {
+            Self::ShredCode(shred) => shred.merkle_proof().map(Either::Left),
+            Self::ShredData(shred) => shred.merkle_proof().map(Either::Right),
         }
     }
 }
@@ -813,7 +824,7 @@ pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
     slot: Slot,
     data_size: usize,
     is_last_in_slot: bool,
-) -> Result<Vec<merkle::Shred>, Error> {
+) -> Result<Vec<Shred>, Error> {
     let chained_merkle_root = Hash::new_from_array(rng.random());
     let parent_offset = rng.random_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
     let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
@@ -1118,23 +1129,11 @@ mod tests {
         assert_eq!(layout::get_shred_id(data), Some(shred.id()));
         assert_eq!(layout::get_signature(data), Some(*shred.signature()));
         assert_eq!(layout::get_shred_type(data).unwrap(), shred.shred_type());
-        match shred.shred_type() {
-            ShredType::Code => {
-                assert_matches!(
-                    layout::get_reference_tick(data),
-                    Err(Error::InvalidShredType)
-                );
-            }
-            ShredType::Data => {
-                assert_eq!(
-                    layout::get_reference_tick(data).unwrap(),
-                    shred.reference_tick()
-                );
-                let parent_offset = layout::get_parent_offset(data).unwrap();
-                let slot = layout::get_slot(data).unwrap();
-                let parent = slot.checked_sub(Slot::from(parent_offset)).unwrap();
-                assert_eq!(parent, shred.parent().unwrap());
-            }
+        if shred.shred_type() == ShredType::Data {
+            let parent_offset = layout::get_parent_offset(data).unwrap();
+            let slot = layout::get_slot(data).unwrap();
+            let parent = slot.checked_sub(Slot::from(parent_offset)).unwrap();
+            assert_eq!(parent, shred.parent().unwrap());
         }
     }
 
@@ -1190,6 +1189,7 @@ mod tests {
                 &mut ProcessShredsStats::default(),
             )
             .unwrap()
+            .into_iter()
             .next()
             .unwrap();
         shred.sign(&keypair);
@@ -1348,7 +1348,6 @@ mod tests {
         )
         .unwrap()
         .into_iter()
-        .map(Shred::from)
         .map(|shred| fill_retransmitter_signature(&mut rng, shred, is_last_in_slot))
         .collect();
         {

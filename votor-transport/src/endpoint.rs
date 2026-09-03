@@ -16,7 +16,7 @@ use {
     qualifier_attr::qualifiers,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_keypair::{Keypair, Signer},
-    solana_net_utils::token_bucket::TokenBucket,
+    solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_pubkey::Pubkey,
     solana_tls_utils::NotifyKeyUpdate,
     std::{
@@ -71,6 +71,8 @@ impl QuicDatagramEndpoint {
     /// `peer_list` carries the desired peer set: inbound admits those peers and
     /// closes connections to peers no longer in the set, outbound connects to
     /// peers in it as long as the peer_list enables pushing.
+    /// `socket_addr_space` controls which remote addresses may start an inbound
+    /// handshake.
     /// `cancel` controls when the endpoint should terminate.
     pub fn spawn(
         runtime: &Handle,
@@ -79,6 +81,7 @@ impl QuicDatagramEndpoint {
         outbound_socket: UdpSocket,
         inbound_datagrams: Sender<Datagram>,
         peer_list: PeerListReceiver,
+        socket_addr_space: SocketAddrSpace,
         max_datagrams_per_second_per_peer: usize,
         cancel: CancellationToken,
     ) -> Result<(mpsc::Sender<Bytes>, Self), Error> {
@@ -176,6 +179,7 @@ impl QuicDatagramEndpoint {
                     inbound_events_sender.clone(),
                     server_stats.clone(),
                     cancel.clone(),
+                    socket_addr_space,
                     rate_limiter.clone(),
                     max_inflight_handshakes,
                 );
@@ -396,9 +400,12 @@ mod tests {
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
         solana_keypair::{Keypair, Signer},
-        solana_net_utils::sockets::{
-            SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
-            unique_port_range_for_tests,
+        solana_net_utils::{
+            SocketAddrSpace,
+            sockets::{
+                SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
+                unique_port_range_for_tests,
+            },
         },
         solana_pubkey::Pubkey,
         solana_tls_utils::NotifyKeyUpdate,
@@ -509,6 +516,7 @@ mod tests {
                 client_socket,
                 ingress_sender,
                 peer_list_receiver,
+                SocketAddrSpace::Unspecified,
                 max_pps,
                 cancel,
             )

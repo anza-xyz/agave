@@ -111,7 +111,7 @@ pub fn new_program_cache_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     for builtin in SVM_BUILTINS {
         cache.replenish(
             builtin.program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0u64, builtin.register_fn)),
+            Arc::new(ProgramCacheEntry::new_builtin(builtin.register_fn)),
         );
     }
 
@@ -170,7 +170,7 @@ pub fn fill_program_cache_from_accounts(
             {
                 continue;
             }
-            if let Some((loaded_program, _last_modification_slot)) = load_program_with_pubkey(
+            if let Some(loaded_program) = load_program_with_pubkey(
                 &FillFromAccountsCallback(accounts),
                 program_runtime_environment,
                 &acc.0,

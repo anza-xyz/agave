@@ -49,7 +49,7 @@ pub struct Stats {
     last_age: AtomicAge,
     last_ages_flushed: AtomicU64,
     pub evict_scan_us: AtomicU64,
-    pub flush_evict_us: AtomicU64,
+    pub evict_us: AtomicU64,
     pub flush_grow_us: AtomicU64,
     last_was_startup: AtomicBool,
     last_time: AtomicInterval,
@@ -247,10 +247,10 @@ impl Stats {
                     ),
                 );
             }
-            // If an entry is held in-mem due to ref count or slot list length,
+            // If an entry is held in-mem due to slot list length,
             // then assume it has two slot list entries.
             // Since `approx_size_of_one_entry()` assumes 'regular' entries
-            // (aka ref count == 1 and slot list len == 1), and the single slot list entry is
+            // (aka slot list len == 1), and the single slot list entry is
             // stored inline in the slot list itself, then when we have larger slot lists,
             // account for them here.
             let estimate_mem_bytes =
@@ -383,11 +383,7 @@ impl Stats {
                     self.flush_grow_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
-                (
-                    "flush_evict_us",
-                    self.flush_evict_us.swap(0, Ordering::Relaxed),
-                    i64
-                ),
+                ("evict_us", self.evict_us.swap(0, Ordering::Relaxed), i64),
                 (
                     "num_hashmap_reallocates",
                     self.num_hashmap_reallocates.swap(0, Ordering::Relaxed),
@@ -467,7 +463,7 @@ impl Stats {
                     disk.map(|disk| disk
                         .stats
                         .index
-                        .index_uses_uncommon_slot_list_len_or_refcount
+                        .index_uses_uncommon_slot_list_len
                         .load(Ordering::Relaxed))
                         .unwrap_or_default(),
                     i64

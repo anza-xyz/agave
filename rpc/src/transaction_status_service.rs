@@ -141,7 +141,7 @@ impl TransactionStatusService {
                 work_id,
             )) => {
                 let mut status_and_memos_batch = if enable_rpc_transaction_history {
-                    Some(blockstore.get_write_batch()?)
+                    Some(blockstore.get_write_batch())
                 } else {
                     None
                 };

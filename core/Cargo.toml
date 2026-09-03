@@ -68,7 +68,6 @@ anyhow = { workspace = true }
 arc-swap = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
-async-trait = { workspace = true }
 bincode = { workspace = true }
 bitvec = { workspace = true }
 bytes = { workspace = true }

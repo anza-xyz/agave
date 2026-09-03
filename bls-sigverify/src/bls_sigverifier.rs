@@ -20,6 +20,7 @@ use {
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
         },
+        vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
     agave_votor_transport::endpoint::{BanSender, Datagram},
@@ -216,7 +217,9 @@ impl SigVerifier {
             }
             self.stats.maybe_report(self.sharable_banks.root().slot());
         }
-        self.stats.do_report(self.sharable_banks.root().slot());
+        let elapsed = self.stats.elapsed_since_last_report();
+        self.stats
+            .do_report(self.sharable_banks.root().slot(), elapsed);
     }
 
     #[cfg(test)]
@@ -323,6 +326,7 @@ impl SigVerifier {
         let root_slot = root_bank.slot();
         let highest_parent_ready_slot = self.highest_parent_ready.read().unwrap().0;
         let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
+        let migration_slot = self.migration_status.migration_slot();
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
         let mut num_pkts = 0u64;
@@ -351,6 +355,7 @@ impl SigVerifier {
                         *sender_identity_pubkey,
                         root_bank,
                         max_vote_slot,
+                        migration_slot,
                     ) {
                         let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                             payload.vote_message.vote,
@@ -362,8 +367,13 @@ impl SigVerifier {
                     }
                 }
                 DecodedWireConsensusMessage::Certificate(cert) => {
-                    if cert.cert_type.slot() < root_slot {
+                    let cert_slot = cert.cert_type.slot();
+                    if cert_slot < root_slot {
                         self.stats.num_old_certs_received += 1;
+                        continue;
+                    }
+                    if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
+                        self.stats.cert_too_far_in_future += 1;
                         continue;
                     }
                     self.add_certificate_to_group(&mut cert_groups, cert, *sender_identity_pubkey);
@@ -385,8 +395,13 @@ impl SigVerifier {
             {
                 continue;
             }
-            if certificate.cert_type.slot() < root_slot {
+            let cert_slot = certificate.cert_type.slot();
+            if cert_slot < root_slot {
                 self.stats.num_old_certs_received += 1;
+                continue;
+            }
+            if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
+                self.stats.cert_too_far_in_future += 1;
                 continue;
             }
             let Some(sender_identity_pubkey) = self
@@ -398,7 +413,7 @@ impl SigVerifier {
             };
             self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
         }
-        self.stats.num_pkts.add_sample(num_pkts);
+        self.stats.num_pkts += num_pkts;
         ExtractedMsgs {
             certs: cert_groups,
             votes,
@@ -412,6 +427,7 @@ impl SigVerifier {
         sender_identity_pubkey: Pubkey,
         root_bank: &Bank,
         max_vote_slot: Slot,
+        migration_slot: Option<Slot>,
     ) -> Option<UnverifiedVotePayload> {
         // votes from self take a different pathway.
         if sender_identity_pubkey == self.cluster_info.id() {
@@ -419,7 +435,15 @@ impl SigVerifier {
         }
         let root_slot = root_bank.slot();
         let vote_slot = msg.vote.slot();
-        if vote_slot > max_vote_slot {
+        let is_in_range = match msg.vote {
+            // Genesis votes bypass the normal range check, instead we require that they are only accepted during the
+            // migration epoch and less than the migration slot
+            Vote::Genesis(_) => {
+                migration_slot.is_some_and(|migration_slot| vote_slot < migration_slot)
+            }
+            _ => vote_slot <= max_vote_slot,
+        };
+        if !is_in_range {
             self.stats.vote_too_far_in_future += 1;
             return None;
         }
@@ -538,7 +562,9 @@ mod tests {
         bitvec::prelude::{BitVec, Lsb0},
         bytes::Bytes,
         crossbeam_channel::{Receiver, TryRecvError, bounded},
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, Signature},
+        solana_bls_signatures::{
+            BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, Signature, signature::SignatureAffine,
+        },
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
@@ -644,10 +670,7 @@ mod tests {
             let (ban_sender, ban_receiver) = stub_ban_channel_for_tests(1024);
             let highest_parent_ready = Arc::new(RwLock::new((
                 NUM_SLOTS_FOR_VERIFY,
-                Block {
-                    slot: NUM_SLOTS_FOR_VERIFY.saturating_sub(1),
-                    block_id: Hash::default(),
-                },
+                Block::new_unique(NUM_SLOTS_FOR_VERIFY.saturating_sub(1)),
             )));
             let verifier = SigVerifier::new(
                 SigVerifierContext {
@@ -713,7 +736,7 @@ mod tests {
     ) -> VoteMessage {
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
         let payload = get_vote_payload_to_sign(vote, shred_version);
-        let signature: Signature = bls_keypair.sign(&payload).into();
+        let signature = SignatureAffine::from(bls_keypair.sign(&payload));
         VoteMessage {
             vote,
             signature,
@@ -753,10 +776,7 @@ mod tests {
     fn test_blockstore_certificate_requires_active_alpenglow() {
         let mut ctx = TestContext::new();
         let shred_version = ctx.verifier.cluster_info.my_shred_version();
-        let block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(1);
         let certificate = test_create_base2_unverified_certificate(
             &ctx.bls_keypairs(),
             shred_version,
@@ -785,10 +805,7 @@ mod tests {
     fn test_old_blockstore_certificate_is_filtered() {
         let mut ctx = TestContext::new();
         let shred_version = ctx.verifier.cluster_info.my_shred_version();
-        let block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(1);
         let certificate = test_create_base2_unverified_certificate(
             &ctx.bls_keypairs(),
             shred_version,
@@ -845,13 +862,11 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
-        let received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
+        let mut received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
+        assert_eq!(received_verified_votes1.len(), 1);
         assert_eq!(
-            received_verified_votes1,
-            (
-                ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey(),
-                vec![5]
-            )
+            received_verified_votes1.remove(&5).unwrap(),
+            vec![ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey()]
         );
 
         let vote_rank2 = 3;
@@ -859,10 +874,7 @@ mod tests {
             &ctx.verifier.sharable_banks.root(),
             &ctx.validator_keypairs,
             ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_notarization_vote(Block {
-                slot: 6,
-                block_id: Hash::new_unique(),
-            }),
+            Vote::new_unique_notar(6),
             vote_rank2,
         );
         let messages2 = [(
@@ -880,13 +892,11 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
-        let received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
+        let mut received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
+        assert_eq!(received_verified_votes2.len(), 1);
         assert_eq!(
-            received_verified_votes2,
-            (
-                ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey(),
-                vec![6]
-            )
+            received_verified_votes2.remove(&6).unwrap(),
+            vec![ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey()]
         );
 
         let vote_rank3 = 9;
@@ -894,10 +904,7 @@ mod tests {
             &ctx.verifier.sharable_banks.root(),
             &ctx.validator_keypairs,
             ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_notarization_fallback_vote(Block {
-                slot: 7,
-                block_id: Hash::new_unique(),
-            }),
+            Vote::new_unique_notar_fallback(7),
             vote_rank3,
         );
         let messages3 = [(
@@ -914,13 +921,11 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
-        let received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
+        let mut received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
+        assert_eq!(received_verified_votes3.len(), 1);
         assert_eq!(
-            received_verified_votes3,
-            (
-                ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey(),
-                vec![7]
-            )
+            received_verified_votes3.remove(&7).unwrap(),
+            vec![ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey()]
         );
     }
 
@@ -964,10 +969,13 @@ mod tests {
         expect_no_receive(&ctx.pool_receiver);
 
         // Send a packet with invalid rank
+        let vote = Vote::new_finalization_vote(5);
+        let payload = get_vote_payload_to_sign(vote, ctx.verifier.cluster_info.my_shred_version());
+        let signature = SignatureAffine::from(ctx.validator_keypairs[0].bls_keypair.sign(&payload));
         let messages_invalid_rank = [(
             ConsensusMessage::Vote(VoteMessage {
                 vote: Vote::new_finalization_vote(5),
-                signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                signature,
                 rank: 1000, // Invalid rank
                 stake: NonZero::new(123).unwrap(),
             }),
@@ -1027,10 +1035,7 @@ mod tests {
             &ctx.verifier.sharable_banks.root(),
             &ctx.validator_keypairs,
             ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_notarization_fallback_vote(Block {
-                slot: 6,
-                block_id: Hash::new_unique(),
-            }),
+            Vote::new_unique_notar_fallback(6),
             msg2_rank,
         );
         ctx.verifier
@@ -1118,7 +1123,7 @@ mod tests {
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
-            let signature: Signature = bls_keypair.sign(&vote_payload).into();
+            let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
                 vote,
                 signature,
@@ -1154,10 +1159,7 @@ mod tests {
         let mut packets = Vec::with_capacity(num_votes);
 
         let vote1 = Vote::new_skip_vote(42);
-        let vote2 = Vote::new_notarization_vote(Block {
-            slot: 43,
-            block_id: Hash::new_unique(),
-        });
+        let vote2 = Vote::new_unique_notar(43);
 
         // Group 1 votes
         for (i, validator_keypair) in ctx
@@ -1381,10 +1383,7 @@ mod tests {
 
         // 2/3 of validators sign the cert.
         let num_signers = (ctx.validator_keypairs.len() * 2).div_ceil(3);
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::new_unique_notar(10);
         let cert = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1411,10 +1410,7 @@ mod tests {
 
         // 60% of validators sign the cert.
         let num_signers = (ctx.validator_keypairs.len() * 6).div_ceil(10);
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::new_unique_notar(10);
         let cert = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1440,12 +1436,7 @@ mod tests {
         let mut ctx = TestContext::new();
 
         let slot = 20;
-        let block_hash = Hash::new_unique();
-        let block = Block {
-            slot,
-            block_id: block_hash,
-        };
-        let cert_type = CertificateType::NotarizeFallback(block);
+        let cert_type = CertificateType::new_unique_notar_fallback(slot);
         let cert = test_create_base3_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1471,12 +1462,7 @@ mod tests {
     fn test_verify_certificate_base3_just_enough_stake() {
         let mut ctx = TestContext::new();
         let slot = 20;
-        let block_hash = Hash::new_unique();
-        let block = Block {
-            slot,
-            block_id: block_hash,
-        };
-        let cert_type = CertificateType::NotarizeFallback(block);
+        let cert_type = CertificateType::new_unique_notar_fallback(slot);
         let cert = test_create_base3_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1505,11 +1491,7 @@ mod tests {
         // 70% of validators sign.
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
         let slot = 10;
-        let block_hash = Hash::new_unique();
-        let cert_type = CertificateType::Notarize(Block {
-            slot,
-            block_id: block_hash,
-        });
+        let cert_type = CertificateType::new_unique_notar(slot);
         let mut bitmap = BitVec::<u8, Lsb0>::new();
         bitmap.resize(num_signers, false);
         for i in 0..num_signers {
@@ -1569,10 +1551,7 @@ mod tests {
 
         // 70% of validators sign.
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::new_unique_notar(10);
         let cert = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1626,7 +1605,7 @@ mod tests {
         let vote_payload =
             get_vote_payload_to_sign(vote, ctx.verifier.cluster_info.my_shred_version());
         let bls_keypair = &ctx.validator_keypairs[0].bls_keypair;
-        let signature: Signature = bls_keypair.sign(&vote_payload).into();
+        let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
 
         let consensus_message = ConsensusMessage::Vote(VoteMessage {
             vote,
@@ -1706,7 +1685,7 @@ mod tests {
         let vote_payload =
             get_vote_payload_to_sign(vote, sig_verifier.cluster_info.my_shred_version());
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
-        let signature: Signature = bls_keypair.sign(&vote_payload).into();
+        let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
         let consensus_message_vote = ConsensusMessage::Vote(VoteMessage {
             vote,
             signature,
@@ -1757,12 +1736,7 @@ mod tests {
         // 80% of validators sign.
         let num_signers = (ctx.validator_keypairs.len() * 8).div_ceil(10);
         let slot = 10;
-        let block_hash = Hash::new_unique();
-        let block = Block {
-            slot,
-            block_id: block_hash,
-        };
-        let cert_type = CertificateType::Notarize(block);
+        let cert_type = CertificateType::new_unique_notar(slot);
         let cert1 = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1804,10 +1778,7 @@ mod tests {
     fn test_same_type_certs_verify_until_first_valid() {
         let mut ctx = TestContext::new();
 
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::new_unique_notar(10);
         let cert1 = test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
@@ -1849,10 +1820,7 @@ mod tests {
     fn test_same_type_certs_try_next_candidate_after_failure() {
         let mut ctx = TestContext::new();
 
-        let cert_type = CertificateType::Notarize(Block {
-            slot: 10,
-            block_id: Hash::new_unique(),
-        });
+        let cert_type = CertificateType::new_unique_notar(10);
         let num_signers = 7;
         let mut bitmap = BitVec::<u8, Lsb0>::new();
         bitmap.resize(num_signers, false);
@@ -1925,10 +1893,7 @@ mod tests {
         let cert_message = ConsensusMessage::Certificate(test_create_base2_certificate(
             &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            CertificateType::Notarize(Block {
-                slot: 43,
-                block_id: Hash::new_unique(),
-            }),
+            CertificateType::new_unique_notar(43),
             &(0..7).collect::<Vec<_>>(),
         ));
         let vote_sender = ctx.validator_keypairs[rank].node_keypair.pubkey();
@@ -2017,10 +1982,7 @@ mod tests {
         let messages: Vec<_> = (0..5)
             .map(|i| {
                 let slot = 10 + i as u64;
-                let cert_type = CertificateType::Notarize(Block {
-                    slot,
-                    block_id: Hash::new_unique(),
-                });
+                let cert_type = CertificateType::new_unique_notar(slot);
                 let mut cert = test_create_base2_certificate(
                     &ctx.bls_keypairs(),
                     ctx.verifier.cluster_info.my_shred_version(),
@@ -2093,10 +2055,7 @@ mod tests {
         *ctx.verifier.highest_parent_ready.write().unwrap() = (
             highest_parent_ready_slot,
             // The ParentReady target slot, rather than the parent block's slot, sets the bound.
-            Block {
-                slot: 7,
-                block_id: Hash::new_unique(),
-            },
+            Block::new_unique(7),
         );
         let max_vote_slot = highest_parent_ready_slot + MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY;
         let first_rejected_vote_slot = max_vote_slot + 1;
@@ -2149,18 +2108,133 @@ mod tests {
 
         assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 0);
+        assert_eq!(ctx.verifier.stats.cert_too_far_in_future.0, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
+        let mut map = ctx.repair_receiver.try_recv().unwrap();
+        assert_eq!(map.len(), 1);
         assert_eq!(
-            ctx.repair_receiver.try_recv().unwrap(),
-            (
+            map.remove(&max_vote_slot).unwrap(),
+            vec![
                 ctx.validator_keypairs[accepted_vote_rank]
                     .vote_keypair
                     .pubkey(),
-                vec![max_vote_slot],
-            )
+            ]
         );
+        expect_no_receive(&ctx.repair_receiver);
+    }
+
+    #[test]
+    fn genesis_votes_bypass_future_bound_during_migration() {
+        let mut ctx = TestContext::new();
+        let highest_parent_ready_slot = 100;
+        *ctx.verifier.highest_parent_ready.write().unwrap() = (
+            highest_parent_ready_slot,
+            Block {
+                slot: highest_parent_ready_slot,
+                block_id: Hash::new_unique(),
+            },
+        );
+        let max_vote_slot = highest_parent_ready_slot + MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY;
+        let migration_slot = ctx.verifier.migration_status.record_feature_activation(200);
+        let genesis_slot = migration_slot.saturating_sub(1);
+        assert!(genesis_slot > max_vote_slot);
+
+        let genesis_block = Block {
+            slot: genesis_slot,
+            block_id: Hash::new_unique(),
+        };
+        ctx.verifier
+            .migration_status
+            .set_genesis_block(genesis_block);
+        let genesis_vote_rank = 0;
+        let genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_genesis_vote(genesis_block),
+            genesis_vote_rank,
+        ));
+
+        // Normal votes remain bounded by ParentReady even when they target the exact block.
+        let normal_vote_rank = 1;
+        let normal_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_notarization_vote(genesis_block),
+            normal_vote_rank,
+        ));
+
+        // The migration slot itself cannot be the Genesis slot.
+        let different_slot_genesis_vote_rank = 2;
+        let different_slot_genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_genesis_vote(Block {
+                slot: migration_slot,
+                block_id: genesis_block.block_id,
+            }),
+            different_slot_genesis_vote_rank,
+        ));
+
+        // The Genesis exception does not require the locally discovered block's hash either.
+        let different_hash_genesis_vote_rank = 3;
+        let different_hash_genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_genesis_vote(Block {
+                slot: genesis_slot,
+                block_id: Hash::new_unique(),
+            }),
+            different_hash_genesis_vote_rank,
+        ));
+
+        let datagrams = messages_to_datagrams(
+            &[
+                (
+                    genesis_vote,
+                    ctx.validator_keypairs[genesis_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+                (
+                    normal_vote,
+                    ctx.validator_keypairs[normal_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+                (
+                    different_slot_genesis_vote,
+                    ctx.validator_keypairs[different_slot_genesis_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+                (
+                    different_hash_genesis_vote,
+                    ctx.validator_keypairs[different_hash_genesis_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+            ],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
+
+        assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 2);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 2);
+        let SigVerifiedBatch::Votes(aggregates) = ctx.pool_receiver.try_recv().unwrap() else {
+            panic!("expected a vote batch");
+        };
+        assert_eq!(aggregates.len(), 2);
+        assert!(
+            aggregates
+                .iter()
+                .all(|aggregate| aggregate.vote().is_genesis_vote())
+        );
+        expect_no_receive(&ctx.pool_receiver);
         expect_no_receive(&ctx.repair_receiver);
     }
 
@@ -2188,7 +2262,7 @@ mod tests {
         );
         ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
 
-        assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_too_far_in_future.0, 1);
         expect_no_receive(&ctx.pool_receiver);
     }
 

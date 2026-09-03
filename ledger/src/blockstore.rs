@@ -31,6 +31,7 @@ use {
         migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
     },
     assert_matches::{assert_matches, debug_assert_matches},
+    bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
     itertools::Itertools,
@@ -45,11 +46,12 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_entry::{
         block_component::{
-            BlockComponent, VersionedBlockFooter, VersionedBlockHeader, VersionedBlockMarker,
-            VersionedUpdateParent, finalization_certificates_from_footer,
+            BlockComponent, ParsedBlockComponent, VersionedBlockFooter, VersionedBlockHeader,
+            VersionedBlockMarker, VersionedUpdateParent, finalization_certificates_from_footer,
             genesis_certificate_from_shred,
         },
-        entry::{Entry, create_ticks},
+        block_component_parser,
+        entry::{Entry, EntryView, create_ticks},
     },
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
     solana_hash::{HASH_BYTES, Hash},
@@ -58,14 +60,13 @@ use {
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, leader_schedule_utils::leader_slot_index},
+    solana_runtime_transaction::sanitize_config::sanitize_config,
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_time_utils::timestamp,
-    solana_transaction::{
-        TransactionVerificationMode,
-        versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
-    },
+    solana_transaction::{TransactionVerificationMode, versioned::VersionedTransaction},
     solana_transaction_status::{
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, EntrySummary,
         RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
@@ -511,8 +512,7 @@ impl ParentInfo {
             return None;
         }
 
-        let shred_bytes = current_shred.payload();
-        let payload = shred::layout::get_data(shred_bytes).ok()?;
+        let payload = current_shred.data().ok()?;
 
         if !BlockComponent::infer_is_block_marker(payload).unwrap_or(false) {
             return None;
@@ -834,6 +834,7 @@ impl Blockstore {
                         &reed_solomon_cache,
                         &mut ProcessShredsStats::default(),
                     )
+                    .into_iter()
                     .filter(Shred::is_data)
                     .collect();
                 if let Some(last_shred) = shreds.last() {
@@ -2353,7 +2354,7 @@ impl Blockstore {
         F: Fn(PossibleDuplicateShred),
     {
         let mut pinnable_slice = self.new_pinnable_slice();
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         self.insert_shreds_at_location_handle_duplicate(
             shreds
                 .into_iter()
@@ -2484,7 +2485,7 @@ impl Blockstore {
         let shreds = shreds.into_iter().map(|shred| {
             (Cow::Owned(shred), /*is_repaired:*/ false, to_location)
         });
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         self.do_insert_shreds_locked(
             lock,
             shreds,
@@ -2622,7 +2623,7 @@ impl Blockstore {
         is_trusted: bool,
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let mut pinnable_slice = self.new_pinnable_slice();
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         let shreds = shreds.into_iter().map(Cow::Owned);
         self.insert_cow_shreds(shreds, is_trusted, &mut pinnable_slice, &mut write_batch)
     }
@@ -2630,7 +2631,7 @@ impl Blockstore {
     #[cfg(test)]
     fn insert_shred_return_duplicate(&self, shred: Shred) -> Vec<PossibleDuplicateShred> {
         let mut pinnable_slice = self.new_pinnable_slice();
-        let mut write_batch = self.get_write_batch().unwrap();
+        let mut write_batch = self.get_write_batch();
         let insert_results = self
             .do_insert_shreds(
                 [(
@@ -2815,7 +2816,7 @@ impl Blockstore {
 
         merkle_root_metas
             .entry((BlockLocation::Original, erasure_set))
-            .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
+            .or_insert_with(|| WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
 
         if let HashMapEntry::Vacant(entry) =
             just_inserted_shreds.entry((BlockLocation::Original, shred.id()))
@@ -3053,7 +3054,7 @@ impl Blockstore {
         }
         merkle_root_metas
             .entry((location, erasure_set))
-            .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
+            .or_insert_with(|| WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
         just_inserted_shreds.insert((location, shred.id()), shred);
         index_meta_working_set_entry.did_insert_occur = true;
         slot_meta_entry.did_insert_occur = true;
@@ -3337,12 +3338,9 @@ impl Blockstore {
         true
     }
 
-    /// Checks if the chained merkle root == merkle root
-    ///
-    /// Returns true if no conflict, or if chained merkle roots are not enabled
+    /// Returns true if `chained_merkle_root` chains correctly to `merkle_root`.
     fn check_chaining(&self, merkle_root: Option<Hash>, chained_merkle_root: Option<Hash>) -> bool {
-        chained_merkle_root.is_none()  // Chained merkle roots have not been enabled yet
-            || chained_merkle_root == merkle_root
+        chained_merkle_root == merkle_root
     }
 
     fn should_insert_data_shred(
@@ -4952,6 +4950,26 @@ impl Blockstore {
         Ok((entries, num_shreds, slot_meta.is_full()))
     }
 
+    /// Returns the entry-view vector for the slot starting with `shred_start_index`, the number
+    /// of shreds that comprise the entry vector, and whether the slot is full (consumed all
+    /// shreds).
+    pub fn get_slot_entry_views_with_shred_info(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+    ) -> Result<(Vec<EntryView<Bytes>>, u64, bool)> {
+        let Some((completed_ranges, slot_meta, num_shreds)) =
+            self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
+        else {
+            return Ok((vec![], 0, false));
+        };
+
+        let entries =
+            self.get_slot_entry_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
+        Ok((entries, num_shreds, slot_meta.is_full()))
+    }
+
     /// Returns the components vector for the slot starting with `shred_start_index`, the number of
     /// shreds that comprise the components vector, and whether the slot is full (consumed all
     /// shreds).
@@ -4969,6 +4987,24 @@ impl Blockstore {
 
         let components =
             self.get_slot_components_in_block(slot, &completed_ranges, Some(&slot_meta))?;
+        debug_assert_eq!(completed_ranges.len(), components.len());
+        Ok((components, completed_ranges, slot_meta.is_full()))
+    }
+
+    pub fn get_slot_component_views_with_shred_info(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+    ) -> Result<(Vec<ParsedBlockComponent>, Vec<Range<u32>>, bool)> {
+        let Some((completed_ranges, slot_meta, _)) =
+            self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
+        else {
+            return Ok((vec![], vec![], false));
+        };
+
+        let components =
+            self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
         debug_assert_eq!(completed_ranges.len(), components.len());
         Ok((components, completed_ranges, slot_meta.is_full()))
     }
@@ -4995,26 +5031,29 @@ impl Blockstore {
         (starting_slot..=ending_slot)
             .into_par_iter()
             .for_each(|slot| {
-                if let Ok(entries) = self.get_slot_entries(slot, 0) {
+                if let Ok((entries, _, _)) =
+                    self.get_slot_entry_views_with_shred_info(slot, 0, false)
+                {
                     entries.into_par_iter().for_each(|entry| {
                         entry.transactions.into_iter().for_each(|tx| {
-                            if let Some(lookups) = tx.message.address_table_lookups() {
-                                add_to_set(
-                                    &lookup_tables,
-                                    lookups.iter().map(|lookup| &lookup.account_key),
-                                );
-                            }
+                            add_to_set(
+                                &lookup_tables,
+                                tx.address_table_lookup_iter()
+                                    .map(|lookup| lookup.account_key),
+                            );
+
                             // Attempt to verify transaction and load addresses from the current bank,
                             // or manually scan the transaction for addresses if the transaction.
                             if let Ok(tx) = bank.verify_transaction(
                                 tx.clone(),
                                 TransactionVerificationMode::FullVerification,
                             ) {
-                                add_to_set(&result, tx.message().account_keys().iter());
+                                add_to_set(&result, tx.account_keys().iter());
                             } else {
-                                add_to_set(&result, tx.message.static_account_keys());
+                                add_to_set(&result, tx.static_account_keys());
 
-                                let tx = SanitizedVersionedTransaction::try_from(tx)
+                                let tx = tx
+                                    .sanitize(&sanitize_config())
                                     .expect("transaction failed to sanitize");
 
                                 let alt_scan_extensions = scan_transaction(&tx);
@@ -5174,6 +5213,29 @@ impl Blockstore {
         })
     }
 
+    fn get_slot_component_views_in_block(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+    ) -> Result<Vec<ParsedBlockComponent>> {
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            let is_empty_entry_batch = BlockComponent::infer_is_empty_entry_batch(&payload);
+
+            block_component_parser::parse(payload)
+                .map(|component| vec![component])
+                .map_err(|error| {
+                    if is_empty_entry_batch {
+                        BlockstoreError::BlockAborted(slot)
+                    } else {
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct block component view: {error}"
+                        ))
+                    }
+                })
+        })
+    }
+
     /// Fetch the entries corresponding to all of the shred indices in `completed_ranges`.
     /// Block markers are skipped because they do not contain entries.
     fn get_slot_entries_in_block(
@@ -5194,6 +5256,32 @@ impl Blockstore {
                     } else {
                         BlockstoreError::InvalidShredData(format!(
                             "could not reconstruct block component: {e}"
+                        ))
+                    }
+                })
+        })
+    }
+
+    fn get_slot_entry_views_in_block(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+    ) -> Result<Vec<EntryView<Bytes>>> {
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            let is_empty_entry_batch = BlockComponent::infer_is_empty_entry_batch(&payload);
+
+            block_component_parser::parse(payload)
+                .map(|component| match component {
+                    ParsedBlockComponent::BlockMarker(_) => vec![],
+                    ParsedBlockComponent::EntryBatch(entries) => entries,
+                })
+                .map_err(|error| {
+                    if is_empty_entry_batch {
+                        BlockstoreError::BlockAborted(slot)
+                    } else {
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct block component: {error}"
                         ))
                     }
                 })
@@ -5308,7 +5396,7 @@ impl Blockstore {
         &self,
         duplicate_confirmed_slot_hashes: impl Iterator<Item = (Slot, Hash)>,
     ) -> Result<()> {
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         for (slot, frozen_hash) in duplicate_confirmed_slot_hashes {
             let data = FrozenHashVersioned::Current(FrozenHashStatus {
                 frozen_hash,
@@ -5323,7 +5411,7 @@ impl Blockstore {
     }
 
     pub fn set_roots<'a>(&self, rooted_slots: impl Iterator<Item = &'a Slot>) -> Result<()> {
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
         let mut max_new_rooted_slot = 0;
         for slot in rooted_slots {
             max_new_rooted_slot = std::cmp::max(max_new_rooted_slot, *slot);
@@ -5363,6 +5451,17 @@ impl Blockstore {
 
     pub fn set_dead_slot(&self, slot: Slot) -> Result<()> {
         self.dead_slots_cf.put(slot, &true)
+    }
+
+    /// Marks a duplicate slot dead unless it is full, for external use.
+    pub fn set_dead_slot_if_duplicate_and_not_full(&self, slot: Slot) -> Result<()> {
+        let _lock = self.insert_shreds_lock.lock().unwrap();
+        if self.has_duplicate_shreds_in_slot(slot)
+            && !self.meta(slot)?.is_some_and(|meta| meta.is_full())
+        {
+            self.set_dead_slot(slot)?;
+        }
+        Ok(())
     }
 
     pub fn remove_dead_slot(&self, slot: Slot) -> Result<()> {
@@ -5597,7 +5696,7 @@ impl Blockstore {
             return Ok(());
         }
         info!("Marking slot {root} and any full children slots as connected");
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
 
         // Mark both connected bits on the root slot so that the flags for this
         // slot match the flags of slots that become connected the typical way.
@@ -6138,7 +6237,7 @@ impl Blockstore {
         Ok(index_meta_entry)
     }
 
-    pub fn get_write_batch(&self) -> Result<WriteBatch> {
+    pub fn get_write_batch(&self) -> WriteBatch {
         self.db.batch()
     }
 
@@ -6205,6 +6304,9 @@ impl Blockstore {
 fn update_completed_data_indexes<'a>(
     is_last_in_data: bool,
     new_shred_index: u32,
+    // The index *plus one* of the highest data shred received for this slot,
+    // i.e. `SlotMeta::received` after accounting for `new_shred_index`.
+    received: u64,
     received_data_shreds: &'a ShredIndex,
     // Shreds indices which are marked data complete.
     completed_data_indexes: &mut CompletedDataIndexes,
@@ -6214,6 +6316,15 @@ fn update_completed_data_indexes<'a>(
     if is_last_in_data {
         completed_data_indexes.insert(new_shred_index);
     }
+    // Every index in `completed_data_indexes` is strictly less than
+    // `received`: indexes are only inserted above, and the caller max-bumps
+    // `SlotMeta::received` past `new_shred_index` first. This makes
+    // `received` a tight exclusive bound for the forward scan below, which
+    // would otherwise walk the bit vector's empty tail on every in-order
+    // shred insertion. The bounded scan clamps to capacity, so saturating
+    // the conversion is safe.
+    let received = u32::try_from(received).unwrap_or(u32::MAX);
+    debug_assert!(completed_data_indexes.range(received..).next().is_none());
     // Consecutive entries i, j, k in this array represent potential ranges
     // [i, j), [j, k) that could be completed data ranges
     [
@@ -6223,7 +6334,7 @@ fn update_completed_data_indexes<'a>(
             .or(Some(0u32)),
         is_last_in_data.then_some(new_shred_index + 1),
         completed_data_indexes
-            .next_completed_index(new_shred_index + 1)
+            .next_completed_index(new_shred_index + 1, received)
             .map(|index| index + 1),
     ]
     .into_iter()
@@ -6257,6 +6368,7 @@ fn update_slot_meta<'a>(
     update_completed_data_indexes(
         is_last_in_slot || is_last_in_data,
         index,
+        slot_meta.received,
         received_data_shreds,
         &mut slot_meta.completed_data_indexes,
     )
@@ -6630,6 +6742,7 @@ pub fn entries_to_test_shreds(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
+        .into_iter()
         .filter(Shred::is_data)
         .collect()
 }

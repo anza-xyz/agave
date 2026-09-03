@@ -268,18 +268,16 @@ mod test {
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
         let mut stats = crate::shred::ProcessShredsStats::default();
-        let shreds: Vec<_> = shredder
-            .make_merkle_shreds_from_entries(
-                &keypair,
-                &entries,
-                /*is_last_in_slot:*/ false,
-                Hash::default(),
-                0,
-                0,
-                &ReedSolomonCache::default(),
-                &mut stats,
-            )
-            .collect();
+        let shreds = shredder.make_merkle_shreds_from_entries(
+            &keypair,
+            &entries,
+            /*is_last_in_slot:*/ false,
+            Hash::default(),
+            0,
+            0,
+            &ReedSolomonCache::default(),
+            &mut stats,
+        );
         let shred = &shreds[0];
 
         // Create a BytesPacket with a trailing nonce and mark it as REPAIR.

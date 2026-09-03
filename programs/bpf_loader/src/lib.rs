@@ -2483,7 +2483,6 @@ mod tests {
                     invoke_context.program_cache_for_tx_batch.replenish(
                         system_program::id(),
                         Arc::new(ProgramCacheEntry::new_builtin(
-                            0,
                             solana_system_program::system_processor::Entrypoint::register,
                         )),
                     );

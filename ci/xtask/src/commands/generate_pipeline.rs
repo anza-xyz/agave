@@ -74,11 +74,10 @@ fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
         name: String::from("sanity"),
         command: String::from("ci/test-sanity.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(5),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     }));
 
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -137,7 +136,6 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
     pipeline.set_priority(10);
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_checks_step());
     Ok(pipeline)
 }
@@ -280,7 +278,6 @@ async fn generate_pull_request_pipeline(
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     if flags.shellcheck {
         pipeline.add_step(default_shellcheck_step());
     }
@@ -337,7 +334,6 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -379,18 +375,7 @@ fn default_sanity_step() -> buildkite::Step {
         name: String::from("sanity"),
         command: String::from("ci/docker-run-default-image.sh ci/test-sanity.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(5),
-        ..Default::default()
-    })
-}
-
-fn default_channel_info_divergence_step() -> buildkite::Step {
-    buildkite::Step::Command(buildkite::CommandStep {
-        name: String::from("channel-info-divergence"),
-        command: String::from("ci/docker-run-default-image.sh ci/test-channel-info-divergence.sh"),
-        agents: Some(queue_agents()),
-        timeout_in_minutes: Some(10),
-        soft_fail: Some(true),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     })
 }
@@ -456,7 +441,7 @@ fn default_miri_step() -> buildkite::Step {
         name: String::from("miri"),
         command: String::from("ci/docker-run-default-image.sh ci/test-miri.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(5),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     })
 }

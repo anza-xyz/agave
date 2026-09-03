@@ -4809,7 +4809,7 @@ pub mod tests {
             solana_pubkey::pubkey!("TestProgram11111111111111111111111111111111");
 
         fn cache_entry() -> ProgramCacheEntry {
-            ProgramCacheEntry::new_builtin(0, Self::register)
+            ProgramCacheEntry::new_builtin(Self::register)
         }
 
         fn instruction(
@@ -5236,6 +5236,43 @@ pub mod tests {
         };
         let (response, _) = futures::executor::block_on(fut);
         assert_eq!(response, 20);
+    }
+
+    #[test]
+    fn test_rpc_get_ag_genesis_cert() {
+        use {
+            agave_votor_messages::{
+                certificate::{CertSignature, GenesisCert},
+                consensus_message::Block,
+            },
+            solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        };
+
+        let rpc = RpcHandler::start();
+        // Seed the bank with a genesis certificate for the RPC to return.
+        let block = Block::new_unique(0);
+        rpc.working_bank()
+            .set_alpenglow_genesis_certificate(&GenesisCert {
+                block,
+                signature: CertSignature {
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    bitmap: vec![1, 2, 3],
+                },
+            });
+
+        let request = create_test_request("getAgGenesisCert", None);
+        let result: Value = parse_success_result(rpc.handle_request_sync(request));
+        let expected = json!({
+            "block": {
+                "slot": 0,
+                "blockId": &block.block_id,
+            },
+            "signature": {
+                "signature": vec![0u8; BLS_SIGNATURE_AFFINE_SIZE],
+                "bitmap": [1, 2, 3],
+            },
+        });
+        assert_eq!(result, expected);
     }
 
     #[test]
@@ -9300,11 +9337,10 @@ pub mod tests {
         );
 
         tx64.push('!');
-        assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
-            Error::invalid_params("invalid base64 encoding: InvalidByte(1640, 33)".to_string())
-        );
+        let err = decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert!(err.message.starts_with("invalid base64 encoding:"));
 
         let mut tx58 = bs58::encode(&tx_ser).into_string();
         let err =

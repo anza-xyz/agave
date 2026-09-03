@@ -132,16 +132,6 @@ pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool, ena
     }
 }
 
-pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
-    for (batch, v) in batches.iter_mut().zip(r) {
-        for (mut pkt, f) in batch.iter_mut().zip(v) {
-            if !pkt.meta().discard() {
-                pkt.meta_mut().set_discard(*f == 0);
-            }
-        }
-    }
-}
-
 #[cfg(feature = "dev-context-only-utils")]
 pub fn threadpool_for_tests() -> rayon::ThreadPool {
     // Four threads is sufficient for unit tests
@@ -218,19 +208,6 @@ mod tests {
         .unwrap();
 
         VersionedTransaction::try_new(VersionedMessage::V1(message), &[&payer]).unwrap()
-    }
-
-    #[test]
-    fn test_mark_disabled() {
-        let batch_size = 1;
-        let mut batch = BytesPacketBatch::with_capacity(batch_size);
-        batch.resize(batch_size, BytesPacket::empty());
-        let mut batches: Vec<PacketBatch> = vec![batch.into()];
-        mark_disabled(&mut batches, &[vec![0]]);
-        assert!(batches[0].get(0).unwrap().meta().discard());
-        batches[0].get_mut(0).unwrap().meta_mut().set_discard(false);
-        mark_disabled(&mut batches, &[vec![1]]);
-        assert!(!batches[0].get(0).unwrap().meta().discard());
     }
 
     fn packet_from_num_sigs(required_num_sigs: u8, actual_num_sigs: usize) -> BytesPacket {

@@ -8,12 +8,20 @@ use {
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, ShredId, Shredder},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
     std::{borrow::Cow, collections::HashSet},
 };
+
+// Shreds in a Merkle FEC set share a signature, while duplicate variants share shred IDs.
+// The pair uniquely identifies every shred from both versions.
+type DuplicateShredKey = (Signature, ShredId);
+
+fn duplicate_shred_key(shred: &Shred) -> DuplicateShredKey {
+    (*shred.signature(), shred.id())
+}
 
 pub const MINIMUM_DUPLICATE_SLOT: Slot = 20;
 pub const DUPLICATE_RATE: usize = 10;
@@ -48,8 +56,8 @@ pub(super) struct BroadcastDuplicatesRun {
     prev_entry_hash: Option<Hash>,
     num_slots_broadcasted: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
-    original_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
-    partition_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
+    original_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
+    partition_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
@@ -78,8 +86,8 @@ impl BroadcastDuplicatesRun {
             prev_entry_hash: None,
             num_slots_broadcasted: 0,
             cluster_nodes_cache,
-            original_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
-            partition_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
+            original_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
+            partition_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
@@ -281,14 +289,14 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             self.original_last_data_shreds.lock().unwrap().extend(
                 original_last_data_shred.iter().map(|shred| {
                     assert!(shred.verify(&pubkey));
-                    shred.signature()
+                    duplicate_shred_key(shred)
                 }),
             );
             self.partition_last_data_shreds.lock().unwrap().extend(
                 partition_last_data_shred.iter().map(|shred| {
                     info!("adding {} to partition set", shred.signature());
                     assert!(shred.verify(&pubkey));
-                    shred.signature()
+                    duplicate_shred_key(shred)
                 }),
             );
             let original_last_data_shred = Arc::new(original_last_data_shred);
@@ -380,36 +388,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         let packets: Vec<_> = shreds
             .iter()
             .filter_map(|shred| {
-                let node = cluster_nodes.get_broadcast_peer(&shred.id())?;
-                if !socket_addr_space.check(&node.tvu(Protocol::UDP)?) {
-                    return None;
-                }
                 if self
-                    .original_last_data_shreds
-                    .lock()
-                    .unwrap()
-                    .remove(shred.signature())
-                {
-                    if cluster_partition.contains(node.pubkey()) {
-                        info!(
-                            "Not broadcasting original shred index {}, slot {} to partition node \
-                             {}",
-                            shred.index(),
-                            shred.slot(),
-                            node.pubkey(),
-                        );
-                        return None;
-                    }
-                } else if self
                     .partition_last_data_shreds
                     .lock()
                     .unwrap()
-                    .remove(shred.signature())
+                    .remove(&duplicate_shred_key(shred))
                 {
-                    // If the shred is part of the partition, broadcast it directly to the
-                    // partition node. This is to account for cases when the partition stake
-                    // is small such as in `test_duplicate_shreds_broadcast_leader()`, then
-                    // the partition node is never selected by get_broadcast_peer()
+                    // Partition shreds bypass Turbine and are sent directly to the partition.
+                    // Do this before selecting a Turbine peer so that an unrelated peer with no
+                    // usable TVU address cannot cause the partition shred to be dropped.
                     return Some(
                         cluster_partition
                             .iter()
@@ -424,10 +411,32 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                                 let tvu = cluster_info.lookup_contact_info(pubkey, |node| {
                                     node.tvu(Protocol::UDP)
                                 })??;
-                                Some((shred.payload(), tvu))
+                                socket_addr_space
+                                    .check(&tvu)
+                                    .then_some((shred.payload(), tvu))
                             })
                             .collect(),
                     );
+                }
+
+                let node = cluster_nodes.get_broadcast_peer(&shred.id())?;
+                if !socket_addr_space.check(&node.tvu(Protocol::UDP)?) {
+                    return None;
+                }
+                if self
+                    .original_last_data_shreds
+                    .lock()
+                    .unwrap()
+                    .remove(&duplicate_shred_key(shred))
+                    && cluster_partition.contains(node.pubkey())
+                {
+                    info!(
+                        "Not broadcasting original shred index {}, slot {} to partition node {}",
+                        shred.index(),
+                        shred.slot(),
+                        node.pubkey(),
+                    );
+                    return None;
                 }
 
                 Some(vec![(shred.payload(), node.tvu(Protocol::UDP)?)])
@@ -461,5 +470,73 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             )
             .expect("Failed to insert shreds in blockstore");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_entry::entry::create_ticks};
+
+    #[test]
+    fn test_special_shred_key_distinguishes_shreds_with_shared_signature() {
+        let keypair = Keypair::new();
+        let shredder = Shredder::new(1, 0, 0, 0).unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let mut stats = ProcessShredsStats::default();
+        let (data_shreds, _) = shredder.component_to_merkle_shreds_for_tests(
+            &keypair,
+            &BlockComponent::EntryBatch(create_ticks(1, 0, Hash::default())),
+            true,
+            Hash::default(),
+            0,
+            0,
+            &reed_solomon_cache,
+            &mut stats,
+        );
+        let (duplicate_data_shreds, _) = shredder.component_to_merkle_shreds_for_tests(
+            &keypair,
+            &BlockComponent::EntryBatch(create_ticks(1, 0, Hash::new_unique())),
+            true,
+            Hash::default(),
+            0,
+            0,
+            &reed_solomon_cache,
+            &mut stats,
+        );
+
+        assert!(data_shreds.len() > 1);
+        assert_eq!(data_shreds.len(), duplicate_data_shreds.len());
+        assert_eq!(
+            data_shreds
+                .iter()
+                .map(|shred| *shred.signature())
+                .collect::<HashSet<_>>()
+                .len(),
+            1,
+        );
+        assert!(
+            data_shreds
+                .iter()
+                .zip(&duplicate_data_shreds)
+                .all(|(shred, duplicate)| {
+                    shred.id() == duplicate.id()
+                        && shred.signature() != duplicate.signature()
+                        && duplicate_shred_key(shred) != duplicate_shred_key(duplicate)
+                })
+        );
+
+        let mut tracked: HashSet<DuplicateShredKey> = data_shreds
+            .iter()
+            .chain(&duplicate_data_shreds)
+            .map(duplicate_shred_key)
+            .collect();
+        assert_eq!(
+            tracked.len(),
+            data_shreds.len() + duplicate_data_shreds.len()
+        );
+        for shred in data_shreds.iter().chain(&duplicate_data_shreds) {
+            assert!(tracked.remove(&duplicate_shred_key(shred)));
+        }
+        assert!(tracked.is_empty());
     }
 }

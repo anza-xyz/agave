@@ -39,7 +39,7 @@ use {
         blockstore_meta::BlockLocation,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
-            ShredFetchStats, ShredType, layout::get_merkle_root, merkle_tree,
+            ShredFetchStats, ShredFlags, ShredType, layout::get_merkle_root, merkle_tree,
         },
     },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
@@ -126,7 +126,8 @@ impl From<Hash> for FecSetRoot {
 pub enum ShredRepairType {
     /// Requesting `MAX_ORPHAN_REPAIR_RESPONSES ` parent shreds
     Orphan(Slot),
-    /// Requesting any shred with index greater than or equal to the particular index
+    /// Requesting any shred with index greater than or equal to the particular index,
+    /// or a lower shred marked as the last shred in its slot.
     HighestShred(Slot, u64),
     /// Requesting the missing shred at a particular index
     Shred(Slot, u64),
@@ -181,7 +182,12 @@ impl RequestResponse for ShredRepairType {
         match self {
             ShredRepairType::Orphan(slot) => shred_slot <= *slot,
             ShredRepairType::HighestShred(slot, index) => {
-                shred_slot == *slot && get_shred_index(shred) >= Some(*index)
+                shred_slot == *slot
+                    && get_shred_index(shred).is_some_and(|shred_index| {
+                        shred_index >= *index
+                            || shred::layout::get_flags(shred)
+                                .is_ok_and(|flags| flags.contains(ShredFlags::LAST_SHRED_IN_SLOT))
+                    })
             }
             ShredRepairType::Shred(slot, index) => {
                 shred_slot == *slot && get_shred_index(shred) == Some(*index)
@@ -2540,7 +2546,7 @@ mod tests {
             index + 1,
             nonce,
         );
-        assert!(rv.is_none());
+        assert!(rv.is_some());
     }
 
     #[test]

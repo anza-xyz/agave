@@ -19,6 +19,11 @@ use {
 
 pub mod points;
 
+/// Maximum commission, in basis points.
+pub(crate) const MAX_BPS: u16 = 10_000;
+/// Maximum commission, in basis points, expressed as a u128
+pub(crate) const MAX_BPS_U128: u128 = MAX_BPS as u128;
+
 #[derive(Debug, PartialEq, Eq)]
 struct CalculatedStakeRewards {
     staker_rewards: u64,
@@ -379,8 +384,6 @@ fn calculate_stake_rewards<'a>(
 /// DEVELOPER NOTE:  This function used to be a method on VoteState, but was moved here
 #[cfg_attr(any(test, feature = "dev-context-only-utils"), qualifiers(pub(crate)))]
 fn commission_split(commission_bps: u16, on: u64) -> (u64, u64, bool) {
-    const MAX_BPS: u16 = 10_000;
-    const MAX_BPS_U128: u128 = MAX_BPS as u128;
     match commission_bps.min(MAX_BPS) {
         0 => (0, on, false),
         MAX_BPS => (on, 0, false),
@@ -415,8 +418,6 @@ fn commission_split(commission_bps: u16, on: u64) -> (u64, u64, bool) {
 /// This is used only for non-Tower epochs, where small unfair splits no longer defer redemption.
 #[cfg_attr(any(test, feature = "dev-context-only-utils"), qualifiers(pub(crate)))]
 fn commission_split_preserve_lamports(commission_bps: u16, on: u64) -> (u64, u64, bool) {
-    const MAX_BPS: u16 = 10_000;
-    const MAX_BPS_U128: u128 = MAX_BPS as u128;
     match commission_bps.min(MAX_BPS) {
         0 => (0, on, false),
         MAX_BPS => (on, 0, false),

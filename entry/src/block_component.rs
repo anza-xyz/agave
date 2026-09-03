@@ -330,6 +330,30 @@ pub struct VotesAggregate {
 }
 
 impl VotesAggregate {
+    /// Creates a new `VotesAggregate` from a compressed signature and bitmap.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new(signature: BLSSignatureCompressed, bitmap: Vec<u8>) -> Self {
+        Self { signature, bitmap }
+    }
+
+    /// Returns a reference to the compressed signature.
+    pub fn signature(&self) -> &BLSSignatureCompressed {
+        &self.signature
+    }
+
+    /// Returns a reference to the bitmap.
+    pub fn bitmap(&self) -> &[u8] {
+        &self.bitmap
+    }
+
+    /// Returns every field of the aggregate. Callers that must not silently
+    /// ignore new fields (e.g. the geyser boundary conversion) bind this
+    /// tuple exhaustively, so growing it breaks them at compile time.
+    pub fn as_parts(&self) -> (&BLSSignatureCompressed, &[u8]) {
+        let Self { signature, bitmap } = self;
+        (signature, bitmap)
+    }
+
     /// Creates a VotesAggregate from a Certificate's signature and bitmap.
     ///
     /// # Panics
@@ -478,6 +502,25 @@ impl VersionedBlockMarker {
         match self {
             Self::V1(BlockMarkerV1::BlockFooter(_)) => true,
             Self::V1(_) => false,
+        }
+    }
+
+    pub fn is_parent_marker(&self) -> bool {
+        match self {
+            Self::V1(BlockMarkerV1::UpdateParent(_)) | Self::V1(BlockMarkerV1::BlockHeader(_)) => {
+                true
+            }
+            Self::V1(_) => false,
+        }
+    }
+
+    pub fn as_update_parent(&self) -> Option<&UpdateParentV1> {
+        match self {
+            Self::V1(BlockMarkerV1::UpdateParent(update_parent)) => {
+                let VersionedUpdateParent::V1(update_parent) = update_parent.inner();
+                Some(update_parent)
+            }
+            Self::V1(_) => None,
         }
     }
 }

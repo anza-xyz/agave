@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(index.num_flush_threads, Some(one));
         assert!(matches!(index.index_limit, IndexLimit::InMemOnly));
         assert!(config.skip_initial_hash_calc);
-        assert!(!config.exhaustively_verify_refcounts);
+        assert!(!config.verify_index);
         assert_eq!(config.read_cache_num_shards, Some(2));
         assert_eq!(config.num_background_threads, Some(one));
         assert_eq!(config.num_foreground_threads, Some(one));

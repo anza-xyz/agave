@@ -631,7 +631,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 AccessType::PrimaryForMaintenance,
             );
             let mut pinnable_slice = target.new_pinnable_slice();
-            let mut write_batch = target.get_write_batch()?;
+            let mut write_batch = target.get_write_batch();
 
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
@@ -678,10 +678,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let slots =
                 get_latest_optimistic_slots(&blockstore, num_slots, exclude_vote_only_slots);
 
-            println!(
-                "{:>20} {:>44} {:>32} {:>13}",
-                "Slot", "Bank Hash", "Timestamp", "Vote Only?"
-            );
             for (slot, hash_and_timestamp_opt, contains_nonvote) in slots.iter() {
                 let (time_str, hash_str) = if let Some((hash, timestamp)) = hash_and_timestamp_opt {
                     let secs: u64 = (timestamp / 1_000) as u64;
@@ -694,9 +690,10 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     let unknown = "Unknown";
                     (String::from(unknown), String::from(unknown))
                 };
+                let vote_only = !contains_nonvote;
                 println!(
-                    "{:>20} {:>44} {:>32} {:>13}",
-                    slot, hash_str, time_str, !contains_nonvote
+                    "Slot {slot}\n  Bank Hash: {hash_str:>44}, Timestamp: {time_str}, Vote Only: \
+                     {vote_only}",
                 );
             }
         }

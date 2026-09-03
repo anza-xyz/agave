@@ -53,6 +53,7 @@ pub(crate) fn create_client_config(
         let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
         res.max_idle_timeout(Some(timeout));
         res.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
+        res.datagram_receive_buffer_size(None);
         // Disable Quic send fairness.
         // When set to false, streams are still scheduled based on priority,
         // but once a chunk of a stream has been written out, quinn tries to complete

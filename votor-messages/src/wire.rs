@@ -85,9 +85,8 @@ pub(crate) struct WireVoteSignature {
 
 impl From<VoteMessage> for WireVoteSignature {
     fn from(msg: VoteMessage) -> Self {
-        Self {
-            signature: msg.signature,
-        }
+        let signature = BLSSignature::from(msg.signature);
+        Self { signature }
     }
 }
 
@@ -113,6 +112,7 @@ pub(crate) struct WireSlotVoteMessage {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// Signature on a wire cert message
 pub struct WireCertSignature {
     #[cfg_attr(
@@ -147,6 +147,7 @@ pub(crate) struct WireSlotCertMessage {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// A wire cert message that holds a block.
 pub struct WireBlockCertMessage {
     /// the block the cert is certifying.
@@ -346,7 +347,7 @@ impl WireConsensusMessageV1 {
         SchemaRead
     ),
     frozen_abi(
-        digest = "DjdpNzNd3eQ569wuRQq7cKAsj791nkjbbhcqWa7TQeKj",
+        digest = "BuNdLfQfseGa7sL29neSwUYqrWo1AVRyTYxMGxLATzia",
         abi_digest = "ErGjoTr18hn3dvPVA7jFgK5WLwb4jgx7a39Yn8dSzB2K",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
@@ -435,7 +436,7 @@ impl VersionedWireConsensusMessage {
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
     frozen_abi(
-        digest = "AKMt6bqYRf1xh7tWg4eAgG7jNN1qtUvNVPb5XZn9vjtV",
+        digest = "FaLMAAzQUX8FfCZhUqETKB1xdBwQuC3pwz2mEaC6t3Gb",
         abi_digest = "2aBMTuPyDgGSYeYX1aBbXURgA4qqr92Eh9yiTeHX6qZq",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",

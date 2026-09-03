@@ -1,7 +1,11 @@
 use {
-    crate::vote_transaction::VoteTransaction, solana_bincode::limited_deserialize,
-    solana_hash::Hash, solana_pubkey::Pubkey, solana_signature::Signature,
-    solana_svm_transaction::svm_transaction::SVMTransaction, solana_transaction::Transaction,
+    crate::vote_transaction::VoteTransaction,
+    solana_bincode::limited_deserialize,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_svm_transaction::{svm_message::SVMStaticMessage, svm_transaction::SVMTransaction},
+    solana_transaction::Transaction,
     solana_vote_interface::instruction::VoteInstruction,
 };
 
@@ -12,7 +16,7 @@ pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
 /// 1. Have exactly one instruction
 /// 2. That instruction must be to the vote program
 /// 3. That instruction must be a single vote state update (UpdateVoteState, TowerSync, etc.)
-pub fn is_valid_vote_only_transaction(tx: &impl SVMTransaction) -> bool {
+pub fn is_valid_vote_only_transaction(tx: &impl SVMStaticMessage) -> bool {
     let mut instructions = tx.program_instructions_iter();
 
     let Some((program_id, instruction)) = instructions.next() else {

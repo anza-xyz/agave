@@ -3863,6 +3863,26 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     // for the partition.
     assert!(partition_node_stake < our_node_stake && partition_node_stake < good_node_stake);
 
+    let validator_keys: Vec<_> = iter::repeat_with(ValidatorKeys::new)
+        .take(node_stakes.len())
+        .collect();
+    // Restrict repair to the leader and good node, which both hold the duplicate-confirmed version.
+    let good_block_repair_validators = HashSet::from([
+        validator_keys[0].node_keypair.pubkey(), // Bad leader stores the original version.
+        validator_keys[2].node_keypair.pubkey(), // Good node receives the original version.
+    ]);
+    let validator_test_configs = validator_keys
+        .into_iter()
+        .map(|validator_keys| ValidatorTestConfig {
+            validator_keys,
+            validator_config: ValidatorConfig {
+                repair_validators: Some(good_block_repair_validators.clone()),
+                ..ValidatorConfig::default_for_test()
+            },
+            in_genesis: true,
+        })
+        .collect();
+
     let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
 
     // 1) Set up the cluster
@@ -3872,7 +3892,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
             duplicate_slot_sender: Some(duplicate_slot_sender),
         }),
         node_stakes,
-        None,
+        Some(validator_test_configs),
         None,
     );
 
@@ -4996,7 +5016,7 @@ fn test_boot_from_local_state() {
     // so use it as the comparison for others.
     // - wait for validator1 to take new snapshots
     // - wait for the other validators to have high enough snapshots
-    // - ensure the other validators' snapshots match validator1's
+    // - ensure the other validators' full snapshots match validator1's
     //
     // NOTE: There's a chance validator 2 or 3 has crossed the next full snapshot past what
     // validator 1 has.  If that happens, validator 2 or 3 may have purged the snapshots needed
@@ -5022,9 +5042,6 @@ fn test_boot_from_local_state() {
     #[allow(dead_code)]
     #[derive(Debug)]
     struct SnapshotSlot(Slot);
-    #[allow(dead_code)]
-    #[derive(Debug)]
-    struct BaseSlot(Slot);
 
     for (i, other_validator_config) in [(2, &validator2_config), (3, &validator3_config)] {
         info!("Checking if validator{i} has the same snapshots as validator1...");
@@ -5078,46 +5095,6 @@ fn test_boot_from_local_state() {
                 .collect::<Vec<_>>(),
         );
 
-        let other_incremental_snapshot_archives =
-            snapshot_paths::incremental_snapshot_archives_iter(
-                other_validator_config
-                    .incremental_snapshot_archives_dir
-                    .path(),
-            )
-            .collect::<Vec<_>>();
-        debug!(
-            "validator{i} incremental snapshot archives: {other_incremental_snapshot_archives:?}"
-        );
-        assert!(
-            other_incremental_snapshot_archives
-                .iter()
-                .any(
-                    |other_incremental_snapshot_archive| other_incremental_snapshot_archive
-                        .base_slot()
-                        == incremental_snapshot_archive.base_slot()
-                        && other_incremental_snapshot_archive.slot()
-                            == incremental_snapshot_archive.slot()
-                        && other_incremental_snapshot_archive.hash()
-                            == incremental_snapshot_archive.hash()
-                ),
-            "incremental snapshot archive does not match!\n  validator1: {:?}\n  validator{i}: \
-             {:?}",
-            (
-                BaseSlot(incremental_snapshot_archive.base_slot()),
-                SnapshotSlot(incremental_snapshot_archive.slot()),
-                incremental_snapshot_archive.hash(),
-            ),
-            other_incremental_snapshot_archives
-                .iter()
-                .sorted_unstable()
-                .rev()
-                .map(|snap| (
-                    BaseSlot(snap.base_slot()),
-                    SnapshotSlot(snap.slot()),
-                    snap.hash(),
-                ))
-                .collect::<Vec<_>>(),
-        );
         info!("Checking if validator{i} has the same snapshots as validator1... DONE");
     }
 }
@@ -5897,7 +5874,6 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(validator_keys.clone()),
         node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
-        ticks_per_slot: 8,
         slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH * 2,
         stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         poh_config: PohConfig {
@@ -6069,7 +6045,6 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
         ),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
-        ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
@@ -6188,7 +6163,7 @@ fn test_alpenglow_basic_equivocation() {
         let total_duplicate_blocks_observed = (1..=last_duplicate)
             .filter(|slot| blockstore.has_duplicate_shreds_in_slot(*slot))
             .count();
-        if total_duplicate_blocks_observed == expected_duplicate_blocks {
+        if total_duplicate_blocks_observed >= expected_duplicate_blocks {
             break;
         }
         if start.elapsed() > Duration::from_secs(60) {

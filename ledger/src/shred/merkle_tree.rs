@@ -144,18 +144,16 @@ pub fn verify_merkle_proof(
     proof: &[u8],
     expected_root: Hash,
 ) -> Result<(), Error> {
-    let mut proof = proof.chunks_exact(SIZE_OF_MERKLE_PROOF_ENTRY);
-    if !proof.remainder().is_empty() {
+    let (proof, remainder) = proof.as_chunks::<SIZE_OF_MERKLE_PROOF_ENTRY>();
+    if !remainder.is_empty() {
         return Err(Error::InvalidMerkleProof);
     }
-    let other = proof.next().ok_or(Error::InvalidMerkleProof)?;
-    let other = <&MerkleProofEntry>::try_from(other).unwrap();
+    let (other, proof) = proof.split_first().ok_or(Error::InvalidMerkleProof)?;
     let parent = if index.is_multiple_of(2) {
         join_nodes(node, other)
     } else {
         join_nodes(other, node)
     };
-    let proof = proof.map(|entry| <&MerkleProofEntry>::try_from(entry).unwrap());
     let merkle_root = get_merkle_root(index >> 1, parent, proof)?;
 
     (merkle_root == expected_root)

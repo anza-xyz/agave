@@ -63,7 +63,7 @@ use {
         elf::{ElfError, Executable, get_sbpf_version},
         error::EbpfError,
         program::SBPFVersion,
-        verifier::RequisiteVerifier,
+        verifier::{LocalVerifier, RequisiteVerifier},
         vm::Config,
     },
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
@@ -3060,6 +3060,11 @@ fn verify_elf(
 
     executable
         .verify::<RequisiteVerifier>()
+        .map_err(|err| explain_elf_error(&err, program_data, config))?;
+
+    // A local verifier to catch SBPFv3 errors
+    executable
+        .verify::<LocalVerifier>()
         .map_err(|err| explain_elf_error(&err, program_data, config).into())
 }
 
@@ -3230,13 +3235,16 @@ async fn send_deploy_messages(
                 }
             }
 
-            // Holds the scheduler alive for the duration of the send.
-            let _tpu_client;
             let cancel_token = CancellationToken::new();
-            let transport = if use_rpc {
-                SendTransport::Rpc(config.send_transaction_config)
+            // Keep background TPU client tasks alive for the duration of the send.
+            let (transport, node_address_service, _tpu_client) = if use_rpc {
+                (
+                    SendTransport::Rpc(config.send_transaction_config),
+                    None,
+                    None,
+                )
             } else {
-                let node_address_service = WebsocketNodeAddressService::run(
+                let (provider, service) = WebsocketNodeAddressService::run(
                     rpc_client.clone(),
                     config.websocket_url.clone(),
                     LeaderTpuCacheServiceConfig::default(),
@@ -3246,20 +3254,22 @@ async fn send_deploy_messages(
 
                 let bind_socket = bind_to_unspecified()?;
 
-                let (transaction_sender, client) =
-                    ClientBuilder::new(Box::new(node_address_service))
-                        .cancel_token(cancel_token.clone())
-                        .bind_socket(bind_socket)
-                        .broadcaster(NonblockingBroadcaster)
-                        .build()
-                        .expect("Failed to build TPU client");
-                _tpu_client = client;
-                SendTransport::Tpu(transaction_sender)
+                let (transaction_sender, client) = ClientBuilder::new(Box::new(provider))
+                    .cancel_token(cancel_token.clone())
+                    .bind_socket(bind_socket)
+                    .broadcaster(NonblockingBroadcaster)
+                    .build()
+                    .expect("Failed to build TPU client");
+                (
+                    SendTransport::Tpu(transaction_sender),
+                    Some(service),
+                    Some(client),
+                )
             };
 
             let versioned_write_messages = write_messages.into_iter().map(VersionedMessage::Legacy);
 
-            let transaction_errors = send_and_confirm_transactions_in_parallel_v3(
+            let transaction_errors_result = send_and_confirm_transactions_in_parallel_v3(
                 rpc_client.clone(),
                 transport,
                 versioned_write_messages,
@@ -3273,10 +3283,19 @@ async fn send_deploy_messages(
                 },
             )
             .await
-            .map_err(|err| format!("Data writes to account failed: {err}"))?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+            .map_err(|err| format!("Data writes to account failed: {err}"));
+
+            cancel_token.cancel();
+            if let Some(node_address_service) = node_address_service
+                && let Err(err) = node_address_service.shutdown().await
+            {
+                error!("Failed to shut down WebSocket node address service: {err}");
+            }
+
+            let transaction_errors = transaction_errors_result?
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
 
             if !transaction_errors.is_empty() {
                 for transaction_error in &transaction_errors {

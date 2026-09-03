@@ -126,8 +126,9 @@ impl Blockstore {
         self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ true)
     }
 
-    /// Like `purge_slot_cleanup_chaining` but preserves alternate block columns.
-    /// Used when switching from an alternate block to allow repair data to be retained.
+    /// Like `purge_slot_cleanup_chaining` but preserves alternate block columns and the duplicate
+    /// proof. Used when switching from an alternate block to allow repair data and the historical
+    /// equivocation evidence to be retained.
     pub(crate) fn purge_slot_cleanup_chaining_keep_alt(&self, slot: Slot) -> Result<()> {
         self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ false)
     }
@@ -136,7 +137,7 @@ impl Blockstore {
         let Some(mut slot_meta) = self.meta(slot)? else {
             return Err(BlockstoreError::SlotUnavailable);
         };
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
 
         self.purge_range(
             &mut write_batch,
@@ -193,7 +194,7 @@ impl Blockstore {
         cleanup_chaining: bool,
         purge_stats: &mut PurgeStats,
     ) -> Result<()> {
-        let mut write_batch = self.get_write_batch()?;
+        let mut write_batch = self.get_write_batch();
 
         let mut delete_range_timer = Measure::start("delete_range");
         self.purge_range(
@@ -261,8 +262,6 @@ impl Blockstore {
             .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.dead_slots_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot);
-        self.duplicate_slots_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.erasure_meta_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.orphans_cf
@@ -296,6 +295,11 @@ impl Blockstore {
             // columns. When `purge_alt_columns` is specified we delete the
             // entire column.
             self.double_merkle_meta_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot);
+            // This column stores the proof that the leader was malicious and
+            // equivocated. We do not want to purge this unless we are in cleanup,
+            // as this information can be used to slash leaders in the future.
+            self.duplicate_slots_cf
                 .delete_range_in_batch(write_batch, from_slot, to_slot);
         } else {
             // This column stores information for both the original and alternate
@@ -460,13 +464,13 @@ impl Blockstore {
         }
 
         for slot in from_slot..=to_slot {
-            let mut slot_components =
-                self.get_slot_components_with_shred_info(slot, 0, /*allow_dead_slots:*/ true);
+            let mut slot_components = self
+                .get_slot_component_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true);
             if slot_components.is_err()
                 && let Ok(Some(slot_meta)) = self.meta(slot)
                 && slot_meta.has_update_parent()
             {
-                slot_components = self.get_slot_components_with_shred_info(
+                slot_components = self.get_slot_component_views_with_shred_info(
                     slot,
                     u64::from(slot_meta.replay_fec_set_index),
                     /*allow_dead_slots:*/ true,
@@ -478,10 +482,10 @@ impl Blockstore {
             let mut transaction_index = 0usize;
             for component in slot_components {
                 match component {
-                    BlockComponent::EntryBatch(entries) => {
+                    ParsedBlockComponent::EntryBatch(entries) => {
                         for transaction in entries.into_iter().flat_map(|entry| entry.transactions)
                         {
-                            if let Some(&signature) = transaction.signatures.first() {
+                            if let Some(&signature) = transaction.signatures().first() {
                                 self.transaction_status_cf
                                     .delete_in_batch(batch, (signature, slot));
                                 self.transaction_memos_cf
@@ -490,7 +494,7 @@ impl Blockstore {
                                 let meta = self.read_transaction_status((signature, slot))?;
                                 let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
                                 let account_keys = AccountKeys::new(
-                                    transaction.message.static_account_keys(),
+                                    transaction.static_account_keys(),
                                     loaded_addresses.as_ref(),
                                 );
 
@@ -506,10 +510,10 @@ impl Blockstore {
                             transaction_index += 1;
                         }
                     }
-                    BlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
+                    ParsedBlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
                         transaction_index = 0;
                     }
-                    BlockComponent::BlockMarker(_) => {}
+                    ParsedBlockComponent::BlockMarker(_) => {}
                 }
             }
         }
@@ -1184,7 +1188,7 @@ pub mod tests {
         );
         blockstore.insert_shreds(shreds, false).unwrap();
 
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         blockstore
             .purge_special_columns_exact(&mut write_batch, slot, slot + 1)
             .unwrap();
@@ -1269,9 +1273,14 @@ pub mod tests {
         blockstore.insert_shreds(slot_11, false).unwrap();
         let (slot_12, _) = make_slot_entries(12, 5, 5);
         blockstore.insert_shreds(slot_12, false).unwrap();
+        blockstore
+            .store_duplicate_slot(5, vec![1], vec![2])
+            .unwrap();
+        assert!(blockstore.has_duplicate_shreds_in_slot(5));
 
         blockstore.purge_slot_cleanup_chaining(5).unwrap();
 
+        assert!(!blockstore.has_duplicate_shreds_in_slot(5));
         let slot_meta = blockstore.meta(5).unwrap().unwrap();
         let expected_slot_meta = SlotMeta {
             slot: 5,

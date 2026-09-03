@@ -6,7 +6,6 @@ use {
         block_cost_limits::*, cost_tracker_post_analysis::CostTrackerPostAnalysis,
         transaction_cost::TransactionCost,
     },
-    solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction_error::TransactionError,
@@ -61,6 +60,22 @@ pub struct UpdatedCosts {
     pub updated_costliest_account_cost: u64,
 }
 
+/// A snapshot of cost-tracker state used for reporting and post-processing.
+pub struct CostTrackerStats {
+    pub block_cost: u64,
+    pub transaction_count: u64,
+    pub number_of_accounts: usize,
+    pub costliest_account: Pubkey,
+    pub costliest_account_cost: u64,
+    pub allocated_accounts_data_size: u64,
+    pub transaction_signature_count: u64,
+    pub secp256k1_instruction_signature_count: u64,
+    pub ed25519_instruction_signature_count: u64,
+    pub in_flight_transaction_count: usize,
+    pub secp256r1_instruction_signature_count: u64,
+    pub number_of_contended_accounts: usize,
+}
+
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CostTrackerLimits {
@@ -100,7 +115,7 @@ pub struct CostTracker {
     cost_by_writable_accounts: HashMap<Pubkey, u64, ahash::RandomState>,
     block_cost: SharedBlockCost,
     transaction_count: Saturating<u64>,
-    allocated_accounts_data_size: Saturating<u64>,
+    allocated_accounts_data_size: SharedAllocatedAccountsDataSize,
     transaction_signature_count: Saturating<u64>,
     secp256k1_instruction_signature_count: Saturating<u64>,
     ed25519_instruction_signature_count: Saturating<u64>,
@@ -121,7 +136,7 @@ impl Default for CostTracker {
             ),
             block_cost: SharedBlockCost::new(0),
             transaction_count: Saturating(0),
-            allocated_accounts_data_size: Saturating(0),
+            allocated_accounts_data_size: SharedAllocatedAccountsDataSize::new(0),
             transaction_signature_count: Saturating(0),
             secp256k1_instruction_signature_count: Saturating(0),
             ed25519_instruction_signature_count: Saturating(0),
@@ -202,10 +217,12 @@ impl CostTracker {
             return Err(CostTrackerError::WouldExceedAccountMaxLimit);
         }
 
-        let allocated_accounts_data_size =
-            self.allocated_accounts_data_size + Saturating(tx_cost.allocated_accounts_data_size());
+        let allocated_accounts_data_size = self
+            .allocated_accounts_data_size
+            .load()
+            .saturating_add(tx_cost.allocated_accounts_data_size());
 
-        if allocated_accounts_data_size.0 > self.limits.allocated_data_size {
+        if allocated_accounts_data_size > self.limits.allocated_data_size {
             return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
         }
 
@@ -239,7 +256,8 @@ impl CostTracker {
         }
 
         // every check passed: publish the block-level state
-        self.allocated_accounts_data_size = allocated_accounts_data_size;
+        self.allocated_accounts_data_size
+            .store(allocated_accounts_data_size);
         self.transaction_count += 1;
         self.transaction_signature_count += tx_cost.num_transaction_signatures();
         self.secp256k1_instruction_signature_count +=
@@ -316,68 +334,30 @@ impl CostTracker {
         self.block_cost.clone()
     }
 
+    pub fn shared_allocated_accounts_data_size(&self) -> SharedAllocatedAccountsDataSize {
+        self.allocated_accounts_data_size.clone()
+    }
+
     pub fn transaction_count(&self) -> u64 {
         self.transaction_count.0
     }
 
-    pub fn report_stats(
-        &self,
-        bank_slot: solana_clock::Slot,
-        is_leader: bool,
-        total_transaction_fee: u64,
-        total_priority_fee: u64,
-    ) {
-        // skip reporting if block is empty
-        if self.transaction_count.0 == 0 {
-            return;
-        }
-
+    pub fn stats(&self) -> CostTrackerStats {
         let (costliest_account, costliest_account_cost) = self.find_costliest_account();
-        let number_of_contended_accounts = self.find_number_of_contended_accounts();
-
-        datapoint_info!(
-            "cost_tracker_stats",
-            "is_leader" => is_leader.to_string(),
-            ("bank_slot", bank_slot, i64),
-            ("block_cost", self.block_cost(), i64),
-            ("transaction_count", self.transaction_count.0, i64),
-            ("number_of_accounts", self.number_of_accounts(), i64),
-            ("costliest_account", costliest_account.to_string(), String),
-            ("costliest_account_cost", costliest_account_cost, i64),
-            (
-                "allocated_accounts_data_size",
-                self.allocated_accounts_data_size.0,
-                i64
-            ),
-            (
-                "transaction_signature_count",
-                self.transaction_signature_count.0,
-                i64
-            ),
-            (
-                "secp256k1_instruction_signature_count",
-                self.secp256k1_instruction_signature_count.0,
-                i64
-            ),
-            (
-                "ed25519_instruction_signature_count",
-                self.ed25519_instruction_signature_count.0,
-                i64
-            ),
-            (
-                "inflight_transaction_count",
-                self.in_flight_transaction_count.0,
-                i64
-            ),
-            (
-                "secp256r1_instruction_signature_count",
-                self.secp256r1_instruction_signature_count.0,
-                i64
-            ),
-            ("total_transaction_fee", total_transaction_fee, i64),
-            ("total_priority_fee", total_priority_fee, i64),
-            ("number_of_contended_accounts", number_of_contended_accounts, i64),
-        );
+        CostTrackerStats {
+            block_cost: self.block_cost(),
+            transaction_count: self.transaction_count.0,
+            number_of_accounts: self.number_of_accounts(),
+            costliest_account,
+            costliest_account_cost,
+            allocated_accounts_data_size: self.allocated_accounts_data_size.load(),
+            transaction_signature_count: self.transaction_signature_count.0,
+            secp256k1_instruction_signature_count: self.secp256k1_instruction_signature_count.0,
+            ed25519_instruction_signature_count: self.ed25519_instruction_signature_count.0,
+            in_flight_transaction_count: self.in_flight_transaction_count.0,
+            secp256r1_instruction_signature_count: self.secp256r1_instruction_signature_count.0,
+            number_of_contended_accounts: self.find_number_of_contended_accounts(),
+        }
     }
 
     fn find_costliest_account(&self) -> (Pubkey, u64) {
@@ -405,7 +385,11 @@ impl CostTracker {
     fn remove_transaction_cost(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
         let cost = tx_cost.sum();
         self.sub_transaction_execution_cost(tx_cost, cost);
-        self.allocated_accounts_data_size -= tx_cost.allocated_accounts_data_size();
+        self.allocated_accounts_data_size.store(
+            self.allocated_accounts_data_size
+                .load()
+                .saturating_sub(tx_cost.allocated_accounts_data_size()),
+        );
         self.transaction_count -= 1;
         self.transaction_signature_count -= tx_cost.num_transaction_signatures();
         self.secp256k1_instruction_signature_count -=
@@ -481,6 +465,25 @@ impl SharedBlockCost {
 
     fn fetch_sub(&self, value: u64) -> u64 {
         self.0.fetch_sub(value, Ordering::Release)
+    }
+
+    pub fn load(&self) -> u64 {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+/// Wrapper around the allocated accounts data size to allow fast sharing of the value without
+/// locking. Value is read-only outside of cost-tracker.
+#[derive(Debug, Clone)]
+pub struct SharedAllocatedAccountsDataSize(Arc<AtomicU64>);
+
+impl SharedAllocatedAccountsDataSize {
+    pub fn new(value: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(value)))
+    }
+
+    fn store(&self, value: u64) {
+        self.0.store(value, Ordering::Release);
     }
 
     pub fn load(&self) -> u64 {
@@ -605,9 +608,10 @@ mod tests {
 
         // build testee to have capacity for one simple transaction
         let mut testee = CostTracker::new(cost, cost);
-        let old = testee.allocated_accounts_data_size;
+        let shared_allocated_accounts_data_size = testee.shared_allocated_accounts_data_size();
+        let old = shared_allocated_accounts_data_size.load();
         assert!(testee.try_add(&tx_cost).is_ok());
-        assert_eq!(old.0 + 1, testee.allocated_accounts_data_size.0);
+        assert_eq!(old + 1, shared_allocated_accounts_data_size.load());
     }
 
     #[test]
@@ -1051,14 +1055,63 @@ mod tests {
         assert_eq!(1, cost_tracker.transaction_count.0);
         assert_eq!(1, cost_tracker.number_of_accounts());
         assert_eq!(cost, cost_tracker.block_cost());
-        assert_eq!(0, cost_tracker.allocated_accounts_data_size.0);
+        assert_eq!(0, cost_tracker.allocated_accounts_data_size.load());
 
         cost_tracker.remove_transaction_cost(&tx_cost);
         // assert cost_tracker is reverted to default
         assert_eq!(0, cost_tracker.transaction_count.0);
         assert_eq!(0, cost_tracker.number_of_accounts());
         assert_eq!(0, cost_tracker.block_cost());
-        assert_eq!(0, cost_tracker.allocated_accounts_data_size.0);
+        assert_eq!(0, cost_tracker.allocated_accounts_data_size.load());
+        let stats = cost_tracker.stats();
+        assert_eq!(stats.block_cost, 0);
+        assert_eq!(stats.transaction_count, 0);
+        assert_eq!(stats.number_of_accounts, 0);
+        assert_eq!(stats.costliest_account, transaction.writable_keys[0]);
+        assert_eq!(stats.costliest_account_cost, 0);
+        assert_eq!(stats.allocated_accounts_data_size, 0);
+        assert_eq!(stats.transaction_signature_count, 0);
+        assert_eq!(stats.secp256k1_instruction_signature_count, 0);
+        assert_eq!(stats.ed25519_instruction_signature_count, 0);
+        assert_eq!(stats.in_flight_transaction_count, 0);
+        assert_eq!(stats.secp256r1_instruction_signature_count, 0);
+        assert_eq!(stats.number_of_contended_accounts, 0);
+    }
+
+    #[test]
+    fn test_cost_tracker_stats() {
+        let mint_keypair = test_setup();
+        let transaction = build_simple_transaction(&mint_keypair);
+        let mut tx_cost = simple_transaction_cost(&transaction, 95);
+        tx_cost.allocated_accounts_data_size = 7;
+
+        let mut cost_tracker = CostTracker::new(100, 1_000);
+        cost_tracker.try_add(&tx_cost).unwrap();
+        cost_tracker.add_transactions_in_flight(2);
+        cost_tracker.transaction_signature_count = Saturating(1);
+        cost_tracker.secp256k1_instruction_signature_count = Saturating(2);
+        cost_tracker.ed25519_instruction_signature_count = Saturating(3);
+        cost_tracker.secp256r1_instruction_signature_count = Saturating(4);
+
+        let stats = cost_tracker.stats();
+        assert_eq!(stats.block_cost, 95);
+        assert_eq!(stats.transaction_count, 1);
+        assert_eq!(stats.number_of_accounts, 1);
+        assert_eq!(stats.costliest_account, mint_keypair.pubkey());
+        assert_eq!(stats.costliest_account_cost, 95);
+        assert_eq!(stats.allocated_accounts_data_size, 7);
+        assert_eq!(stats.transaction_signature_count, 1);
+        assert_eq!(stats.secp256k1_instruction_signature_count, 2);
+        assert_eq!(stats.ed25519_instruction_signature_count, 3);
+        assert_eq!(stats.in_flight_transaction_count, 2);
+        assert_eq!(stats.secp256r1_instruction_signature_count, 4);
+        assert_eq!(stats.number_of_contended_accounts, 1);
+
+        cost_tracker.update_execution_cost(&tx_cost, 90, 0);
+        let adjusted_stats = cost_tracker.stats();
+        assert_eq!(adjusted_stats.block_cost, 90);
+        assert_eq!(adjusted_stats.costliest_account_cost, 90);
+        assert_eq!(adjusted_stats.number_of_contended_accounts, 0);
     }
 
     #[test]

@@ -94,19 +94,12 @@ mod serde_snapshot_tests {
         )
     }
 
-    fn account_storages_to_stream<W>(
-        stream: &mut W,
-        slot: Slot,
-        account_storage_entries: &[Arc<AccountStorageEntry>],
-    ) -> wincode::WriteResult<()>
+    fn accounts_db_fields_to_stream<W>(stream: &mut W, slot: Slot) -> wincode::WriteResult<()>
     where
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        serialize_into(
-            stream,
-            &SerializableAccountsDb::new(slot, account_storage_entries, bank_hash_stats),
-        )
+        serialize_into(stream, &SerializableAccountsDb::new(slot, bank_hash_stats))
     }
 
     /// Simulates the unpacking & storage reconstruction done during snapshot unpacking
@@ -162,8 +155,7 @@ mod serde_snapshot_tests {
         accounts_db_config: AccountsDbConfig,
     ) -> AccountsDb {
         let mut writer = Cursor::new(vec![]);
-        let snapshot_storages = accounts.get_storages(..=slot).0;
-        account_storages_to_stream(&mut writer, slot, &snapshot_storages).unwrap();
+        accounts_db_fields_to_stream(&mut writer, slot).unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
@@ -220,12 +212,7 @@ mod serde_snapshot_tests {
 
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
-            accounts.store_accounts_seq(
-                (slot, [(pubkey, &account)].as_slice()),
-                0,
-                None,
-                &ancestors,
-            );
+            accounts.store_accounts((slot, [(pubkey, &account)].as_slice()), 0, None, &ancestors);
         }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
@@ -234,12 +221,7 @@ mod serde_snapshot_tests {
             .calculate_accounts_lt_hash_at_startup_from_index(&Ancestors::default());
 
         let mut writer = Cursor::new(vec![]);
-        account_storages_to_stream(
-            &mut writer,
-            slot,
-            &accounts.accounts_db.get_storages(..=slot).0,
-        )
-        .unwrap();
+        accounts_db_fields_to_stream(&mut writer, slot).unwrap();
 
         let copied_accounts = TempDir::new().unwrap();
 
@@ -662,30 +644,30 @@ mod serde_snapshot_tests {
         current_slot += 1;
         assert_eq!(0, accounts.alive_account_count_in_slot(current_slot));
         accounts.add_root_and_flush_write_cache(current_slot - 1);
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        assert!(accounts.contains(&pubkey1));
         accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         assert_eq!(1, accounts.alive_account_count_in_slot(current_slot));
-        // Ref count is 1 as the older version in the previous slot was marked obsolete
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        // pubkey1 is still alive; the older version in the previous slot was marked obsolete
+        assert!(accounts.contains(&pubkey1));
 
         // C: Yet more update to trigger lazy clean of step A
         current_slot += 1;
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        assert!(accounts.contains(&pubkey1));
         accounts.store_for_tests((current_slot, [(&pubkey1, &account3)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        assert!(accounts.contains(&pubkey1));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         // D: Make pubkey1 0-lamport; also triggers clean of step B
         current_slot += 1;
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        assert!(accounts.contains(&pubkey1));
         accounts.store_for_tests((current_slot, [(&pubkey1, &zero_lamport_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
-        // Ref count is 0 as the zero lamport account was converted to a tombstone
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 0);
+        // The zero lamport account was converted to a tombstone, so pubkey1 is out of the index
+        assert!(!accounts.contains(&pubkey1));
         accounts.add_root(current_slot);
 
         // E: Avoid missing bank hash error

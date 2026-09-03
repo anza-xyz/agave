@@ -40,6 +40,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
+        cost_update_service::report_cost_tracker_stats,
         resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
@@ -54,6 +55,7 @@ use {
         blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
         blockstore_processor::ProcessSlotCallback,
+        leader_schedule_cache::LeaderScheduleCache,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
@@ -639,7 +641,8 @@ fn setup_slot_recording(
                 let cost_tracker = bank.read_cost_tracker().unwrap();
                 let slot = bank.slot();
                 let is_leader_block = false;
-                cost_tracker.report_stats(
+                report_cost_tracker_stats(
+                    &cost_tracker.stats(),
                     slot,
                     is_leader_block,
                     total_transaction_fee,
@@ -2206,8 +2209,17 @@ fn main() {
                         || bootstrap_validator_pubkeys.is_some();
 
                     if child_bank_required {
-                        let mut child_bank =
-                            Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
+                        let child_slot = bank.slot() + 1;
+                        let child_leader = LeaderScheduleCache::new_from_bank(&bank)
+                            .slot_leader_at(child_slot, Some(&bank))
+                            .unwrap_or_else(|| {
+                                eprintln!(
+                                    "Error: Unable to determine the leader of child slot \
+                                     {child_slot}"
+                                );
+                                exit(1);
+                            });
+                        let mut child_bank = Bank::new_from_parent(bank, child_leader, child_slot);
 
                         if let Ok(rent_burn_percentage) = rent_burn_percentage {
                             child_bank.set_rent_burn_percentage(rent_burn_percentage);
@@ -2446,7 +2458,7 @@ fn main() {
                                 AccessType::PrimaryForMaintenance,
                             ));
                             let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
-                            let mut write_batch = backup_blockstore.get_write_batch().unwrap();
+                            let mut write_batch = backup_blockstore.get_write_batch();
                             let _ = backup_blockstore
                                 .insert_cow_shreds(
                                     shreds.into_iter().map(Cow::Owned),
@@ -2490,13 +2502,12 @@ fn main() {
                                 &ReedSolomonCache::default(),
                                 &mut ProcessShredsStats::default(),
                             )
+                            .into_iter()
                             .filter(Shred::is_data)
                             .map(Cow::Owned)
                             .collect();
                         let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
-                        let mut write_batch = rw_blockstore
-                            .get_write_batch()
-                            .expect("Blockstore operation must succeed");
+                        let mut write_batch = rw_blockstore.get_write_batch();
                         rw_blockstore
                             .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
                             .expect("Blockstore operation must succeed");

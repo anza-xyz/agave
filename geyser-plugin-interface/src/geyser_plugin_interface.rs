@@ -3,8 +3,8 @@
 //! In addition, the dynamic library must export a "C" function _create_plugin which
 //! creates the implementation of the plugin.
 use {
+    crate::block_footer::VersionedBlockFooter,
     solana_clock::{BankId, Slot, UnixTimestamp},
-    solana_entry::block_component::VersionedBlockFooter,
     solana_hash::Hash,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
@@ -350,13 +350,18 @@ pub struct ReplicaBlockFooterInfo<'a> {
     /// The slot containing the block footer.
     pub slot: Slot,
     /// The versioned block footer.
-    pub block_footer: &'a VersionedBlockFooter,
+    pub block_footer: &'a VersionedBlockFooter<'a>,
 }
 
 /// A wrapper to future-proof ReplicaBlockFooterInfo handling.
+///
+/// `V0_0_1` carried `solana_entry::block_component::VersionedBlockFooter`
+/// and shipped through v4.3; it was removed when the payload became the
+/// `block_footer` mirror types. The explicit discriminant keeps the two
+/// formats distinguishable across plugin builds.
 #[repr(u32)]
 pub enum ReplicaBlockFooterInfoVersions<'a> {
-    V0_0_1(&'a ReplicaBlockFooterInfo<'a>),
+    V0_0_2(&'a ReplicaBlockFooterInfo<'a>) = 1,
 }
 
 #[derive(Clone, Debug)]

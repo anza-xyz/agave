@@ -17,14 +17,16 @@ use {
         },
         transaction_batch::TransactionBatch,
     },
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::transaction_with_meta::{
+        StaticMessageWithMeta, TransactionWithMeta,
+    },
     solana_svm::{
-        account_loader::validate_fee_payer,
+        account_loader::{TransactionCheckResult, validate_fee_payer},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
-    solana_transaction_error::TransactionError,
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_vote::vote_parser,
     std::num::Saturating,
 };
@@ -129,11 +131,11 @@ impl Consumer {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results =
             SmallVec::<[_; TARGET_NUM_TRANSACTIONS_PER_BATCH]>::from_elem(Ok(()), txs.len());
-        let check_results = bank.check_transactions(
+        let check_results = Self::check_transactions_for_scheduling(
+            bank,
             txs,
             &pre_results,
             bank.max_processing_age(),
-            true,
             &mut error_counters,
         );
         let check_results = check_results
@@ -316,8 +318,39 @@ impl Consumer {
             })
             .collect();
 
+        // This guard allows bank retirement to wait for load/execution-side effects before shared
+        // state for the slot is purged.
+        let tx_execution_guard = bank.try_enter_transaction_execution();
+        let Some(tx_execution_guard) = tx_execution_guard else {
+            // This bank is being quiesced! Early exit.
+            retryable_transaction_indexes.extend(
+                batch
+                    .lock_results()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, result)| {
+                        result.is_ok().then_some(RetryableIndex {
+                            index,
+                            immediately_retryable: true,
+                        })
+                    }),
+            );
+            retryable_transaction_indexes.sort_unstable();
+            retryable_transaction_indexes.dedup();
+            return ExecuteAndCommitTransactionsOutput {
+                transaction_counts: LeaderProcessedTransactionCounts {
+                    attempted_processing_count: batch.sanitized_transactions().len() as u64,
+                    ..LeaderProcessedTransactionCounts::default()
+                },
+                retryable_transaction_indexes,
+                commit_transactions_result: Err(PohRecorderError::MaxHeightReached),
+                execute_and_commit_timings,
+                error_counters,
+            };
+        };
+
         let (load_and_execute_transactions_output, load_execute_us) =
-            measure_us!(bank.load_and_execute_transactions(
+            measure_us!(tx_execution_guard.load_and_execute_transactions(
                 batch,
                 bank.max_processing_age(),
                 &mut execute_and_commit_timings.execute_timings,
@@ -366,8 +399,12 @@ impl Consumer {
             processed_transactions
         });
 
+        // Handoff from the execution guard to the traditional freeze lock before recording. A
+        // normal freeze only waits for this record/commit section, while bank retirement first
+        // waits for execution guards and then for this lock.
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
+        drop(tx_execution_guard);
 
         let reserved_bytes =
             bank.entry_bytes_budget()
@@ -472,9 +509,20 @@ impl Consumer {
         }
     }
 
+    pub(crate) fn check_transactions_for_scheduling<Tx: TransactionWithMeta>(
+        bank: &Bank,
+        txs: &[impl core::borrow::Borrow<Tx>],
+        lock_results: &[TransactionResult<()>],
+        max_age: usize,
+        error_counters: &mut TransactionErrorMetrics,
+    ) -> Vec<TransactionCheckResult> {
+        bank.check_transactions_external(txs, lock_results, max_age, false, error_counters)
+            .0
+    }
+
     pub fn check_fee_payer_unlocked(
         bank: &Bank,
-        transaction: &impl TransactionWithMeta,
+        transaction: &impl StaticMessageWithMeta,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = transaction.fee_payer();
@@ -485,10 +533,8 @@ impl Consumer {
             transaction_configuration.priority_fee_lamports,
             bank.fee_features(),
         );
-        let (mut fee_payer_account, _slot) = bank
-            .rc
-            .accounts
-            .load_with_fixed_root(&bank.ancestors, fee_payer)
+        let mut fee_payer_account = bank
+            .get_account_with_fixed_root(fee_payer)
             .ok_or(TransactionError::AccountNotFound)?;
 
         validate_fee_payer(

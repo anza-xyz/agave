@@ -993,7 +993,7 @@ impl ProgramTest {
         self.builtin_programs.push((
             program_id,
             program_name,
-            ProgramCacheEntry::new_builtin(0, builtin),
+            ProgramCacheEntry::new_builtin(builtin),
         ));
     }
 

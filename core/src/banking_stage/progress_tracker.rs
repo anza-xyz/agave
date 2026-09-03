@@ -7,7 +7,7 @@ use {
     agave_votor::slot_clock::SharedAlpenglowSlotClock,
     agave_votor_messages::migration::MigrationStatus,
     solana_clock::{BankId, Slot},
-    solana_cost_model::cost_tracker::SharedBlockCost,
+    solana_cost_model::cost_tracker::{SharedAllocatedAccountsDataSize, SharedBlockCost},
     solana_poh::poh_recorder::SharedLeaderState,
     solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
     std::{
@@ -59,6 +59,7 @@ struct ProgressTracker {
 
     last_observed_bank_id: Option<BankId>,
     limit_and_shared_block_cost: Option<(u64, SharedBlockCost)>,
+    limit_and_shared_allocated_accounts_data_size: Option<(u64, SharedAllocatedAccountsDataSize)>,
 }
 
 impl ProgressTracker {
@@ -80,6 +81,7 @@ impl ProgressTracker {
 
             last_observed_bank_id: None,
             limit_and_shared_block_cost: None,
+            limit_and_shared_allocated_accounts_data_size: None,
         }
     }
 
@@ -144,13 +146,7 @@ impl ProgressTracker {
         producer: &mut shaq::spsc::Producer<ProgressMessage>,
         message: ProgressMessage,
     ) -> bool {
-        producer.sync();
-        if producer.try_write(message).is_ok() {
-            producer.commit();
-            true
-        } else {
-            false
-        }
+        producer.try_write(message).is_ok()
     }
 
     /// Gets current progress and formats into expected message type.
@@ -162,13 +158,17 @@ impl ProgressTracker {
             .unwrap_or((u64::MAX, u64::MAX));
         let progress_message = if let Some(working_bank) = leader_state.working_bank() {
             let bank_id = working_bank.bank_id();
-            // If new bank grab the cost tracker lock to get limit and shared cost.
+            // If new bank grab the cost tracker lock to get limits and shared costs.
             // This avoids needing to lock except on bank switches.
             if self.last_observed_bank_id != Some(bank_id) {
                 let cost_tracker = working_bank.read_cost_tracker().unwrap();
                 self.limit_and_shared_block_cost = Some((
                     cost_tracker.get_block_limit(),
                     cost_tracker.shared_block_cost(),
+                ));
+                self.limit_and_shared_allocated_accounts_data_size = Some((
+                    cost_tracker.get_allocated_data_size_limit(),
+                    cost_tracker.shared_allocated_accounts_data_size(),
                 ));
                 self.last_observed_bank_id = Some(bank_id);
             }
@@ -197,11 +197,15 @@ impl ProgressTracker {
                 next_leader_slot: next_leader_range_start,
                 leader_range_end: next_leader_range_end,
                 remaining_cost_units: self.remaining_block_cost(),
+                remaining_allocated_accounts_data_size: self
+                    .remaining_allocated_accounts_data_size(),
                 latest_blockhash: working_bank.last_blockhash().to_bytes(),
+                target_bank_time_ms: target_bank_time_ms(working_bank.ns_per_slot),
             }
         } else {
             self.last_observed_bank_id = None;
             self.limit_and_shared_block_cost = None;
+            self.limit_and_shared_allocated_accounts_data_size = None;
             let (current_slot, current_slot_progress) =
                 if self.migration_status.is_alpenglow_enabled() {
                     let slot_info = self.alpenglow_slot_clock.load()?;
@@ -234,7 +238,9 @@ impl ProgressTracker {
                 next_leader_slot: next_leader_range_start,
                 leader_range_end: next_leader_range_end,
                 remaining_cost_units: 0,
+                remaining_allocated_accounts_data_size: 0,
                 latest_blockhash: [0; 32],
+                target_bank_time_ms: 0,
             }
         };
 
@@ -248,6 +254,21 @@ impl ProgressTracker {
             .map(|(limit, shared_block_cost)| limit.saturating_sub(shared_block_cost.load()))
             .unwrap_or(0)
     }
+
+    /// If leader get the remaining allocated accounts data size. Otherwise 0.
+    fn remaining_allocated_accounts_data_size(&self) -> u64 {
+        self.limit_and_shared_allocated_accounts_data_size
+            .as_ref()
+            .map(|(limit, shared_allocated_accounts_data_size)| {
+                limit.saturating_sub(shared_allocated_accounts_data_size.load())
+            })
+            .unwrap_or(0)
+    }
+}
+
+fn target_bank_time_ms(ns_per_slot: u128) -> u16 {
+    let milliseconds = ns_per_slot.wrapping_div(1_000_000);
+    u16::try_from(milliseconds).unwrap_or(u16::MAX)
 }
 
 fn alpenglow_progress(elapsed: Duration, slot_duration: Duration) -> u8 {
@@ -368,7 +389,10 @@ mod tests {
         assert_eq!(message.next_leader_slot, u64::MAX);
         assert_eq!(message.leader_range_end, u64::MAX);
         assert_eq!(message.epoch, 0);
+        assert_eq!(message.remaining_cost_units, 0);
+        assert_eq!(message.remaining_allocated_accounts_data_size, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+        assert_eq!(message.target_bank_time_ms, 0);
 
         let expected_tick_height = 2 * ticks_per_slot;
         shared_leader_state.store(Arc::new(LeaderState::new(
@@ -386,6 +410,7 @@ mod tests {
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.epoch, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+        assert_eq!(message.target_bank_time_ms, 0);
 
         // Next leader slot is in the future - should be NOT_LEADER.
         shared_leader_state.store(Arc::new(LeaderState::new(
@@ -403,6 +428,7 @@ mod tests {
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.epoch, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+        assert_eq!(message.target_bank_time_ms, 0);
 
         // In leader slot but no bank yet - should be LEADER_STARTING.
         // leader_first_tick_height is at start of slot 4, and we're at tick_height
@@ -426,6 +452,7 @@ mod tests {
         assert_eq!(message.current_slot_progress, 1);
         assert_eq!(message.epoch, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+        assert_eq!(message.target_bank_time_ms, 0);
 
         // Slot boundary mid-window: tick_height one tick before leader_first_tick_height.
         let slot_5_boundary = 5 * ticks_per_slot;
@@ -462,7 +489,17 @@ mod tests {
         assert_eq!(message.leader_range_end, 7);
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.epoch, bank.epoch());
+        assert_eq!(
+            message.remaining_allocated_accounts_data_size,
+            bank.read_cost_tracker()
+                .unwrap()
+                .get_allocated_data_size_limit()
+        );
         assert_eq!(message.latest_blockhash, bank.last_blockhash().to_bytes());
+        assert_eq!(
+            message.target_bank_time_ms,
+            target_bank_time_ms(bank.ns_per_slot)
+        );
 
         bank.fill_bank_with_ticks_for_tests();
         assert!(bank.is_complete());
@@ -481,6 +518,10 @@ mod tests {
         assert_eq!(message.current_slot_progress, 100);
         assert_eq!(message.epoch, bank.epoch());
         assert_eq!(message.latest_blockhash, bank.last_blockhash().to_bytes());
+        assert_eq!(
+            message.target_bank_time_ms,
+            target_bank_time_ms(bank.ns_per_slot)
+        );
 
         // Child bank past the first epoch boundary - epoch should advance.
         let child_bank = Arc::new(Bank::new_from_parent(
@@ -506,6 +547,10 @@ mod tests {
         assert_eq!(
             message.latest_blockhash,
             child_bank.last_blockhash().to_bytes()
+        );
+        assert_eq!(
+            message.target_bank_time_ms,
+            target_bank_time_ms(child_bank.ns_per_slot)
         );
     }
 
@@ -661,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn test_progress_tracker_remaining_block_cost() {
+    fn test_progress_tracker_remaining_costs() {
         let mut progress_tracker = ProgressTracker::new(
             Arc::default(),
             SharedLeaderState::new(0, None, None),
@@ -673,6 +718,7 @@ mod tests {
 
         // No bank - no block cost set (0).
         assert_eq!(0, progress_tracker.remaining_block_cost());
+        assert_eq!(0, progress_tracker.remaining_allocated_accounts_data_size());
 
         let block_limit = 10_000;
         progress_tracker.limit_and_shared_block_cost = Some((block_limit, SharedBlockCost::new(0)));
@@ -680,6 +726,24 @@ mod tests {
         progress_tracker.limit_and_shared_block_cost =
             Some((block_limit, SharedBlockCost::new(block_limit / 2)));
         assert_eq!(block_limit / 2, progress_tracker.remaining_block_cost());
+
+        let allocated_accounts_data_size_limit = 20_000;
+        progress_tracker.limit_and_shared_allocated_accounts_data_size = Some((
+            allocated_accounts_data_size_limit,
+            SharedAllocatedAccountsDataSize::new(0),
+        ));
+        assert_eq!(
+            allocated_accounts_data_size_limit,
+            progress_tracker.remaining_allocated_accounts_data_size()
+        );
+        progress_tracker.limit_and_shared_allocated_accounts_data_size = Some((
+            allocated_accounts_data_size_limit,
+            SharedAllocatedAccountsDataSize::new(allocated_accounts_data_size_limit / 2),
+        ));
+        assert_eq!(
+            allocated_accounts_data_size_limit / 2,
+            progress_tracker.remaining_allocated_accounts_data_size()
+        );
     }
 
     #[test]

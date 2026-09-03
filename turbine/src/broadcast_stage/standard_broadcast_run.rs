@@ -198,23 +198,23 @@ impl StandardBroadcastRun {
         }
         // Set the reference_tick as if the PoH completed for this slot
         let reference_tick = max_ticks_in_slot;
-        let shreds: Vec<_> =
-            Shredder::new(self.slot, self.parent, reference_tick, self.shred_version)
-                .unwrap()
-                .make_merkle_shreds_from_entries(
-                    keypair,
-                    &[],  // entries
-                    true, // is_last_in_slot,
-                    self.chained_merkle_root,
-                    self.next_shred_index,
-                    self.next_code_index,
-                    &self.reed_solomon_cache,
-                    &mut self.process_shreds_stats,
-                )
-                // These shreds will finish the slot so no need to update
-                // self.next_shred_index and self.next_code_index
-                .inspect(|shred| self.process_shreds_stats.record_shred(shred))
-                .collect();
+        let shreds = Shredder::new(self.slot, self.parent, reference_tick, self.shred_version)
+            .unwrap()
+            .make_merkle_shreds_from_entries(
+                keypair,
+                &[],  // entries
+                true, // is_last_in_slot,
+                self.chained_merkle_root,
+                self.next_shred_index,
+                self.next_code_index,
+                &self.reed_solomon_cache,
+                &mut self.process_shreds_stats,
+            );
+        // These shreds will finish the slot so no need to update
+        // self.next_shred_index and self.next_code_index
+        shreds.iter().for_each(|shred| {
+            self.process_shreds_stats.record_shred(shred);
+        });
         if let Some(shred) = shreds.last() {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }
@@ -243,16 +243,15 @@ impl StandardBroadcastRun {
                     self.next_code_index,
                     &self.reed_solomon_cache,
                     process_stats,
-                )
-                .inspect(|shred| {
-                    process_stats.record_shred(shred);
-                    let next_index = match shred.shred_type() {
-                        ShredType::Code => &mut self.next_code_index,
-                        ShredType::Data => &mut self.next_shred_index,
-                    };
-                    *next_index = (*next_index).max(shred.index() + 1);
-                })
-                .collect();
+                );
+        shreds.iter().for_each(|shred| {
+            process_stats.record_shred(shred);
+            let next_index = match shred.shred_type() {
+                ShredType::Code => &mut self.next_code_index,
+                ShredType::Data => &mut self.next_shred_index,
+            };
+            *next_index = (*next_index).max(shred.index() + 1);
+        });
 
         if self
             .migration_status
@@ -323,7 +322,7 @@ impl StandardBroadcastRun {
         let (bsend, brecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
         let (ssend, srecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         self.process_receive_results(
             keypair,
             blockstore,
@@ -821,7 +820,7 @@ mod test {
         let (socket_sender, _socket_receiver) = bounded(1024);
         let (blockstore_sender, _blockstore_receiver) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut standard_broadcast_run = StandardBroadcastRun::new(
             0,
@@ -1060,7 +1059,7 @@ mod test {
         let (bsend, brecv) = bounded(1024);
         let (ssend, _srecv) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut last_tick_height = bank.tick_height();
         let mut standard_broadcast_run = StandardBroadcastRun::new(
@@ -1193,7 +1192,7 @@ mod test {
         let (bsend, brecv) = bounded(1024);
         let (ssend, srecv) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
-        let mut write_batch = blockstore.get_write_batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch();
 
         let ticks = create_ticks(1, 0, genesis_config.hash());
         let err = standard_broadcast_run

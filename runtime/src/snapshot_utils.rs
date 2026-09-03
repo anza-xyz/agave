@@ -533,7 +533,6 @@ pub fn serialize_snapshot(
                 stream,
                 bank_fields,
                 bank_hash_stats,
-                snapshot_storages,
                 extra_fields,
             )?;
             Ok(())

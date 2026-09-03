@@ -1,6 +1,7 @@
 use {
     bincode::{deserialize, serialize},
     crossbeam_channel::{Receiver, Sender, unbounded},
+    futures::StreamExt,
     solana_account::Account,
     solana_banks_interface::{
         Banks, BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
@@ -201,7 +202,6 @@ fn simulate_transaction(
     }
 }
 
-#[tarpc::server]
 impl Banks for BanksServer {
     async fn send_transaction_with_context(self, _: Context, transaction: VersionedTransaction) {
         let message_hash = transaction.message.hash();
@@ -417,7 +417,11 @@ pub async fn start_local_server(
         poll_signature_status_sleep_duration,
     );
     let (client_transport, server_transport) = transport::channel::unbounded();
-    let server = server::BaseChannel::with_defaults(server_transport).execute(banks_server.serve());
+    let server = server::BaseChannel::with_defaults(server_transport)
+        .execute(banks_server.serve())
+        .for_each(|rpc| async move {
+            tokio::spawn(rpc);
+        });
     tokio::spawn(server);
     client_transport
 }

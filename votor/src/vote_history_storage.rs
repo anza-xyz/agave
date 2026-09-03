@@ -278,21 +278,12 @@ mod test {
         // The validator still casts a Finalize vote for each notarized block,
         // but no finalization certificate advances the root.
         for slot in 1..=MAX_SLOTS_WITHOUT_FINALIZATION as u64 {
-            let block = Block {
-                slot,
-                block_id: Hash::default(),
-            };
+            let block = Block::new_unique(slot);
             vote_history.add_vote(Vote::new_notarization_vote(block));
             vote_history.add_block_notarized(block);
             vote_history.add_vote(Vote::new_finalization_vote(slot));
             if slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64) {
-                vote_history.add_parent_ready(
-                    slot,
-                    Block {
-                        slot: slot - 1,
-                        block_id: Hash::default(),
-                    },
-                );
+                vote_history.add_parent_ready(slot, Block::new_unique(slot - 1));
             }
         }
         let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();

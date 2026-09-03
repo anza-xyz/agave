@@ -13,6 +13,7 @@ use {
         workers_cache::{WorkersCache, WorkersCacheError, shutdown_worker},
     },
     async_trait::async_trait,
+    itertools::Itertools,
     quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
     std::{
@@ -233,6 +234,10 @@ impl ConnectionWorkersScheduler {
         // channel is dropped.
         let mut identity_updater_is_active = true;
 
+        let mut next_leaders = Vec::with_capacity(leaders_fanout.connect);
+        let mut connect_leaders = Vec::with_capacity(leaders_fanout.connect);
+        let mut send_leaders = Vec::with_capacity(leaders_fanout.send);
+
         loop {
             let transaction: WireTransaction = tokio::select! {
                 recv_res = transaction_receiver.recv() => match recv_res {
@@ -270,14 +275,14 @@ impl ConnectionWorkersScheduler {
                 }
             };
 
-            let connect_leaders = leader_updater.next_leaders(leaders_fanout.connect);
-            let send_leaders = extract_send_leaders(&connect_leaders, leaders_fanout.send);
+            next_leaders.clear();
+            leader_updater.next_leaders(leaders_fanout.connect, &mut next_leaders);
+            select_unique_leaders(&next_leaders, leaders_fanout.connect, &mut connect_leaders);
 
-            // add future leaders to the cache to hide the latency of opening
-            // the connection.
-            for peer in connect_leaders {
+            // add future leaders to the cache to hide the latency of opening the connection.
+            for peer in &connect_leaders {
                 if let Some(evicted_worker) = workers.ensure_worker(
-                    peer,
+                    *peer,
                     &endpoint,
                     worker_channel_size,
                     max_reconnect_attempts,
@@ -287,6 +292,8 @@ impl ConnectionWorkersScheduler {
                     shutdown_worker(evicted_worker);
                 }
             }
+
+            select_unique_leaders(&next_leaders, leaders_fanout.send, &mut send_leaders);
 
             if let Err(error) = broadcaster
                 .send_to_workers(&mut workers, &send_leaders, transaction)
@@ -300,7 +307,6 @@ impl ConnectionWorkersScheduler {
         workers.shutdown().await;
 
         endpoint.close(0u32.into(), b"Closing connection");
-        leader_updater.stop().await;
         if let Some(error) = last_error {
             return Err(error);
         }
@@ -359,23 +365,12 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
     }
 }
 
-/// Extracts a list of unique leader addresses to which transactions will be sent.
-///
-/// This function selects up to `send_fanout` addresses from the `leaders` list, ensuring that
-/// only unique addresses are included while maintaining their original order.
-pub fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
-    let send_count = send_fanout.min(leaders.len());
-    remove_duplicates(&leaders[..send_count])
-}
-
-/// Removes duplicate `SocketAddr` elements from the given slice while
-/// preserving their original order.
-fn remove_duplicates(input: &[SocketAddr]) -> Vec<SocketAddr> {
-    let mut res = Vec::with_capacity(input.len());
-    for address in input {
-        if !res.contains(address) {
-            res.push(*address);
-        }
-    }
-    res
+/// Replaces `selected_leaders` with unique TPU addresses from the first `max_leaders` candidates.
+fn select_unique_leaders(
+    leaders: &[SocketAddr],
+    max_leaders: usize,
+    selected_leaders: &mut Vec<SocketAddr>,
+) {
+    selected_leaders.clear();
+    selected_leaders.extend(leaders.iter().take(max_leaders).copied().unique());
 }

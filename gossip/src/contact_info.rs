@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::{field_qualifiers, qualifiers};
 pub use solana_net_utils::Protocol;
 use {
     crate::{
@@ -114,6 +116,11 @@ pub struct ContactInfo {
 
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(key(pub), index(pub), offset(pub))
+)]
 pub(crate) struct SocketEntry {
     pub(crate) key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
     pub(crate) index: u8, // IpAddr index in the accompanying addrs vector.
@@ -259,13 +266,14 @@ impl ContactInfo {
         &self.version
     }
 
-    // Conformance-only accessors; unused under DCOU.
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn addrs(&self) -> &[IpAddr] {
         &self.addrs
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn sockets(&self) -> &[SocketEntry] {
         &self.sockets
     }
@@ -434,6 +442,23 @@ impl ContactInfo {
     /// ip must be IPv4, specified, and not multicast
     pub fn is_valid_address(addr: &SocketAddr, socket_addr_space: &SocketAddrSpace) -> bool {
         addr.port() != 0u16 && Self::is_valid_ip(addr.ip()) && socket_addr_space.check(addr)
+    }
+
+    /// Returns true if all advertised UDP sockets have the same IP address.
+    pub(crate) fn has_consistent_udp_ip(&self) -> bool {
+        let Some(ip) = self.gossip().map(|socket| socket.ip()) else {
+            return false;
+        };
+        [
+            self.serve_repair(Protocol::UDP),
+            self.tpu(Protocol::UDP),
+            self.tpu_forwards(Protocol::UDP),
+            self.tpu_vote(Protocol::UDP),
+            self.tvu(Protocol::UDP),
+        ]
+        .into_iter()
+        .flatten()
+        .all(|socket| socket.ip() == ip)
     }
 
     fn is_valid_ip(addr: IpAddr) -> bool {
@@ -893,6 +918,49 @@ mod tests {
         };
         let bytes = wincode::serialize(&node).unwrap();
         assert!(wincode::deserialize::<ContactInfo>(&bytes).is_err());
+    }
+
+    #[test]
+    fn test_has_consistent_udp_ip() {
+        assert!(!ContactInfo::default().has_consistent_udp_ip());
+
+        let mut node = ContactInfo::new_localhost(&Pubkey::new_unique(), 0);
+        node.set_tpu(Protocol::UDP, (Ipv4Addr::LOCALHOST, 8002))
+            .unwrap();
+        node.set_tpu_forwards(Protocol::UDP, (Ipv4Addr::LOCALHOST, 8003))
+            .unwrap();
+        assert!(node.has_consistent_udp_ip());
+
+        let other_ip = Ipv4Addr::new(127, 0, 0, 2);
+        for key in [
+            SOCKET_TAG_GOSSIP,
+            SOCKET_TAG_SERVE_REPAIR,
+            SOCKET_TAG_TPU,
+            SOCKET_TAG_TPU_FORWARDS,
+            SOCKET_TAG_TPU_VOTE,
+            SOCKET_TAG_TVU,
+        ] {
+            let mut node = node.clone();
+            node.set_socket(key, SocketAddr::from((other_ip, 9000)))
+                .unwrap();
+            assert!(!node.has_consistent_udp_ip());
+        }
+
+        for key in [
+            SOCKET_TAG_RPC,
+            SOCKET_TAG_RPC_PUBSUB,
+            SOCKET_TAG_SERVE_REPAIR_QUIC,
+            SOCKET_TAG_TPU_FORWARDS_QUIC,
+            SOCKET_TAG_TPU_QUIC,
+            SOCKET_TAG_TPU_VOTE_QUIC,
+            SOCKET_TAG_TVU_QUIC,
+            SOCKET_TAG_ALPENGLOW,
+        ] {
+            let mut node = node.clone();
+            node.set_socket(key, SocketAddr::from((other_ip, 9000)))
+                .unwrap();
+            assert!(node.has_consistent_udp_ip());
+        }
     }
 
     #[test]

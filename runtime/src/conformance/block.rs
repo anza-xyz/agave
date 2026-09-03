@@ -451,13 +451,13 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
         .chain(acct_states_from_proto.iter().cloned())
         .collect();
 
-    accounts.store_accounts_seq(
+    accounts.store_accounts(
         (parent_slot, &accounts_to_store[..]),
         BankId::default(),
         None,
         &Ancestors::default(),
     );
-    accounts.store_accounts_seq(
+    accounts.store_accounts(
         (current_slot, &accounts_to_store[..]),
         BankId::default(),
         None,
@@ -537,8 +537,9 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
     );
 
     let mut parent_lthash = LtHash::identity();
-    for (i, chunk) in bank_ctx.parent_lt_hash.chunks_exact(2).enumerate() {
-        parent_lthash.0[i] = u16::from_le_bytes(chunk.try_into().unwrap());
+    let (chunks, _) = bank_ctx.parent_lt_hash.as_chunks::<2>();
+    for (i, chunk) in chunks.iter().enumerate() {
+        parent_lthash.0[i] = u16::from_le_bytes(*chunk);
     }
 
     assert!(bank_ctx.ns_per_slot.len() == 16);

@@ -183,6 +183,8 @@ pub struct StreamerStats {
     pub(crate) total_packets_sent_to_consumer: AtomicUsize,
     pub(crate) total_bytes_sent_to_consumer: AtomicUsize,
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
+    /// Number of completed packets assembled from at least the accumulator's inline chunk capacity.
+    pub(crate) total_packets_at_or_above_chunk_capacity: AtomicUsize,
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
     pub(crate) num_evictions_staked: AtomicUsize,
@@ -412,6 +414,12 @@ impl StreamerStats {
             (
                 "chunks_processed_by_batcher",
                 self.total_chunks_processed_by_batcher
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "packets_at_or_above_chunk_capacity",
+                self.total_packets_at_or_above_chunk_capacity
                     .swap(0, Ordering::Relaxed),
                 i64
             ),

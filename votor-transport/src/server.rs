@@ -13,12 +13,12 @@ use {
     log::{debug, error, info, warn},
     quinn::{Connecting, Connection, Endpoint},
     solana_keypair::Signer,
-    solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
+    solana_net_utils::{SocketAddrSpace, banlist::Banlist, token_bucket::TokenBucket},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::get_remote_pubkey,
     std::{
         collections::{HashMap, hash_map::Entry},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         sync::{Arc, atomic::Ordering},
         time::Duration,
     },
@@ -50,6 +50,18 @@ pub(crate) enum InboundConnectionEvent {
     FloodDetected { peer: Pubkey },
 }
 
+fn is_invalid_remote_address(
+    remote_addr: SocketAddr,
+    local_ip: Option<IpAddr>,
+    socket_addr_space: SocketAddrSpace,
+) -> bool {
+    remote_addr.is_ipv6()
+        || remote_addr.ip().is_multicast()
+        || (matches!(socket_addr_space, SocketAddrSpace::Global)
+            && local_ip == Some(remote_addr.ip()))
+        || !socket_addr_space.check(&remote_addr)
+}
+
 /// AcceptLoop pulls connection attempts off its endpoint, runs the server
 /// side of the TLS handshake, then spawns a task that awaits the client's reply.
 /// This coarsely bounds the number of cores that can be dedicated
@@ -59,6 +71,7 @@ pub(crate) struct AcceptLoop {
     events_sender: mpsc::Sender<InboundConnectionEvent>,
     stats: Arc<ServerStats>,
     cancel: CancellationToken,
+    socket_addr_space: SocketAddrSpace,
     /// Paces how fast this endpoint *starts* handshakes.
     handshake_rate_limiter: TokenBucket,
     /// Bounds the number of in-flight handshakes for this endpoint.
@@ -71,6 +84,7 @@ impl AcceptLoop {
         events_sender: mpsc::Sender<InboundConnectionEvent>,
         stats: Arc<ServerStats>,
         cancel: CancellationToken,
+        socket_addr_space: SocketAddrSpace,
         handshake_rate_limiter: TokenBucket,
         max_inflight_handshakes: usize,
     ) -> Self {
@@ -79,6 +93,7 @@ impl AcceptLoop {
             events_sender,
             stats,
             cancel,
+            socket_addr_space,
             handshake_rate_limiter,
             max_inflight_handshakes,
         }
@@ -90,6 +105,7 @@ impl AcceptLoop {
             events_sender,
             stats,
             cancel,
+            socket_addr_space,
             handshake_rate_limiter,
             max_inflight_handshakes,
         } = self;
@@ -147,7 +163,11 @@ impl AcceptLoop {
                     }
                     let remote_addr = incoming.remote_address();
                     debug!("Incoming connection from {remote_addr}.");
-                    if remote_addr.is_ipv6() || remote_addr.ip().is_multicast() {
+                    if is_invalid_remote_address(
+                        remote_addr,
+                        incoming.local_ip(),
+                        socket_addr_space,
+                    ) {
                         incoming.ignore();
                         continue;
                     }
@@ -617,6 +637,36 @@ mod tests {
         tokio::{spawn, time::sleep},
     };
 
+    #[test]
+    fn remote_address_filter_honors_socket_addr_space() {
+        let public = SocketAddr::from(([1, 2, 3, 4], 8000));
+        let private = SocketAddr::from(([10, 0, 0, 1], 8000));
+        let localhost = SocketAddr::from((Ipv4Addr::LOCALHOST, 8000));
+
+        assert!(!is_invalid_remote_address(
+            public,
+            None,
+            SocketAddrSpace::Global,
+        ));
+        for addr in [private, localhost] {
+            assert!(is_invalid_remote_address(
+                addr,
+                None,
+                SocketAddrSpace::Global,
+            ));
+            assert!(!is_invalid_remote_address(
+                addr,
+                Some(addr.ip()),
+                SocketAddrSpace::Unspecified,
+            ));
+        }
+        assert!(is_invalid_remote_address(
+            public,
+            Some(public.ip()),
+            SocketAddrSpace::Global,
+        ));
+    }
+
     /// Connection attempts arriving at a server whose incoming queue is already
     /// full must be dropped with no reply at all, and must not displace attempts
     /// that are already queued.
@@ -731,6 +781,7 @@ mod tests {
             events_sender,
             stats.clone(),
             cancel.clone(),
+            SocketAddrSpace::Unspecified,
             TokenBucket::new(
                 HANDSHAKE_BURST,
                 HANDSHAKE_BURST,
@@ -810,6 +861,7 @@ mod tests {
             events_sender,
             stats.clone(),
             cancel.clone(),
+            SocketAddrSpace::Unspecified,
             TokenBucket::new(
                 HANDSHAKE_BURST,
                 HANDSHAKE_BURST,
@@ -894,6 +946,7 @@ mod tests {
             events_sender,
             stats.clone(),
             cancel.clone(),
+            SocketAddrSpace::Unspecified,
             TokenBucket::new(
                 HANDSHAKE_BURST,
                 HANDSHAKE_BURST,

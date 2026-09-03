@@ -664,7 +664,12 @@ impl ValidatorTpuConfig {
                 max_connections_per_ipaddr_per_min: 32,
                 ..Default::default()
             },
-            qos_config: SimpleQosConfig::default(),
+            qos_config: SimpleQosConfig {
+                // Way more than the size of our clusters. If some super low staked validators can not
+                // find room, it does not present a liveness issue.
+                max_staked_connections: 4096,
+                ..Default::default()
+            },
         };
 
         // Two threads is reasonable for tests; benches are free to set more
@@ -2891,7 +2896,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
             let mut num_slots_copied = 0;
             let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
             let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
-            let mut write_batch = backup_blockstore.get_write_batch()?;
+            let mut write_batch = backup_blockstore.get_write_batch();
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
@@ -3285,10 +3290,7 @@ mod tests {
         ));
 
         let cert = GenesisCert {
-            block: Block {
-                slot: 40,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(40),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],

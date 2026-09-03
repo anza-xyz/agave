@@ -47,5 +47,10 @@ solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
+[dev-dependencies]
+agave-votor-messages = { workspace = true }
+solana-bls-signatures = { workspace = true }
+solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
 [lints]
 workspace = true
