@@ -1,4 +1,4 @@
-//! Dispatch helpers for stake delegation warmup/cooldown math.
+//! Helpers for stake delegation math.
 
 use {
     solana_clock::Epoch,
@@ -36,6 +36,24 @@ pub(crate) fn delegation_activation_status<T: StakeHistoryGetEntry>(
         #[allow(deprecated)]
         delegation.stake_activating_and_deactivating(epoch, history, new_rate_activation_epoch)
     }
+}
+
+#[inline]
+pub(crate) fn is_delegation_inert<T: StakeHistoryGetEntry>(
+    delegation: &Delegation,
+    epoch: Epoch,
+    history: &T,
+    new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
+) -> bool {
+    let activation_status = delegation_activation_status(
+        delegation,
+        epoch,
+        history,
+        new_rate_activation_epoch,
+        use_fixed_point_stake_math,
+    );
+    activation_status.effective == 0 && activation_status.activating == 0
 }
 
 #[inline]
