@@ -1,0 +1,250 @@
+name: Pull Request
+
+on:
+  pull_request:
+    branches:
+      - master
+      - v[0-9]+.[0-9]+
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ubuntu-24.04
+    outputs:
+      runner: "ubuntu-24.04"
+      image: ${{ steps.env.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Resolve CI docker image
+        id: env
+        shell: bash
+        run: |
+          source ci/docker/env.sh
+          echo "image=$CI_DOCKER_IMAGE" >> "$GITHUB_OUTPUT"
+
+  sanity:
+    needs: setup
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 5
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: ci/test-sanity.sh
+
+  shellcheck:
+    needs: setup
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/shellcheck.sh
+
+  check:
+    needs: [setup, sanity, shellcheck]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 40
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: ci/test-checks.sh
+
+  feature-check:
+    needs: [setup, sanity, shellcheck]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 40
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4, 5]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/feature-check/test-feature.sh ${{ matrix.part }}/${{ strategy.job-total }}
+
+  feature-check-dev-bins:
+    needs: [setup, sanity, shellcheck]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 20
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/feature-check/test-feature-dev-bins.sh
+
+  miri:
+    needs: [setup, sanity, shellcheck]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 5
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/test-miri.sh
+
+  frozen-abi:
+    needs: [setup, sanity, shellcheck]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/test-frozen-abi.sh
+
+  stable:
+    needs:
+      [setup, check, feature-check, feature-check-dev-bins, miri, frozen-abi]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 40
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/stable/run-partition.sh ${{ matrix.part }} ${{ strategy.job-total }}
+
+  dev-bins:
+    needs:
+      [setup, check, feature-check, feature-check-dev-bins, miri, frozen-abi]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 40
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1 --ulimit nofile=1000000:1000000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: cargo nextest run --profile ci --manifest-path ./dev-bins/Cargo.toml
+
+  local-cluster:
+    needs:
+      [setup, check, feature-check, feature-check-dev-bins, miri, frozen-abi]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 60
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/stable/run-local-cluster-partially.sh ${{ matrix.part }} ${{ strategy.job-total }}
+
+  doctest:
+    needs:
+      [setup, check, feature-check, feature-check-dev-bins, miri, frozen-abi]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/test-docs.sh
+
+  localnet:
+    needs:
+      [setup, check, feature-check, feature-check-dev-bins, miri, frozen-abi]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/stable/run-localnet.sh
+
+  stable-sbf:
+    needs: [setup, stable, dev-bins, local-cluster, doctest, localnet]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 35
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/test-stable-sbf.sh
+
+  shuttle:
+    needs: [setup, stable, dev-bins, local-cluster, doctest, localnet]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: ci/test-shuttle.sh
+
+  coverage:
+    needs: [setup, stable, dev-bins, local-cluster, doctest, localnet]
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ${{ needs.setup.outputs.runner }}
+    timeout-minutes: 60
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      options: --security-opt seccomp=unconfined --ulimit memlock=-1:-1
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: ci/coverage/part-${{ matrix.part }}.sh

@@ -4,6 +4,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 source ci/_
+source ci/env.sh
 
 echo --- git diff --check
 
