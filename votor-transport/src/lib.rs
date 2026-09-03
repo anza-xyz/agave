@@ -39,6 +39,17 @@ pub type PeerListReceiver = watch::Receiver<PeerListSnapshot>;
 /// copy to avoid a `solana-runtime` dependency from this transport crate.
 pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
+/// Upper bound on unique peers admitted into the peer_list at once.
+///
+/// `PeerListUpdater::refresh_peer_list` can union staked-node sets from up to
+/// three overlapping epochs near a boundary (the trailing epoch, the root
+/// epoch, and the next epoch), each individually capped at
+/// `MAX_ALPENGLOW_VOTE_ACCOUNTS`. With enough validator-set churn across those
+/// epochs the union can approach three times a single epoch's cap, so
+/// connection- and channel-sizing constants must budget for that, not just
+/// `MAX_ALPENGLOW_VOTE_ACCOUNTS` alone.
+pub const MAX_PEER_LIST_SIZE: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS * 3;
+
 /// Allows one backup instance to connect while connection from the primary instance
 /// has not yet timed out (this is normal during validator updates).
 /// More than two is erroneous and implies multiple backup nodes assumed the same
@@ -47,9 +58,10 @@ pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 
 /// Capacity of the channel used by the accept and read tasks to report
 /// connection lifecycle events. Events are per-connection, so sized
-/// to absorb a whole cluster disconnecting at once.
+/// to absorb a whole cluster disconnecting at once, including the epoch-churn
+/// overlap captured by [`MAX_PEER_LIST_SIZE`].
 pub(crate) const CONN_EVENT_CHANNEL_CAP: usize =
-    MAX_ALPENGLOW_VOTE_ACCOUNTS * MAX_INBOUND_CONNECTIONS_PER_PEER;
+    MAX_PEER_LIST_SIZE * MAX_INBOUND_CONNECTIONS_PER_PEER;
 
 /// Votor should pace broadcasts to each peer. We must drop packets that
 /// break the limits set by BLS sigverifier. However, network jitter may
