@@ -24,7 +24,10 @@ pub fn account_from_proto(value: ProtoAccount) -> (Pubkey, Account) {
     let owner = Pubkey::try_from(owner).expect("invalid account owner bytes");
     let data = match data_repr {
         Some(DataRepr::Data(data)) => data,
-        _ => Vec::new(),
+        Some(DataRepr::DataHash(_)) => {
+            panic!("input account carries a data hash, expected raw data")
+        }
+        None => Vec::new(),
     };
 
     (
