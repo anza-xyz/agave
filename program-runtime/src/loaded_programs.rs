@@ -529,7 +529,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     }
                     // Remove entries un/re/deployed on orphan forks
                     let mut first_ancestor_found = false;
-                    let mut first_ancestor_env = None;
+                    let mut seen_environments: Vec<&ProgramRuntimeEnvironment> = Vec::new();
                     *second_level = second_level
                         .iter()
                         .rev()
@@ -550,20 +550,21 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             {
                                 if !first_ancestor_found {
                                     first_ancestor_found = true;
-                                    first_ancestor_env = entry.program.get_environment();
+                                    seen_environments.extend(entry.program.get_environment());
                                     return true;
                                 }
-                                // Do not prune the entry if the runtime environment of the entry is
-                                // different than the entry that was previously found (stored in
-                                // first_ancestor_env). Different environment indicates that this entry
-                                // might belong to an older epoch that had a different environment (e.g.
-                                // different feature set). Once the root moves to the new/current epoch,
-                                // the entry will get pruned. But, until then the entry might still be
-                                // getting used by an older slot.
+                                // Do not prune the entry if the runtime environment of the entry has
+                                // not been seen yet among the entries already kept. Different
+                                // environment indicates that this entry might belong to an older epoch
+                                // that had a different environment (e.g. different feature set). Once
+                                // the root moves to the new/current epoch, the entry will get pruned.
+                                // But, until then the entry might still be getting used by an older
+                                // slot. Only the newest entry on each is needed for that.
                                 if let Some(entry_env) = entry.program.get_environment()
-                                    && let Some(env) = first_ancestor_env
-                                    && entry_env != env
+                                    && !seen_environments.is_empty()
+                                    && !seen_environments.contains(&entry_env)
                                 {
+                                    seen_environments.push(entry_env);
                                     return true;
                                 }
                                 self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
@@ -2441,6 +2442,44 @@ pub(crate) mod tests {
             extracted.entries.get(&program_id).unwrap(),
             &closed
         ));
+    }
+
+    #[test]
+    fn test_prune_dedup_reaches_every_environment() {
+        // Six deployments before the root, cycling through three
+        // environments.
+        let (mut cache, fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let other_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let third_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let program_id = Pubkey::new_unique();
+        let mut deploy = |slot, entry_env: &ProgramRuntimeEnvironment| {
+            let entry = new_test_entry_with_owner(
+                slot,
+                ProgramCacheEntryOwner::LoaderV3,
+                new_loaded_entry(entry_env.clone()),
+            );
+            cache.assign_program(entry_env, program_id, slot, Arc::clone(&entry));
+            entry
+        };
+        let _at_10 = deploy(10, &third_env);
+        let _at_20 = deploy(20, &other_env);
+        let _at_30 = deploy(30, &env);
+        let at_40 = deploy(40, &third_env);
+        let at_50 = deploy(50, &other_env);
+        let at_60 = deploy(60, &env);
+
+        cache.prune(70, None, &fork_graph.read().unwrap());
+
+        // The walk remembers every environment it has kept an entry on, so
+        // the newest on each survives and everything below it is dropped as
+        // superseded. The entries at 10, 20 and 30 all go.
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 3);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &at_40));
+        assert!(Arc::ptr_eq(slot_versions.get(1).unwrap(), &at_50));
+        assert!(Arc::ptr_eq(slot_versions.get(2).unwrap(), &at_60));
+        assert_eq!(cache.stats.prunes_orphan.load(Ordering::Relaxed), 3);
     }
 
     #[test]
