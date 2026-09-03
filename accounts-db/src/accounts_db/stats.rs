@@ -314,9 +314,6 @@ pub struct ShrinkAncientStats {
     pub bytes_from_must_shrink: AtomicU64,
     pub bytes_from_smallest_storages: AtomicU64,
     pub bytes_from_newest_storages: AtomicU64,
-    pub many_ref_slots_skipped: AtomicU64,
-    pub slots_cannot_move_count: AtomicU64,
-    pub many_refs_old_alive: AtomicU64,
     pub slots_eligible_to_shrink: AtomicU64,
     pub total_dead_bytes: AtomicU64,
     pub total_alive_bytes: AtomicU64,
@@ -339,8 +336,6 @@ pub struct SquashStatsSub {
     pub store_accounts_stats: StoreAccountsForSquashStats,
     pub rewrite_elapsed_us: Saturating<u64>,
     pub create_and_insert_store_elapsed_us: Saturating<u64>,
-    pub unpackable_slots_count: Saturating<usize>,
-    pub newest_alive_packed_count: Saturating<usize>,
 }
 
 impl SquashStatsSub {
@@ -349,8 +344,6 @@ impl SquashStatsSub {
             .accumulate(&other.store_accounts_stats);
         self.rewrite_elapsed_us += other.rewrite_elapsed_us;
         self.create_and_insert_store_elapsed_us += other.create_and_insert_store_elapsed_us;
-        self.unpackable_slots_count += other.unpackable_slots_count;
-        self.newest_alive_packed_count += other.newest_alive_packed_count;
     }
 }
 
@@ -369,8 +362,6 @@ pub struct ShrinkStats {
     pub tombstone_carry_forward_us: AtomicU64,
     /// number of zero-lamport accounts carried forward to the new storage as tombstones
     pub num_tombstones_carried_forward: AtomicU64,
-    pub unpackable_slots_count: AtomicU64,
-    pub newest_alive_packed_count: AtomicU64,
     pub drop_storage_entries_elapsed: AtomicU64,
     pub accounts_removed: AtomicUsize,
     pub bytes_removed: AtomicU64,
@@ -561,13 +552,6 @@ impl ShrinkAncientStats {
         shrink_stats
             .rewrite_elapsed
             .fetch_add(stats_sub.rewrite_elapsed_us.0, Ordering::Relaxed);
-        shrink_stats
-            .unpackable_slots_count
-            .fetch_add(stats_sub.unpackable_slots_count.0 as u64, Ordering::Relaxed);
-        shrink_stats.newest_alive_packed_count.fetch_add(
-            stats_sub.newest_alive_packed_count.0 as u64,
-            Ordering::Relaxed,
-        );
         let StoreAccountsForSquashStats {
             store_accounts_for_shrink_stats,
             flush_read_cache_us,
@@ -659,20 +643,6 @@ impl ShrinkAncientStats {
                 i64
             ),
             (
-                "unpackable_slots_count",
-                self.shrink_stats
-                    .unpackable_slots_count
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "newest_alive_packed_count",
-                self.shrink_stats
-                    .newest_alive_packed_count
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
                 "drop_storage_entries_elapsed",
                 self.shrink_stats
                     .drop_storage_entries_elapsed
@@ -757,21 +727,6 @@ impl ShrinkAncientStats {
             (
                 "bytes_from_newest_storages",
                 self.bytes_from_newest_storages.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "many_ref_slots_skipped",
-                self.many_ref_slots_skipped.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "slots_cannot_move_count",
-                self.slots_cannot_move_count.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "many_refs_old_alive",
-                self.many_refs_old_alive.swap(0, Ordering::Relaxed),
                 i64
             ),
             ("slot", self.slot.load(Ordering::Relaxed), i64),
