@@ -5764,7 +5764,6 @@ impl AccountsDb {
 
     /// Call clean_accounts() with the common parameters that tests/benches use.
     pub fn clean_accounts_for_tests(&self) {
-
         // Find the largest storage, to pass it into clean so all
         // storages are cleaned
         let max_storage_slot = self
