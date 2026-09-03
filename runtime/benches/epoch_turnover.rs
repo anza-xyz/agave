@@ -73,13 +73,26 @@ fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Accou
     Account::from(account)
 }
 
-fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
+fn populate_vote_accounts(
+    bank: &Bank,
+    vote_pubkeys: Vec<Pubkey>,
+    external_inflation_collector: bool,
+) {
     for vote_pubkey in vote_pubkeys.into_iter() {
         let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
 
-        let mut vote_state = VoteStateHandler::new_v4(
-            VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
-        );
+        let mut v4 = VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
+        v4.pending_delegator_rewards = 1_000;
+        if external_inflation_collector {
+            let commission_collector = Pubkey::new_unique();
+            v4.inflation_rewards_collector = commission_collector;
+            let lamports = bank.rent_collector().rent.minimum_balance(0);
+            let account =
+                AccountSharedData::new(lamports, 0, &solana_sdk_ids::system_program::id());
+            bank.store_account(&commission_collector, &account);
+        }
+
+        let mut vote_state = VoteStateHandler::new_v4(v4);
 
         for i in 0..SYNTHETIC_VOTE_SLOTS {
             process_slot_vote_unchecked(&mut vote_state, i);
@@ -92,7 +105,11 @@ fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
     }
 }
 
-fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+fn setup_bank(
+    vote_accounts: usize,
+    stake_accounts: usize,
+    external_inflation_collector: bool,
+) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
     let validators = (0..vote_accounts)
         .map(|_| ValidatorVoteKeypairs::new_rand())
         .collect::<Vec<_>>();
@@ -127,7 +144,7 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
     let (initial_bank, bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
-    populate_vote_accounts(&initial_bank, vote_pubkeys);
+    populate_vote_accounts(&initial_bank, vote_pubkeys, external_inflation_collector);
 
     let last_slot_in_epoch = initial_bank.get_slots_in_epoch(0).checked_sub(1).unwrap();
 
@@ -145,10 +162,19 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
 fn bench_epoch_turnover(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_epoch_turnover");
 
-    for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
-        let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
+    for (vote_accounts, stake_accounts, external_inflation_collector) in
+        iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS, [false, true])
+    {
+        let collector_type = if external_inflation_collector {
+            "external"
+        } else {
+            "vote_account"
+        };
+        let name =
+            format!("{vote_accounts}_votes_{stake_accounts}_stakes_{collector_type}_collector");
 
-        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
+        let (initial_bank, bank_forks) =
+            setup_bank(vote_accounts, stake_accounts, external_inflation_collector);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         group.bench_function(name.as_str(), move |b| {
@@ -173,7 +199,7 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
     for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
         let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
 
-        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
+        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts, false);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         let bank = Arc::new(Bank::new_from_parent(
