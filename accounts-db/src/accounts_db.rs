@@ -142,17 +142,6 @@ pub(crate) struct AliveAccounts<'a> {
     pub(crate) bytes: usize,
 }
 
-/// separate alive accounts by whether a newer duplicate of the account exists
-#[derive(Debug)]
-pub(crate) struct AliveAccountsSeparated<'a> {
-    /// can be packed into any slot
-    pub(crate) no_duplicates: AliveAccounts<'a>,
-    /// can only be packed into a slot >= this one
-    pub(crate) newest_duplicate: AliveAccounts<'a>,
-    /// must stay in this slot
-    pub(crate) not_newest_duplicate: AliveAccounts<'a>,
-}
-
 pub(crate) trait ShrinkCollector<'a>: Sync + Send {
     fn with_capacity(capacity: usize, slot: Slot) -> Self;
     fn collect(&mut self, other: Self);
@@ -186,55 +175,6 @@ impl<'a> ShrinkCollector<'a> for AliveAccounts<'a> {
     }
     fn alive_accounts(&self) -> &Vec<&'a AccountFromStorage> {
         &self.accounts
-    }
-}
-
-impl<'a> ShrinkCollector<'a> for AliveAccountsSeparated<'a> {
-    fn collect(&mut self, other: Self) {
-        self.no_duplicates.collect(other.no_duplicates);
-        self.newest_duplicate.collect(other.newest_duplicate);
-        self.not_newest_duplicate
-            .collect(other.not_newest_duplicate);
-    }
-    fn with_capacity(capacity: usize, slot: Slot) -> Self {
-        Self {
-            no_duplicates: AliveAccounts::with_capacity(capacity, slot),
-            newest_duplicate: AliveAccounts::with_capacity(0, slot),
-            not_newest_duplicate: AliveAccounts::with_capacity(0, slot),
-        }
-    }
-    fn add(&mut self, account: &'a AccountFromStorage, slot_list: &[(Slot, AccountInfo)]) {
-        assert!(!slot_list.is_empty());
-        let slot = self.no_duplicates.slot;
-        let other = if slot_list.len() == 1 {
-            &mut self.no_duplicates
-        } else if !slot_list
-            .iter()
-            .any(|(slot_list_slot, _info)| slot_list_slot > &slot)
-        {
-            // this entry is alive but is newer than any other slot in the index
-            &mut self.newest_duplicate
-        } else {
-            // This entry is alive but is older than at least one other slot in the index.
-            // We would expect clean to get rid of the entry for THIS slot at some point, but clean hasn't done that yet.
-            &mut self.not_newest_duplicate
-        };
-        other.add(account, slot_list);
-    }
-    fn len(&self) -> usize {
-        self.no_duplicates
-            .len()
-            .saturating_add(self.not_newest_duplicate.len())
-            .saturating_add(self.newest_duplicate.len())
-    }
-    fn alive_bytes(&self) -> usize {
-        self.no_duplicates
-            .alive_bytes()
-            .saturating_add(self.not_newest_duplicate.alive_bytes())
-            .saturating_add(self.newest_duplicate.alive_bytes())
-    }
-    fn alive_accounts(&self) -> &Vec<&'a AccountFromStorage> {
-        unimplemented!("illegal use");
     }
 }
 
