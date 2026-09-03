@@ -6,7 +6,6 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    std::time::Instant,
 };
 
 /// Struct to handle requests to build rewards certs and receive the produced certs.
@@ -47,7 +46,6 @@ impl CertsRequestor {
         let request = RewardRequest {
             bank_slot,
             reply_sender,
-            request_sent: Instant::now(),
         };
         match self.req_sender.try_send(request) {
             Ok(()) => Ok(Some(RewardRequestToken { reply_receiver })),
@@ -85,18 +83,13 @@ impl CertsRequestor {
                         Ok(RewardRespSucc::default())
                     }
                     Err(TryRecvError::Disconnected) => Err(()),
-                    Ok(resp) => {
-                        if let Ok(d) = u64::try_from(resp.processing_duration.as_micros()) {
-                            stats.reward_certs_production_us = d;
+                    Ok(resp) => match resp.result {
+                        Ok(res) => Ok(res),
+                        Err(err) => {
+                            error!("{my_pubkey} building reward cert failed with {err:?}");
+                            Ok(RewardRespSucc::default())
                         }
-                        match resp.result {
-                            Ok(res) => Ok(res),
-                            Err(err) => {
-                                error!("{my_pubkey} building reward cert failed with {err:?}");
-                                Ok(RewardRespSucc::default())
-                            }
-                        }
-                    }
+                    },
                 }
             }
         }
@@ -147,7 +140,6 @@ mod tests {
         let RewardRequest {
             bank_slot: _,
             reply_sender,
-            request_sent,
         } = receiver.recv().unwrap();
         reply_sender
             .send(RewardResponse {
@@ -156,7 +148,6 @@ mod tests {
                     notar: None,
                     validators: validators.clone(),
                 }),
-                processing_duration: request_sent.elapsed(),
             })
             .unwrap();
         let resp = handler

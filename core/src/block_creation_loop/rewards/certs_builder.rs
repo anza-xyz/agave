@@ -3,16 +3,60 @@ use {
         RewardRequest, RewardRespSucc, RewardResponse,
     },
     agave_bls_sigverify::rewards::RewardInput,
+    agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
     crossbeam_channel::RecvError,
     entry::Entry,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_measure::measure_us,
     solana_runtime::bank::Bank,
-    std::{collections::BTreeMap, sync::Arc},
+    std::{
+        collections::BTreeMap,
+        sync::Arc,
+        time::{Duration, Instant},
+    },
 };
 
 mod entry;
+
+const REPORT_INTERVAL: Duration = Duration::from_secs(1);
+
+struct Metrics {
+    last_report: Instant,
+    build_us: WelfordStats,
+    purged_state: u64,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            last_report: Instant::now(),
+            build_us: WelfordStats::default(),
+            purged_state: 0,
+        }
+    }
+}
+
+impl Metrics {
+    fn maybe_report(&mut self) {
+        let Self {
+            last_report,
+            build_us,
+            purged_state,
+        } = self;
+        if last_report.elapsed() > REPORT_INTERVAL {
+            datapoint_info!(
+                "reward-certs-builder",
+                ("build_us_count", build_us.count(), i64),
+                ("build_us_max", build_us.maximum::<u64>(), Option<i64>),
+                ("build_us_mean", build_us.mean::<u64>(), Option<i64>),
+                ("purged_state", *purged_state, i64),
+            );
+            *self = Self::default();
+        }
+    }
+}
 
 /// Container to store state needed to generate reward certificates.
 pub(super) struct CertsBuilder {
@@ -20,6 +64,7 @@ pub(super) struct CertsBuilder {
     aggregates: BTreeMap<Slot, Entry>,
     /// Stores the latest pubkey for the current node.
     cluster_info: Arc<ClusterInfo>,
+    metrics: Metrics,
 }
 
 impl CertsBuilder {
@@ -28,6 +73,7 @@ impl CertsBuilder {
         Self {
             aggregates: BTreeMap::default(),
             cluster_info,
+            metrics: Metrics::default(),
         }
     }
 
@@ -57,18 +103,16 @@ impl CertsBuilder {
             Ok(RewardRequest {
                 bank_slot,
                 reply_sender,
-                request_sent,
             }) => {
-                let result = self.build_certs(bank_slot);
-                let resp = RewardResponse {
-                    result,
-                    processing_duration: request_sent.elapsed(),
-                };
+                let (result, build_us) = measure_us!(self.build_certs(bank_slot));
+                let resp = RewardResponse { result };
                 let _ = reply_sender.send(resp).inspect_err(|_| {
                     info!(
                         "{my_pubkey}: channel to send reply for bank_slot={bank_slot} disconnected"
                     );
                 });
+                self.metrics.build_us.add_sample(build_us);
+                self.metrics.maybe_report();
                 Ok(())
             }
             Err(_) => {
@@ -81,11 +125,15 @@ impl CertsBuilder {
     pub(super) fn handle_input(&mut self, root_bank: &Bank, input: RewardInput) {
         let root_slot = root_bank.slot();
         // drop state that is too old based on how the root slot has progressed
-        // TODO: if this actually purges state, that probably indicates that the leader missed its
-        // window.  We should have a metric for this.
-        self.aggregates = self
+        // if this actually drops state, that probably indicates that the leader missed its
+        // window.
+        let new_aggregates = self
             .aggregates
             .split_off(&root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD));
+        if !self.aggregates.is_empty() {
+            self.metrics.purged_state += 1;
+        }
+        self.aggregates = new_aggregates;
 
         match input {
             RewardInput::External(aggregates) => {
@@ -151,5 +199,6 @@ impl CertsBuilder {
                 }
             }
         }
+        self.metrics.maybe_report();
     }
 }
