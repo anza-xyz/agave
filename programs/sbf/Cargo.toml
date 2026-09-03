@@ -195,12 +195,7 @@ solana-client-traits = "4.0.0"
 solana-clock = { workspace = true }
 solana-cluster-type = "3.0.0"
 solana-compute-budget = { workspace = true }
-solana-compute-budget-instruction = {
-    workspace = true,
-    features = [
-        "dev-context-only-utils",
-    ]
-}
+solana-compute-budget-instruction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = "3.1.0"
 solana-fee = { workspace = true }
 solana-fee-calculator = "3.2.0"
@@ -215,12 +210,7 @@ solana-program-runtime = { workspace = true, features = ["dev-context-only-utils
 solana-pubkey = "4.2.0"
 solana-rent = "4.1.0"
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime-transaction = {
-    workspace = true,
-    features = [
-        "dev-context-only-utils",
-    ]
-}
+solana-runtime-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sbf-rust-invoke-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }

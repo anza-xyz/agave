@@ -32,20 +32,8 @@ frozen-abi = [
 bv = { workspace = true }
 fnv = { workspace = true }
 rand = { workspace = true }
-solana-frozen-abi = {
-    workspace = true,
-    optional = true,
-    features = [
-        "frozen-abi",
-    ]
-}
-solana-frozen-abi-macro = {
-    workspace = true,
-    optional = true,
-    features = [
-        "frozen-abi",
-    ]
-}
+solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-sanitize = { workspace = true }
 solana-time-utils = { workspace = true }
 wincode = { workspace = true, features = ["bv"] }

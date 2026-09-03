@@ -52,20 +52,8 @@ smallvec = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-frozen-abi = {
-    workspace = true,
-    optional = true,
-    features = [
-        "frozen-abi",
-    ]
-}
-solana-frozen-abi-macro = {
-    workspace = true,
-    optional = true,
-    features = [
-        "frozen-abi",
-    ]
-}
+solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }

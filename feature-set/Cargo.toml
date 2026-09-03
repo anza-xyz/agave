@@ -23,20 +23,8 @@ dev-context-only-utils = []
 [dependencies]
 ahash = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-frozen-abi = {
-    workspace = true,
-    optional = true,
-    features = [
-        "frozen-abi",
-    ]
-}
-solana-frozen-abi-macro = {
-    workspace = true,
-    optional = true,
-    features = [
-        "frozen-abi",
-    ]
-}
+solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false }
