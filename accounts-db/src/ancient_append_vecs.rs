@@ -256,8 +256,7 @@ impl AncientSlotInfos {
             // It will take a lot of time for the pack algorithm to create that many, and that is bad for system performance.
             // This should be a limit that only affects extreme testing environments.
             // We do not stop including entries until we have dealt with all the high slot #s. This allows the algorithm to continue
-            // to make progress each time it is called. There are exceptions that can cause the pack to fail, such as accounts with multiple
-            // refs.
+            // to make progress each time it is called.
             if !info.is_high_slot
                 && (storages_remaining + ancient_storages_required < low_threshold
                     || ancient_storages_required as u64 > u64::from(tuning.max_resulting_storages))
@@ -405,8 +404,8 @@ impl AccountsDb {
 
         let mut accounts_to_combine = self.calc_accounts_to_combine(&mut accounts_per_storage);
 
-        // for the accounts which are one ref and can be put anywhere, we want to put the accounts from the LARGEST storages at the end.
-        // This causes us to keep the accounts we're re-packing from already existing ancient storages together with other normal one ref accounts.
+        // Put the accounts from the LARGEST storages at the end.
+        // This causes us to keep the accounts we're re-packing from already existing ancient storages together.
         // The alternative could cause us to mix newly ancient slots produced by flush (containing accounts touched more recently) with previously
         // packed ancient storages which over time contained enough dead accounts that the storage needed to be shrunk by being re-packed.
         // The end result of this sort should cause older, colder accounts (previously packed into large storages and then re-packed/shrunk) to
@@ -415,8 +414,7 @@ impl AccountsDb {
             .accounts_to_combine
             .sort_unstable_by_key(|a| a.written_bytes);
 
-        // pack the accounts with 1 ref or refs > 1 but the slot we're packing is the highest alive slot for the pubkey.
-        // Note the `chain` below combining the 2 types of refs.
+        // Pack the accounts into storages of size 'ideal_storage_size'.
         let pack = PackedAncientStorage::pack(
             accounts_to_combine
                 .accounts_to_combine
@@ -688,23 +686,15 @@ impl AccountsDb {
         metrics.accumulate(&write_ancient_accounts.metrics);
     }
 
-    /// given all accounts per ancient slot, in slots that we want to combine together:
-    /// 1. Look up each pubkey in the index
-    /// 2. separate, by slot, into:
-    ///    2a. pubkeys with refcount = 1. This means this pubkey exists NOWHERE else in accounts db.
-    ///    2b. pubkeys with refcount > 1
-    ///
-    /// Note that the return value can contain fewer items than 'accounts_per_storage' if we find storages which won't be affected.
-    /// 'accounts_per_storage' should be sorted by slot
+    /// given all accounts per ancient slot, in slots that we want to combine together: get a list
+    /// of all the accounts that should be combined into new storages and the slots that should be
+    /// used for the new storages.
     fn calc_accounts_to_combine<'a>(
         &self,
         accounts_per_storage: &'a mut [(&'a SlotInfo, GetUniqueAccountsResult)],
     ) -> AccountsToCombine<'a> {
-        let len = accounts_per_storage.len();
-        let mut target_slots_sorted = Vec::with_capacity(len);
-
         // `shrink_collect` all accounts in the storages we want to combine.
-        let mut accounts_to_combine = accounts_per_storage
+        let accounts_to_combine = accounts_per_storage
             .iter_mut()
             .map(|(info, unique_accounts)| {
                 self.shrink_collect::<AliveAccounts<'_>>(
@@ -715,15 +705,10 @@ impl AccountsDb {
             })
             .collect::<Vec<_>>();
 
-        let mut last_slot = None;
-        for (_, shrink_collect) in accounts_to_combine.iter_mut().enumerate() {
-            // assert that iteration is in descending slot order since the code below relies on this.
-            if let Some(last_slot) = last_slot {
-                assert!(last_slot > shrink_collect.slot);
-            }
-            last_slot = Some(shrink_collect.slot);
-            target_slots_sorted.push(shrink_collect.slot);
-        }
+        let mut target_slots_sorted = accounts_to_combine
+            .iter()
+            .map(|shrink_collect| shrink_collect.slot)
+            .collect::<Vec<_>>();
 
         target_slots_sorted.sort_unstable();
         AccountsToCombine {
@@ -760,15 +745,10 @@ impl AccountsDb {
 /// hold all alive accounts to be shrunk and/or combined
 #[derive(Debug, Default)]
 struct AccountsToCombine<'a> {
-    /// all the rest of alive accounts that can move slots and should be combined
-    /// This includes all accounts with ref_count = 1 from the slots in 'accounts_keep_slots'.
-    /// There is one entry here for each storage we are processing. Even if all accounts are in 'accounts_keep_slots'.
+    /// All alive accounts to be combined into new storages, along with the slot the accounts are currently stored in
     accounts_to_combine: Vec<ShrinkCollect<AliveAccounts<'a>>>,
-    /// slots that contain alive accounts that can move into ANY other ancient slot
-    /// these slots will NOT be in 'accounts_keep_slots'
-    /// Some of these slots will have ancient append vecs created at them to contain everything in 'accounts_to_combine'
-    /// The rest will become dead slots with no accounts in them.
-    /// Sort order is lowest to highest.
+    /// slots that contain alive accounts that can be reused for the new storages
+    /// sort order is lowest to highest
     target_slots_sorted: Vec<Slot>,
 }
 
@@ -1447,7 +1427,6 @@ mod tests {
     fn test_finish_combine_ancient_slots_packed_internal(accounts_db_config: AccountsDbConfig) {
         // n storages
         // 1 account each
-        // all accounts have 1 ref
         // nothing shrunk, so all storages and roots should be removed
         // or all slots shrunk so no roots or storages should be removed
         for in_shrink_candidate_slots in [false, true] {
