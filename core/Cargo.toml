@@ -18,33 +18,33 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-  "agave-banking-stage-ingress-types/dev-context-only-utils",
-  "agave-bls-sigverify/dev-context-only-utils",
-  "agave-votor/dev-context-only-utils",
-  "solana-entry/dev-context-only-utils",
-  "solana-ledger/dev-context-only-utils",
-  "solana-perf/dev-context-only-utils",
-  "solana-runtime/dev-context-only-utils",
-  "solana-streamer/dev-context-only-utils",
-  "solana-tpu-client-next/dev-context-only-utils",
+    "agave-banking-stage-ingress-types/dev-context-only-utils",
+    "agave-bls-sigverify/dev-context-only-utils",
+    "agave-votor/dev-context-only-utils",
+    "solana-entry/dev-context-only-utils",
+    "solana-ledger/dev-context-only-utils",
+    "solana-perf/dev-context-only-utils",
+    "solana-runtime/dev-context-only-utils",
+    "solana-streamer/dev-context-only-utils",
+    "solana-tpu-client-next/dev-context-only-utils",
 ]
 frozen-abi = [
-  "dep:solana-frozen-abi",
-  "dep:solana-frozen-abi-macro",
-  "solana-accounts-db/frozen-abi",
-  "solana-cost-model/frozen-abi",
-  "solana-frozen-abi/frozen-abi",
-  "solana-gossip/frozen-abi",
-  "solana-hash/frozen-abi",
-  "solana-ledger/frozen-abi",
-  "solana-packet/frozen-abi",
-  "solana-perf/frozen-abi",
-  "solana-pubkey/frozen-abi",
-  "solana-runtime/frozen-abi",
-  "solana-signature/frozen-abi",
-  "solana-svm/frozen-abi",
-  "solana-vote/frozen-abi",
-  "solana-vote-program/frozen-abi",
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-accounts-db/frozen-abi",
+    "solana-cost-model/frozen-abi",
+    "solana-frozen-abi/frozen-abi",
+    "solana-gossip/frozen-abi",
+    "solana-hash/frozen-abi",
+    "solana-ledger/frozen-abi",
+    "solana-packet/frozen-abi",
+    "solana-perf/frozen-abi",
+    "solana-pubkey/frozen-abi",
+    "solana-runtime/frozen-abi",
+    "solana-signature/frozen-abi",
+    "solana-svm/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
 ]
 
 [dependencies]
@@ -113,18 +113,18 @@ solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-frozen-abi = {
-  workspace = true,
-  optional = true,
-  features = [
-    "frozen-abi",
-  ]
+    workspace = true,
+    optional = true,
+    features = [
+        "frozen-abi",
+    ]
 }
 solana-frozen-abi-macro = {
-  workspace = true,
-  optional = true,
-  features = [
-    "frozen-abi",
-  ]
+    workspace = true,
+    optional = true,
+    features = [
+        "frozen-abi",
+    ]
 }
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }

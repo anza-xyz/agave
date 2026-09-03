@@ -29,11 +29,11 @@ serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
 solana-address-lookup-table-interface = {
-  workspace = true,
-  features = [
-    "bincode",
-    "bytemuck",
-  ]
+    workspace = true,
+    features = [
+        "bincode",
+        "bytemuck",
+    ]
 }
 solana-clock = { workspace = true }
 solana-config-interface = { workspace = true, features = ["bincode"] }

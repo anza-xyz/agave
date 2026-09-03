@@ -23,10 +23,10 @@ name = "solana_vote_program"
 agave-unstable-api = []
 dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = [
-  "dep:solana-frozen-abi",
-  "dep:solana-frozen-abi-macro",
-  "solana-program-runtime/frozen-abi",
-  "solana-vote-interface/frozen-abi",
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-program-runtime/frozen-abi",
+    "solana-vote-interface/frozen-abi",
 ]
 
 [dependencies]
@@ -40,18 +40,18 @@ solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = {
-  workspace = true,
-  optional = true,
-  features = [
-    "frozen-abi",
-  ]
+    workspace = true,
+    optional = true,
+    features = [
+        "frozen-abi",
+    ]
 }
 solana-frozen-abi-macro = {
-  workspace = true,
-  optional = true,
-  features = [
-    "frozen-abi",
-  ]
+    workspace = true,
+    optional = true,
+    features = [
+        "frozen-abi",
+    ]
 }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }

@@ -3,7 +3,7 @@ toml-version = "v1.1.0"
 [format.rules]
 comment-style = "preserve"
 date-time-delimiter = "preserve"
-indent-width = 2
+indent-width = 4
 key-quote-style = "preserve"
 string-quote-style = "preserve"
 
@@ -17,12 +17,12 @@ table-keys-order.enabled = false
 
 [[schemas.overrides]]
 targets = [
-  "dependencies",
-  "dev-dependencies",
-  "build-dependencies",
-  "workspace.dependencies",
-  "target.*.dependencies",
-  "target.*.dev-dependencies",
-  "target.*.build-dependencies",
+    "dependencies",
+    "dev-dependencies",
+    "build-dependencies",
+    "workspace.dependencies",
+    "target.*.dependencies",
+    "target.*.dev-dependencies",
+    "target.*.build-dependencies",
 ]
 format.rules.table-keys-order = "ascending"

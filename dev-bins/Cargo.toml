@@ -1,9 +1,9 @@
 [workspace]
 members = [
-  "../accounts-db/store-tool",
-  "../conformance",
-  "../ledger-tool",
-  "../svm-conformance",
+    "../accounts-db/store-tool",
+    "../conformance",
+    "../ledger-tool",
+    "../svm-conformance",
 ]
 
 resolver = "2"
@@ -20,8 +20,8 @@ edition = "2024"
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
-  'cfg(target_os, values("solana"))',
-  'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+    'cfg(target_os, values("solana"))',
+    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
 ]
 
 # Clippy lint configuration that can not be applied in clippy.toml
@@ -59,11 +59,11 @@ futures = "0.3.34"
 histogram = "0.6.9"
 itertools = "0.15.0"
 jemallocator = {
-  package = "tikv-jemallocator",
-  version = "0.6.0",
-  features = [
-    "unprefixed_malloc_on_supported_platforms",
-  ]
+    package = "tikv-jemallocator",
+    version = "0.6.0",
+    features = [
+        "unprefixed_malloc_on_supported_platforms",
+    ]
 }
 log = "0.4.28"
 num_cpus = "1.17.0"

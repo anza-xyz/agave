@@ -20,9 +20,9 @@ default = ["metrics"]
 agave-unstable-api = []
 metrics = ["solana-program-runtime/metrics"]
 shuttle-test = [
-  "solana-program-runtime/shuttle-test",
-  "solana-sbpf/shuttle-test",
-  "solana-svm-type-overrides/shuttle-test",
+    "solana-program-runtime/shuttle-test",
+    "solana-sbpf/shuttle-test",
+    "solana-svm-type-overrides/shuttle-test",
 ]
 svm-internal = []
 

@@ -45,18 +45,18 @@ cli = ["dep:clap"]
 dev-context-only-utils = []
 dummy-for-ci-check = []
 ffi = [
-  "dep:agave-feature-set",
-  "dep:agave-precompiles",
-  "dep:prost",
-  "dep:protosol",
-  "dep:solana-compute-budget",
-  "dep:solana-instruction",
-  "dep:solana-program-runtime",
-  "dep:solana-pubkey",
-  "dep:solana-svm",
-  "dep:solana-syscalls",
-  "dep:solana-transaction-error",
-  "solana-svm/conformance",
+    "dep:agave-feature-set",
+    "dep:agave-precompiles",
+    "dep:prost",
+    "dep:protosol",
+    "dep:solana-compute-budget",
+    "dep:solana-instruction",
+    "dep:solana-program-runtime",
+    "dep:solana-pubkey",
+    "dep:solana-svm",
+    "dep:solana-syscalls",
+    "dep:solana-transaction-error",
+    "solana-svm/conformance",
 ]
 frozen-abi = []
 
