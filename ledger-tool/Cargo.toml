@@ -83,6 +83,7 @@ solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
+solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }

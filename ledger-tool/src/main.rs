@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     crate::{
+        alpenglow_rollback::*,
         args::*,
         bigtable::*,
         blockstore::*,
@@ -55,6 +56,7 @@ use {
         blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
         blockstore_processor::ProcessSlotCallback,
+        leader_schedule_cache::LeaderScheduleCache,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
@@ -105,6 +107,7 @@ use {
     },
 };
 
+mod alpenglow_rollback;
 mod args;
 mod bigtable;
 mod blockstore;
@@ -113,6 +116,71 @@ mod ledger_path;
 mod ledger_utils;
 mod output;
 mod program;
+
+fn install_synthetic_shreds(
+    blockstore: &Arc<Blockstore>,
+    ledger_path: &Path,
+    arg_matches: &ArgMatches<'_>,
+    start_slot: Slot,
+    end_slot: Slot,
+    shreds: Vec<Shred>,
+    backup_shred_version: Option<u16>,
+) -> Arc<Blockstore> {
+    if let Some(shred_version) = backup_shred_version {
+        let backup_path = ledger_path.join(format!(
+            "{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL}_backup_{shred_version}_{start_slot}"
+        ));
+        let backup = open_blockstore(&backup_path, arg_matches, AccessType::PrimaryForMaintenance);
+        let mut old_shreds = Vec::new();
+        for (slot, _) in blockstore
+            .slot_meta_iterator(start_slot)
+            .expect("Blockstore operation must succeed")
+            .take_while(|(slot, _)| *slot <= end_slot)
+        {
+            old_shreds.extend(
+                blockstore
+                    .get_data_shreds_for_slot(slot, 0)
+                    .expect("Blockstore operation must succeed"),
+            );
+        }
+        let mut pinnable_slice = backup.new_pinnable_slice();
+        let mut write_batch = backup.get_write_batch();
+        backup
+            .insert_cow_shreds(
+                old_shreds.into_iter().map(Cow::Owned),
+                true,
+                &mut pinnable_slice,
+                &mut write_batch,
+            )
+            .expect("Blockstore operation must succeed");
+    }
+
+    let blockstore = if blockstore.is_primary_access() {
+        Arc::clone(blockstore)
+    } else {
+        Arc::new(open_blockstore(
+            ledger_path,
+            arg_matches,
+            AccessType::PrimaryForMaintenance,
+        ))
+    };
+    if backup_shred_version.is_some() {
+        blockstore
+            .purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)
+            .expect("Blockstore operation must succeed");
+    }
+    let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
+    blockstore
+        .insert_cow_shreds(
+            shreds.into_iter().map(Cow::Owned),
+            true,
+            &mut pinnable_slice,
+            &mut write_batch,
+        )
+        .expect("Blockstore operation must succeed");
+    Arc::clone(&blockstore)
+}
 
 fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result<()> {
     let mut child = Command::new("dot")
@@ -1533,6 +1601,38 @@ fn main() {
                         .long("enable-capitalization-change")
                         .takes_value(false)
                         .help("If snapshot creation should succeed with a capitalization delta."),
+                )
+                .arg(
+                    Arg::with_name("rollback_alpenglow")
+                        .long("rollback-alpenglow")
+                        .takes_value(false)
+                        .requires("enable_capitalization_change")
+                        .conflicts_with_all(&[
+                            "hard_forks",
+                            "incremental",
+                            "minimized",
+                            "ending_slot",
+                            "recalculate_accounts_lt_hash",
+                            "warp_slot",
+                            "faucet_lamports",
+                            "faucet_pubkey",
+                            "bootstrap_validator",
+                            "bootstrap_stake_authorized_pubkey",
+                            "rent_burn_percentage",
+                            "hashes_per_tick",
+                            "accounts_to_remove",
+                            "feature_gates_to_deactivate",
+                            "vote_accounts_to_destake",
+                            "remove_stake_accounts",
+                            "account_paths",
+                            "force_update_to_open",
+                        ])
+                        .help(
+                            "Roll the latest finalized Alpenglow root back to a same-epoch Tower \
+                             hard fork. Closes Alpenglow protocol accounts, resets reward \
+                             cursors, and backs up and replaces the discarded branch in-place. \
+                             Partitioned and pending delegator rewards must be inactive.",
+                        ),
                 ),
         )
         .subcommand(
@@ -2009,6 +2109,7 @@ fn main() {
 
                     let is_incremental = arg_matches.is_present("incremental");
                     let is_minimized = arg_matches.is_present("minimized");
+                    let rollback_alpenglow = arg_matches.is_present("rollback_alpenglow");
                     let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
                         .unwrap_or_else(|_| {
                             let snapshot_archive_path = value_t!(arg_matches, "snapshots", String)
@@ -2125,6 +2226,16 @@ fn main() {
                         );
                         exit(1);
                     }
+                    if rollback_alpenglow
+                        && (!blockstore.is_root(snapshot_slot)
+                            || blockstore.max_root() != snapshot_slot)
+                    {
+                        eprintln!(
+                            "Error: --rollback-alpenglow requires the latest finalized source \
+                             slot."
+                        );
+                        exit(1);
+                    }
                     process_options.halt_at_slot = Some(snapshot_slot);
 
                     let ending_slot = if is_minimized {
@@ -2198,6 +2309,62 @@ fn main() {
                     // possibility.
                     accounts_background_service.join().unwrap();
 
+                    let mut prepared_alpenglow_rollback = None;
+                    let mut alpenglow_rollback_report = None;
+                    let mut source_shred_version = None;
+                    if rollback_alpenglow {
+                        if !bank.feature_set.is_active(&feature_set::alpenglow::id())
+                            || !bank.is_alpenglow()
+                            || bank.get_alpenglow_genesis_certificate().is_none()
+                        {
+                            eprintln!(
+                                "Error: slot {snapshot_slot} is not a completed Alpenglow bank. \
+                                 The feature and genesis certificate must both be active."
+                            );
+                            exit(1);
+                        }
+
+                        let rollback_slot = snapshot_slot.checked_add(1).unwrap_or_else(|| {
+                            eprintln!("Error: source slot {snapshot_slot} has no child slot");
+                            exit(1);
+                        });
+                        let source_epoch = bank.epoch();
+                        let rollback_epoch = bank.epoch_schedule().get_epoch(rollback_slot);
+                        if source_epoch != rollback_epoch {
+                            eprintln!(
+                                "Error: rollback child slot {rollback_slot} crosses an epoch \
+                                 boundary ({source_epoch} -> {rollback_epoch}). Choose an earlier \
+                                 finalized source slot in the same epoch."
+                            );
+                            exit(1);
+                        }
+                        if bank
+                            .hard_forks()
+                            .iter()
+                            .any(|(slot, _count)| *slot == rollback_slot)
+                        {
+                            eprintln!(
+                                "Error: rollback child slot {rollback_slot} is already registered \
+                                 as a hard fork."
+                            );
+                            exit(1);
+                        }
+
+                        // Capture this before constructing the child: Bank hard-fork state is
+                        // shared between parent and child, and registering H changes what the
+                        // in-memory source bank reports even though source replay used this old
+                        // version.
+                        source_shred_version = Some(compute_shred_version(
+                            &genesis_config.hash(),
+                            Some(&bank.hard_forks()),
+                        ));
+                        prepared_alpenglow_rollback =
+                            Some(preflight_alpenglow_rollback(&bank).unwrap_or_else(|err| {
+                                eprintln!("Error: unable to prepare Alpenglow rollback: {err}");
+                                exit(1);
+                            }));
+                    }
+
                     let child_bank_required = rent_burn_percentage.is_ok()
                         || hashes_per_tick.is_some()
                         || remove_stake_accounts
@@ -2205,11 +2372,41 @@ fn main() {
                         || !feature_gates_to_deactivate.is_empty()
                         || !vote_accounts_to_destake.is_empty()
                         || faucet_pubkey.is_some()
-                        || bootstrap_validator_pubkeys.is_some();
+                        || bootstrap_validator_pubkeys.is_some()
+                        || rollback_alpenglow;
 
                     if child_bank_required {
-                        let mut child_bank =
-                            Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
+                        let child_slot = bank.slot().checked_add(1).unwrap_or_else(|| {
+                            eprintln!("Error: source slot {} has no child slot", bank.slot());
+                            exit(1);
+                        });
+                        let mut child_bank = if rollback_alpenglow {
+                            let leader = LeaderScheduleCache::new_from_bank(&bank)
+                                .slot_leader_at(child_slot, Some(&bank))
+                                .unwrap_or_else(|| {
+                                    eprintln!(
+                                        "Error: unable to determine the leader for rollback slot \
+                                         {child_slot}"
+                                    );
+                                    exit(1);
+                                });
+                            Bank::new_from_parent_for_alpenglow_rollback(
+                                bank.clone(),
+                                leader,
+                                child_slot,
+                            )
+                        } else {
+                            Bank::new_from_parent(bank.clone(), *bank.leader(), child_slot)
+                        };
+
+                        if rollback_alpenglow {
+                            alpenglow_rollback_report = Some(
+                                prepared_alpenglow_rollback
+                                    .take()
+                                    .unwrap()
+                                    .apply(&child_bank),
+                            );
+                        }
 
                         if let Ok(rent_burn_percentage) = rent_burn_percentage {
                             child_bank.set_rent_burn_percentage(rent_burn_percentage);
@@ -2397,8 +2594,35 @@ fn main() {
                         }
                     }
 
-                    let new_shred_verison =
+                    let new_shred_version =
                         compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
+                    if rollback_alpenglow {
+                        let old_shred_version = source_shred_version
+                            .expect("rollback source shred version is captured");
+                        if old_shred_version == new_shred_version {
+                            eprintln!(
+                                "Error: rollback hard fork produced the same 16-bit shred version \
+                                 ({new_shred_version}) as the Alpenglow source. Refusing an \
+                                 ambiguous branch."
+                            );
+                            exit(1);
+                        }
+                        let report = alpenglow_rollback_report
+                            .as_ref()
+                            .expect("rollback reward rewrite report is available");
+                        println!(
+                            "Alpenglow rollback prepared: source slot {}, Tower hard-fork slot \
+                             {}, epoch {}, shred version {} -> {}, reset {} vote and {} stake \
+                             accounts",
+                            snapshot_slot,
+                            bank.slot(),
+                            bank.epoch(),
+                            old_shred_version,
+                            new_shred_version,
+                            report.vote_accounts_reset,
+                            report.stake_accounts_reset,
+                        );
+                    }
                     if child_bank_required {
                         let num_ticks_per_slot = bank.ticks_per_slot();
                         let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
@@ -2411,96 +2635,77 @@ fn main() {
                             bank.register_tick(&tick_entry.hash, &scheduler);
                         });
 
-                        // Calculate and set the block ID so we can read it to
-                        // properly chain shreds for the child bank
-                        Bank::calculate_and_set_block_id_for_dcou(&bank);
-
-                        // Next steps will need write access to the Blockstore
-                        // so ensure we have R/W access
-                        let rw_blockstore = if blockstore.is_primary_access() {
-                            blockstore.clone()
+                        if rollback_alpenglow {
+                            assert!(bank.block_id().is_none());
+                            bank.freeze();
                         } else {
-                            Arc::new(open_blockstore(
-                                &ledger_path,
-                                arg_matches,
-                                AccessType::PrimaryForMaintenance,
-                            ))
-                        };
-
-                        // If slot exists, back it up in another Blockstore
-                        // just in case and purge from the Blockstore
-                        let slot = bank.slot();
-                        if blockstore.has_existing_shreds_for_slot(slot) {
-                            let shreds = blockstore
-                                .get_data_shreds_for_slot(slot, 0)
-                                .expect("Blockstore operation must succeed");
-
-                            let old_shred_version =
-                                shreds.first().expect("Slot must have a shred").version();
-                            let backup_directory = format!(
-                                "{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL}_backup_{old_shred_version}_{slot}"
-                            );
-                            let backup_ledger_path = ledger_path.join(backup_directory);
-                            info!("Backing up {slot} at {}", backup_ledger_path.display(),);
-                            let backup_blockstore = Arc::new(open_blockstore(
-                                &backup_ledger_path,
-                                arg_matches,
-                                AccessType::PrimaryForMaintenance,
-                            ));
-                            let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
-                            let mut write_batch = backup_blockstore.get_write_batch();
-                            let _ = backup_blockstore
-                                .insert_cow_shreds(
-                                    shreds.into_iter().map(Cow::Owned),
-                                    true,
-                                    &mut pinnable_slice,
-                                    &mut write_batch,
-                                )
-                                .expect("Blockstore operation must succeed");
-
-                            // Purge modifies state so use rw_blockstore
-                            info!("Purging slot {slot} from Blockstore");
-                            rw_blockstore
-                                .purge_slots_cleanup_chaining(slot, slot, PurgeType::Exact)
-                                .expect("Blockstore operation must succeed");
+                            Bank::calculate_and_set_block_id_for_dcou(&bank);
                         }
 
-                        // Use a "dummy" but deterministic keyapir to sign
+                        let slot = bank.slot();
                         let keypair = keypair_from_seed(&[0; Keypair::SECRET_KEY_LENGTH])
                             .expect("Keypair creation must succeed");
-                        let chained_merkle_root = bank
-                            .parent()
-                            .expect("Child bank must have parent bank available")
-                            .block_id()
-                            .expect("Parent bank must have block ID set");
-
-                        let shredder = Shredder::new(
-                            slot,
-                            bank.parent_slot(),
-                            /*reference_tick:*/ 0,
-                            new_shred_verison,
-                        )
-                        .expect("Shredder creation must succeed");
-                        let shreds: Vec<_> = shredder
+                        let shredder =
+                            Shredder::new(slot, bank.parent_slot(), 0, new_shred_version)
+                                .expect("Shredder creation must succeed");
+                        let synthetic_shreds: Vec<_> = shredder
                             .make_merkle_shreds_from_entries(
                                 &keypair,
                                 &tick_entries,
-                                /*is_last_in_slot:*/ true,
-                                chained_merkle_root,
-                                /*next_shred_index:*/ 0,
-                                /*next_code_index:*/ 0,
+                                true,
+                                bank.parent_block_id().expect("Parent block ID must be set"),
+                                0,
+                                0,
                                 &ReedSolomonCache::default(),
                                 &mut ProcessShredsStats::default(),
                             )
                             .into_iter()
                             .filter(Shred::is_data)
-                            .map(Cow::Owned)
                             .collect();
-                        let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
-                        let mut write_batch = rw_blockstore.get_write_batch();
-                        rw_blockstore
-                            .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
-                            .expect("Blockstore operation must succeed");
+                        if rollback_alpenglow {
+                            bank.set_block_id(Some(
+                                synthetic_shreds
+                                    .last()
+                                    .expect("Synthetic slot must contain a data shred")
+                                    .merkle_root()
+                                    .expect("Synthetic data shred must have a Merkle root"),
+                            ));
+                        }
+                        let highest_slot = rollback_alpenglow
+                            .then(|| {
+                                blockstore
+                                    .highest_slot()
+                                    .expect("Blockstore operation must succeed")
+                            })
+                            .flatten();
+                        let end_slot = highest_slot.unwrap_or(slot).max(slot);
+                        let backup_shred_version = if rollback_alpenglow {
+                            highest_slot
+                                .is_some_and(|highest_slot| highest_slot >= slot)
+                                .then_some(source_shred_version.unwrap())
+                        } else {
+                            blockstore.has_existing_shreds_for_slot(slot).then(|| {
+                                blockstore
+                                    .get_data_shreds_for_slot(slot, 0)
+                                    .expect("Blockstore operation must succeed")[0]
+                                    .version()
+                            })
+                        };
+                        let rw_blockstore = install_synthetic_shreds(
+                            &blockstore,
+                            &ledger_path,
+                            arg_matches,
+                            slot,
+                            end_slot,
+                            synthetic_shreds,
+                            backup_shred_version,
+                        );
+                        if rollback_alpenglow {
+                            assert_eq!(
+                                rw_blockstore.get_last_shred_merkle_root(slot).unwrap(),
+                                bank.block_id()
+                            );
+                        }
                     }
 
                     let pre_capitalization = bank.capitalization();
@@ -2659,7 +2864,7 @@ fn main() {
                     if let Some(msg) = capitalization_message {
                         println!("{msg}");
                     }
-                    println!("Shred version: {new_shred_verison}",);
+                    println!("Shred version: {new_shred_version}",);
 
                     if let Some(system_monitor_service) = system_monitor_service {
                         exit_signal.store(true, Ordering::Relaxed);

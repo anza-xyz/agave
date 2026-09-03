@@ -259,6 +259,7 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-syscalls",
  "solana-system-interface 3.3.0",
+ "solana-sysvar",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-status",

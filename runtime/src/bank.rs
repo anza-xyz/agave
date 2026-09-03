@@ -1434,6 +1434,7 @@ impl Bank {
             slot,
             null_tracer(),
             NewBankOptions::default(),
+            None,
         )
     }
 
@@ -1443,7 +1444,24 @@ impl Bank {
         slot: Slot,
         new_bank_options: NewBankOptions,
     ) -> Self {
-        Self::_new_from_parent(parent, leader, slot, null_tracer(), new_bank_options)
+        Self::_new_from_parent(parent, leader, slot, null_tracer(), new_bank_options, None)
+    }
+
+    /// Creates the immediate, same-epoch Tower hard-fork child used by offline rollback tooling.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_from_parent_for_alpenglow_rollback(
+        parent: Arc<Bank>,
+        leader: SlotLeader,
+        slot: Slot,
+    ) -> Self {
+        Self::_new_from_parent(
+            parent,
+            leader,
+            slot,
+            null_tracer(),
+            NewBankOptions::default(),
+            Some(Self::prepare_alpenglow_rollback),
+        )
     }
 
     pub fn new_from_parent_with_tracer(
@@ -1458,6 +1476,7 @@ impl Bank {
             slot,
             Some(reward_calc_tracer),
             NewBankOptions::default(),
+            None,
         )
     }
 
@@ -1471,6 +1490,7 @@ impl Bank {
         slot: Slot,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_bank_options: NewBankOptions,
+        prepare_bank: Option<fn(&mut Bank, &Bank)>,
     ) -> Self {
         let mut time = Measure::start("bank::new_from_parent");
         let NewBankOptions { vote_only_bank } = new_bank_options;
@@ -1619,6 +1639,10 @@ impl Bank {
             ancestors.extend(new.parents_iter().map(|parent| parent.slot()));
             new.ancestors = Ancestors::from(ancestors);
         });
+
+        if let Some(prepare_bank) = prepare_bank {
+            prepare_bank(&mut new, &parent);
+        }
 
         let prepare_timings = new.prepare_for_block_execution(
             parent.epoch(),
@@ -3544,6 +3568,69 @@ impl Bank {
 
     fn set_is_alpenglow(&self) {
         self.is_alpenglow.store(true, Relaxed);
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    fn prepare_alpenglow_rollback(&mut self, parent: &Bank) {
+        assert_eq!(
+            self.slot(),
+            parent.slot().saturating_add(1),
+            "Alpenglow rollback requires the immediate child of the source bank"
+        );
+        assert_eq!(
+            self.epoch(),
+            parent.epoch(),
+            "Alpenglow rollback must not cross an epoch boundary"
+        );
+        assert!(
+            parent.is_alpenglow()
+                && self.is_alpenglow()
+                && self.feature_set.is_active(&feature_set::alpenglow::id())
+                && self.get_alpenglow_genesis_certificate().is_some(),
+            "Alpenglow rollback requires an Alpenglow parent and child"
+        );
+
+        assert!(
+            !parent
+                .get_account(&sysvar::epoch_rewards::id())
+                .and_then(|account| from_account::<sysvar::epoch_rewards::EpochRewards>(&account))
+                .is_some_and(|rewards| rewards.active),
+            "Alpenglow rollback requires inactive partitioned epoch rewards"
+        );
+        assert!(
+            !self
+                .hard_forks()
+                .iter()
+                .any(|(hard_fork_slot, _count)| *hard_fork_slot == self.slot()),
+            "Alpenglow rollback hard fork is already registered at the child slot"
+        );
+
+        // This runs before new-bank sysvar updates and after source replay.
+        self.register_hard_fork(self.slot());
+
+        self.deactivate_feature(&feature_set::alpenglow::id());
+        // Capitalization is recalculated by ledger-tool after these closures.
+        for address in [
+            feature_set::alpenglow::id(),
+            *GENESIS_CERTIFICATE_ACCOUNT,
+            *NANOSECOND_CLOCK_ACCOUNT,
+        ] {
+            if let Some(mut account) = self.get_account_with_fixed_root_no_cache(&address) {
+                let old_data_size = account.data().len();
+                account.set_lamports(0);
+                account.set_data_from_slice(&[]);
+                self.store_account(&address, &account);
+                self.calculate_and_update_accounts_data_size_delta_off_chain(old_data_size, 0);
+            }
+        }
+        self.is_alpenglow.store(false, Relaxed);
+
+        // Apply the Tower slot parameters to this already-created bank.
+        let tower_hashes_per_tick = self.current_slot_params().hashes_per_tick();
+        self.apply_slot_time_persistent_changes();
+        self.apply_activated_features();
+        self.set_hashes_per_tick(tower_hashes_per_tick);
+        self.assert_bank_matches_slot_params();
     }
 
     /// For use in the first Alpenglow block, set the genesis certificate.
@@ -7370,6 +7457,82 @@ impl Bank {
     /// Returns true when this bank is using slot params beyond its genesis baseline.
     pub fn slot_time_reduction_active(&self) -> bool {
         self.ns_per_slot != self.slot_params.baseline_params().ns_per_slot()
+    }
+}
+
+#[cfg(all(test, feature = "dev-context-only-utils"))]
+mod alpenglow_rollback_tests {
+    use {
+        super::*,
+        crate::genesis_utils::{activate_alpenglow_at_genesis, create_genesis_config},
+    };
+
+    #[test]
+    fn test_new_from_parent_for_alpenglow_rollback() {
+        const SLOTS_PER_EPOCH: Slot = 32;
+        let mut genesis_config = create_genesis_config(1_000_000).genesis_config;
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
+        let genesis_hashes_per_tick = genesis_config.poh_config.hashes_per_tick;
+        activate_alpenglow_at_genesis(&mut genesis_config);
+        genesis_config.poh_config.hashes_per_tick = genesis_hashes_per_tick;
+
+        let (genesis_bank, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        genesis_bank.set_hashes_per_tick(None);
+
+        let first_reduced_slot = genesis_bank.epoch_schedule().get_first_slot_in_epoch(1);
+        let reduced_epoch_bank = Arc::new(Bank::new_from_parent(
+            genesis_bank,
+            SlotLeader::default(),
+            first_reduced_slot,
+        ));
+        let source_slot = first_reduced_slot + 1;
+        let source = Arc::new(Bank::new_from_parent(
+            reduced_epoch_bank,
+            SlotLeader::default(),
+            source_slot,
+        ));
+        source.update_clock_from_footer(1_234_567_890);
+        let expected_tower_hashes_per_tick = source.current_slot_params().hashes_per_tick();
+        assert_ne!(expected_tower_hashes_per_tick, genesis_hashes_per_tick);
+        let source_capitalization = source.capitalization();
+        let source_data_size_discrepancy = i128::from(source.load_accounts_data_size())
+            - i128::from(source.calculate_accounts_data_size().unwrap());
+        let rollback_slot = source_slot + 1;
+
+        let bank = Bank::new_from_parent_for_alpenglow_rollback(
+            source,
+            SlotLeader::default(),
+            rollback_slot,
+        );
+
+        assert!(!bank.is_alpenglow());
+        assert!(!bank.feature_set.is_active(&feature_set::alpenglow::id()));
+        assert_eq!(bank.hashes_per_tick(), expected_tower_hashes_per_tick);
+        assert!(
+            [
+                feature_set::alpenglow::id(),
+                *GENESIS_CERTIFICATE_ACCOUNT,
+                *NANOSECOND_CLOCK_ACCOUNT,
+            ]
+            .iter()
+            .all(|address| bank.get_balance(address) == 0)
+        );
+        assert!(
+            bank.hard_forks()
+                .iter()
+                .any(|hard_fork| *hard_fork == (rollback_slot, 1))
+        );
+        let restart_slot: LastRestartSlot =
+            from_account(&bank.get_account(&sysvar::last_restart_slot::id()).unwrap()).unwrap();
+        assert_eq!(restart_slot.last_restart_slot, rollback_slot);
+        assert_eq!(bank.capitalization(), source_capitalization);
+        assert_eq!(
+            i128::from(bank.load_accounts_data_size())
+                - i128::from(bank.calculate_accounts_data_size().unwrap()),
+            source_data_size_discrepancy
+        );
     }
 }
 
