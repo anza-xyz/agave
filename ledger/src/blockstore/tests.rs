@@ -7377,7 +7377,7 @@ fn test_purge_transaction_history_before_missing_shred_and_update_parent() {
     assert_eq!(slot_meta.replay_fec_set_index, update_parent_fec_set_index);
 
     let stats = blockstore
-        .purge_transaction_history_for_slot_exact(slot)
+        .purge_transaction_history_for_replay_slot_exact(slot)
         .unwrap();
     assert_eq!(stats.transactions_processed, 1);
     assert!(

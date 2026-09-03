@@ -476,7 +476,7 @@ impl Blockstore {
     /// Removes transaction history written before the UpdateParent boundary
     /// recorded in SlotMeta. All deletes are staged before the write batch is
     /// committed.
-    pub fn purge_transaction_history_for_slot_exact(
+    pub fn purge_transaction_history_for_replay_slot_exact(
         &self,
         slot: Slot,
     ) -> Result<TransactionHistoryPurgeStats> {
@@ -556,7 +556,7 @@ impl Blockstore {
 
     /// Removes transaction history for the ordered transactions BCL recorded
     /// before producing an UpdateParent marker.
-    pub fn purge_transaction_history_for_slot_exact_bcl(
+    pub fn purge_transaction_history_for_leader_slot_exact(
         &self,
         slot: Slot,
         accumulated_txs: &[VersionedTransaction],
@@ -619,7 +619,7 @@ impl Blockstore {
     }
 
     /// Removes transaction history for the entire persisted slot.
-    pub fn purge_transaction_history_for_slot_full(
+    pub fn purge_transaction_history_for_switch_bank_slot_exact(
         &self,
         slot: Slot,
     ) -> Result<TransactionHistoryPurgeStats> {
@@ -1299,7 +1299,7 @@ pub mod tests {
         }
 
         let error = blockstore
-            .purge_transaction_history_for_slot_exact(slot)
+            .purge_transaction_history_for_replay_slot_exact(slot)
             .unwrap_err();
         assert!(matches!(
             error,
@@ -1329,7 +1329,7 @@ pub mod tests {
         );
 
         let stats = blockstore
-            .purge_transaction_history_for_slot_exact_bcl(slot, &accumulated_txs)
+            .purge_transaction_history_for_leader_slot_exact(slot, &accumulated_txs)
             .unwrap();
         assert_eq!(stats.transactions_processed, signatures.len() as u64);
         assert_eq!(
@@ -1382,7 +1382,7 @@ pub mod tests {
         }
 
         let stats = blockstore
-            .purge_transaction_history_for_slot_exact(slot)
+            .purge_transaction_history_for_replay_slot_exact(slot)
             .unwrap();
         assert_eq!(
             stats.transactions_processed,

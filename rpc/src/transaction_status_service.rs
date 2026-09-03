@@ -285,13 +285,13 @@ impl TransactionStatusService {
                 let purge_result = if enable_rpc_transaction_history {
                     match &purge_input {
                         TransactionHistoryPurgeInput::ReplayStage => {
-                            blockstore.purge_transaction_history_for_slot_exact(slot)
+                            blockstore.purge_transaction_history_for_replay_slot_exact(slot)
                         }
                         TransactionHistoryPurgeInput::SwitchBank => {
-                            blockstore.purge_transaction_history_for_slot_full(slot)
+                            blockstore.purge_transaction_history_for_switch_bank_slot_exact(slot)
                         }
                         TransactionHistoryPurgeInput::Bcl(transactions) => blockstore
-                            .purge_transaction_history_for_slot_exact_bcl(
+                            .purge_transaction_history_for_leader_slot_exact(
                                 slot,
                                 transactions.as_slice(),
                             ),
