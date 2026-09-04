@@ -1,7 +1,7 @@
 use {
     crate::handshake::{
-        ClientHandshakeError, ClientLogon, ClientSession, ClientWorkerSession,
-        shared::{LOGON_FAILURE, MAX_WORKERS, VERSION},
+        ClientHandshakeError, ClientLogon, ClientSession, ClientWorkerSession, ProtocolVersions,
+        shared::{LOGON_FAILURE, MAX_WORKERS},
     },
     agave_scheduler_bindings::{CheckWorkerToPackMessage, PackToCheckWorkerMessage},
     libc::CMSG_LEN,
@@ -44,13 +44,14 @@ pub fn connect(
     logon: ClientLogon,
     timeout: Duration,
 ) -> Result<ClientSession, ClientHandshakeError> {
-    connect_path(path.as_ref(), logon, timeout)
+    connect_path(path.as_ref(), logon, timeout, ProtocolVersions::current())
 }
 
-fn connect_path(
+pub(crate) fn connect_path(
     path: &Path,
     logon: ClientLogon,
     timeout: Duration,
+    versions: ProtocolVersions,
 ) -> Result<ClientSession, ClientHandshakeError> {
     // NB: Technically this connect call can block indefinitely if the receiver's connection queue
     // is full. In practice this should almost never happen. If it does work arounds are:
@@ -64,7 +65,7 @@ fn connect_path(
     stream.set_write_timeout(Some(timeout))?;
 
     // Send the logon message to the server.
-    send_logon(&mut stream, logon)?;
+    send_logon(&mut stream, logon, versions)?;
 
     // Receive the server's response & on success the files for the newly allocated shared memory.
     let files = recv_response(&mut stream)?;
@@ -75,17 +76,25 @@ fn connect_path(
     Ok(session)
 }
 
-fn send_logon(stream: &mut UnixStream, logon: ClientLogon) -> Result<(), ClientHandshakeError> {
+fn send_logon(
+    stream: &mut UnixStream,
+    logon: ClientLogon,
+    versions: ProtocolVersions,
+) -> Result<(), ClientHandshakeError> {
     // Send the logon message.
     let mut buf = [0; 1024];
-    buf[..8].copy_from_slice(&VERSION.to_le_bytes());
-    const LOGON_END: usize = 8 + core::mem::size_of::<ClientLogon>();
-    let ptr = buf[8..LOGON_END].as_mut_ptr().cast::<ClientLogon>();
+    let versions_ptr = buf.as_mut_ptr().cast::<ProtocolVersions>();
+    const LOGON_END: usize =
+        ProtocolVersions::SERIALIZED_SIZE + core::mem::size_of::<ClientLogon>();
+    let logon_ptr = buf[ProtocolVersions::SERIALIZED_SIZE..LOGON_END]
+        .as_mut_ptr()
+        .cast::<ClientLogon>();
     // SAFETY:
     // - `buf` is valid for writes.
-    // - `buf.len()` has enough space for logon's size in memory.
+    // - `buf.len()` has enough space for both values.
     unsafe {
-        core::ptr::write_unaligned(ptr, logon);
+        core::ptr::write_unaligned(versions_ptr, versions);
+        core::ptr::write_unaligned(logon_ptr, logon);
     }
     stream.write_all(&buf)?;
 

@@ -1,6 +1,8 @@
 use {
     crate::handshake::{
-        AgaveHandshakeError, ClientHandshakeError, ClientLogon, client::connect, server::Server,
+        AgaveHandshakeError, ClientHandshakeError, ClientLogon, ProtocolVersions,
+        client::{connect, connect_path},
+        server::Server,
         shared::MAX_WORKERS,
     },
     agave_scheduler_bindings::{
@@ -12,6 +14,57 @@ use {
     std::time::Duration,
     tempfile::NamedTempFile,
 };
+
+#[test]
+fn reject_version_mismatches() {
+    let current = ProtocolVersions::current();
+    let mismatched_versions = [
+        ProtocolVersions {
+            handshake: current.handshake.checked_add(1).unwrap(),
+            ..current
+        },
+        ProtocolVersions {
+            scheduler_bindings: current.scheduler_bindings.checked_add(1).unwrap(),
+            ..current
+        },
+        ProtocolVersions {
+            shaq: current.shaq.checked_add(1).unwrap(),
+            ..current
+        },
+        ProtocolVersions {
+            rts_alloc: current.rts_alloc.checked_add(1).unwrap(),
+            ..current
+        },
+    ];
+
+    for client_versions in mismatched_versions {
+        let ipc = NamedTempFile::new().unwrap();
+        std::fs::remove_file(ipc.path()).unwrap();
+        let mut server = Server::new(ipc.path()).unwrap();
+        let server_handle = std::thread::spawn(move || {
+            let Err(AgaveHandshakeError::Version { server, client }) = server.accept() else {
+                panic!();
+            };
+            assert_eq!(server, current);
+            assert_eq!(client, client_versions);
+        });
+
+        let result = connect_path(
+            ipc.path(),
+            ClientLogon::default(),
+            Duration::from_secs(1),
+            client_versions,
+        );
+        let Err(ClientHandshakeError::Rejected(reason)) = result else {
+            panic!();
+        };
+        assert_eq!(
+            reason,
+            format!("Version; server=({current}); client=({client_versions})")
+        );
+        server_handle.join().unwrap();
+    }
+}
 
 #[test]
 fn message_passing_on_all_queues() {

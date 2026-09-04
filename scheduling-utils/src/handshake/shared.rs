@@ -4,6 +4,7 @@ use {
         PackToExecutionWorkerMessage, ProgressMessage, TpuToPackMessage,
     },
     rts_alloc::Allocator,
+    std::fmt,
     thiserror::Error,
 };
 
@@ -12,12 +13,61 @@ pub(crate) type ShaqError = shaq::error::Error;
 
 pub const MAX_WORKERS: usize = 64;
 
-/// Protocol version.
-pub(crate) const VERSION: u64 = 5;
+/// Handshake protocol version.
+pub(crate) const HANDSHAKE_VERSION: u64 = 6;
 pub(crate) const LOGON_SUCCESS: u8 = 0x01;
 pub(crate) const LOGON_FAILURE: u8 = 0x02;
 pub(crate) const MAX_ALLOCATOR_HANDLES: usize = 128;
 pub(crate) const GLOBAL_ALLOCATORS: usize = 1;
+
+/// Versions of the interfaces shared by Agave and an external scheduler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct ProtocolVersions {
+    /// Version of the handshake protocol.
+    pub handshake: u64,
+    /// Version of the scheduler bindings.
+    pub scheduler_bindings: u64,
+    /// Version of the shared-memory queues.
+    pub shaq: u64,
+    /// Version of the shared-memory allocator.
+    pub rts_alloc: u64,
+}
+
+impl ProtocolVersions {
+    pub(crate) const SERIALIZED_SIZE: usize = core::mem::size_of::<Self>();
+
+    /// Returns the versions used by this build.
+    pub fn current() -> Self {
+        Self {
+            handshake: HANDSHAKE_VERSION,
+            scheduler_bindings: agave_scheduler_bindings::version(),
+            shaq: u64::from(shaq::VERSION),
+            rts_alloc: u64::from(rts_alloc::VERSION),
+        }
+    }
+
+    pub(crate) fn try_from_bytes(buffer: &[u8]) -> Option<Self> {
+        if buffer.len() != Self::SERIALIZED_SIZE {
+            return None;
+        }
+
+        // SAFETY:
+        // - buffer is correctly sized, initialized and readable.
+        // - `Self` is valid for any byte pattern.
+        Some(unsafe { core::ptr::read_unaligned(buffer.as_ptr().cast()) })
+    }
+}
+
+impl fmt::Display for ProtocolVersions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "handshake={}, scheduler-bindings={}, shaq={}, rts-alloc={}",
+            self.handshake, self.scheduler_bindings, self.shaq, self.rts_alloc
+        )
+    }
+}
 
 /// The logon message sent by the client to the server.
 #[derive(Debug, Default, Clone, Copy)]
@@ -143,8 +193,11 @@ pub enum AgaveHandshakeError {
     Timeout,
     #[error("Close during handshake")]
     EofDuringHandshake,
-    #[error("Version; server={server}; client={client}")]
-    Version { server: u64, client: u64 },
+    #[error("Version; server=({server}); client=({client})")]
+    Version {
+        server: ProtocolVersions,
+        client: ProtocolVersions,
+    },
     #[error("Worker count; count={0}")]
     WorkerCount(usize),
     #[error("Check worker count; count={0}")]
