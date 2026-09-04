@@ -1629,7 +1629,7 @@ impl Validator {
         let vote_tracker = Arc::<VoteTracker>::default();
 
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
-        let (verified_vote_sender, verified_vote_receiver) = unbounded();
+        let (verified_vote_sender, verified_vote_receiver) = bounded(4096);
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
 
