@@ -27,6 +27,11 @@ name = "test_exec_gossip"
 path = "src/bin/test_exec_gossip.rs"
 required-features = ["cli", "ffi"]
 
+[[bin]]
+name = "test_exec_txn"
+path = "src/bin/test_exec_txn.rs"
+required-features = ["cli", "ffi"]
+
 [features]
 default = ["cli", "ffi"]
 agave-unstable-api = []
