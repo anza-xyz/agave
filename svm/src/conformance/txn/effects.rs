@@ -20,6 +20,7 @@ pub struct TxnEffects {
     pub executed: bool,
     pub status: TransactionResult<()>,
     pub resulting_accounts: Vec<(Pubkey, Account)>,
+    pub rollback_accounts: Vec<(Pubkey, Account)>,
     pub return_data: Vec<u8>,
     pub executed_units: u64,
     pub fee_details: FeeDetails,
@@ -34,6 +35,7 @@ impl TxnEffects {
             executed: false,
             status: Err(err),
             resulting_accounts: vec![],
+            rollback_accounts: vec![],
             return_data: vec![],
             executed_units: 0,
             fee_details: FeeDetails::new(0, 0),
@@ -123,6 +125,11 @@ impl From<TxnEffects> for ProtoTxnResult {
             .into_iter()
             .map(|(pubkey, account)| account_to_proto((pubkey, account)))
             .collect();
+        let rollback_accounts = value
+            .rollback_accounts
+            .into_iter()
+            .map(|(pubkey, account)| account_to_proto((pubkey, account)))
+            .collect();
 
         Self {
             executed: value.executed,
@@ -135,7 +142,7 @@ impl From<TxnEffects> for ProtoTxnResult {
             fee_details,
             loaded_accounts_data_size: value.loaded_accounts_data_size,
             modified_accounts,
-            rollback_accounts: vec![],
+            rollback_accounts,
         }
     }
 }
