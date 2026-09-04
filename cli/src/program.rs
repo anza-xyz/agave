@@ -10,6 +10,7 @@ use {
             simulate_and_update_compute_unit_limit,
         },
         feature::{CliFeatureStatus, status_from_account},
+        local_verifier::verify,
     },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
     bip39::{Language, Mnemonic},
@@ -3060,7 +3061,15 @@ fn verify_elf(
 
     executable
         .verify::<RequisiteVerifier>()
-        .map_err(|err| explain_elf_error(&err, program_data, config).into())
+        .map_err(|err| explain_elf_error(&err, program_data, config))?;
+
+    // A local verifier to catch SBPFv3 errors
+    verify(
+        executable.get_text_bytes().1,
+        executable.get_sbpf_version(),
+        executable.get_loader().get_function_registry(),
+    )
+    .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
 }
 
 /// Turns an `EbpfError` from local ELF verification into a concise error
