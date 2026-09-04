@@ -388,10 +388,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
     // is perhaps being flushed by another thread already.
     pub fn next_bucket_to_flush(&self) -> usize {
         self.next_bucket_to_flush
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |bucket| {
-                Some((bucket + 1) % self.bins)
+            .update(Ordering::AcqRel, Ordering::Acquire, |bucket| {
+                (bucket + 1) % self.bins
             })
-            .unwrap()
     }
 
     /// prepare for this to be dynamic if necessary

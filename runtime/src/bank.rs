@@ -4414,12 +4414,13 @@ impl Bank {
             return;
         }
 
-        self.accounts_data_size_delta_on_chain
-            .try_update(AcqRel, Acquire, |accounts_data_size_delta_on_chain| {
-                Some(accounts_data_size_delta_on_chain.saturating_add(amount))
-            })
-            // SAFETY: unwrap() is safe since our update fn always returns `Some`
-            .unwrap();
+        self.accounts_data_size_delta_on_chain.update(
+            AcqRel,
+            Acquire,
+            |accounts_data_size_delta_on_chain| {
+                accounts_data_size_delta_on_chain.saturating_add(amount)
+            },
+        );
     }
 
     /// Update the accounts data size delta from off-chain events by adding `amount`.
@@ -4429,12 +4430,13 @@ impl Bank {
             return;
         }
 
-        self.accounts_data_size_delta_off_chain
-            .try_update(AcqRel, Acquire, |accounts_data_size_delta_off_chain| {
-                Some(accounts_data_size_delta_off_chain.saturating_add(amount))
-            })
-            // SAFETY: unwrap() is safe since our update fn always returns `Some`
-            .unwrap();
+        self.accounts_data_size_delta_off_chain.update(
+            AcqRel,
+            Acquire,
+            |accounts_data_size_delta_off_chain| {
+                accounts_data_size_delta_off_chain.saturating_add(amount)
+            },
+        );
     }
 
     /// Calculate the data size delta and update the off-chain accounts data size delta
