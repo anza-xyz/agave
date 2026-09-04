@@ -228,6 +228,10 @@ test-case = { workspace = true }
 jemallocator = { workspace = true }
 
 [[bench]]
+name = "consensus"
+harness = false
+
+[[bench]]
 name = "sigverify_stage"
 harness = false
 
