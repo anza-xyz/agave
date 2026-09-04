@@ -4415,7 +4415,7 @@ impl Bank {
         }
 
         self.accounts_data_size_delta_on_chain
-            .fetch_update(AcqRel, Acquire, |accounts_data_size_delta_on_chain| {
+            .try_update(AcqRel, Acquire, |accounts_data_size_delta_on_chain| {
                 Some(accounts_data_size_delta_on_chain.saturating_add(amount))
             })
             // SAFETY: unwrap() is safe since our update fn always returns `Some`
@@ -4430,7 +4430,7 @@ impl Bank {
         }
 
         self.accounts_data_size_delta_off_chain
-            .fetch_update(AcqRel, Acquire, |accounts_data_size_delta_off_chain| {
+            .try_update(AcqRel, Acquire, |accounts_data_size_delta_off_chain| {
                 Some(accounts_data_size_delta_off_chain.saturating_add(amount))
             })
             // SAFETY: unwrap() is safe since our update fn always returns `Some`

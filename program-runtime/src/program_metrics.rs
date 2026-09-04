@@ -43,7 +43,7 @@ impl ProgramStatistics {
     fn observe_ema<const WINDOW_SIZE: u64>(counter: &AtomicU64, duration_us: u64) {
         let duration_ema = duration_us.saturating_mul(EMA_SCALE);
         counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |ema| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |ema| {
                 // Exponential moving average iteratively is computed as $ema' = alpha *
                 // observation + (1 - alpha) * ema$. This works great for floating point, but we
                 // want integers. For purposes of convenience we also want to really think in terms
