@@ -74,14 +74,14 @@ impl TokenBucket {
     /// On success, returns Ok(amount of tokens left in the bucket).
     /// On failure, returns Err(amount of tokens missing to fill request).
     #[inline]
-    #[rustversion::attr(
-        all(nightly, since(1.99), before(1.100)),
-        allow(deprecated, reason = "Shuttle atomics do not yet support try_update")
-    )]
     pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
         let now = self.time_us();
         self.update_state(now);
-        match self.tokens.fetch_update(
+        #[cfg_attr(
+            all(rust_1_99_nightly, not(feature = "shuttle-test")),
+            expect(deprecated, reason = "Shuttle atomics do not yet support try_update")
+        )]
+        let result = self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
             Ordering::Acquire, // everyone observed correct number
             |tokens| {
@@ -91,7 +91,8 @@ impl TokenBucket {
                     None
                 }
             },
-        ) {
+        );
+        match result {
             Ok(prev) => Ok(prev.saturating_sub(request_size)),
             Err(prev) => Err(request_size.saturating_sub(prev)),
         }
@@ -105,14 +106,14 @@ impl TokenBucket {
     /// fewer tokens are available than requested, all available tokens are
     /// taken and the consumed count reflects that.
     #[inline]
-    #[rustversion::attr(
-        all(nightly, since(1.99), before(1.100)),
-        allow(deprecated, reason = "Shuttle atomics do not yet support try_update")
-    )]
     pub fn consume_tokens_saturating(&self, request_size: u64) -> u64 {
         let now = self.time_us();
         self.update_state(now);
         let mut consumed = 0u64;
+        #[cfg_attr(
+            all(rust_1_99_nightly, not(feature = "shuttle-test")),
+            expect(deprecated, reason = "Shuttle atomics do not yet support try_update")
+        )]
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
             Ordering::Acquire, // everyone observed correct number
@@ -126,11 +127,11 @@ impl TokenBucket {
 
     /// Adds given amount of tokens, up to a maximum of self.max_tokens.
     #[inline]
-    #[rustversion::attr(
-        all(nightly, since(1.99), before(1.100)),
-        allow(deprecated, reason = "Shuttle atomics do not yet support try_update")
-    )]
     pub fn add_tokens(&self, new_tokens: u64) {
+        #[cfg_attr(
+            all(rust_1_99_nightly, not(feature = "shuttle-test")),
+            expect(deprecated, reason = "Shuttle atomics do not yet support try_update")
+        )]
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // writer publishes new amount
             Ordering::Acquire, //we fetch the correct amount
@@ -312,10 +313,6 @@ where
     /// On failure, returns Err(amount of tokens missing to fill request)
     /// If no bucket exists at key, a new bucket will be allocated, and normal policy will be applied to it
     /// Outdated buckets may be evicted on an LRU basis.
-    #[rustversion::attr(
-        all(nightly, since(1.99), before(1.100)),
-        allow(deprecated, reason = "Shuttle atomics do not yet support try_update")
-    )]
     pub fn consume_tokens(&self, key: K, request_size: u64) -> Result<u64, u64> {
         let (entry_added, res) = {
             let bucket = self.data.entry(key);
@@ -332,7 +329,11 @@ where
         };
 
         if entry_added {
-            if let Ok(count) =
+            #[cfg_attr(
+                all(rust_1_99_nightly, not(feature = "shuttle-test")),
+                expect(deprecated, reason = "Shuttle atomics do not yet support try_update")
+            )]
+            let result =
                 self.countdown_to_shrink
                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                         if v == 0 {
@@ -342,8 +343,8 @@ where
                         } else {
                             Some(v.saturating_sub(1))
                         }
-                    })
-            {
+                    });
+            if let Ok(count) = result {
                 if count == 1 {
                     // the last "previous" value we will see before counter reaches zero
                     self.maybe_shrink();
