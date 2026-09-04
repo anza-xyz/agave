@@ -186,6 +186,7 @@ pub fn execute_txn_with_callback<C: InvokeContextCallback>(
         executed: true,
         status,
         resulting_accounts,
+        rollback_accounts: vec![],
         return_data,
         executed_units,
         fee_details: FeeDetails::new(0, 0),

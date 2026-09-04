@@ -50,12 +50,10 @@ ffi = [
     "dep:prost",
     "dep:protosol",
     "dep:solana-compute-budget",
-    "dep:solana-instruction",
     "dep:solana-program-runtime",
     "dep:solana-pubkey",
     "dep:solana-svm",
     "dep:solana-syscalls",
-    "dep:solana-transaction-error",
     "solana-svm/conformance",
 ]
 frozen-abi = []
@@ -67,12 +65,10 @@ clap = { version = "4.5.59", features = ["derive"], optional = true }
 prost = { workspace = true, optional = true }
 protosol = { workspace = true, optional = true }
 solana-compute-budget = { workspace = true, optional = true }
-solana-instruction = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, optional = true }
 solana-pubkey = { workspace = true, optional = true }
 solana-svm = { workspace = true, optional = true }
 solana-syscalls = { workspace = true, optional = true }
-solana-transaction-error = { workspace = true, optional = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
