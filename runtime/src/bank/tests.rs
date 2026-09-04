@@ -6966,16 +6966,27 @@ fn test_vat_burn_slot_params() {
         // Verify correct VAT amount is burned.
         let vote_lamports_before = bank.get_balance(&vote_pubkey);
         let incinerator_lamports_before = bank.get_balance(&incinerator::id());
+        let rewards_len_before = bank.rewards.read().unwrap().len();
         let stakes = SerdeStakesToStakeFormat::from(bank.get_top_epoch_stakes());
         let epoch_stakes = VersionedEpochStakes::new(stakes, bank.epoch());
         bank.maybe_burn_vat_from_staked_accounts(&epoch_stakes);
-        assert_eq!(
-            bank.get_balance(&vote_pubkey),
-            vote_lamports_before - params.vat_to_burn_per_epoch()
-        );
+        let vote_lamports_after = vote_lamports_before - params.vat_to_burn_per_epoch();
+        assert_eq!(bank.get_balance(&vote_pubkey), vote_lamports_after);
         assert_eq!(
             bank.get_balance(&incinerator::id()),
             incinerator_lamports_before + params.vat_to_burn_per_epoch()
+        );
+        assert_eq!(
+            &bank.rewards.read().unwrap()[rewards_len_before..],
+            &[(
+                vote_pubkey,
+                RewardInfo {
+                    reward_type: RewardType::Fee,
+                    lamports: -(params.vat_to_burn_per_epoch() as i64),
+                    post_balance: vote_lamports_after,
+                    commission_bps: None,
+                },
+            )]
         );
     }
 }

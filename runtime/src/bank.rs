@@ -2778,7 +2778,10 @@ impl Bank {
         // +1 for the incinerator account
         let mut accounts_to_store: Vec<(Pubkey, AccountSharedData)> =
             Vec::with_capacity(vote_accounts.len() + 1);
+        let mut vat_rewards = Vec::with_capacity(vote_accounts.len());
         let mut total_vat = 0u64;
+        let vat_reward_lamports =
+            -i64::try_from(vat_to_burn_per_epoch).expect("VAT amount should fit in an i64");
 
         // Vote accounts have already been filtered by clone_and_filter_for_vat to only include
         // accounts with non-zero stake and sufficient balance.
@@ -2794,6 +2797,15 @@ impl Bank {
                          balance for the VAT",
                     ),
             );
+            vat_rewards.push((
+                *vote_pubkey,
+                RewardInfo {
+                    reward_type: RewardType::Fee,
+                    lamports: vat_reward_lamports,
+                    post_balance: account.lamports(),
+                    commission_bps: None,
+                },
+            ));
             accounts_to_store.push((*vote_pubkey, account));
         }
 
@@ -2808,6 +2820,7 @@ impl Bank {
         accounts_to_store.push((incinerator::id(), incinerator_account));
 
         self.store_accounts((self.slot, accounts_to_store.as_slice()), None);
+        self.rewards.write().unwrap().extend(vat_rewards);
         info!(
             "Transferred total VAT of {total_vat} lamports to incinerator from staked vote \
              accounts"
