@@ -81,7 +81,7 @@ impl TokenBucket {
             all(rust_1_99_nightly, not(feature = "shuttle-test")),
             expect(deprecated, reason = "Shuttle atomics do not yet support try_update")
         )]
-        let result = self.tokens.fetch_update(
+        match self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
             Ordering::Acquire, // everyone observed correct number
             |tokens| {
@@ -91,8 +91,7 @@ impl TokenBucket {
                     None
                 }
             },
-        );
-        match result {
+        ) {
             Ok(prev) => Ok(prev.saturating_sub(request_size)),
             Err(prev) => Err(request_size.saturating_sub(prev)),
         }
@@ -333,7 +332,7 @@ where
                 all(rust_1_99_nightly, not(feature = "shuttle-test")),
                 expect(deprecated, reason = "Shuttle atomics do not yet support try_update")
             )]
-            let result =
+            if let Ok(count) =
                 self.countdown_to_shrink
                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                         if v == 0 {
@@ -343,8 +342,8 @@ where
                         } else {
                             Some(v.saturating_sub(1))
                         }
-                    });
-            if let Ok(count) = result {
+                    })
+            {
                 if count == 1 {
                     // the last "previous" value we will see before counter reaches zero
                     self.maybe_shrink();
