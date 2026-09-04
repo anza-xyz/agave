@@ -15,7 +15,8 @@ use {
         stake::check_current_authority,
     },
     agave_feature_set::{
-        alpenglow, bls_pubkey_management_in_vote_account, vote_account_initialize_v2,
+        alpenglow, bls_pubkey_management_in_vote_account, commission_rate_in_basis_points,
+        delay_commission_updates, vote_account_initialize_v2,
     },
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{App, Arg, ArgMatches, SubCommand, value_t_or_exit},
@@ -47,7 +48,7 @@ use {
     solana_transaction::Transaction,
     solana_vote_program::{
         vote_error::VoteError,
-        vote_instruction::{self, CreateVoteAccountConfig, withdraw},
+        vote_instruction::{self, CommissionKind, CreateVoteAccountConfig, withdraw},
         vote_state::{
             VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4, VoterWithBLSArgs,
             create_bls_proof_of_possession,
@@ -386,6 +387,49 @@ impl VoteSubCommands for App<'_, '_> {
                 .arg(
                     Arg::with_name("authorized_withdrawer")
                         .index(3)
+                        .value_name("AUTHORIZED_KEYPAIR")
+                        .takes_value(true)
+                        .required(true)
+                        .validator(is_valid_signer)
+                        .help("Authorized withdrawer keypair"),
+                )
+                .offline_args()
+                .nonce_args(false)
+                .arg(fee_payer_arg())
+                .arg(memo_arg())
+                .arg(compute_unit_price_arg()),
+        )
+        .subcommand(
+            SubCommand::with_name("vote-update-commission-bps")
+                .about("Update the vote account's commission in basis points")
+                .arg(pubkey!(
+                    Arg::with_name("vote_account_pubkey")
+                        .index(1)
+                        .value_name("VOTE_ACCOUNT_ADDRESS")
+                        .required(true),
+                    "Vote account to update."
+                ))
+                .arg(
+                    Arg::with_name("commission_kind")
+                        .index(2)
+                        .value_name("COMMISSION_KIND")
+                        .takes_value(true)
+                        .required(true)
+                        .possible_values(&["inflation-rewards", "block-revenue"])
+                        .help("Which commission kind to update"),
+                )
+                .arg(
+                    Arg::with_name("commission_bps")
+                        .index(3)
+                        .value_name("BASIS_POINTS")
+                        .takes_value(true)
+                        .required(true)
+                        .validator(is_valid_basis_points)
+                        .help("The new commission in basis points (0-10000)"),
+                )
+                .arg(
+                    Arg::with_name("authorized_withdrawer")
+                        .index(4)
                         .value_name("AUTHORIZED_KEYPAIR")
                         .takes_value(true)
                         .required(true)
@@ -779,6 +823,58 @@ pub fn parse_vote_update_commission(
         command: CliCommand::VoteUpdateCommission {
             vote_account_pubkey,
             commission,
+            withdraw_authority: signer_info.index_of(authorized_withdrawer_pubkey).unwrap(),
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority: signer_info.index_of(nonce_authority_pubkey).unwrap(),
+            memo,
+            fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
+            compute_unit_price,
+        },
+        signers: signer_info.signers,
+    })
+}
+
+pub fn parse_vote_update_commission_bps(
+    matches: &ArgMatches<'_>,
+    default_signer: &DefaultSigner,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let vote_account_pubkey =
+        pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
+    let commission_kind = match matches.value_of("commission_kind").unwrap() {
+        "inflation-rewards" => CommissionKind::InflationRewards,
+        "block-revenue" => CommissionKind::BlockRevenue,
+        kind => unreachable!("unexpected commission kind: {kind}"),
+    };
+    let commission_bps = value_t_or_exit!(matches, "commission_bps", u16);
+    let (authorized_withdrawer, authorized_withdrawer_pubkey) =
+        signer_of(matches, "authorized_withdrawer", wallet_manager)?;
+
+    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
+    let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
+    let blockhash_query = BlockhashQuery::new_from_matches(matches);
+    let nonce_account = pubkey_of(matches, NONCE_ARG.name);
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
+    let (nonce_authority, nonce_authority_pubkey) =
+        signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
+    let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
+    let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
+
+    let mut bulk_signers = vec![fee_payer, authorized_withdrawer];
+    if nonce_account.is_some() {
+        bulk_signers.push(nonce_authority);
+    }
+    let signer_info =
+        default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
+
+    Ok(CliCommandInfo {
+        command: CliCommand::VoteUpdateCommissionBps {
+            vote_account_pubkey,
+            commission_kind,
+            commission_bps,
             withdraw_authority: signer_info.index_of(authorized_withdrawer_pubkey).unwrap(),
             sign_only,
             dump_transaction_message,
@@ -1502,6 +1598,115 @@ pub async fn process_vote_update_commission(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         commission,
+    )]
+    .with_memo(memo)
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit,
+    });
+    let nonce_authority = config.signers[nonce_authority];
+    let fee_payer = config.signers[fee_payer];
+
+    let mut message = if let Some(nonce_account) = &nonce_account {
+        Message::new_with_nonce(
+            ixs,
+            Some(&fee_payer.pubkey()),
+            nonce_account,
+            &nonce_authority.pubkey(),
+        )
+    } else {
+        Message::new(&ixs, Some(&fee_payer.pubkey()))
+    };
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    let mut tx = Transaction::new_unsigned(message);
+    if sign_only {
+        tx.try_partial_sign(&config.signers, recent_blockhash)?;
+        return_signers_with_config(
+            &tx,
+            &config.output_format,
+            &ReturnSignersConfig {
+                dump_transaction_message,
+            },
+        )
+    } else {
+        tx.try_sign(&config.signers, recent_blockhash)?;
+        if let Some(nonce_account) = &nonce_account {
+            let nonce_account =
+                solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
+                    rpc_client,
+                    nonce_account,
+                    config.commitment,
+                )
+                .await?;
+            check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
+        }
+        check_account_for_fee_with_commitment(
+            rpc_client,
+            &config.signers[0].pubkey(),
+            &tx.message,
+            config.commitment,
+        )
+        .await?;
+        let result = rpc_client
+            .send_and_confirm_transaction_with_spinner_and_config(
+                &tx,
+                config.commitment,
+                config.send_transaction_config,
+            )
+            .await;
+        log_instruction_custom_error::<VoteError>(result, config)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn process_vote_update_commission_bps(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    vote_account_pubkey: &Pubkey,
+    commission_kind: CommissionKind,
+    commission_bps: u16,
+    withdraw_authority: SignerIndex,
+    sign_only: bool,
+    dump_transaction_message: bool,
+    blockhash_query: &BlockhashQuery,
+    nonce_account: Option<Pubkey>,
+    nonce_authority: SignerIndex,
+    memo: Option<&String>,
+    fee_payer: SignerIndex,
+    compute_unit_price: Option<u64>,
+) -> ProcessResult {
+    let authorized_withdrawer = config.signers[withdraw_authority];
+
+    if !sign_only {
+        for (feature_id, simd) in [
+            (commission_rate_in_basis_points::id(), "SIMD-0291"),
+            (delay_commission_updates::id(), "SIMD-0249"),
+        ] {
+            if !get_feature_is_active(rpc_client, &feature_id)
+                .await
+                .unwrap_or(false)
+            {
+                return Err(CliError::BadParameter(format!(
+                            "Commission rates in basis points require {simd}, which is not \
+                             enabled on                      this cluster"
+                        ))
+                .into());
+            }
+        }
+    }
+
+    let recent_blockhash = blockhash_query
+        .get_blockhash(rpc_client, config.commitment)
+        .await?;
+    let compute_unit_limit = match blockhash_query {
+        BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
+        BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
+    };
+    let ixs = vec![vote_instruction::update_commission_bps(
+        vote_account_pubkey,
+        &authorized_withdrawer.pubkey(),
+        commission_kind,
+        commission_bps,
     )]
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
@@ -2765,6 +2970,70 @@ mod tests {
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
                 ],
             }
+        );
+
+        for (kind_arg, commission_kind) in [
+            ("inflation-rewards", CommissionKind::InflationRewards),
+            ("block-revenue", CommissionKind::BlockRevenue),
+        ] {
+            let test_update_commission_bps = test_commands.clone().get_matches_from(vec![
+                "test",
+                "vote-update-commission-bps",
+                &pubkey_string,
+                kind_arg,
+                "250",
+                &keypair_file,
+            ]);
+            assert_eq!(
+                parse_command(&test_update_commission_bps, &default_signer, &mut None).unwrap(),
+                CliCommandInfo {
+                    command: CliCommand::VoteUpdateCommissionBps {
+                        vote_account_pubkey: pubkey,
+                        commission_kind,
+                        commission_bps: 250,
+                        withdraw_authority: 1,
+                        sign_only: false,
+                        dump_transaction_message: false,
+                        blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                        nonce_account: None,
+                        nonce_authority: 0,
+                        memo: None,
+                        fee_payer: 0,
+                        compute_unit_price: None,
+                    },
+                    signers: vec![
+                        Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                        Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    ],
+                }
+            );
+        }
+
+        let test_bad_commission_kind = test_commands.clone().get_matches_from_safe(vec![
+            "test",
+            "vote-update-commission-bps",
+            &pubkey_string,
+            "transaction-fees",
+            "250",
+            &keypair_file,
+        ]);
+        assert_eq!(
+            test_bad_commission_kind.unwrap_err().kind,
+            clap::ErrorKind::InvalidValue
+        );
+
+        // Basis points are capped at 10000 (100%).
+        let test_bad_commission_bps = test_commands.clone().get_matches_from_safe(vec![
+            "test",
+            "vote-update-commission-bps",
+            &pubkey_string,
+            "block-revenue",
+            "10001",
+            &keypair_file,
+        ]);
+        assert_eq!(
+            test_bad_commission_bps.unwrap_err().kind,
+            clap::ErrorKind::ValueValidation
         );
 
         // Test WithdrawFromVoteAccount subcommand
