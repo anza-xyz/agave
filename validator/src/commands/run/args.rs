@@ -1096,10 +1096,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)
-            .help(
+            .help("Pre-allocate the accounts index, assuming this many accounts")
+            .long_help(
                 "Pre-allocate the accounts index, assuming this many accounts. Overrides the \
-                 account count recorded in the local snapshot dir when starting using fastboot \
-                 state.",
+                 account count recorded in the local snapshot directory, which is otherwise used \
+                 when starting from local snapshot state rather than a snapshot archive.",
             )
             .hidden(hidden_unless_forced()),
     )

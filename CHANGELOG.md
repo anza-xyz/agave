@@ -24,10 +24,6 @@ Release channels have their own copy of this changelog:
   and `--experimental-retransmit-xdp-zero-copy` have been removed. Use `--xdp-interface`, `--xdp-cpu-cores`
   and `--xdp-zero-copy` instead.
 #### Changes
-* Local snapshot dirs now record the bank's account count, which is used to pre-allocate the
-  accounts index when starting using fastboot state. `--accounts-index-initial-accounts-count`
-  still overrides it. Snapshot archives are unaffected, so restoring from an archive pre-allocates
-  only when that flag is given.
 
 ## 4.3.0
 ### RPC

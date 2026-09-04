@@ -95,7 +95,9 @@ const AUX_SNAPSHOT_FILE_READ_BUF_SIZE: usize = 4 * 1024 * 1024;
 //         and the next teardown writes the new-format storages list.
 //         Note: 2.0.0 validators cannot fastboot from 3.0.0 snapshots because the per-storage
 //         hardlink dirs they rely on are no longer written; they must fall back to archive.
-const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(3, 0, 0);
+// 3.1.0 - Startup hints file added. Optional tuning state, so snapshots fastboot in either
+//         direction between 3.0.0 and 3.1.0; a validator finding no hints just skips the tuning.
+const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(3, 1, 0);
 
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.

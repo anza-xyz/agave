@@ -350,7 +350,8 @@ impl SnapshotPackagerService {
         );
         if let Err(err) = result {
             warn!("Failed to write startup hints: {err}");
-            // Don't mark the bank snapshot as loadable with a truncated hints file, return early.
+            // If writing the startup hints failed, we do *NOT* want to mark the bank snapshot
+            // as loadable so return early.
             return;
         }
 
