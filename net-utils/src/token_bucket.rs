@@ -78,10 +78,6 @@ impl TokenBucket {
         let now = self.time_us();
         self.update_state(now);
         #[allow(
-            unfulfilled_lint_expectations,
-            reason = "fetch_update is not deprecated on Rust 1.98 or Shuttle's test atomics"
-        )]
-        #[expect(
             deprecated,
             reason = "Keep fetch_update for shuttle-test: Shuttle 0.7.1 lacks try_update"
         )]
@@ -114,10 +110,6 @@ impl TokenBucket {
         self.update_state(now);
         let mut consumed = 0u64;
         #[allow(
-            unfulfilled_lint_expectations,
-            reason = "fetch_update is not deprecated on Rust 1.98 or Shuttle's test atomics"
-        )]
-        #[expect(
             deprecated,
             reason = "Keep fetch_update for shuttle-test: Shuttle 0.7.1 lacks try_update"
         )]
@@ -136,10 +128,6 @@ impl TokenBucket {
     #[inline]
     pub fn add_tokens(&self, new_tokens: u64) {
         #[allow(
-            unfulfilled_lint_expectations,
-            reason = "fetch_update is not deprecated on Rust 1.98 or Shuttle's test atomics"
-        )]
-        #[expect(
             deprecated,
             reason = "Keep fetch_update for shuttle-test: Shuttle 0.7.1 lacks try_update"
         )]
@@ -341,10 +329,6 @@ where
 
         if entry_added {
             #[allow(
-                unfulfilled_lint_expectations,
-                reason = "fetch_update is not deprecated on Rust 1.98 or Shuttle's test atomics"
-            )]
-            #[expect(
                 deprecated,
                 reason = "Keep fetch_update for shuttle-test: Shuttle 0.7.1 lacks try_update"
             )]
