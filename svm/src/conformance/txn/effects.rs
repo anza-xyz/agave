@@ -30,7 +30,7 @@ pub struct TxnEffects {
 }
 
 impl TxnEffects {
-    pub(crate) fn from_unprocessed_error(err: TransactionError) -> Self {
+    pub fn from_unprocessed_error(err: TransactionError) -> Self {
         Self {
             executed: false,
             status: Err(err),
