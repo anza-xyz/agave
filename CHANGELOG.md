@@ -17,6 +17,11 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* `getTransaction` now accepts `minContextSlot`, and `getSignatureStatuses` now accepts `commitment`
+  and `minContextSlot`, in their config objects. Both return `MinContextSlotNotReached` (-32016) when
+  the node's context slot at the requested commitment is below the minimum. `getSignatureStatuses`
+  still defaults to `processed` when no commitment is given.
+* Added `RpcClient::get_signature_statuses_with_config`.
 ### Validator
 #### Breaking
 * scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
