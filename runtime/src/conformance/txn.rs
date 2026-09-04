@@ -408,19 +408,24 @@ pub unsafe extern "C" fn sol_compat_txn_execute_v1(
     1
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "conformance"))]
 mod tests {
-    #[cfg(feature = "conformance")]
-    use std::collections::HashSet;
     use {
-        super::{BankTxnProcessingResult, execute_txn},
-        agave_feature_set::{FeatureSet, disable_sbpf_v0_execution, set_exempt_rent_epoch_max},
-        solana_account::{AccountSharedData, ReadableAccount},
-        solana_accounts_db::blockhash_queue::BlockhashQueue,
+        super::{ProtoTxnResult, execute_txn_proto},
+        agave_feature_set::{FEATURE_NAMES, disable_sbpf_v0_execution},
+        protosol::protos::{
+            BlockhashQueueEntry as ProtoBlockhashQueueEntry,
+            CompiledInstruction as ProtoCompiledInstruction, FeatureSet as ProtoFeatureSet,
+            FeeRateGovernor as ProtoFeeRateGovernor,
+            MessageAddressTableLookup as ProtoMessageAddressTableLookup,
+            MessageHeader as ProtoMessageHeader, SanitizedTransaction as ProtoSanitizedTransaction,
+            TransactionMessage as ProtoTransactionMessage, TxnBank as ProtoTxnBank,
+            TxnContext as ProtoTxnContext,
+        },
+        solana_account::AccountSharedData,
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
-        solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_message::{
@@ -430,48 +435,150 @@ mod tests {
             v0::{self, MessageAddressTableLookup},
         },
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
         solana_sdk_ids::{bpf_loader_upgradeable, native_loader, sysvar},
         solana_signature::Signature,
         solana_slot_hashes::SlotHashes,
-        solana_svm::transaction_processing_result::{
-            ProcessedTransaction, TransactionProcessingResultExtensions,
+        solana_svm::{
+            conformance::account_state::account_to_proto,
+            transaction_processing_result::ProcessedTransaction,
         },
         solana_transaction::versioned::VersionedTransaction,
-        std::{borrow::Cow, env, fs, sync::Arc},
+        std::{borrow::Cow, collections::HashSet, env, fs, sync::Arc},
     };
 
-    /// All features enabled except `disable_sbpf_v0_execution`, so the v0
-    /// `complex-transfer` program loads. `set_exempt_rent_epoch_max` is forced on
-    /// to match the accounts' `u64::MAX` rent epoch.
-    fn feature_set() -> FeatureSet {
-        let mut feature_set = FeatureSet::all_enabled();
-        feature_set.activate(&set_exempt_rent_epoch_max::id(), 0);
-        feature_set.deactivate(&disable_sbpf_v0_execution::id());
-        feature_set
+    const LAMPORTS_PER_SIGNATURE: u64 = 5000;
+
+    /// A fixture addresses a feature by the first eight bytes of its pubkey.
+    fn feature_id(pubkey: &Pubkey) -> u64 {
+        u64::from_le_bytes(pubkey.to_bytes()[..8].try_into().unwrap())
     }
 
-    fn fee_rate_governor() -> FeeRateGovernor {
-        // Mirrors the proto path: only `lamports_per_signature` is set; the
-        // targets/burn are zeroed (unlike `FeeRateGovernor::default()`).
-        FeeRateGovernor {
-            lamports_per_signature: 5000,
-            target_lamports_per_signature: 0,
-            target_signatures_per_slot: 0,
-            min_lamports_per_signature: 0,
-            max_lamports_per_signature: 0,
-            burn_percent: 0,
+    /// Every feature except `disable_sbpf_v0_execution`, so the v0
+    /// `complex-transfer` program loads. `set_exempt_rent_epoch_max` is among
+    /// them, matching the accounts' `u64::MAX` rent epoch.
+    ///
+    /// Filtering happens in fixture-id space, not pubkey space:
+    /// `reenable_sbpf_v0_execution` shares its first eight bytes with
+    /// `disable_sbpf_v0_execution`, so leaving it in would re-add the same id
+    /// and `feature_set_from_proto` would resolve it to either feature.
+    fn proto_feature_set() -> ProtoFeatureSet {
+        let disabled = feature_id(&disable_sbpf_v0_execution::id());
+        ProtoFeatureSet {
+            features: FEATURE_NAMES
+                .keys()
+                .map(feature_id)
+                .filter(|id| *id != disabled)
+                .collect(),
         }
     }
 
     /// A blockhash queue with two registered hashes; returns the queue plus the
     /// most-recent blockhash to use as the message's `recent_blockhash`.
-    fn blockhash_queue() -> (BlockhashQueue, Hash) {
-        let mut queue = BlockhashQueue::default();
-        queue.register_hash(&Hash::new_unique(), 5000);
+    fn proto_blockhash_queue() -> (Vec<ProtoBlockhashQueueEntry>, Hash) {
         let recent = Hash::new_unique();
-        queue.register_hash(&recent, 5000);
-        (queue, recent)
+        let entries = [Hash::new_unique(), recent]
+            .iter()
+            .map(|blockhash| ProtoBlockhashQueueEntry {
+                blockhash: blockhash.to_bytes().to_vec(),
+                lamports_per_signature: LAMPORTS_PER_SIGNATURE,
+            })
+            .collect();
+        (entries, recent)
+    }
+
+    /// The protobuf form of a transaction, as a fixture would carry it.
+    fn proto_transaction(transaction: &VersionedTransaction) -> ProtoSanitizedTransaction {
+        let message = &transaction.message;
+        let header = message.header();
+        // The fixture format only distinguishes legacy from v0.
+        let (is_legacy, address_table_lookups) = match message {
+            VersionedMessage::Legacy(_) => (true, vec![]),
+            VersionedMessage::V0(message) => (
+                false,
+                message
+                    .address_table_lookups
+                    .iter()
+                    .map(|lookup| ProtoMessageAddressTableLookup {
+                        account_key: lookup.account_key.to_bytes().to_vec(),
+                        writable_indexes: lookup
+                            .writable_indexes
+                            .iter()
+                            .copied()
+                            .map(u32::from)
+                            .collect(),
+                        readonly_indexes: lookup
+                            .readonly_indexes
+                            .iter()
+                            .copied()
+                            .map(u32::from)
+                            .collect(),
+                    })
+                    .collect(),
+            ),
+            VersionedMessage::V1(_) => panic!("v1 messages have no fixture representation"),
+        };
+
+        ProtoSanitizedTransaction {
+            message: Some(ProtoTransactionMessage {
+                is_legacy,
+                header: Some(ProtoMessageHeader {
+                    num_required_signatures: u32::from(header.num_required_signatures),
+                    num_readonly_signed_accounts: u32::from(header.num_readonly_signed_accounts),
+                    num_readonly_unsigned_accounts: u32::from(
+                        header.num_readonly_unsigned_accounts,
+                    ),
+                }),
+                account_keys: message
+                    .static_account_keys()
+                    .iter()
+                    .map(|key| key.to_bytes().to_vec())
+                    .collect(),
+                recent_blockhash: message.recent_blockhash().to_bytes().to_vec(),
+                instructions: message
+                    .instructions()
+                    .iter()
+                    .map(|instruction| ProtoCompiledInstruction {
+                        program_id_index: u32::from(instruction.program_id_index),
+                        accounts: instruction
+                            .accounts
+                            .iter()
+                            .copied()
+                            .map(u32::from)
+                            .collect(),
+                        data: instruction.data.clone(),
+                    })
+                    .collect(),
+                address_table_lookups,
+            }),
+            message_hash: vec![0; 32],
+            signatures: transaction
+                .signatures
+                .iter()
+                .map(|signature| signature.as_ref().to_vec())
+                .collect(),
+        }
+    }
+
+    fn txn_context(
+        accounts: Vec<(Pubkey, AccountSharedData)>,
+        transaction: VersionedTransaction,
+        blockhash_queue: Vec<ProtoBlockhashQueueEntry>,
+    ) -> ProtoTxnContext {
+        ProtoTxnContext {
+            tx: Some(proto_transaction(&transaction)),
+            account_shared_data: accounts
+                .into_iter()
+                .map(|(pubkey, account)| account_to_proto((pubkey, account.into())))
+                .collect(),
+            bank: Some(ProtoTxnBank {
+                blockhash_queue,
+                rbh_lamports_per_signature: LAMPORTS_PER_SIGNATURE as u32,
+                // Only the per-signature fee matters here; targets and burn are zeroed.
+                fee_rate_governor: Some(ProtoFeeRateGovernor::default()),
+                total_epoch_stake: 0,
+                features: Some(proto_feature_set()),
+            }),
+        }
     }
 
     fn account(lamports: u64, data: Vec<u8>, owner: Pubkey, executable: bool) -> AccountSharedData {
@@ -592,59 +699,20 @@ mod tests {
         ]
     }
 
-    /// Lamports of the writable account `pubkey` after execution, if the
-    /// transaction executed successfully.
-    fn writable_account_lamports(
-        execution: &BankTxnProcessingResult,
-        pubkey: &Pubkey,
-    ) -> Option<u64> {
-        match execution {
-            BankTxnProcessingResult::Processed {
-                result: Ok(ProcessedTransaction::Executed(executed_tx)),
-                runtime_transaction,
-            } => {
-                let sanitized_transaction = runtime_transaction.as_sanitized_transaction();
-                let sanitized_message = sanitized_transaction.message();
-                executed_tx
-                    .loaded_transaction
-                    .accounts
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| sanitized_message.is_writable(*index))
-                    .find(|(_, (key, _))| key == pubkey)
-                    .map(|(_, (_, account))| account.lamports())
-            }
-            _ => None,
-        }
+    /// Lamports of the writable account `pubkey` after execution.
+    fn writable_account_lamports(result: &ProtoTxnResult, pubkey: &Pubkey) -> Option<u64> {
+        result
+            .modified_accounts
+            .iter()
+            .find(|account| account.address.as_slice() == pubkey.as_ref())
+            .map(|account| account.lamports)
     }
 
-    fn return_data(execution: &BankTxnProcessingResult) -> Vec<u8> {
-        match execution {
-            BankTxnProcessingResult::Processed {
-                result: Ok(ProcessedTransaction::Executed(executed_tx)),
-                ..
-            } => executed_tx
-                .execution_details
-                .return_data
-                .as_ref()
-                .map(|info| info.data.clone())
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        }
+    fn assert_executed_ok(result: &ProtoTxnResult) {
+        assert!(result.executed, "transaction was not processed");
+        assert_eq!(result.txn_error, 0, "transaction failed: {result:?}");
     }
 
-    fn assert_executed_ok(execution: &BankTxnProcessingResult) {
-        match execution {
-            BankTxnProcessingResult::Processed { result, .. } => {
-                assert!(result.was_processed_with_successful_result())
-            }
-            BankTxnProcessingResult::FailedVerification(err) => {
-                panic!("transaction failed verification: {err:?}")
-            }
-        }
-    }
-
-    #[cfg(feature = "conformance")]
     fn sanitized_message_with_program(program_id: Pubkey) -> solana_message::SanitizedMessage {
         solana_message::SanitizedMessage::try_from_legacy_message(
             legacy::Message {
@@ -666,7 +734,6 @@ mod tests {
         .unwrap()
     }
 
-    #[cfg(feature = "conformance")]
     #[test]
     fn noop_transaction_effects() {
         const COMPUTE_UNIT_LIMIT: u64 = 123_456;
@@ -716,7 +783,7 @@ mod tests {
         let [(program_id, program), (program_data_id, program_data)] =
             deploy_program("clock-sysvar");
         let fee_payer = Pubkey::new_unique();
-        let (blockhash_queue, recent_blockhash) = blockhash_queue();
+        let (blockhash_queue, recent_blockhash) = proto_blockhash_queue();
 
         let message = VersionedMessage::Legacy(legacy::Message {
             header: MessageHeader {
@@ -746,17 +813,10 @@ mod tests {
             rent_sysvar_account(),
         ];
 
-        let execution = execute_txn(
-            &accounts,
-            feature_set(),
-            blockhash_queue,
-            fee_rate_governor(),
-            0,
-            transaction,
-        );
+        let result = execute_txn_proto(&txn_context(accounts, transaction, blockhash_queue));
 
-        assert_executed_ok(&execution);
-        assert_eq!(return_data(&execution).len(), 8);
+        assert_executed_ok(&result);
+        assert_eq!(result.return_data.len(), 8);
     }
 
     #[test]
@@ -766,7 +826,7 @@ mod tests {
         let fee_payer = Pubkey::new_unique();
         let sender = Pubkey::new_unique();
         let recipient = Pubkey::new_unique();
-        let (blockhash_queue, recent_blockhash) = blockhash_queue();
+        let (blockhash_queue, recent_blockhash) = proto_blockhash_queue();
 
         let message = VersionedMessage::V0(v0::Message {
             header: MessageHeader {
@@ -801,21 +861,11 @@ mod tests {
             slot_hashes_sysvar_account(),
         ];
 
-        let execution = execute_txn(
-            &accounts,
-            feature_set(),
-            blockhash_queue,
-            fee_rate_governor(),
-            0,
-            transaction,
-        );
+        let result = execute_txn_proto(&txn_context(accounts, transaction, blockhash_queue));
 
-        assert_executed_ok(&execution);
-        assert_eq!(writable_account_lamports(&execution, &sender), Some(899990));
-        assert_eq!(
-            writable_account_lamports(&execution, &recipient),
-            Some(900010)
-        );
+        assert_executed_ok(&result);
+        assert_eq!(writable_account_lamports(&result, &sender), Some(899990));
+        assert_eq!(writable_account_lamports(&result, &recipient), Some(900010));
     }
 
     #[test]
@@ -826,7 +876,7 @@ mod tests {
         let sender = Pubkey::new_unique();
         let recipient = Pubkey::new_unique();
         let extra_account = Pubkey::new_unique();
-        let (blockhash_queue, recent_blockhash) = blockhash_queue();
+        let (blockhash_queue, recent_blockhash) = proto_blockhash_queue();
 
         // The program adds this account's little-endian amount to the transfer.
         let extra_data = account(2, vec![5, 0, 0, 0, 0, 0, 0, 0], Pubkey::default(), false);
@@ -884,20 +934,10 @@ mod tests {
             slot_hashes_sysvar_account(),
         ];
 
-        let execution = execute_txn(
-            &accounts,
-            feature_set(),
-            blockhash_queue,
-            fee_rate_governor(),
-            0,
-            transaction,
-        );
+        let result = execute_txn_proto(&txn_context(accounts, transaction, blockhash_queue));
 
-        assert_executed_ok(&execution);
-        assert_eq!(writable_account_lamports(&execution, &sender), Some(899985));
-        assert_eq!(
-            writable_account_lamports(&execution, &recipient),
-            Some(900015)
-        );
+        assert_executed_ok(&result);
+        assert_eq!(writable_account_lamports(&result, &sender), Some(899985));
+        assert_eq!(writable_account_lamports(&result, &recipient), Some(900015));
     }
 }
