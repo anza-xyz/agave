@@ -79,7 +79,7 @@ impl TokenBucket {
         self.update_state(now);
         #[allow(
             deprecated,
-            reason = "Keep fetch_update for shuttle-test: Shuttle 0.7.1 lacks try_update"
+            reason = "shuttle 0.7.1 lacks try_update, the replacement for fetch_update"
         )]
         match self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
@@ -111,7 +111,7 @@ impl TokenBucket {
         let mut consumed = 0u64;
         #[allow(
             deprecated,
-            reason = "Keep fetch_update for shuttle-test: Shuttle 0.7.1 lacks try_update"
+            reason = "shuttle 0.7.1 lacks try_update, the replacement for fetch_update"
         )]
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
@@ -129,7 +129,7 @@ impl TokenBucket {
     pub fn add_tokens(&self, new_tokens: u64) {
         #[allow(
             deprecated,
-            reason = "Keep fetch_update for shuttle-test: Shuttle 0.7.1 lacks try_update"
+            reason = "shuttle 0.7.1 lacks try_update, the replacement for fetch_update"
         )]
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // writer publishes new amount
@@ -330,7 +330,7 @@ where
         if entry_added {
             #[allow(
                 deprecated,
-                reason = "Keep fetch_update for shuttle-test: Shuttle 0.7.1 lacks try_update"
+                reason = "shuttle 0.7.1 lacks try_update, the replacement for fetch_update"
             )]
             if let Ok(count) =
                 self.countdown_to_shrink
