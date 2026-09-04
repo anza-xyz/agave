@@ -333,6 +333,23 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     };
     effects.zero_precompile_custom_error(sanitized_message);
 
+    // Only keep modified accounts that were passed in as account keys or were
+    // loaded via an address lookup table.
+    let mut loaded_account_keys = AHashSet::<Pubkey>::new();
+    loaded_account_keys.extend(
+        proto_message
+            .account_keys
+            .iter()
+            .map(|key| Pubkey::try_from(key.as_slice()).unwrap()),
+    );
+    if let SanitizedMessage::V0(message) = sanitized_message {
+        loaded_account_keys.extend(message.loaded_addresses.writable.iter().copied());
+        loaded_account_keys.extend(message.loaded_addresses.readonly.iter().copied());
+    }
+    effects
+        .resulting_accounts
+        .retain(|(pubkey, _)| loaded_account_keys.contains(pubkey));
+
     let cu_avail = effects.cu_avail;
     let has_err = effects.status.is_err();
     let mut txn_result = ProtoTxnResult::from(effects);
@@ -346,25 +363,6 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
             .iter_mut()
             .map(|acc| &mut acc.data),
     );
-
-    // Only keep modified accounts that were passed in as account keys or were
-    // loaded via an address lookup table.
-    let account_keys = &proto_message.account_keys;
-    let mut loaded_account_keys = AHashSet::<Pubkey>::new();
-    loaded_account_keys.extend(
-        account_keys
-            .iter()
-            .map(|key| Pubkey::try_from(key.as_slice()).unwrap()),
-    );
-    if let SanitizedMessage::V0(message) = sanitized_message {
-        loaded_account_keys.extend(message.loaded_addresses.writable.iter().copied());
-        loaded_account_keys.extend(message.loaded_addresses.readonly.iter().copied());
-    }
-    txn_result.modified_accounts.retain(|account| {
-        Pubkey::try_from(account.address.as_slice())
-            .map(|pubkey| loaded_account_keys.contains(&pubkey))
-            .unwrap()
-    });
 
     txn_result
 }
