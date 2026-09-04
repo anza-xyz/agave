@@ -54,8 +54,12 @@ impl TwilioWebHook {
     }
 }
 
-fn get_twilio_config() -> Result<Option<TwilioWebHook>, String> {
-    let config_var = env::var("TWILIO_CONFIG");
+fn env_with_fallback(prefix: &str, key: &str) -> Result<String, env::VarError> {
+    env::var(format!("{prefix}{key}")).or_else(|_| env::var(key))
+}
+
+fn get_twilio_config(prefix: &str) -> Result<Option<TwilioWebHook>, String> {
+    let config_var = env_with_fallback(prefix, "TWILIO_CONFIG");
 
     if config_var.is_err() {
         info!("Twilio notifications disabled");
@@ -117,19 +121,19 @@ impl Notifier {
 
         let mut notifiers = vec![];
 
-        if let Ok(webhook) = env::var(format!("{env_prefix}DISCORD_WEBHOOK")) {
+        if let Ok(webhook) = env_with_fallback(env_prefix, "DISCORD_WEBHOOK") {
             notifiers.push(NotificationChannel::Discord(webhook));
         }
-        if let Ok(webhook) = env::var(format!("{env_prefix}SLACK_WEBHOOK")) {
+        if let Ok(webhook) = env_with_fallback(env_prefix, "SLACK_WEBHOOK") {
             notifiers.push(NotificationChannel::Slack(webhook));
         }
-        if let Ok(routing_key) = env::var(format!("{env_prefix}PAGERDUTY_INTEGRATION_KEY")) {
+        if let Ok(routing_key) = env_with_fallback(env_prefix, "PAGERDUTY_INTEGRATION_KEY") {
             notifiers.push(NotificationChannel::PagerDuty(routing_key));
         }
 
         if let (Ok(bot_token), Ok(chat_id)) = (
-            env::var(format!("{env_prefix}TELEGRAM_BOT_TOKEN")),
-            env::var(format!("{env_prefix}TELEGRAM_CHAT_ID")),
+            env_with_fallback(env_prefix, "TELEGRAM_BOT_TOKEN"),
+            env_with_fallback(env_prefix, "TELEGRAM_CHAT_ID"),
         ) {
             notifiers.push(NotificationChannel::Telegram(TelegramWebHook {
                 bot_token,
@@ -137,11 +141,11 @@ impl Notifier {
             }));
         }
 
-        if let Ok(Some(webhook)) = get_twilio_config() {
+        if let Ok(Some(webhook)) = get_twilio_config(env_prefix) {
             notifiers.push(NotificationChannel::Twilio(webhook));
         }
 
-        if let Ok(log_level) = env::var(format!("{env_prefix}LOG_NOTIFIER_LEVEL")) {
+        if let Ok(log_level) = env_with_fallback(env_prefix, "LOG_NOTIFIER_LEVEL") {
             match Level::from_str(&log_level) {
                 Ok(level) => notifiers.push(NotificationChannel::Log(level)),
                 Err(e) => {
