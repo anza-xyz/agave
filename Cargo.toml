@@ -279,7 +279,7 @@ libc = "0.2.189"
 libloading = "0.9.0"
 libsecp256k1 = { version = "0.7.2", default-features = false, features = ["std", "static-context"] }
 log = "0.4.34"
-lru = "0.18.2"
+lru = "0.18.3"
 lz4 = "1.28.1"
 memmap2 = "0.9.11"
 memoffset = "0.9.1"
