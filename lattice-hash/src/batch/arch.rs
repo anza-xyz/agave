@@ -267,7 +267,7 @@ unsafe fn compress_batch<L: Lanes>(batch: Batch<'_>, acc: &mut LtHash) {
     // ---- XOF expansion phase (mirrors fd_blake3_fini_2048) ----
     // Re-compress the root block NUM_XOF_BLOCKS (32) times with an incrementing
     // output-block counter; each pass yields one 64-byte output block, which we
-    // transpose back to per-lane rows and SWAR-u16-reduce into `acc`.
+    // transpose back to per-lane rows and u16-reduce into `acc`.
     let mut out_words = [zero; NUM_BLOCK_WORDS];
     for xof_block in 0..NUM_XOF_BLOCKS {
         let counter = xof_block as u64;
