@@ -3,8 +3,10 @@
 #[cfg(feature = "conformance")]
 use {
     crate::conformance::{account_state::account_to_proto, err::serialized_error_code},
+    agave_precompiles::is_precompile,
     protosol::protos::{FeeDetails as ProtoFeeDetails, TxnResult as ProtoTxnResult},
     solana_instruction::error::InstructionError,
+    solana_message::SanitizedMessage,
 };
 use {
     solana_account::Account,
@@ -47,6 +49,32 @@ impl TxnEffects {
             .iter()
             .find(|(pk, _)| pk == pubkey)
             .map(|(_, account)| account)
+    }
+
+    /// Zero the custom error code when the failing instruction is a
+    /// precompile. Firedancer does not compare precompile custom codes.
+    #[cfg(feature = "conformance")]
+    pub fn zero_precompile_custom_error(&mut self, sanitized_message: &SanitizedMessage) {
+        let index = match &self.status {
+            Err(TransactionError::InstructionError(index, InstructionError::Custom(code)))
+                if *code != 0 =>
+            {
+                *index
+            }
+            _ => return,
+        };
+
+        let failed_on_precompile = sanitized_message
+            .program_instructions_iter()
+            .nth(usize::from(index))
+            .is_some_and(|(program_id, _)| is_precompile(program_id, |_| true));
+
+        if failed_on_precompile {
+            self.status = Err(TransactionError::InstructionError(
+                index,
+                InstructionError::Custom(0),
+            ));
+        }
     }
 }
 
