@@ -4,39 +4,45 @@
 //! through `bank.load_and_execute_transactions`, and encodes the effects as a
 //! `TxnResult`. `sol_compat_txn_execute_v1` is the FFI entry point.
 //!
-//! Living inside `solana-runtime` lets the harness use the real [`Bank`]
-//! execution path (rather than driving the SVM directly), which keeps it at
-//! parity with SolFuzz-Agave.
+//! Driving the real [`Bank`] execution path, rather than the SVM directly,
+//! is what keeps this at parity with SolFuzz-Agave.
 
 use {
-    super::{
-        deserialize_accounts, fee_rate_governor_from_proto, new_accounts_for_tests_single_threaded,
-        restore_blockhash_queue,
+    agave_feature_set::virtual_address_space_adjustments,
+    agave_transaction_view::transaction_view::UnsanitizedTransactionView,
+    ahash::AHashSet,
+    bytes::Bytes,
+    protosol::protos::{
+        AcctState, BlockhashQueueEntry as ProtoBlockhashQueueEntry,
+        FeeRateGovernor as ProtoFeeRateGovernor, TxnContext as ProtoTxnContext,
+        TxnResult as ProtoTxnResult,
     },
-    crate::{
+    solana_account::{Account, AccountSharedData},
+    solana_accounts_db::{
+        accounts::Accounts,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
+        ancestors::Ancestors,
+        blockhash_queue::BlockhashQueue,
+    },
+    solana_clock::{BankId, Clock, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_PROCESSING_AGE},
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_hash::Hash,
+    solana_message::SanitizedMessage,
+    solana_pubkey::Pubkey,
+    solana_runtime::{
         bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
         stake_history::StakeHistory,
         stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
     },
-    agave_feature_set::virtual_address_space_adjustments,
-    agave_transaction_view::transaction_view::UnsanitizedTransactionView,
-    ahash::AHashSet,
-    bytes::Bytes,
-    protosol::protos::{TxnContext as ProtoTxnContext, TxnResult as ProtoTxnResult},
-    solana_account::Account,
-    solana_accounts_db::ancestors::Ancestors,
-    solana_clock::{BankId, Clock, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_PROCESSING_AGE},
-    solana_epoch_schedule::EpochSchedule,
-    solana_message::SanitizedMessage,
-    solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk_ids::sysvar,
     solana_signature::Signature,
     solana_stake_interface::state::Stake,
     solana_svm::{
         conformance::{
-            direct_mapping::direct_mapping_handle_cu_exhaustion,
+            account_state::account_from_proto, direct_mapping::direct_mapping_handle_cu_exhaustion,
             feature_set::feature_set_from_proto, setup::sysvar_from_accounts,
             txn::effects::TxnEffects, versioned_transaction::versioned_transaction_from_proto,
         },
@@ -49,93 +55,12 @@ use {
     solana_transaction::TransactionVerificationMode,
     solana_transaction_error::TransactionError,
     solana_vote::vote_account::VoteAccounts,
-    std::collections::HashMap,
+    std::{collections::HashMap, num::NonZeroUsize, sync::Arc},
 };
-// Imports used only by the FFI entry point, which is excluded from `test` builds.
 #[cfg(not(test))]
 use {prost::Message, std::ffi::c_int};
 
-fn rollback_accounts_to_native(rollback_accounts: &RollbackAccounts) -> Vec<(Pubkey, Account)> {
-    rollback_accounts
-        .iter()
-        .map(|(pubkey, account)| (*pubkey, account.clone().into()))
-        .collect()
-}
-
-fn processed_transaction_effects(
-    txn: &ProcessedTransaction,
-    sanitized_message: &SanitizedMessage,
-) -> TxnEffects {
-    let (resulting_accounts, rollback_accounts, return_data, compute_unit_limit) = match txn {
-        ProcessedTransaction::Executed(executed_tx) => {
-            let loaded = &executed_tx.loaded_transaction;
-            let resulting_accounts = loaded
-                .accounts
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| sanitized_message.is_writable(*index))
-                .map(|(_, (pubkey, account))| (*pubkey, account.clone().into()))
-                .collect();
-            let rollback_accounts = if executed_tx.execution_details.status.is_err() {
-                rollback_accounts_to_native(&loaded.rollback_accounts)
-            } else {
-                vec![]
-            };
-            let return_data = executed_tx
-                .execution_details
-                .return_data
-                .as_ref()
-                .map(|info| info.data.clone())
-                .unwrap_or_default();
-            (
-                resulting_accounts,
-                rollback_accounts,
-                return_data,
-                loaded.compute_budget.compute_unit_limit,
-            )
-        }
-        ProcessedTransaction::FeesOnly(tx) => (
-            vec![],
-            rollback_accounts_to_native(&tx.rollback_accounts),
-            vec![],
-            0,
-        ),
-        ProcessedTransaction::NoOp(_) => (vec![], vec![], vec![], 0),
-    };
-
-    let executed_units = txn.executed_units();
-    TxnEffects {
-        executed: true,
-        status: txn.status(),
-        resulting_accounts,
-        rollback_accounts,
-        return_data,
-        executed_units,
-        fee_details: txn.fee_details(),
-        loaded_accounts_data_size: u64::from(txn.loaded_accounts_data_size()),
-        // The bank records logs, but the fixture does not compare them.
-        logs: vec![],
-        cu_avail: compute_unit_limit.saturating_sub(executed_units),
-    }
-}
-
-/// Rejected before processing. Precompile error codes are not conformant, so
-/// the custom code is dropped.
-fn failed_verification_result(err: TransactionError) -> ProtoTxnResult {
-    ProtoTxnResult {
-        custom_error: 0,
-        ..unprocessed_txn_result(err)
-    }
-}
-
-fn unprocessed_txn_result(err: TransactionError) -> ProtoTxnResult {
-    ProtoTxnResult {
-        fee_details: None,
-        ..ProtoTxnResult::from(TxnEffects::from_unprocessed_error(err))
-    }
-}
-
-/// Decode a `TxnContext` proto, run it through [`execute_txn`], and encode the
+/// Decode a `TxnContext` proto, execute it against a [`Bank`], and encode the
 /// effects as a `TxnResult` proto.
 pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     let txn_bank = context.bank.as_ref().unwrap();
@@ -312,6 +237,140 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     );
 
     txn_result
+}
+
+/// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
+/// accounts (treated as nonexistent).
+fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
+    accounts
+        .iter()
+        .filter(|account| account.lamports > 0)
+        .map(|account| {
+            let (pubkey, account) = account_from_proto(account.clone());
+            (pubkey, account.into())
+        })
+        .collect()
+}
+
+fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> BlockhashQueue {
+    let mut blockhash_queue = BlockhashQueue::default();
+    for entry in entries {
+        let blockhash =
+            Hash::new_from_array(<[u8; 32]>::try_from(entry.blockhash.as_slice()).unwrap());
+        blockhash_queue.register_hash(&blockhash, entry.lamports_per_signature);
+    }
+    blockhash_queue
+}
+
+fn fee_rate_governor_from_proto(
+    value: &ProtoFeeRateGovernor,
+    lamports_per_signature: u64,
+) -> FeeRateGovernor {
+    FeeRateGovernor {
+        lamports_per_signature,
+        target_lamports_per_signature: value.target_lamports_per_signature,
+        target_signatures_per_slot: value.target_signatures_per_slot,
+        min_lamports_per_signature: value.min_lamports_per_signature,
+        max_lamports_per_signature: value.max_lamports_per_signature,
+        burn_percent: value.burn_percent as u8,
+    }
+}
+
+fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
+    let single_thread = NonZeroUsize::new(1).unwrap();
+    AccountsDbConfig {
+        num_background_threads: Some(single_thread),
+        read_cache_num_shards: Some(2),
+        skip_initial_hash_calc: true,
+        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+    }
+}
+
+fn new_accounts_for_tests_single_threaded() -> Accounts {
+    Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        new_accounts_db_config_for_tests_single_threaded(),
+    )))
+}
+
+/// Rejected before processing. Precompile error codes are not conformant, so
+/// the custom code is dropped.
+fn failed_verification_result(err: TransactionError) -> ProtoTxnResult {
+    ProtoTxnResult {
+        custom_error: 0,
+        ..unprocessed_txn_result(err)
+    }
+}
+
+fn unprocessed_txn_result(err: TransactionError) -> ProtoTxnResult {
+    ProtoTxnResult {
+        fee_details: None,
+        ..ProtoTxnResult::from(TxnEffects::from_unprocessed_error(err))
+    }
+}
+
+fn rollback_accounts_to_native(rollback_accounts: &RollbackAccounts) -> Vec<(Pubkey, Account)> {
+    rollback_accounts
+        .iter()
+        .map(|(pubkey, account)| (*pubkey, account.clone().into()))
+        .collect()
+}
+
+fn processed_transaction_effects(
+    txn: &ProcessedTransaction,
+    sanitized_message: &SanitizedMessage,
+) -> TxnEffects {
+    let (resulting_accounts, rollback_accounts, return_data, compute_unit_limit) = match txn {
+        ProcessedTransaction::Executed(executed_tx) => {
+            let loaded = &executed_tx.loaded_transaction;
+            let resulting_accounts = loaded
+                .accounts
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| sanitized_message.is_writable(*index))
+                .map(|(_, (pubkey, account))| (*pubkey, account.clone().into()))
+                .collect();
+            let rollback_accounts = if executed_tx.execution_details.status.is_err() {
+                rollback_accounts_to_native(&loaded.rollback_accounts)
+            } else {
+                vec![]
+            };
+            let return_data = executed_tx
+                .execution_details
+                .return_data
+                .as_ref()
+                .map(|info| info.data.clone())
+                .unwrap_or_default();
+            (
+                resulting_accounts,
+                rollback_accounts,
+                return_data,
+                loaded.compute_budget.compute_unit_limit,
+            )
+        }
+        ProcessedTransaction::FeesOnly(tx) => (
+            vec![],
+            rollback_accounts_to_native(&tx.rollback_accounts),
+            vec![],
+            0,
+        ),
+        ProcessedTransaction::NoOp(_) => (vec![], vec![], vec![], 0),
+    };
+
+    let executed_units = txn.executed_units();
+    TxnEffects {
+        executed: true,
+        status: txn.status(),
+        resulting_accounts,
+        rollback_accounts,
+        return_data,
+        executed_units,
+        fee_details: txn.fee_details(),
+        loaded_accounts_data_size: u64::from(txn.loaded_accounts_data_size()),
+        // The bank records logs, but the fixture does not compare them.
+        logs: vec![],
+        cu_avail: compute_unit_limit.saturating_sub(executed_units),
+    }
 }
 
 /// # Safety
