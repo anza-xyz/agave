@@ -1468,31 +1468,13 @@ mod tests {
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_system_interface::instruction as system_instruction,
-        solana_sysvar_id::SysvarId,
+        solana_sysvar_account::create_sysvar_account,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_context::transaction::TransactionContext,
         solana_transaction_error::TransactionError,
         std::{borrow::Cow, collections::HashMap},
         test_case::test_case,
     };
-
-    fn create_sysvar_account<T>(value: &T) -> AccountSharedData
-    where
-        T: wincode::Serialize<Src = T> + SysvarId,
-    {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
-        let canonical_data_len = match T::id() {
-            sysvar::clock::ID => solana_clock::SIZE,
-            sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
-            sysvar::fees::ID => solana_sysvar::fees::SIZE,
-            sysvar::rent::ID => solana_rent::SIZE,
-            id => panic!("unsupported sysvar: {id}"),
-        };
-        let required_data_len = canonical_data_len.max(serialized_len);
-        let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
-    }
 
     fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
         SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()))

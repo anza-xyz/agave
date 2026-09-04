@@ -130,6 +130,7 @@ pub unsafe extern "C" fn sol_compat_svm_txn_execute_v1(
 mod tests {
     use {
         super::*,
+        crate::test_utils::proto_sysvar_account,
         protosol::protos::{
             AcctState as ProtoAcctState, CompiledInstruction as ProtoCompiledInstruction,
             MessageHeader as ProtoMessageHeader, SanitizedTransaction as ProtoSanitizedTransaction,
@@ -200,17 +201,10 @@ mod tests {
                     executable: false,
                     owner: system_program::id().to_bytes().to_vec(),
                 },
-                ProtoAcctState {
-                    address: clock_pubkey.to_bytes().to_vec(),
-                    lamports: 1,
-                    data: bincode::serialize(&Clock {
-                        slot: 1,
-                        ..Clock::default()
-                    })
-                    .unwrap(),
-                    executable: false,
-                    owner: sysvar::id().to_bytes().to_vec(),
-                },
+                proto_sysvar_account(&Clock {
+                    slot: 1,
+                    ..Clock::default()
+                }),
                 ProtoAcctState {
                     address: system_program_id.to_bytes().to_vec(),
                     lamports: system_program_account.lamports,

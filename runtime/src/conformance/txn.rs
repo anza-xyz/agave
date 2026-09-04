@@ -568,12 +568,13 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-        solana_sdk_ids::{bpf_loader_upgradeable, native_loader, sysvar},
+        solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
         solana_signature::Signature,
         solana_slot_hashes::SlotHashes,
         solana_svm::transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
+        solana_sysvar_account::keyed_sysvar_account,
         solana_transaction::versioned::VersionedTransaction,
         std::{borrow::Cow, env, fs, sync::Arc},
     };
@@ -627,18 +628,6 @@ mod tests {
         account(lamports, vec![], Pubkey::default(), false)
     }
 
-    fn sysvar_account<T: serde::Serialize>(id: Pubkey, state: &T) -> (Pubkey, AccountSharedData) {
-        (
-            id,
-            account(
-                1,
-                bincode::serialize(state).unwrap(),
-                native_loader::id(),
-                false,
-            ),
-        )
-    }
-
     fn clock_sysvar_account() -> (Pubkey, AccountSharedData) {
         let clock = Clock {
             slot: 20,
@@ -647,7 +636,7 @@ mod tests {
             leader_schedule_epoch: 1,
             unix_timestamp: 1720556855,
         };
-        sysvar_account(sysvar::clock::id(), &clock)
+        keyed_sysvar_account(&clock)
     }
 
     fn epoch_schedule_sysvar_account() -> (Pubkey, AccountSharedData) {
@@ -658,23 +647,15 @@ mod tests {
             first_normal_epoch: 14,
             first_normal_slot: 524256,
         };
-        sysvar_account(sysvar::epoch_schedule::id(), &epoch_schedule)
+        keyed_sysvar_account(&epoch_schedule)
     }
 
     fn rent_sysvar_account() -> (Pubkey, AccountSharedData) {
-        sysvar_account(sysvar::rent::id(), &solana_rent::Rent::default())
+        keyed_sysvar_account(&solana_rent::Rent::default())
     }
 
     fn slot_hashes_sysvar_account() -> (Pubkey, AccountSharedData) {
-        (
-            sysvar::slot_hashes::id(),
-            account(
-                1,
-                wincode::serialize(&SlotHashes::default()).unwrap(),
-                native_loader::id(),
-                false,
-            ),
-        )
+        keyed_sysvar_account(&SlotHashes::default())
     }
 
     fn system_program_account() -> (Pubkey, AccountSharedData) {

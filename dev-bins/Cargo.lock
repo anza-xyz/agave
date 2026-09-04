@@ -8407,11 +8407,9 @@ version = "4.4.0-alpha.3"
 dependencies = [
  "agave-feature-set",
  "agave-precompiles",
- "bincode",
  "clap 4.6.1",
  "prost",
  "protosol",
- "serde",
  "solana-account 4.7.0",
  "solana-clock",
  "solana-compute-budget",
@@ -8424,7 +8422,10 @@ dependencies = [
  "solana-syscalls",
  "solana-system-interface 3.3.0",
  "solana-system-program",
+ "solana-sysvar-account",
+ "solana-sysvar-id",
  "solana-transaction-error",
+ "wincode",
 ]
 
 [[package]]
@@ -8612,6 +8613,18 @@ dependencies = [
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stake-history",
+ "solana-sysvar-id",
+ "wincode",
+]
+
+[[package]]
+name = "solana-sysvar-account"
+version = "4.4.0-alpha.3"
+dependencies = [
+ "solana-account 4.7.0",
+ "solana-pubkey 4.3.0",
+ "solana-sdk-ids",
+ "solana-sysvar",
  "solana-sysvar-id",
  "wincode",
 ]

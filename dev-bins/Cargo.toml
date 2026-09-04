@@ -149,6 +149,7 @@ solana-svm-transaction = "5.0.0"
 solana-syscalls = { path = "../syscalls", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 solana-system-interface = "3.2"
 solana-system-program = { path = "../programs/system", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
+solana-sysvar-account = { path = "../sysvar-account" }
 solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "../test-validator", version = "=4.4.0-alpha.3" }
 solana-time-utils = "3.0.0"

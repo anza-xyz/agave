@@ -1,0 +1,24 @@
+[package]
+name = "solana-sysvar-account"
+description = "Sysvar account construction for tests and benches"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[features]
+dev-context-only-utils = []
+
+[dependencies]
+solana-account = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-sysvar = { workspace = true, features = ["wincode"] }
+solana-sysvar-id = { workspace = true }
+wincode = { workspace = true }
+
+[lints]
+workspace = true

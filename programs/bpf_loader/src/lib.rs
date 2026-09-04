@@ -1114,26 +1114,9 @@ mod tests {
         solana_sbpf::program::{BuiltinFunctionDefinition, BuiltinProgram},
         solana_sdk_ids::{system_program, sysvar},
         solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
-        solana_sysvar_id::SysvarId,
+        solana_sysvar_account::create_sysvar_account,
         std::{fs::File, io::Read, ops::Range},
     };
-
-    fn create_sysvar_account<T>(value: &T) -> AccountSharedData
-    where
-        T: wincode::Serialize<Src = T> + SysvarId,
-    {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
-        let canonical_data_len = match T::id() {
-            sysvar::clock::ID => solana_clock::SIZE,
-            sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
-            sysvar::rent::ID => solana_rent::SIZE,
-            id => panic!("unsupported sysvar: {id}"),
-        };
-        let required_data_len = canonical_data_len.max(serialized_len);
-        let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
-    }
 
     // 10 iterations is intentionally low: `mock_process_instruction` runs on a
     // single thread, so additional `shuttle::check_random` iterations validate

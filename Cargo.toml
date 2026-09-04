@@ -104,6 +104,7 @@ members = [
     "svm-type-overrides",
     "syscalls",
     "syscalls/gen-syscall-list",
+    "sysvar-account",
     "test-validator",
     "tls-utils",
     "tokens",
@@ -499,6 +500,7 @@ solana-system-interface = { version = "3.3.0", features = ["alloc", "bincode", "
 solana-system-program = { path = "programs/system", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 solana-system-transaction = "4.1.0"
 solana-sysvar = "4.3.0"
+solana-sysvar-account = { path = "sysvar-account" }
 solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "test-validator", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 solana-time-utils = "3.0.0"

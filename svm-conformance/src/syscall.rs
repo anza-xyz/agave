@@ -364,12 +364,12 @@ pub unsafe extern "C" fn sol_compat_vm_syscall_execute_v1(
 mod tests {
     use {
         super::*,
+        crate::test_utils::proto_sysvar_account,
         protosol::protos::{
             AcctState as ProtoAcctState, InstrContext as ProtoInstrContext,
             SyscallInvocation as ProtoSyscallInvocation, VmContext as ProtoVmContext,
         },
         solana_rent::Rent,
-        solana_sdk_ids::sysvar,
     };
 
     const PROGRAM_ID: [u8; 32] = [7; 32];
@@ -389,13 +389,7 @@ mod tests {
             executable: true,
             owner: Pubkey::default().to_bytes().to_vec(),
         };
-        let rent_sysvar = ProtoAcctState {
-            address: sysvar::rent::id().to_bytes().to_vec(),
-            lamports: 1,
-            data: bincode::serialize(&Rent::default()).unwrap(),
-            executable: false,
-            owner: sysvar::id().to_bytes().to_vec(),
-        };
+        let rent_sysvar = proto_sysvar_account(&Rent::default());
         ProtoSyscallContext {
             instr_ctx: Some(ProtoInstrContext {
                 program_id: PROGRAM_ID.to_vec(),
