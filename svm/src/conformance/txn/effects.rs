@@ -2,7 +2,9 @@
 
 #[cfg(feature = "conformance")]
 use {
-    crate::conformance::{account_state::account_to_proto, err::serialized_error_code},
+    crate::conformance::{
+        account_state::account_to_proto, err::serialized_error_code, fd_hash::fd_hash_or_zero,
+    },
     protosol::protos::{FeeDetails as ProtoFeeDetails, TxnResult as ProtoTxnResult},
     solana_instruction::error::InstructionError,
 };
@@ -102,7 +104,7 @@ impl From<TxnEffects> for ProtoTxnResult {
             instruction_error,
             instruction_error_index,
             custom_error,
-            return_data: value.return_data,
+            return_data_hash: fd_hash_or_zero(&value.return_data),
             executed_units: value.executed_units,
             fee_details,
             loaded_accounts_data_size: value.loaded_accounts_data_size,
