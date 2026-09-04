@@ -20,6 +20,9 @@ name = "agave_logger"
 
 [features]
 agave-unstable-api = []
+# Colorize records when stderr is a terminal. Off by default: the ANSI adapter runs a
+# state machine over every record while holding the stderr lock.
+auto-color = ["env_logger/auto-color"]
 
 [dependencies]
 env_logger = { workspace = true }
