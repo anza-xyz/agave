@@ -250,6 +250,7 @@ dependencies = [
  "agave-precompiles",
  "bincode",
  "bytemuck",
+ "criterion",
  "ed25519-dalek 1.0.1",
  "hex",
  "libsecp256k1",
