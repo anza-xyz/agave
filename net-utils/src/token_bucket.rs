@@ -74,6 +74,10 @@ impl TokenBucket {
     /// On success, returns Ok(amount of tokens left in the bucket).
     /// On failure, returns Err(amount of tokens missing to fill request).
     #[inline]
+    #[rustversion::attr(
+        all(nightly, since(1.99), before(1.100)),
+        allow(deprecated, reason = "Shuttle atomics do not yet support try_update")
+    )]
     pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
         let now = self.time_us();
         self.update_state(now);
@@ -101,6 +105,10 @@ impl TokenBucket {
     /// fewer tokens are available than requested, all available tokens are
     /// taken and the consumed count reflects that.
     #[inline]
+    #[rustversion::attr(
+        all(nightly, since(1.99), before(1.100)),
+        allow(deprecated, reason = "Shuttle atomics do not yet support try_update")
+    )]
     pub fn consume_tokens_saturating(&self, request_size: u64) -> u64 {
         let now = self.time_us();
         self.update_state(now);
@@ -118,6 +126,10 @@ impl TokenBucket {
 
     /// Adds given amount of tokens, up to a maximum of self.max_tokens.
     #[inline]
+    #[rustversion::attr(
+        all(nightly, since(1.99), before(1.100)),
+        allow(deprecated, reason = "Shuttle atomics do not yet support try_update")
+    )]
     pub fn add_tokens(&self, new_tokens: u64) {
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // writer publishes new amount
@@ -300,6 +312,10 @@ where
     /// On failure, returns Err(amount of tokens missing to fill request)
     /// If no bucket exists at key, a new bucket will be allocated, and normal policy will be applied to it
     /// Outdated buckets may be evicted on an LRU basis.
+    #[rustversion::attr(
+        all(nightly, since(1.99), before(1.100)),
+        allow(deprecated, reason = "Shuttle atomics do not yet support try_update")
+    )]
     pub fn consume_tokens(&self, key: K, request_size: u64) -> Result<u64, u64> {
         let (entry_added, res) = {
             let bucket = self.data.entry(key);

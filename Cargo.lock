@@ -9126,6 +9126,7 @@ dependencies = [
  "nix",
  "pcap-file",
  "rand 0.9.4",
+ "rustversion",
  "serde",
  "shuttle",
  "socket2 0.6.5",
