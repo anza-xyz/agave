@@ -319,7 +319,6 @@ rts-alloc = { version = "5.1.0" }
 rusb = "0.9"
 rustls = { version = "0.23.43", features = ["std"], default-features = false }
 rustls-webpki = { version = "0.103.15", default-features = false, features = ["std"] }
-rustversion = "1.0.17"
 scopeguard = "1.2.0"
 semver = "1.0.28"
 seqlock = "0.2.0"

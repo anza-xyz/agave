@@ -7272,7 +7272,6 @@ dependencies = [
  "log",
  "nix",
  "rand 0.9.4",
- "rustversion",
  "serde",
  "socket2 0.6.5",
  "solana-serde",

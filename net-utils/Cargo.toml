@@ -49,9 +49,6 @@ url = { workspace = true }
 agave-logger = { workspace = true }
 solana-net-utils = { path = ".", features = ["agave-unstable-api"] }
 
-[build-dependencies]
-rustversion = { workspace = true }
-
 [lints]
 workspace = true
 
