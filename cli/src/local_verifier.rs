@@ -17,12 +17,12 @@ pub(crate) fn verify<T: Copy + PartialEq>(
     }
 
     let mut insn_ptr: usize = 0;
-    while (insn_ptr + 1) * ebpf::INSN_SIZE <= prog.len() {
+    while insn_ptr.saturating_add(1).saturating_mul(ebpf::INSN_SIZE) <= prog.len() {
         let insn = ebpf::get_insn(prog, insn_ptr);
 
         match insn.opc {
             ebpf::LD_DW_IMM => {
-                insn_ptr += 1;
+                insn_ptr = insn_ptr.saturating_add(1);
             }
 
             ebpf::CALL_IMM
@@ -37,7 +37,7 @@ pub(crate) fn verify<T: Copy + PartialEq>(
             _ => (),
         }
 
-        insn_ptr += 1;
+        insn_ptr = insn_ptr.saturating_add(1);
     }
 
     Ok(())
