@@ -10,6 +10,7 @@ use {
             simulate_and_update_compute_unit_limit,
         },
         feature::{CliFeatureStatus, status_from_account},
+        local_verifier::verify,
     },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
     bip39::{Language, Mnemonic},
@@ -63,7 +64,7 @@ use {
         elf::{ElfError, Executable, get_sbpf_version},
         error::EbpfError,
         program::SBPFVersion,
-        verifier::{RequisiteVerifier},
+        verifier::RequisiteVerifier,
         vm::Config,
     },
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
@@ -91,7 +92,6 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
-use crate::local_verifier::LocalVerifier;
 
 pub const CLOSE_PROGRAM_WARNING: &str = "WARNING! Closed programs cannot be recreated at the same \
                                          program id. Once a program is closed, it can never be \
@@ -3064,9 +3064,12 @@ fn verify_elf(
         .map_err(|err| explain_elf_error(&err, program_data, config))?;
 
     // A local verifier to catch SBPFv3 errors
-    executable
-        .verify::<LocalVerifier>()
-        .map_err(|err| explain_elf_error(&err, program_data, config).into())
+    verify(
+        executable.get_text_bytes().1,
+        executable.get_sbpf_version(),
+        executable.get_loader().get_function_registry(),
+    )
+    .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
 }
 
 /// Turns an `EbpfError` from local ELF verification into a concise error
