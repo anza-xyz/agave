@@ -41,14 +41,16 @@ pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
 /// Upper bound on unique peers admitted into the peer_list at once.
 ///
-/// `PeerListUpdater::refresh_peer_list` can union staked-node sets from up to
-/// three overlapping epochs near a boundary (the trailing epoch, the root
-/// epoch, and the next epoch), each individually capped at
-/// `MAX_ALPENGLOW_VOTE_ACCOUNTS`. With enough validator-set churn across those
-/// epochs the union can approach three times a single epoch's cap, so
-/// connection- and channel-sizing constants must budget for that, not just
-/// `MAX_ALPENGLOW_VOTE_ACCOUNTS` alone.
-pub const MAX_PEER_LIST_SIZE: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS * 3;
+/// `PeerListUpdater::refresh_peer_list` can union the root epoch's staked-node
+/// set with one adjacent epoch's: the trailing epoch near the start of a new
+/// epoch, or the next epoch near the end of the current one. Those two
+/// windows don't overlap, so at most two epochs' sets (never three) are ever
+/// unioned outside of pathological startup conditions that don't occur on
+/// mainnet. With realistic validator-set churn between those two epochs the
+/// union can somewhat exceed a single epoch's cap, but nowhere near double
+/// it, since most validators remain staked across the boundary. 1.5x budgets
+/// for that expected churn without grossly over-provisioning.
+pub const MAX_PEER_LIST_SIZE: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS * 3 / 2;
 
 /// Allows one backup instance to connect while connection from the primary instance
 /// has not yet timed out (this is normal during validator updates).
