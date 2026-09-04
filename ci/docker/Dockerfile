@@ -86,7 +86,7 @@ RUN \
   cargo install cargo-hack && \
   cargo install cargo-sort@2.0.2 && \
   cargo install rustfilt && \
-  cargo install cargo-build-sbf@4.1.0 --locked && \
+  cargo install cargo-build-sbf@4.3.0 --locked && \
   cargo install cargo-deny@0.20.2 --locked && \
   rustup show && \
   rustc --version && \
