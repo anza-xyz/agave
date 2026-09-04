@@ -6,7 +6,7 @@ use {
     serde_json::{Map, Value, json},
     solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
     solana_sdk_ids::sysvar,
-    solana_stake_interface::instruction::StakeInstruction,
+    solana_stake_interface::{config as stake_config, instruction::StakeInstruction},
 };
 
 pub fn parse_stake(
@@ -118,14 +118,24 @@ pub fn parse_stake(
                     "stakeHistorySysvar".to_string(),
                     json!(account_keys[instruction.accounts[3] as usize].to_string()),
                 );
-                map.insert(
-                    "stakeConfigAccount".to_string(),
-                    json!(account_keys[instruction.accounts[4] as usize].to_string()),
-                );
-                if instruction.accounts.len() >= 6 {
+                // The program requires a fifth account in this layout but
+                // never reads the stake config account, so clients may pass
+                // the stake authority in its position instead
+                if account_keys[instruction.accounts[4] as usize] == stake_config::ID {
+                    map.insert(
+                        "stakeConfigAccount".to_string(),
+                        json!(account_keys[instruction.accounts[4] as usize].to_string()),
+                    );
+                    if instruction.accounts.len() >= 6 {
+                        map.insert(
+                            "stakeAuthority".to_string(),
+                            json!(account_keys[instruction.accounts[5] as usize].to_string()),
+                        );
+                    }
+                } else {
                     map.insert(
                         "stakeAuthority".to_string(),
-                        json!(account_keys[instruction.accounts[5] as usize].to_string()),
+                        json!(account_keys[instruction.accounts[4] as usize].to_string()),
                     );
                 }
             } else {
@@ -813,6 +823,38 @@ mod test {
         );
         message.instructions[0].accounts.pop();
         assert!(parse_stake(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
+
+        // Reduced layout that omits only the (unused) stake config account,
+        // leaving the stake authority in its position
+        let instruction = Instruction::new_with_bincode(
+            solana_sdk_ids::stake::ID,
+            &StakeInstruction::DelegateStake,
+            vec![
+                AccountMeta::new(stake_pubkey, false),
+                AccountMeta::new_readonly(vote_pubkey, false),
+                AccountMeta::new_readonly(sysvar::clock::ID, false),
+                AccountMeta::new_readonly(sysvar::stake_history::ID, false),
+                AccountMeta::new_readonly(authorized_pubkey, true),
+            ],
+        );
+        let message = Message::new(&[instruction], None);
+        assert_eq!(
+            parse_stake(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys, None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "delegate".to_string(),
+                info: json!({
+                    "stakeAccount": stake_pubkey.to_string(),
+                    "voteAccount": vote_pubkey.to_string(),
+                    "clockSysvar": sysvar::clock::ID.to_string(),
+                    "stakeHistorySysvar": sysvar::stake_history::ID.to_string(),
+                    "stakeAuthority": authorized_pubkey.to_string(),
+                }),
+            }
+        );
 
         // Minimal layout without sysvar or config accounts
         let instruction = Instruction::new_with_bincode(
