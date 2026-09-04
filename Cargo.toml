@@ -242,7 +242,10 @@ dirs-next = "2.0.0"
 eager = "0.1.0"
 ed25519-dalek = "2.2"
 enum-iterator = "2.3.0"
-env_logger = "0.11.11"
+env_logger = { version = "0.11.11", default-features = false, features = [
+    "humantime",
+    "regex",
+] }
 fd-lock = "4.0.4"
 five8 = "1.0.0"
 flate2 = "1.1.9"
