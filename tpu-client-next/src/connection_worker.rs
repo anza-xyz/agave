@@ -16,7 +16,10 @@ use {
     solana_tls_utils::socket_addr_to_quic_server_name,
     std::{
         net::SocketAddr,
-        sync::{Arc, atomic::Ordering},
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
     },
     tokio::{
         sync::mpsc,
@@ -24,6 +27,8 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
+
+pub(crate) const RTT_UNSET: u64 = u64::MAX;
 
 /// The maximum connection handshake timeout for QUIC connections.
 /// This is set to 2 seconds, which was the earlier shorter connection idle timeout
@@ -80,6 +85,7 @@ pub(crate) struct ConnectionWorker {
     last_congestion_events: u64,
     max_reconnect_attempts: usize,
     send_transaction_stats: Arc<SendTransactionStats>,
+    rtt_ms: Arc<AtomicU64>,
     handshake_timeout: Duration,
     cancel: CancellationToken,
 }
@@ -99,6 +105,7 @@ impl ConnectionWorker {
         transaction_receiver: mpsc::Receiver<WireTransaction>,
         max_reconnect_attempts: usize,
         send_transaction_stats: Arc<SendTransactionStats>,
+        rtt_ms: Arc<AtomicU64>,
         handshake_timeout: Duration,
     ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
@@ -110,6 +117,7 @@ impl ConnectionWorker {
             last_congestion_events: 0,
             max_reconnect_attempts,
             send_transaction_stats,
+            rtt_ms,
             handshake_timeout,
             cancel: cancel.clone(),
         };
@@ -195,6 +203,7 @@ impl ConnectionWorker {
     /// the type of closure, records statistics, and determines whether to
     /// attempt reconnection based on the error type.
     fn handle_connection_closed(&mut self, close_reason: ConnectionError) {
+        self.rtt_ms.store(RTT_UNSET, Ordering::Relaxed);
         match &close_reason {
             ConnectionError::ConnectionClosed(close) => {
                 debug!(
@@ -264,18 +273,27 @@ impl ConnectionWorker {
                 self.peer
             );
             record_error(error, &self.send_transaction_stats);
+            self.rtt_ms.store(RTT_UNSET, Ordering::Relaxed);
             self.connection = ConnectionState::Retry(1);
             // Exit early since connection is likely broken
             return;
         } else {
-            let events = connection.stats().path.congestion_events;
+            let (congestion_events, rtt_ms) = {
+                let connection_stats = connection.stats();
+                (
+                    connection_stats.path.congestion_events,
+                    connection_stats.path.rtt.as_millis() as u64,
+                )
+            };
             self.send_transaction_stats
                 .transport_congestion_events
                 .fetch_add(
-                    events.saturating_sub(self.last_congestion_events),
+                    congestion_events.saturating_sub(self.last_congestion_events),
                     Ordering::Relaxed,
                 );
-            self.last_congestion_events = events;
+            self.last_congestion_events = congestion_events;
+
+            self.rtt_ms.store(rtt_ms, Ordering::Relaxed);
 
             self.send_transaction_stats
                 .successfully_sent
@@ -311,6 +329,8 @@ impl ConnectionWorker {
                 match res {
                     Ok(Ok(connection)) => {
                         self.last_congestion_events = 0;
+                        let rtt = connection.stats().path.rtt;
+                        self.rtt_ms.store(rtt.as_millis() as u64, Ordering::Relaxed);
                         self.connection = ConnectionState::Active(connection);
                     }
                     Ok(Err(err)) => {
