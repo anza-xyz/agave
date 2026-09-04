@@ -49,15 +49,15 @@ jobs:
                   "cargo bench -p solana-poh --bench transaction_recorder -- --output-format bencher --noplot",
                 ],
             }
-          # split because consensus is a criterion bench, while shredder and
-          # sigverify_stage use the bencher harness, which would treat
-          # `--output-format` as a benchmark name filter and run nothing
+          # split because sigverify_stage still uses the bencher harness, which
+          # would treat `--output-format` as a benchmark name filter and run
+          # nothing
           - {
               name: "solana-core",
               commands:
                 [
                   "cargo bench -p solana-core --bench consensus -- --output-format bencher --noplot",
-                  "cargo bench -p solana-core --bench shredder",
+                  "cargo bench -p solana-core --bench shredder -- --output-format bencher --noplot",
                   "cargo bench -p solana-core --bench sigverify_stage",
                 ],
             }
