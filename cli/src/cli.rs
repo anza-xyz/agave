@@ -28,7 +28,7 @@ use {
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
-    solana_vote_program::vote_state::VoteAuthorize,
+    solana_vote_program::{vote_instruction::CommissionKind, vote_state::VoteAuthorize},
     std::{
         collections::HashMap, error, io::stdout, rc::Rc, str::FromStr, sync::Arc, time::Duration,
     },
@@ -396,6 +396,20 @@ pub enum CliCommand {
         fee_payer: SignerIndex,
         compute_unit_price: Option<u64>,
     },
+    VoteUpdateCommissionCollector {
+        vote_account_pubkey: Pubkey,
+        commission_kind: CommissionKind,
+        new_collector: Pubkey,
+        withdraw_authority: SignerIndex,
+        sign_only: bool,
+        dump_transaction_message: bool,
+        blockhash_query: BlockhashQuery,
+        nonce_account: Option<Pubkey>,
+        nonce_authority: SignerIndex,
+        memo: Option<String>,
+        fee_payer: SignerIndex,
+        compute_unit_price: Option<u64>,
+    },
     // Wallet Commands
     Address,
     Airdrop {
@@ -744,6 +758,9 @@ pub fn parse_command(
         }
         ("vote-update-commission", Some(matches)) => {
             parse_vote_update_commission(matches, default_signer, wallet_manager)
+        }
+        ("vote-update-commission-collector", Some(matches)) => {
+            parse_vote_update_commission_collector(matches, default_signer, wallet_manager)
         }
         ("vote-authorize-voter", Some(matches)) => parse_vote_authorize(
             matches,
@@ -1637,6 +1654,38 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 config,
                 vote_account_pubkey,
                 *commission,
+                *withdraw_authority,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+                *nonce_account,
+                *nonce_authority,
+                memo.as_ref(),
+                *fee_payer,
+                *compute_unit_price,
+            )
+            .await
+        }
+        CliCommand::VoteUpdateCommissionCollector {
+            vote_account_pubkey,
+            commission_kind,
+            new_collector,
+            withdraw_authority,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority,
+            memo,
+            fee_payer,
+            compute_unit_price,
+        } => {
+            process_vote_update_commission_collector(
+                &rpc_client,
+                config,
+                vote_account_pubkey,
+                commission_kind.clone(),
+                new_collector,
                 *withdraw_authority,
                 *sign_only,
                 *dump_transaction_message,
