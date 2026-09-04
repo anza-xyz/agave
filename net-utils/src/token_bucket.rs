@@ -77,6 +77,10 @@ impl TokenBucket {
     pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
         let now = self.time_us();
         self.update_state(now);
+        #[allow(
+            deprecated,
+            reason = "shuttle lacks try_update, the replacement for fetch_update"
+        )]
         match self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
             Ordering::Acquire, // everyone observed correct number
@@ -105,6 +109,10 @@ impl TokenBucket {
         let now = self.time_us();
         self.update_state(now);
         let mut consumed = 0u64;
+        #[allow(
+            deprecated,
+            reason = "shuttle lacks try_update, the replacement for fetch_update"
+        )]
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
             Ordering::Acquire, // everyone observed correct number
@@ -119,6 +127,10 @@ impl TokenBucket {
     /// Adds given amount of tokens, up to a maximum of self.max_tokens.
     #[inline]
     pub fn add_tokens(&self, new_tokens: u64) {
+        #[allow(
+            deprecated,
+            reason = "shuttle lacks try_update, the replacement for fetch_update"
+        )]
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // writer publishes new amount
             Ordering::Acquire, //we fetch the correct amount
@@ -316,6 +328,10 @@ where
         };
 
         if entry_added {
+            #[allow(
+                deprecated,
+                reason = "shuttle lacks try_update, the replacement for fetch_update"
+            )]
             if let Ok(count) =
                 self.countdown_to_shrink
                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {

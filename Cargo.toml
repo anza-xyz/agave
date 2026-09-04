@@ -144,7 +144,7 @@ repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
 edition = "2024"
-rust-version = "1.98.0"
+rust-version = "1.98.1"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
@@ -330,6 +330,8 @@ serde_with = { version = "3.22.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
 shaq = { version = "4.1.0" }
+# When upgrading shuttle, check for try_update support to replace fetch_update in
+# net-utils/src/token_bucket.rs and remove its allow(deprecated) attributes.
 shuttle = "0.7.1"
 signal-hook = "0.4.4"
 slab = "0.4.12"
