@@ -1,9 +1,6 @@
-use {solana_pubkey::Pubkey, solana_svm_transaction::svm_message::SVMMessage};
-
 // Costs are stored in compute units.
 #[derive(Debug)]
-pub struct TransactionCost<'a, Tx> {
-    pub transaction: &'a Tx,
+pub struct TransactionCost {
     pub signature_cost: u64,
     pub write_lock_cost: u64,
     pub data_bytes_cost: u16,
@@ -12,7 +9,7 @@ pub struct TransactionCost<'a, Tx> {
     pub allocated_accounts_data_size: u64,
 }
 
-impl<'a, Tx> TransactionCost<'a, Tx> {
+impl TransactionCost {
     pub fn sum(&self) -> u64 {
         self.signature_cost
             .saturating_add(self.write_lock_cost)
@@ -43,194 +40,6 @@ impl<'a, Tx> TransactionCost<'a, Tx> {
 
     pub fn write_lock_cost(&self) -> u64 {
         self.write_lock_cost
-    }
-}
-
-impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
-    pub fn writable_accounts(&self) -> impl Iterator<Item = &Pubkey> {
-        let transaction = self.transaction;
-        transaction
-            .account_keys()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, key)| transaction.is_writable(index).then_some(key))
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-#[derive(Debug)]
-pub struct WritableKeysTransaction {
-    pub writable_keys: Vec<Pubkey>,
-    pub is_simple_vote: bool,
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl WritableKeysTransaction {
-    pub fn new(writable_keys: Vec<Pubkey>) -> Self {
-        WritableKeysTransaction {
-            writable_keys,
-            is_simple_vote: false,
-        }
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTransaction {
-    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
-        unimplemented!("WritableKeysTransaction::version")
-    }
-
-    fn num_transaction_signatures(&self) -> u64 {
-        unimplemented!("WritableKeysTransaction::num_transaction_signatures")
-    }
-
-    fn num_write_locks(&self) -> u64 {
-        unimplemented!("WritableKeysTransaction::num_write_locks")
-    }
-
-    fn num_readonly_signed_static_accounts(&self) -> u8 {
-        unimplemented!("WritableKeysTransaction::num_readonly_signed_static_accounts")
-    }
-
-    fn num_readonly_unsigned_static_accounts(&self) -> u8 {
-        unimplemented!("WritableKeysTransaction::num_readonly_unsigned_static_accounts")
-    }
-
-    fn recent_blockhash(&self) -> &solana_hash::Hash {
-        unimplemented!("WritableKeysTransaction::recent_blockhash")
-    }
-
-    fn num_instructions(&self) -> usize {
-        unimplemented!("WritableKeysTransaction::num_instructions")
-    }
-
-    fn instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = solana_svm_transaction::instruction::SVMInstruction<'_>> {
-        core::iter::empty()
-    }
-
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &Pubkey,
-            solana_svm_transaction::instruction::SVMInstruction<'_>,
-        ),
-    > + Clone {
-        core::iter::empty()
-    }
-
-    fn static_account_keys(&self) -> &[Pubkey] {
-        &self.writable_keys
-    }
-
-    fn fee_payer(&self) -> &Pubkey {
-        unimplemented!("WritableKeysTransaction::fee_payer")
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        unimplemented!("WritableKeysTransaction::num_lookup_tables")
-    }
-
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<
-        Item = solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup<
-            '_,
-        >,
-    > {
-        core::iter::empty()
-    }
-
-    fn is_requested_writable(&self, _index: usize) -> bool {
-        unimplemented!("WritableKeysTransaction::is_requested_writable")
-    }
-
-    fn is_signer(&self, _index: usize) -> bool {
-        unimplemented!("WritableKeysTransaction::is_signer")
-    }
-
-    fn is_invoked(&self, _key_index: usize) -> bool {
-        unimplemented!("WritableKeysTransaction::is_invoked")
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
-    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
-        solana_message::AccountKeys::new(&self.writable_keys, None)
-    }
-
-    fn is_writable(&self, _index: usize) -> bool {
-        true
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_transaction::SVMStaticTransaction for WritableKeysTransaction {
-    fn signature(&self) -> &solana_signature::Signature {
-        unimplemented!("WritableKeysTransaction::signature")
-    }
-
-    fn signatures(&self) -> &[solana_signature::Signature] {
-        unimplemented!("WritableKeysTransaction::signatures")
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_runtime_transaction::transaction_meta::TransactionMeta for WritableKeysTransaction {
-    fn message_hash(&self) -> &solana_hash::Hash {
-        unimplemented!("WritableKeysTransaction::message_hash")
-    }
-
-    fn is_simple_vote_transaction(&self) -> bool {
-        self.is_simple_vote
-    }
-
-    fn signature_details(&self) -> &solana_message::TransactionSignatureDetails {
-        const DUMMY: solana_message::TransactionSignatureDetails =
-            solana_message::TransactionSignatureDetails::new(0, 0, 0, 0);
-        &DUMMY
-    }
-
-    fn transaction_configuration(
-        &self,
-        _feature_set: &agave_feature_set::FeatureSet,
-    ) -> Result<
-        solana_runtime_transaction::transaction_meta::TransactionConfiguration,
-        solana_transaction::TransactionError,
-    > {
-        unimplemented!("WritableKeysTransaction::transaction_configuration")
-    }
-
-    fn instruction_data_len(&self) -> u16 {
-        unimplemented!("WritableKeysTransaction::instruction_data_len")
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_runtime_transaction::transaction_with_meta::StaticTransactionWithMeta
-    for WritableKeysTransaction
-{
-    fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
-        unimplemented!("WritableKeysTransaction::to_versioned_transaction")
-    }
-
-    fn serialized_size(&self) -> usize {
-        unimplemented!("WritableKeysTransaction::serialized_size")
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
-    for WritableKeysTransaction
-{
-    #[allow(refining_impl_trait)]
-    fn as_sanitized_transaction(
-        &self,
-    ) -> std::borrow::Cow<'_, solana_transaction::sanitized::SanitizedTransaction> {
-        unimplemented!("WritableKeysTransaction::as_sanitized_transaction");
     }
 }
 
@@ -315,7 +124,6 @@ mod tests {
                     &feature_set,
                 );
             let vote_program_cost = TransactionCost {
-                transaction: &vote_transaction,
                 signature_cost,
                 write_lock_cost,
                 data_bytes_cost,

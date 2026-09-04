@@ -34,6 +34,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_leader_schedule::{LeaderSchedule, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::transaction_with_meta::writable_accounts,
     solana_sdk_ids::sysvar,
     solana_stake_interface::state::Delegation,
     solana_svm::{
@@ -624,7 +625,7 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
             if bank
                 .write_cost_tracker()
                 .unwrap()
-                .try_add(&tx_cost)
+                .try_add(&tx_cost, writable_accounts(sanitized))
                 .is_err()
             {
                 has_err = true;
