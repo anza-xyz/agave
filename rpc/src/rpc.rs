@@ -1683,14 +1683,22 @@ impl JsonRpcRequestProcessor {
         signatures: Vec<Signature>,
         config: Option<RpcSignatureStatusConfig>,
     ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>> {
-        let search_transaction_history = config
-            .map(|x| x.search_transaction_history)
-            .unwrap_or(false);
+        let config = config.unwrap_or_default();
+        let search_transaction_history = config.search_transaction_history;
         if search_transaction_history {
             self.check_if_transaction_history_enabled()?;
         }
 
-        let bank = self.bank(Some(CommitmentConfig::processed()));
+        // Default to processed to preserve this method's historical behavior
+        // for callers that do not pass a commitment.
+        let bank = self.get_bank_with_config(RpcContextConfig {
+            commitment: Some(
+                config
+                    .commitment
+                    .unwrap_or_else(CommitmentConfig::processed),
+            ),
+            min_context_slot: config.min_context_slot,
+        })?;
         let mut statuses: Vec<Option<TransactionStatus>> = vec![];
 
         for signature in signatures {
@@ -1794,6 +1802,21 @@ impl JsonRpcRequestProcessor {
         check_is_at_least_confirmed(commitment)?;
 
         let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+        // Fail fast, before consulting the blockstore or bigtable, when this
+        // node's view at the requested commitment is behind the caller's
+        // minimum. Mirrors getSignaturesForAddress.
+        let min_context_slot = config.min_context_slot.unwrap_or_default();
+        let context_slot = if commitment.is_confirmed() {
+            confirmed_bank.slot()
+        } else {
+            self.block_commitment_cache
+                .read()
+                .unwrap()
+                .highest_super_majority_root()
+        };
+        if context_slot < min_context_slot {
+            return Err(RpcCustomError::MinContextSlotNotReached { context_slot }.into());
+        }
         let confirmed_transaction = self
             .runtime
             .spawn_blocking({
@@ -4664,6 +4687,7 @@ pub mod tests {
         solana_rpc_client_api::{
             custom_error::{
                 JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
+                JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
                 JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
                 JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
             },
@@ -6950,6 +6974,33 @@ pub mod tests {
                 .expect("actual response deserialization");
         assert_eq!(expected_res, result.as_ref().unwrap().status);
 
+        // minContextSlot ahead of the node's processed bank: fail fast with
+        // the context slot instead of answering from a stale view.
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getSignatureStatuses","params":[["{}"], {{"minContextSlot": {}}}]}}"#,
+            confirmed_block_signatures[0],
+            bank.slot() + 1000
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let json: Value = serde_json::from_str(&res.unwrap()).unwrap();
+        assert_eq!(
+            json["error"]["code"],
+            JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED
+        );
+        assert!(json["error"]["data"]["contextSlot"].is_u64());
+
+        // minContextSlot already satisfied: same answer as without it.
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getSignatureStatuses","params":[["{}"], {{"minContextSlot": 0}}]}}"#,
+            confirmed_block_signatures[0]
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let json: Value = serde_json::from_str(&res.unwrap()).unwrap();
+        let result: Option<TransactionStatus> =
+            serde_json::from_value(json["result"]["value"][0].clone())
+                .expect("actual response deserialization");
+        assert!(result.is_some());
+
         // disable rpc-tx-history, but attempt historical query
         meta.config.enable_rpc_transaction_history = false;
         let req = format!(
@@ -7480,6 +7531,35 @@ pub mod tests {
             ),
         );
         assert_eq!(response, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_transaction_min_context_slot() {
+        let rpc = RpcHandler::start();
+        let signature = rpc.create_test_transactions_and_populate_blockstore()[0].to_string();
+        let expected = (
+            JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
+            String::from("Minimum context slot has not been reached"),
+        );
+
+        for commitment in ["confirmed", "finalized"] {
+            // Far ahead of anything this node has seen: fail fast instead of
+            // answering with an ambiguous null.
+            let config = json!({ "commitment": commitment, "minContextSlot": u64::MAX / 2 });
+            let request =
+                create_test_request("getTransaction", Some(json!([signature.clone(), config])));
+            assert_eq!(
+                parse_failure_response(rpc.handle_request_sync(request)),
+                expected
+            );
+
+            // Already satisfied: the normal lookup proceeds.
+            let config = json!({ "commitment": commitment, "minContextSlot": 0 });
+            let request =
+                create_test_request("getTransaction", Some(json!([signature.clone(), config])));
+            let result: Value = parse_success_result(rpc.handle_request_sync(request));
+            assert!(!result.is_null());
+        }
     }
 
     #[test]
