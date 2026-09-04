@@ -157,11 +157,12 @@ bitflags! {
         /// clamped to 63 on the way in, see
         /// [`ShredFlags::from_reference_tick`].
         const SHRED_TICK_REFERENCE_MASK = 0b0011_1111;
-        /// The data carried by this shred and its predecessors, concatenated,
-        /// deserializes into whole [`Entry`]s.
+        /// Flag marking the end of a set of shreds whose concatenated data
+        /// deserializes into a
+        /// [`BlockComponent`](solana_entry::block_component::BlockComponent).
         const DATA_COMPLETE_SHRED       = 0b0100_0000;
-        /// This is the last data shred of the slot; nothing follows it. Sets
-        /// the `DATA_COMPLETE_SHRED` bit as well.
+        /// Flag marking the last data shred of the slot; nothing follows it.
+        /// Sets the `DATA_COMPLETE_SHRED` bit as well.
         const LAST_SHRED_IN_SLOT        = 0b1100_0000;
     }
 }
