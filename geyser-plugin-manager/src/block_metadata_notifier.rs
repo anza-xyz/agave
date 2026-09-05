@@ -1,8 +1,6 @@
 use {
-    crate::{
-        block_metadata_notifier_interface::BlockMetadataNotifier,
-        geyser_plugin_manager::GeyserPluginManager,
-    },
+    crate::block_metadata_notifier_interface::BlockMetadataNotifier,
+    agave_geyser_plugin_host::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
     },
@@ -35,7 +33,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         commission_rate_in_basis_points: bool,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
@@ -52,7 +50,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             entry_count,
         );
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             let block_info = ReplicaBlockInfoVersions::V0_0_4(&block_info);
             match plugin.notify_block_metadata_for_bank(block_info, bank_id) {
                 Err(err) => {
@@ -139,7 +137,7 @@ impl BlockMetadataNotifierImpl {
 mod tests {
     use {
         super::*,
-        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_host::{GeyserPluginManager, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
         arc_swap::ArcSwap,
         libloading::Library,
@@ -192,11 +190,11 @@ mod tests {
     #[test]
     fn test_notify_block_metadata_includes_bank_id() {
         let updates = Arc::new(Mutex::new(Vec::new()));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded_test_plugin(TestBlockMetadataPlugin {
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager::from_plugins(
+            vec![loaded_test_plugin(TestBlockMetadataPlugin {
                 updates: updates.clone(),
             })],
-        })));
+        ))));
         let notifier = BlockMetadataNotifierImpl::new(plugin_manager);
         let rewards = KeyedRewardsAndNumPartitions {
             keyed_rewards: Vec::new(),

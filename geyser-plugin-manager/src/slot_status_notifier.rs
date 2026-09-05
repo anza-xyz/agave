@@ -1,5 +1,5 @@
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_plugin_host::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
     arc_swap::ArcSwap,
     log::*,
@@ -49,11 +49,11 @@ impl SlotStatusNotifierImpl {
 
     pub fn notify_slot_status(&self, slot: Slot, parent: Option<Slot>, slot_status: SlotStatus) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             match plugin.update_slot_status(slot, parent, &slot_status) {
                 Err(err) => {
                     error!(
@@ -82,11 +82,11 @@ impl SlotStatusNotifierImpl {
         bank_id: BankId,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             match plugin.update_bank_status(slot, parent, &slot_status, bank_id) {
                 Err(err) => {
                     error!(
@@ -112,7 +112,7 @@ impl SlotStatusNotifierImpl {
 mod tests {
     use {
         super::*,
-        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_host::{GeyserPluginManager, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
         arc_swap::ArcSwap,
         libloading::Library,
@@ -160,9 +160,9 @@ mod tests {
     }
 
     fn create_notifier(updates: Arc<Mutex<Vec<SlotStatusUpdate>>>) -> SlotStatusNotifierImpl {
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded_test_plugin(TestSlotStatusPlugin { updates })],
-        })));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager::from_plugins(
+            vec![loaded_test_plugin(TestSlotStatusPlugin { updates })],
+        ))));
         SlotStatusNotifierImpl::new(plugin_manager)
     }
 
@@ -181,5 +181,12 @@ mod tests {
                 (42, Some(41), SlotStatus::Processed, 9),
             ]
         );
+
+        // With no plugins loaded, slot status updates are dropped without side effects.
+        let empty = SlotStatusNotifierImpl::new(Arc::new(ArcSwap::from(Arc::new(
+            GeyserPluginManager::default(),
+        ))));
+        empty.notify_slot_processed(43, Some(42), 9);
+        assert_eq!(updates.lock().unwrap().len(), 2);
     }
 }

@@ -29,9 +29,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-    solana_geyser_plugin_manager::{
-        GeyserPluginManagerRequest, geyser_plugin_manager::GeyserPluginManager,
-    },
+    solana_geyser_plugin_manager::{GeyserPluginManager, GeyserPluginManagerRequest},
     solana_gossip::{
         cluster_info::{ClusterInfo, DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig},
         contact_info::Protocol,

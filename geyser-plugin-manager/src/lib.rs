@@ -11,4 +11,9 @@ pub mod slot_status_notifier;
 pub mod slot_status_observer;
 pub mod transaction_notifier;
 
-pub use geyser_plugin_manager::GeyserPluginManagerRequest;
+pub use {
+    // Re-exported so existing `solana_geyser_plugin_manager` imports keep resolving now that the
+    // plugin set itself lives in the host crate.
+    agave_geyser_plugin_host::{GeyserPluginManager, GeyserPluginManagerError, LoadedGeyserPlugin},
+    geyser_plugin_manager::GeyserPluginManagerRequest,
+};

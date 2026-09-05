@@ -5,11 +5,12 @@ use {
         block_metadata_notifier_interface::BlockMetadataNotifierArc,
         deshred_transaction_notifier::DeshredTransactionNotifierImpl,
         entry_notifier::EntryNotifierImpl,
-        geyser_plugin_manager::{GeyserPluginManager, GeyserPluginManagerRequest},
+        geyser_plugin_manager::{self, GeyserPluginManagerRequest},
         slot_status_notifier::SlotStatusNotifierImpl,
         slot_status_observer::SlotStatusObserver,
         transaction_notifier::TransactionNotifierImpl,
     },
+    agave_geyser_plugin_host::GeyserPluginManager,
     arc_swap::ArcSwap,
     crossbeam_channel::Receiver,
     log::*,
@@ -88,9 +89,7 @@ impl GeyserPluginService {
         )>,
     ) -> Result<Self, GeyserPluginServiceError> {
         info!("Starting GeyserPluginService from config files: {geyser_plugin_config_files:?}");
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: Vec::new(),
-        })));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager::default())));
 
         for geyser_plugin_config_file in geyser_plugin_config_files {
             Self::load_plugin(&plugin_manager, geyser_plugin_config_file)?;
@@ -198,7 +197,7 @@ impl GeyserPluginService {
         plugin_manager: &ArcSwap<GeyserPluginManager>,
         geyser_plugin_config_file: &Path,
     ) -> Result<(), GeyserPluginServiceError> {
-        GeyserPluginManager::load_plugin(plugin_manager, geyser_plugin_config_file)
+        geyser_plugin_manager::load_plugin(plugin_manager, geyser_plugin_config_file)
             .map_err(|e| GeyserPluginServiceError::FailedToLoadPlugin(e.into()))?;
         Ok(())
     }
@@ -241,9 +240,7 @@ impl GeyserPluginService {
             slot_status_observer.join()?;
         }
 
-        let empty_plugin_manager = GeyserPluginManager {
-            plugins: Vec::new(),
-        };
+        let empty_plugin_manager = GeyserPluginManager::default();
         let mut geyser_plugin_manager_ref =
             self.plugin_manager.swap(Arc::new(empty_plugin_manager));
         loop {
@@ -274,7 +271,8 @@ impl GeyserPluginService {
                     if let Ok(request) = request_receiver.recv_timeout(Duration::from_secs(5)) {
                         match request {
                             GeyserPluginManagerRequest::ListPlugins { response_sender } => {
-                                let plugin_list = plugin_manager.load().list_plugins();
+                                let plugin_list =
+                                    geyser_plugin_manager::list_plugins(&plugin_manager.load());
                                 response_sender
                                     .send(plugin_list)
                                     .expect("Admin rpc service will be waiting for response");
@@ -285,7 +283,7 @@ impl GeyserPluginService {
                                 ref config_file,
                                 response_sender,
                             } => {
-                                let reload_result = GeyserPluginManager::reload_plugin(
+                                let reload_result = geyser_plugin_manager::reload_plugin(
                                     &plugin_manager,
                                     name,
                                     config_file,
@@ -299,8 +297,10 @@ impl GeyserPluginService {
                                 ref config_file,
                                 response_sender,
                             } => {
-                                let load_result =
-                                    GeyserPluginManager::load_plugin(&plugin_manager, config_file);
+                                let load_result = geyser_plugin_manager::load_plugin(
+                                    &plugin_manager,
+                                    config_file,
+                                );
                                 response_sender
                                     .send(load_result)
                                     .expect("Admin rpc service will be waiting for response");
@@ -311,7 +311,7 @@ impl GeyserPluginService {
                                 response_sender,
                             } => {
                                 let unload_result =
-                                    GeyserPluginManager::unload_plugin(&plugin_manager, name);
+                                    geyser_plugin_manager::unload_plugin(&plugin_manager, name);
                                 response_sender
                                     .send(unload_result)
                                     .expect("Admin rpc service will be waiting for response");
