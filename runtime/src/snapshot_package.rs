@@ -1,7 +1,10 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_hash::Hash;
 use {
-    crate::bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+    crate::{
+        bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+        serde_snapshot::StartupHints,
+    },
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind, snapshot_hash::SnapshotHash},
     solana_accounts_db::account_storage_entry::AccountStorageEntry,
     solana_clock::Slot,
@@ -49,6 +52,7 @@ impl SnapshotPackage {
             bank_fields: bank_fields_to_serialize,
             bank_hash_stats: bank.get_bank_hash_stats(),
             status_cache_slot_deltas,
+            startup_hints: StartupHints::new_from_bank(bank),
         };
 
         Self {
@@ -71,6 +75,7 @@ impl SnapshotPackage {
             bank_fields: BankFieldsToSerialize::default_for_tests(),
             bank_hash_stats: BankHashStats::default(),
             status_cache_slot_deltas: Vec::default(),
+            startup_hints: StartupHints::default(),
         };
 
         Self {
@@ -99,4 +104,5 @@ pub struct BankSnapshotPackage {
     pub bank_fields: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
     pub status_cache_slot_deltas: Vec<BankSlotDelta>,
+    pub startup_hints: StartupHints,
 }

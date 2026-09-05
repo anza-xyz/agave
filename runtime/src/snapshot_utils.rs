@@ -5,8 +5,8 @@ use {
         bank::BankFieldsToDeserialize,
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, SerdeObsoleteAccountsMap,
-            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams, StorageListItem,
-            StoragesList,
+            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams, StartupHints,
+            StorageListItem, StoragesList,
         },
         snapshot_package::BankSnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
@@ -75,6 +75,8 @@ pub const MAX_OBSOLETE_ACCOUNTS_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 12; // 12 
 /// Each `(slot, id)` entry encodes to 12 bytes; 100 MiB covers ~8.7 million entries, well past
 /// any realistic storage count.
 pub const MAX_STORAGES_LIST_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MiB
+/// The file holds a handful of scalars; this conservative bound limits the impact of bad state.
+pub const MAX_STARTUP_HINTS_FILE_SIZE: u64 = 4096;
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 /// Buffer size for reading auxiliary per-snapshot files (obsolete accounts, storages list).
@@ -93,7 +95,9 @@ const AUX_SNAPSHOT_FILE_READ_BUF_SIZE: usize = 4 * 1024 * 1024;
 //         and the next teardown writes the new-format storages list.
 //         Note: 2.0.0 validators cannot fastboot from 3.0.0 snapshots because the per-storage
 //         hardlink dirs they rely on are no longer written; they must fall back to archive.
-const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(3, 0, 0);
+// 3.1.0 - Startup hints file added. Optional tuning state, so snapshots fastboot in either
+//         direction between 3.0.0 and 3.1.0; a validator finding no hints just skips the tuning.
+const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(3, 1, 0);
 
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.
@@ -493,6 +497,7 @@ pub fn serialize_snapshot(
         mut bank_fields,
         bank_hash_stats,
         status_cache_slot_deltas,
+        startup_hints,
     } = bank_snapshot_package;
     let status_cache_slot_deltas = status_cache_slot_deltas.as_slice();
     let slot = bank_fields.slot;
@@ -591,6 +596,9 @@ pub fn serialize_snapshot(
                     )
                     .map_err(|err| AddBankSnapshotError::WriteStoragesList(Box::new(err)))?
                 );
+
+                write_startup_hints_to_snapshot(&bank_snapshot_dir, &startup_hints, io_setup)
+                    .map_err(|err| AddBankSnapshotError::WriteStartupHints(Box::new(err)))?;
 
                 mark_bank_snapshot_as_loadable(&bank_snapshot_dir)
                     .map_err(AddBankSnapshotError::MarkSnapshotLoadable)?;
@@ -814,6 +822,58 @@ fn deserialize_storages_list(
     Ok(serde_snapshot::deserialize_wincode_from(
         storages_list_reader,
     )?)
+}
+
+pub fn write_startup_hints_to_snapshot(
+    bank_snapshot_dir: impl AsRef<Path>,
+    startup_hints: &StartupHints,
+    io_setup: &IoSetupState,
+) -> Result<FileSize> {
+    let startup_hints_path = bank_snapshot_dir
+        .as_ref()
+        .join(snapshot_paths::SNAPSHOT_STARTUP_HINTS_FILENAME);
+    let mut file_stream = SizeLimitedWriter::new(
+        large_file_buf_writer(&startup_hints_path, io_setup)?,
+        MAX_STARTUP_HINTS_FILE_SIZE,
+    );
+    serde_snapshot::serialize_into(&mut file_stream, startup_hints).map_err(|err| {
+        IoError::other(format!(
+            "unable to serialize startup hints to file '{}': {err}",
+            startup_hints_path.display(),
+        ))
+    })?;
+    Ok(file_stream.bytes_written())
+}
+
+/// Reads the startup hints written next to a bank snapshot.
+///
+/// `Ok(None)` when the snapshot predates the hints file or its hints came from a newer version;
+/// any other failure to read a present file is an error.
+pub fn read_startup_hints(bank_snapshot_dir: impl AsRef<Path>) -> Result<Option<StartupHints>> {
+    let startup_hints_path = bank_snapshot_dir
+        .as_ref()
+        .join(snapshot_paths::SNAPSHOT_STARTUP_HINTS_FILENAME);
+    if !startup_hints_path.exists() {
+        return Ok(None);
+    }
+
+    let startup_hints_file_metadata = fs::metadata(&startup_hints_path)?;
+    if startup_hints_file_metadata.len() > MAX_STARTUP_HINTS_FILE_SIZE {
+        let error_message = format!(
+            "too large startup hints file to deserialize: '{}' has {} bytes (max size is \
+             {MAX_STARTUP_HINTS_FILE_SIZE} bytes)",
+            startup_hints_path.display(),
+            startup_hints_file_metadata.len(),
+        );
+        return Err(IoError::other(error_message).into());
+    }
+    let startup_hints_reader = ReadAdapter::new(large_file_buf_reader(
+        &startup_hints_path,
+        AUX_SNAPSHOT_FILE_READ_BUF_SIZE,
+        &IoSetupState::default(),
+    )?);
+
+    Ok(StartupHints::read_from(startup_hints_reader)?)
 }
 
 pub fn serialize_snapshot_data_file<F>(

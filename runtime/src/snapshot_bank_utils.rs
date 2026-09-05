@@ -367,7 +367,7 @@ pub fn bank_from_snapshot_dir(
     leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
+    mut accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> agave_snapshots::Result<Bank> {
@@ -375,6 +375,19 @@ pub fn bank_from_snapshot_dir(
         "Loading bank from snapshot dir: {}",
         bank_snapshot.snapshot_dir.display()
     );
+
+    // Size the index up front from the snapshot's account count, unless it was configured
+    // explicitly. Fastboot only: snapshot archives carry no such count.
+    let num_accounts_hint = snapshot_utils::read_startup_hints(&bank_snapshot.snapshot_dir)?
+        .and_then(|startup_hints| startup_hints.num_accounts());
+    if let Some(num_accounts) = num_accounts_hint {
+        let index_config = accounts_db_config.index.get_or_insert_default();
+        if index_config.num_initial_accounts.is_none() {
+            let num_accounts = num_accounts as usize;
+            info!("Sizing accounts index for {num_accounts} accounts, per the snapshot");
+            index_config.num_initial_accounts = Some(num_accounts);
+        }
+    }
 
     // Storages from this snapshot already live under `account_paths`; the storages list
     // inside the bank snapshot dir tells us which ones belong to it, and stale files
@@ -939,6 +952,7 @@ mod tests {
             bank_fields: bank.get_fields_to_serialize(),
             bank_hash_stats: bank.get_bank_hash_stats(),
             status_cache_slot_deltas: bank.status_cache.read().unwrap().root_slot_deltas(),
+            startup_hints: serde_snapshot::StartupHints::new_from_bank(bank),
         };
 
         let snapshot_storages = bank.get_snapshot_storages(None);
@@ -1846,6 +1860,44 @@ mod tests {
 
         assert!(purge_bank_snapshot(&bank_snapshot_dir).is_ok());
         assert!(fs::metadata(&bank_snapshot_dir).is_err());
+    }
+
+    #[test]
+    fn test_bank_snapshot_dir_startup_hints() {
+        let bank = Bank::new_for_tests(&GenesisConfig::default());
+        bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
+
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        create_bank_snapshot_from_bank(
+            &bank_snapshots_dir,
+            &bank,
+            SnapshotVersion::default(),
+            true,
+        )
+        .unwrap();
+
+        let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, bank.slot());
+        let startup_hints = snapshot_utils::read_startup_hints(&bank_snapshot_dir)
+            .unwrap()
+            .unwrap();
+        let num_accounts = bank.rc.accounts.accounts_db.accounts_index.num_accounts() as u64;
+        assert_ne!(num_accounts, 0);
+        assert_eq!(startup_hints.num_accounts(), Some(num_accounts));
+
+        // A truncated file is corrupt local state, not a missing hint
+        let startup_hints_path =
+            bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STARTUP_HINTS_FILENAME);
+        fs::write(&startup_hints_path, [0u8; 3]).unwrap();
+        assert!(snapshot_utils::read_startup_hints(&bank_snapshot_dir).is_err());
+
+        // Snapshots predating the hints file still load
+        fs::remove_file(&startup_hints_path).unwrap();
+        assert!(
+            snapshot_utils::read_startup_hints(&bank_snapshot_dir)
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// Test versioning when fastbooting
