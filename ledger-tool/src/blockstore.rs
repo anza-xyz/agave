@@ -29,7 +29,7 @@ use {
     },
     std::{
         borrow::Cow,
-        collections::{BTreeMap, BTreeSet, HashMap},
+        collections::{BTreeMap, BTreeSet},
         fs::File,
         io::{BufRead, BufReader},
         path::{Path, PathBuf},
@@ -968,7 +968,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     allow_dead_slots,
                     &output_format,
                     verbose_level,
-                    &mut HashMap::new(),
                 )?;
             }
         }
