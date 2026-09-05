@@ -21,7 +21,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "supplyElGamalPubkey": initialize_mint_data.supply_elgamal_pubkey.to_string(),
                 "decryptableSupply": initialize_mint_data.decryptable_supply.to_string(),
             });
@@ -37,7 +37,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "newDecryptableSupply": update_decryptable_supply.new_decryptable_supply.to_string(),
 
             });
@@ -62,7 +62,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "newSupplyElGamalPubkey": rotate_supply_data.new_supply_elgamal_pubkey.to_string(),
                 "proofInstructionOffset": rotate_supply_data.proof_instruction_offset,
 
@@ -74,12 +74,12 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 if rotate_supply_data.proof_instruction_offset == 0 {
                     map.insert(
                         "proofContextStateAccount".to_string(),
-                        json!(account_keys[account_indexes[offset] as usize].to_string()),
+                        json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                     );
                 } else {
                     map.insert(
                         "instructionsSysvar".to_string(),
-                        json!(account_keys[account_indexes[offset] as usize].to_string()),
+                        json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                     );
                 }
             }
@@ -104,8 +104,8 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "destination": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
+                "destination": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "newDecryptableSupply": mint_data.new_decryptable_supply.to_string(),
                 "equalityProofInstructionOffset": mint_data.equality_proof_instruction_offset,
                 "ciphertextValidityProofInstructionOffset": mint_data.ciphertext_validity_proof_instruction_offset,
@@ -121,7 +121,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -131,7 +131,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -140,7 +140,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "ciphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -149,7 +149,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -174,8 +174,8 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "destination": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
+                "destination": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "newDecryptableAvailableBalance": burn_data.new_decryptable_available_balance.to_string(),
                 "equalityProofInstructionOffset": burn_data.equality_proof_instruction_offset,
                 "ciphertextValidityProofInstructionOffset": burn_data.ciphertext_validity_proof_instruction_offset,
@@ -191,7 +191,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -201,7 +201,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -210,7 +210,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "ciphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -219,7 +219,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -240,7 +240,7 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
         ConfidentialMintBurnInstruction::ApplyPendingBurn => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
             });
             let map = value.as_object_mut().unwrap();
             parse_signers(

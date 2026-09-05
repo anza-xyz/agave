@@ -22,7 +22,7 @@ pub(in crate::parse_token) fn parse_default_account_state_instruction(
             Ok(ParsedInstructionEnum {
                 instruction_type: format!("initialize{instruction_type}"),
                 info: json!({
-                    "mint": account_keys[account_indexes[0] as usize].to_string(),
+                    "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                     "accountState": convert_account_state(account_state),
                 }),
             })
@@ -30,7 +30,7 @@ pub(in crate::parse_token) fn parse_default_account_state_instruction(
         DefaultAccountStateInstruction::Update => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "accountState": convert_account_state(account_state),
             });
             let map = value.as_object_mut().unwrap();
