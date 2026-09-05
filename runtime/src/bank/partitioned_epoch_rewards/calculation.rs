@@ -23,7 +23,9 @@ use {
         },
         reward_info::RewardInfo,
         stake_account::StakeAccount,
-        stake_delegation::{delegation_activation_status, delegation_effective_stake},
+        stake_delegation::{
+            delegation_activation_status, delegation_effective_stake, is_delegation_inert,
+        },
         stakes::Stakes,
     },
     log::{debug, info},
@@ -551,6 +553,7 @@ impl Bank {
             stake_history,
             &stake_delegations,
             &cached_vote_accounts,
+            rewarded_epoch,
             epoch_inflation_rewards,
             &ag_epoch_type,
             thread_pool,
@@ -799,6 +802,7 @@ impl Bank {
         let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
         let custom_commission_collector = feature_snapshot.custom_commission_collector;
         let block_revenue_sharing = feature_snapshot.block_revenue_sharing;
+        let remove_inactive_stakes = feature_snapshot.remove_inactive_stakes;
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -818,6 +822,18 @@ impl Bank {
                 .zip(&mut stake_rewards.spare_capacity_mut()[..stake_delegations_len])
                 .with_min_len(500)
                 .filter_map(|((stake_pubkey, stake_account), reward_ref)| {
+                    if remove_inactive_stakes
+                        && is_delegation_inert(
+                            stake_account.delegation(),
+                            rewarded_epoch,
+                            stake_history,
+                            new_warmup_cooldown_rate_epoch,
+                            use_fixed_point_stake_math,
+                        )
+                    {
+                        reward_ref.write(None);
+                        return None;
+                    }
                     let block_reward = if block_revenue_sharing {
                         calculate_block_reward(
                             rewarded_epoch,
@@ -944,6 +960,7 @@ impl Bank {
         stake_history: &StakeHistory,
         stake_delegations: &Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
         cached_vote_accounts: &CachedVoteAccounts<'_>,
+        rewarded_epoch: Epoch,
         epoch_inflation_rewards: u64,
         ag_epoch_type: &AlpenglowEpochType,
         thread_pool: &ThreadPool,
@@ -975,11 +992,24 @@ impl Bank {
         }
 
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
+        let remove_inactive_stakes = self.feature_set.snapshot().remove_inactive_stakes;
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
                 .map(|(_stake_pubkey, stake_account)| {
-                    let vote_pubkey = stake_account.delegation().voter_pubkey;
+                    let delegation = stake_account.delegation();
+                    if remove_inactive_stakes
+                        && is_delegation_inert(
+                            delegation,
+                            rewarded_epoch,
+                            stake_history,
+                            new_warmup_cooldown_rate_epoch,
+                            use_fixed_point_stake_math,
+                        )
+                    {
+                        return 0;
+                    }
+                    let vote_pubkey = delegation.voter_pubkey;
 
                     let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey)
                     else {
@@ -1574,6 +1604,7 @@ mod tests {
             &stake_history,
             &stake_delegations,
             &cached_vote_accounts,
+            rewarded_epoch,
             expected_rewards,
             &AlpenglowEpochType::Tower,
             &thread_pool,
@@ -1608,6 +1639,7 @@ mod tests {
             &stake_history,
             &stake_delegations,
             &cached_vote_accounts,
+            rewarded_epoch,
             expected_rewards,
             &AlpenglowEpochType::Tower,
             &thread_pool,
@@ -2216,6 +2248,114 @@ mod tests {
         let new_delegation = stake_state.stake().unwrap().delegation;
         assert_eq!(new_delegation.stake, 0);
         assert_eq!(new_delegation.deactivation_epoch, 0);
+    }
+
+    #[test]
+    fn test_inert_delegation_is_not_partitioned_for_rewards() {
+        let GenesisConfigInfo {
+            mut genesis_config,
+            voting_keypair,
+            ..
+        } = genesis_utils::create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            42 * LAMPORTS_PER_SOL,
+        );
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        genesis_config.rent = Rent::default();
+        let genesis_vote_address = voting_keypair.pubkey();
+
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let feature_snapshot = bank.feature_set.snapshot();
+        assert!(feature_snapshot.remove_inactive_stakes);
+        assert!(feature_snapshot.relax_post_exec_min_balance_check);
+
+        // A delegation deactivated in the epoch it was activated in never has
+        // effective or activating stake, so the epoch boundary evicts it from
+        // the stakes cache. Its lamports leave no room for the rent-exempt
+        // reserve, which is what makes SIMD-0392 want to rewrite it at
+        // distribution time.
+        let delegation = LAMPORTS_PER_SOL;
+        let inert_stake_address = Pubkey::new_unique();
+        let mut inert_stake_account =
+            create_stake_account(delegation, delegation, &genesis_vote_address, 0);
+        let StakeStateV2::Stake(meta, mut stake, flags) = inert_stake_account.state().unwrap()
+        else {
+            panic!("expected a delegated stake account");
+        };
+        stake.delegation.deactivation_epoch = stake.delegation.activation_epoch;
+        inert_stake_account
+            .set_state(&StakeStateV2::Stake(meta, stake, flags))
+            .unwrap();
+
+        // Seed the cache directly. Once the feature is active, storing an inert
+        // delegation never puts it in the cache to begin with; the boundary
+        // sweep exists for delegations that were cached before activation, or
+        // that went inert while cached.
+        bank.store_account_without_stakes_cache(&inert_stake_address, &inert_stake_account);
+        bank.stakes_cache.check_and_store(
+            &inert_stake_address,
+            &inert_stake_account,
+            bank.new_warmup_cooldown_rate_epoch(),
+            bank.use_fixed_point_stake_math(),
+            false,
+            false,
+        );
+        assert!(
+            bank.stakes_cache
+                .stakes()
+                .stake_delegations()
+                .contains_key(&inert_stake_address)
+        );
+
+        let bank = apply_epoch_operations(
+            bank,
+            bank_forks.as_ref(),
+            EpochOperations {
+                epoch: 0,
+                vote_operations: vec![(
+                    genesis_vote_address,
+                    VoteOperations {
+                        earned_credits: Some(1000),
+                        ..VoteOperations::default()
+                    },
+                )],
+            },
+        );
+
+        assert!(
+            !bank
+                .stakes_cache
+                .stakes()
+                .stake_delegations()
+                .contains_key(&inert_stake_address)
+        );
+        let EpochRewardStatus::Active(EpochRewardPhase::Calculation(status)) =
+            &bank.epoch_reward_status
+        else {
+            panic!("expected rewards pending distribution");
+        };
+        assert!(
+            !status
+                .all_stake_rewards
+                .enumerated_rewards_iter()
+                .any(|(_, reward)| reward.stake_pubkey == inert_stake_address),
+            "an evicted delegation must not be scheduled for distribution"
+        );
+
+        // Run the distribution block: the delegation is left alone rather than
+        // failing to resolve against the stakes cache.
+        let slot = bank.slot();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::new_unique(),
+            slot + 1,
+        );
+        let stake_account = bank.get_account(&inert_stake_address).unwrap();
+        let stake_state: StakeStateV2 = stake_account.state().unwrap();
+        assert_eq!(stake_state.stake().unwrap().delegation.stake, delegation);
     }
 
     #[test]
