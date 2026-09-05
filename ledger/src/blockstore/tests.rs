@@ -7177,7 +7177,7 @@ fn transaction_signatures(entries: &[Entry]) -> Vec<Signature> {
         .collect()
 }
 
-fn write_transaction_statuses_for_entries(
+pub(crate) fn write_transaction_statuses_for_entries(
     blockstore: &Blockstore,
     slot: Slot,
     entries: &[Entry],
@@ -7225,8 +7225,9 @@ fn write_transaction_statuses_for_entries(
 pub(crate) struct UpdateParentSlotFixture {
     previous_blockhash: String,
     post_update_blockhash: String,
+    pub(crate) pre_update_address: Pubkey,
     pub(crate) post_update_address: Pubkey,
-    pre_update_signatures: Vec<Signature>,
+    pub(crate) pre_update_signatures: Vec<Signature>,
     pub(crate) post_update_signatures: Vec<Signature>,
     post_update_starting_transaction_indexes: Vec<usize>,
     post_update_num_entries: usize,
@@ -7257,10 +7258,14 @@ pub(crate) fn insert_complete_update_parent_slot(
 
     let pre_update_entries = make_slot_entries_with_transactions(1);
     let post_update_entries = make_slot_entries_with_transactions(2);
+    let pre_update_address = pre_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
     let post_update_address = post_update_entries[0].transactions[0]
         .message
         .static_account_keys()[0];
-    let pre_update_signatures = transaction_signatures(&pre_update_entries);
+    let pre_update_signatures =
+        write_transaction_statuses_for_entries(blockstore, slot, &pre_update_entries);
     let post_update_signatures =
         write_transaction_statuses_for_entries(blockstore, slot, &post_update_entries);
     let post_update_blockhash = post_update_entries.last().unwrap().hash.to_string();
@@ -7305,6 +7310,7 @@ pub(crate) fn insert_complete_update_parent_slot(
     UpdateParentSlotFixture {
         previous_blockhash,
         post_update_blockhash,
+        pre_update_address,
         post_update_address,
         pre_update_signatures,
         post_update_signatures,
@@ -7312,6 +7318,87 @@ pub(crate) fn insert_complete_update_parent_slot(
         post_update_num_entries,
         update_parent_fec_set_index,
     }
+}
+
+#[test]
+fn test_purge_transaction_history_before_missing_shred_and_update_parent() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let original_parent = 103;
+    let update_parent = 100;
+    let pre_update_entries = make_slot_entries_with_transactions(1);
+    let pre_update_address = pre_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
+    let pre_update_signature =
+        write_transaction_statuses_for_entries(&blockstore, slot, &pre_update_entries)[0];
+    blockstore
+        .write_transaction_memos(&pre_update_signature, slot, "memo".to_string())
+        .unwrap();
+
+    let fec_set_size = u32::try_from(DATA_SHREDS_PER_FEC_BLOCK).unwrap();
+    let incomplete_fec_set_index = fec_set_size * 2;
+    let update_parent_fec_set_index = fec_set_size * 3;
+    let mut shreds = create_block_header_shreds(slot, original_parent, Hash::new_unique());
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        pre_update_entries,
+        fec_set_size,
+        false,
+    ));
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        make_slot_entries_with_transactions(1),
+        incomplete_fec_set_index,
+        false,
+    ));
+    shreds.extend(create_update_parent_shreds_with_shred_parent(
+        slot,
+        original_parent,
+        update_parent,
+        Hash::new_unique(),
+        update_parent_fec_set_index,
+        false,
+    ));
+    let mut shreds = data_shreds(shreds);
+    let missing_shred_position = shreds
+        .iter()
+        .position(|shred| shred.index() == incomplete_fec_set_index)
+        .unwrap();
+    shreds.remove(missing_shred_position);
+    blockstore.insert_shreds(shreds, true).unwrap();
+
+    let slot_meta = blockstore.meta(slot).unwrap().unwrap();
+    assert_eq!(slot_meta.consumed, u64::from(incomplete_fec_set_index));
+    assert_eq!(slot_meta.replay_fec_set_index, update_parent_fec_set_index);
+
+    let stats = blockstore
+        .purge_transaction_history_for_slot_exact(slot)
+        .unwrap();
+    assert_eq!(stats.transactions_processed, 1);
+    assert!(
+        blockstore
+            .read_transaction_status((pre_update_signature, slot))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        blockstore
+            .read_transaction_memos(pre_update_signature, slot)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        blockstore
+            .address_signatures_cf
+            .get((pre_update_address, slot, 0, pre_update_signature))
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]

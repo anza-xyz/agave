@@ -22,10 +22,10 @@ use {
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
-    std::{borrow::Cow, sync::Arc},
+    std::{borrow::Cow, sync::Arc, time::Instant},
 };
 
 type WorkSequence = u64;
@@ -47,6 +47,43 @@ pub struct TransactionStatusBatch {
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
     Freeze(Arc<Bank>),
+    PurgeTransactionHistory {
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+        requested_at: Instant,
+        done_sender: Option<crossbeam_channel::Sender<()>>,
+    },
+}
+
+/// Data used to reconstruct the transaction-history keys removed by a purge.
+#[derive(Debug)]
+pub enum TransactionHistoryPurgeInput {
+    ReplayStage,
+    SwitchBank,
+    Bcl(Arc<Vec<VersionedTransaction>>),
+}
+
+/// The validator path that requested transaction-history cleanup for a slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionHistoryPurgeSource {
+    LeaderWindow,
+    SoftDeadSlot,
+    UpdateParentSignal,
+    AbandonedBank,
+    SwitchBank,
+}
+
+impl TransactionHistoryPurgeSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LeaderWindow => "leader_window",
+            Self::SoftDeadSlot => "soft_dead_slot",
+            Self::UpdateParentSignal => "update_parent_signal",
+            Self::AbandonedBank => "abandoned_bank",
+            Self::SwitchBank => "switch_bank",
+        }
+    }
 }
 
 pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
@@ -281,6 +318,49 @@ impl TransactionStatusSender {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
         }
+    }
+
+    /// Requests removal of transaction history for `slot` and waits until the
+    /// TransactionStatusService has finished processing the request.
+    pub fn send_purge_transaction_history_for_slot(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+    ) -> Result<(), String> {
+        let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
+        self.send_purge_transaction_history_request(slot, source, purge_input, Some(done_sender))?;
+
+        done_receiver.recv().map_err(|err| err.to_string())
+    }
+
+    /// Queues removal of transaction history for `slot` without waiting for
+    /// TransactionStatusService to process the request.
+    pub fn enqueue_purge_transaction_history_for_slot(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+    ) -> Result<(), String> {
+        self.send_purge_transaction_history_request(slot, source, purge_input, None)
+    }
+
+    fn send_purge_transaction_history_request(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+        done_sender: Option<crossbeam_channel::Sender<()>>,
+    ) -> Result<(), String> {
+        self.sender
+            .send(TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                source,
+                purge_input,
+                requested_at: Instant::now(),
+                done_sender,
+            })
+            .map_err(|err| err.to_string())
     }
 }
 

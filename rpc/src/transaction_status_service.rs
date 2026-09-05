@@ -12,7 +12,9 @@ use {
     solana_runtime::{
         bank::{Bank, KeyedRewardsAndNumPartitions},
         dependency_tracker::DependencyTracker,
-        transaction_execution::{TransactionStatusBatch, TransactionStatusMessage},
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionStatusBatch, TransactionStatusMessage,
+        },
     },
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{
@@ -272,6 +274,79 @@ impl TransactionStatusService {
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
             }
+            TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                source,
+                purge_input,
+                requested_at,
+                done_sender,
+            } => {
+                let queue_wait_us = requested_at.elapsed().as_micros();
+                let purge_result = if enable_rpc_transaction_history {
+                    match &purge_input {
+                        TransactionHistoryPurgeInput::ReplayStage => {
+                            blockstore.purge_transaction_history_for_slot_exact(slot)
+                        }
+                        TransactionHistoryPurgeInput::SwitchBank => {
+                            blockstore.purge_transaction_history_for_slot_full(slot)
+                        }
+                        TransactionHistoryPurgeInput::Bcl(transactions) => blockstore
+                            .purge_transaction_history_for_slot_exact_bcl(
+                                slot,
+                                transactions.as_slice(),
+                            ),
+                    }
+                    .map(Some)
+                } else {
+                    Ok(None)
+                };
+                let request_elapsed_us = requested_at.elapsed().as_micros();
+                let success = purge_result.is_ok();
+                let stats = purge_result
+                    .as_ref()
+                    .ok()
+                    .and_then(|stats| stats.as_ref())
+                    .copied()
+                    .unwrap_or_default();
+
+                datapoint_info!(
+                    "transaction-status-service-purge-transaction-history",
+                    "source" => source.as_str(),
+                    ("slot", slot, i64),
+                    (
+                        "rpc_transaction_history_enabled",
+                        enable_rpc_transaction_history,
+                        bool
+                    ),
+                    ("queue_wait_us", queue_wait_us, i64),
+                    ("transactions_processed", stats.transactions_processed, i64),
+                    ("deletion_keys_staged", stats.deletion_keys_staged(), i64),
+                    (
+                        "transaction_status_deletion_keys_staged",
+                        stats.transaction_status_deletion_keys_staged,
+                        i64
+                    ),
+                    (
+                        "transaction_memos_deletion_keys_staged",
+                        stats.transaction_memos_deletion_keys_staged,
+                        i64
+                    ),
+                    (
+                        "address_signatures_deletion_keys_staged",
+                        stats.address_signatures_deletion_keys_staged,
+                        i64
+                    ),
+                    ("prepare_deletions_us", stats.prepare_deletions_us, i64),
+                    ("write_batch_us", stats.write_batch_us, i64),
+                    ("request_elapsed_us", request_elapsed_us, i64),
+                    ("success", success, bool),
+                );
+
+                purge_result?;
+                if let Some(done_sender) = done_sender {
+                    let _ = done_sender.send(());
+                }
+            }
         }
         Ok(())
     }
@@ -356,15 +431,22 @@ pub(crate) mod tests {
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
         solana_clock::{BankId, Slot},
+        solana_entry::entry::next_entry_mut,
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
+        solana_ledger::{
+            blockstore::entries_to_test_shreds, genesis_utils::create_genesis_config,
+            get_tmp_ledger_path_auto_delete,
+        },
         solana_message::SimpleAddressLoader,
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_runtime::{
+            bank::{Bank, TransactionBalancesSet},
+            transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
+        },
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -703,5 +785,75 @@ pub(crate) mod tests {
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
         );
+    }
+
+    #[test]
+    fn test_purge_transaction_history_for_switch_bank() {
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
+        let transaction_status_sender = TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let slot = 42;
+        let payer = Keypair::new();
+        let address = Pubkey::new_unique();
+        let transaction = system_transaction::transfer(&payer, &address, 1, Hash::new_unique());
+        let signature = transaction.signatures[0];
+        let entry = next_entry_mut(&mut Hash::default(), 1, vec![transaction]);
+        blockstore
+            .insert_shreds(
+                entries_to_test_shreds(&[entry], slot, slot - 1, true, 0),
+                true,
+            )
+            .unwrap();
+
+        blockstore
+            .write_transaction_status(
+                slot,
+                signature,
+                std::iter::once((&address, true)),
+                TransactionStatusMeta::default(),
+                0,
+            )
+            .unwrap();
+        blockstore
+            .write_transaction_memos(&signature, slot, "memo".to_string())
+            .unwrap();
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let transaction_status_service = TransactionStatusService::new(
+            transaction_status_receiver,
+            Arc::new(AtomicU64::default()),
+            true,
+            None,
+            blockstore.clone(),
+            false,
+            None,
+            exit.clone(),
+        );
+
+        transaction_status_sender
+            .send_purge_transaction_history_for_slot(
+                slot,
+                TransactionHistoryPurgeSource::SwitchBank,
+                TransactionHistoryPurgeInput::SwitchBank,
+            )
+            .unwrap();
+
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, slot)
+                .unwrap()
+                .is_none()
+        );
+        transaction_status_service.quiesce_and_join_for_tests(exit);
     }
 }

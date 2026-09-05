@@ -46,6 +46,9 @@ use {
         bank_forks_controller::{BankForksController, BankForksControllerError},
         block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
+        },
         validated_block_finalization::ValidatedBlockFinalizationCert,
         validated_reward_certificate::ValidatedRewardCert,
     },
@@ -146,6 +149,7 @@ pub struct BlockCreationLoopConfig {
     pub banking_tracer: Arc<BankingTracer>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
+    pub transaction_status_sender: Option<TransactionStatusSender>,
 
     // Receivers / notifications from banking stage / replay / votor
     pub leader_window_info_receiver: Receiver<LeaderWindowInfo>,
@@ -183,6 +187,7 @@ struct LeaderContext {
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
     entry_notification_sender: Option<EntryNotifierSender>,
+    transaction_status_sender: Option<TransactionStatusSender>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
     reward_certs_requestor: CertsRequestor,
@@ -260,6 +265,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         banking_tracer,
         slot_status_notifier,
         entry_notification_sender,
+        transaction_status_sender,
         record_receiver_receiver,
         leader_window_info_receiver,
         replay_highest_frozen,
@@ -316,6 +322,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         rpc_subscriptions,
         slot_status_notifier,
         entry_notification_sender,
+        transaction_status_sender,
         banking_tracer,
         replay_highest_frozen,
         reward_certs_requestor,
@@ -1019,6 +1026,17 @@ fn handle_parent_ready(
         .clear_bank(slot)
         .map_err(|_| PohRecorderError::ResetBankError(old_parent_slot, new_parent_slot))?;
     ctx.poh_recorder.write().unwrap().clear_bank(true);
+    let accumulated_txs = Arc::new(accumulated_txs);
+
+    if let Some(transaction_status_sender) = &ctx.transaction_status_sender {
+        transaction_status_sender
+            .enqueue_purge_transaction_history_for_slot(
+                slot,
+                TransactionHistoryPurgeSource::LeaderWindow,
+                TransactionHistoryPurgeInput::Bcl(Arc::clone(&accumulated_txs)),
+            )
+            .expect("failed to enqueue UpdateParent transaction-history purge");
+    }
 
     if let Some(sender) = &ctx.entry_notification_sender
         && let Err(err) = sender.send(EntryNotification::UpdateParent(EntryUpdateParentInfo {
@@ -1046,9 +1064,9 @@ fn handle_parent_ready(
 
     // Re-inject accumulated transactions back to banking stage for rescheduling
     let packets: Vec<BytesPacket> = accumulated_txs
-        .into_iter()
+        .iter()
         .filter_map(|tx| {
-            let serialized = wincode::serialize(&tx)
+            let serialized = wincode::serialize(tx)
                 .inspect_err(|e| {
                     error!(
                         "failed to serialize transaction for rescheduling - this should never \
@@ -1466,6 +1484,7 @@ mod tests {
         solana_runtime::{
             bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader,
             installed_scheduler_pool::BankWithScheduler,
+            transaction_execution::TransactionStatusMessage,
         },
         solana_system_transaction as system_transaction,
         std::num::NonZeroUsize,
@@ -1535,6 +1554,40 @@ mod tests {
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> Arc<dyn BankForksController> {
         Arc::new(TestBankForksController { bank_forks })
+    }
+
+    fn transaction_history_purge_responder() -> (
+        TransactionStatusSender,
+        std::thread::JoinHandle<(
+            Slot,
+            TransactionHistoryPurgeSource,
+            TransactionHistoryPurgeInput,
+        )>,
+    ) {
+        let (sender, receiver) = bounded(1);
+        let response_thread = std::thread::spawn(move || {
+            let TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                source,
+                purge_input,
+                done_sender,
+                ..
+            } = receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap()
+            else {
+                panic!("expected transaction-history purge request");
+            };
+            assert!(done_sender.is_none());
+            (slot, source, purge_input)
+        });
+        (
+            TransactionStatusSender {
+                sender,
+                dependency_tracker: None,
+            },
+            response_thread,
+        )
     }
 
     fn leader_window_info(start_slot: Slot, parent_slot: Slot) -> LeaderWindowInfo {
@@ -1661,6 +1714,7 @@ mod tests {
             rpc_subscriptions: None,
             slot_status_notifier: None,
             entry_notification_sender: None,
+            transaction_status_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
@@ -1776,6 +1830,7 @@ mod tests {
             rpc_subscriptions: None,
             slot_status_notifier: None,
             entry_notification_sender: None,
+            transaction_status_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
@@ -1847,6 +1902,7 @@ mod tests {
             rpc_subscriptions: None,
             slot_status_notifier: None,
             entry_notification_sender: None,
+            transaction_status_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
@@ -1965,6 +2021,8 @@ mod tests {
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
         let (entry_notification_sender, entry_notification_receiver) = bounded(1);
+        let (transaction_status_sender, purge_response_thread) =
+            transaction_history_purge_responder();
 
         let mut ctx = LeaderContext {
             exit,
@@ -1990,6 +2048,7 @@ mod tests {
             rpc_subscriptions: None,
             slot_status_notifier: None,
             entry_notification_sender: Some(entry_notification_sender),
+            transaction_status_sender: Some(transaction_status_sender),
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
@@ -2045,6 +2104,17 @@ mod tests {
         )
         .unwrap()
         .expect("sad handover should recreate the leader bank");
+
+        let (purge_slot, purge_source, purge_input) = purge_response_thread.join().unwrap();
+        assert_eq!(purge_slot, leader_slot);
+        assert_eq!(purge_source, TransactionHistoryPurgeSource::LeaderWindow);
+        let TransactionHistoryPurgeInput::Bcl(purge_transactions) = purge_input else {
+            panic!("expected BCL transactions in purge request");
+        };
+        assert_eq!(
+            purge_transactions.as_slice(),
+            &[accumulated_tx.clone(), drained_tx.clone()]
+        );
 
         assert_eq!(new_bank.slot(), leader_slot);
         assert_eq!(new_bank.parent_slot(), new_parent_slot);
