@@ -26,7 +26,24 @@ pub(super) trait Shred<'a>: Sized {
     fn payload(&self) -> &Payload;
     fn into_payload(self) -> Payload;
 
-    // Returns the shard index within the erasure coding set.
+    /// Returns the shard index within the erasure coding set: this shred's
+    /// index within its own erasure batch, in
+    /// `[0, num_data_shreds + num_coding_shreds)` — so `[0, 64)` under the
+    /// current 32:32 configuration.
+    ///
+    /// This is what the Reed-Solomon coding and the Merkle tree address a shred
+    /// by, and is unrelated in scale to [`ShredCommonHeader::index`], which is a
+    /// position within the whole slot. Data shreds occupy the lower range of the
+    /// batch and coding shreds the upper, so the two types derive it
+    /// differently:
+    ///
+    /// * Data shreds: `index - fec_set_index`, in `[0, num_data_shreds)`.
+    /// * Coding shreds: `position + num_data_shreds`, in
+    ///   `[num_data_shreds, num_data_shreds + num_coding_shreds)`, computed
+    ///   entirely from the coding header.
+    ///
+    /// Fails with [`Error::InvalidErasureShardIndex`] if the headers do not
+    /// yield an index inside the batch.
     fn erasure_shard_index(&self) -> Result<usize, Error>;
     // Returns the portion of the shred's payload which is erasure coded.
     fn erasure_shard(&self) -> Result<&[u8], Error>;

@@ -147,13 +147,22 @@ pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
     (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
 }
 
-// LAST_SHRED_IN_SLOT also implies DATA_COMPLETE_SHRED.
-// So it cannot be LAST_SHRED_IN_SLOT if not also DATA_COMPLETE_SHRED.
 bitflags! {
+    /// Flags carried by data shreds in [`DataShredHeader::flags`].
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
     pub struct ShredFlags:u8 {
+        /// Mask selecting the six bits that hold the *reference tick*: how many
+        /// ticks had already elapsed in the slot when the leader produced this
+        /// shred. The leader's value ranges over `[0, ticks_per_slot]` but is
+        /// clamped to 63 on the way in, see
+        /// [`ShredFlags::from_reference_tick`].
         const SHRED_TICK_REFERENCE_MASK = 0b0011_1111;
+        /// Flag marking the end of a set of shreds whose concatenated data
+        /// deserializes into a
+        /// [`BlockComponent`](solana_entry::block_component::BlockComponent).
         const DATA_COMPLETE_SHRED       = 0b0100_0000;
+        /// Flag marking the last data shred of the slot; nothing follows it.
+        /// Sets the `DATA_COMPLETE_SHRED` bit as well.
         const LAST_SHRED_IN_SLOT        = 0b1100_0000;
     }
 }
@@ -250,56 +259,189 @@ pub enum Error {
 )]
 #[wincode(tag_encoding = "u8")]
 pub enum ShredType {
+    /// Shreds containing serialized block data.
     #[wincode(tag = 0b1010_0101)]
     Data = 0b1010_0101,
+    /// Shreds containing Reed-Solomon parity over the data shreds of one
+    /// erasure batch.
     #[wincode(tag = 0b0101_1010)]
     Code = 0b0101_1010,
 }
 
+/// Shred type plus the two layout parameters needed to parse everything that
+/// follows the data buffer, packed into the single byte at
+/// [`ShredCommonHeader::shred_variant`].
+///
+/// The high 4 bits identifies the variant and the low 4 bits holds
+/// `proof_size`:
+/// ```text
+///   0b0110_????  MerkleCode
+///   0b0111_????  MerkleCode resigned
+///   0b1001_????  MerkleData
+///   0b1011_????  MerkleData resigned
+/// ```
+/// Every variant in use today is chained, i.e. the payload embeds the Merkle
+/// root of the previous erasure batch.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ShredVariant {
-    // proof_size is the number of Merkle proof entries, and is encoded in the
-    // lowest 4 bits of the binary representation. The first 4 bits identify
-    // the shred variant:
-    //   0b0110_???? MerkleCode
-    //   0b0111_???? MerkleCode resigned
-    //   0b1001_???? MerkleData
-    //   0b1011_???? MerkleData resigned
-    MerkleCode { proof_size: u8, resigned: bool }, // 0b01??_????
-    MerkleData { proof_size: u8, resigned: bool }, // 0b10??_????
+    // 0b01??_????
+    MerkleCode {
+        /// Number of entries in this shred's Merkle proof, i.e. the height of
+        /// the erasure batch's Merkle tree, `ceil(log2(batch size))`. 6 for the
+        /// standard 32:32 batch, see [`PROOF_ENTRIES_FOR_32_32_BATCH`]. Each
+        /// entry occupies `SIZE_OF_MERKLE_PROOF_ENTRY` bytes of the payload, so
+        /// this directly determines how much room is left for data. Encoded in
+        /// the low 4 bits and therefore capped at 15.
+        proof_size: u8,
+        /// Whether the payload reserves a trailing 64 bytes for the
+        /// retransmitter's signature. Set only on the last erasure batch of a
+        /// slot; those shreds are re-signed by each node as they are forwarded
+        /// down the Turbine tree (see [`wire::resign_packet`]), on top of the
+        /// leader's signature which is left intact.
+        resigned: bool,
+    },
+    // 0b10??_????
+    MerkleData {
+        /// See [`ShredVariant::MerkleCode::proof_size`].
+        proof_size: u8,
+        /// See [`ShredVariant::MerkleCode::resigned`].
+        resigned: bool,
+    },
 }
 
-/// A common header that is present in data and code shred headers
+/// The header at the front of every shred, data and coding alike.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct ShredCommonHeader {
+    /// The leader's signature over the *Merkle root of the erasure batch*, not
+    /// over this shred alone.
+    ///
+    /// Every shred in an erasure batch therefore carries the identical
+    /// signature, which is what lets erasure-recovered shreds simply inherit
+    /// the signature of the shreds they were reconstructed from: rebuilding the
+    /// tree yields the same root, so the existing signature still verifies.
+    /// Occupies the first `SIZE_OF_SIGNATURE` bytes of the payload; everything
+    /// it commits to lies past those bytes.
     signature: Signature,
+    /// Shred type and the layout parameters (`proof_size`, `resigned`) that
+    /// determine where the Merkle root, proof and retransmitter signature sit
+    /// within the payload.
     shred_variant: ShredVariant,
+    /// The slot this shred belongs to.
     slot: Slot,
+    /// Position of this shred within its slot, counting from zero.
+    ///
+    /// Data and coding shreds are numbered by two *independent* per-slot
+    /// counters, both of which restart at zero on every slot:
+    ///
+    /// * On a data shred, `index` is its position among the slot's data shreds,
+    ///   bounded by [`MAX_DATA_SHREDS_PER_SLOT`].
+    /// * On a coding shred, `index` is its position among the slot's coding
+    ///   shreds, bounded by [`MAX_CODE_SHREDS_PER_SLOT`].
+    ///
+    /// `sanitize` rejects shreds at or above the respective bound. Because the
+    /// counters are independent, a data shred and a coding shred of the same
+    /// slot routinely share an `index`; only `(slot, index, shred_type)` — i.e.
+    /// [`ShredId`] — is unique.
     index: u32,
+    /// The cluster's shred version, derived from the genesis hash and the list
+    /// of hard forks. Nodes discard shreds whose version does not match their
+    /// own.
     version: u16,
+    /// The `index` of the *first data shred* of this shred's erasure batch.
+    ///
+    /// All shreds of a batch, coding shreds included, carry the same value, so
+    /// `(slot, fec_set_index)` identifies the batch — see [`ErasureSetId`].
+    ///
+    /// It is slot-relative and restarts on every slot: the first erasure batch
+    /// of a slot has `fec_set_index == 0`, the next `32`, and so on in steps
+    /// of [`DATA_SHREDS_PER_FEC_BLOCK`].
+    ///
+    /// Note it is always a *data* shred index. On a data shred,
+    /// `index - fec_set_index` is therefore the shred's position within its
+    /// erasure batch — but on a coding shred that subtraction is meaningless,
+    /// since `index` then comes from the separate coding-shred counter.
     fec_set_index: u32,
 }
 
-/// The data shred header has parent offset and flags
+/// The header that follows [`ShredCommonHeader`] in a data shred.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct DataShredHeader {
+    /// How many slots back this slot's parent is: `slot - parent_slot`.
+    ///
+    /// Stored as an offset rather than an absolute slot to save space, which
+    /// caps the gap to a parent at `u16::MAX` slots; `Shredder::new` rejects
+    /// anything longer. Must be non-zero except in slot 0 — a zero offset
+    /// elsewhere would make a slot its own parent, and `parent()` returns
+    /// [`Error::InvalidParentOffset`] for it.
     parent_offset: u16,
+    /// Reference tick and the batch/slot completion markers. See [`ShredFlags`].
     #[wincode(with = "PodShredFlags")]
     flags: ShredFlags,
-    size: u16, // common shred header + data shred header + data
+    /// Number of bytes in the payload taken by the headers plus the entry data,
+    /// i.e. `SIZE_OF_DATA_SHRED_HEADERS + <num bytes of entry data>`.
+    ///
+    /// A slot's entries are serialized into one long byte stream, which is then
+    /// cut into contiguous chunks, one per data shred. Each chunk is written
+    /// into the shred's *data buffer*: the `ShredData::capacity(proof_size,
+    /// resigned)` bytes of the payload that follow the headers. The buffer is
+    /// fixed-size but a chunk need not fill it, so `size` records where the
+    /// chunk stops and the zero padding begins. `data()` returns exactly
+    /// `payload[SIZE_OF_DATA_SHRED_HEADERS..size]`.
+    ///
+    /// Note this is an offset from the start of the payload, not a length: it
+    /// includes the header bytes, which is why it is never below
+    /// `SIZE_OF_DATA_SHRED_HEADERS`. That lower bound is a shred carrying no
+    /// entry data at all, which is emitted to pad a short erasure batch out to
+    /// [`DATA_SHREDS_PER_FEC_BLOCK`] shreds. The upper bound is
+    /// `SIZE_OF_DATA_SHRED_HEADERS + capacity`; outside that range `data()`
+    /// fails with [`Error::InvalidDataSize`]. Padding past `size` is erasure
+    /// coded along with the rest of the buffer.
+    size: u16,
 }
 
-/// The coding shred header has FEC information
+/// The header that follows [`ShredCommonHeader`] in a coding shred, describing
+/// the Reed-Solomon configuration of the erasure batch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct CodingShredHeader {
+    /// Number of data shreds in this erasure batch — the number of shards that
+    /// must be present, in any combination of data and coding, to recover the
+    /// batch. Currently always [`DATA_SHREDS_PER_FEC_BLOCK`].
     num_data_shreds: u16,
+    /// Number of coding shreds in this erasure batch, currently always
+    /// [`CODING_SHREDS_PER_FEC_BLOCK`].
     num_coding_shreds: u16,
-    position: u16, // [0..num_coding_shreds)
+    /// This shred's position among the batch's coding shreds, in
+    /// `[0, num_coding_shreds)`. Add `num_data_shreds` to get the shred's index
+    /// into the erasure batch as a whole, since data shreds occupy the lower
+    /// range.
+    position: u16,
 }
 
+/// A single shred: one MTU-sized frame of a slot's ledger data, or the
+/// redundancy that protects such frames against packet loss.
+///
+/// Both variants hold the fully deserialized headers alongside the wire bytes
+/// they were parsed from. See the [module docs](self) for the on-wire diagrams,
+/// and [`merkle::ShredData`] / [`merkle::ShredCode`] for how the Merkle root,
+/// proof and retransmitter signature are laid out after them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shred {
+    /// A redundancy shred, computed by Reed-Solomon coding over the data shreds
+    /// of one erasure batch.
+    ///
+    /// It carries no ledger data of its own. A batch of `num_data_shreds` data
+    /// shreds is extended with `num_coding_shreds` of these (both recorded in
+    /// the coding shred's header), and *any* `num_data_shreds` of the resulting
+    /// total suffice to reconstruct the whole batch. A receiver that loses some
+    /// shreds to the network can therefore rebuild them locally instead of
+    /// asking a peer to repair them.
+    ///
+    /// The erasure crate — and so the recovery code and its errors, e.g.
+    /// `reed_solomon_erasure::Error::TooFewParityShards` — calls these *parity
+    /// shards*.
     ShredCode(merkle::ShredCode),
+    /// A shred carrying one contiguous chunk of the slot's serialized
+    /// [`Entry`]s.
     ShredData(merkle::ShredData),
 }
 
