@@ -49,6 +49,27 @@ const SOCKET_TAG_ALPENGLOW: u8 = 13;
 const_assert_eq!(SOCKET_CACHE_SIZE, 14);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
 
+/// Human readable name of a socket tag, or None if the tag is unknown.
+pub const fn socket_tag_name(key: u8) -> Option<&'static str> {
+    Some(match key {
+        SOCKET_TAG_GOSSIP => "gossip",
+        SOCKET_TAG_RPC => "rpc",
+        SOCKET_TAG_RPC_PUBSUB => "rpc_pubsub",
+        SOCKET_TAG_SERVE_REPAIR => "serve_repair",
+        SOCKET_TAG_SERVE_REPAIR_QUIC => "serve_repair_quic",
+        SOCKET_TAG_TPU => "tpu",
+        SOCKET_TAG_TPU_FORWARDS => "tpu_forwards",
+        SOCKET_TAG_TPU_FORWARDS_QUIC => "tpu_forwards_quic",
+        SOCKET_TAG_TPU_QUIC => "tpu_quic",
+        SOCKET_TAG_TPU_VOTE => "tpu_vote",
+        SOCKET_TAG_TPU_VOTE_QUIC => "tpu_vote_quic",
+        SOCKET_TAG_TVU => "tvu",
+        SOCKET_TAG_TVU_QUIC => "tvu_quic",
+        SOCKET_TAG_ALPENGLOW => "alpenglow",
+        _ => return None,
+    })
+}
+
 // An alias for a function that reads data from a ContactInfo entry stored in
 // the gossip CRDS table.
 pub trait ContactInfoQuery<R>: Fn(&ContactInfo) -> R {}
@@ -291,6 +312,19 @@ impl ContactInfo {
 
     pub fn set_shred_version(&mut self, shred_version: u16) {
         self.shred_version = shred_version
+    }
+
+    /// Iterator over every advertised socket as (socket tag, address) pairs,
+    /// including tags which have no dedicated accessor.
+    pub fn iter_sockets(&self) -> impl Iterator<Item = (u8, SocketAddr)> + '_ {
+        let mut port = 0u16;
+        self.sockets.iter().filter_map(move |entry| {
+            // Entries are sanitized on deserialization, so the running port
+            // sum cannot overflow and every index is in bounds.
+            port += entry.offset;
+            let addr = self.addrs.get(usize::from(entry.index))?;
+            Some((entry.key, SocketAddr::new(*addr, port)))
+        })
     }
 
     get_socket!(gossip, SOCKET_TAG_GOSSIP);

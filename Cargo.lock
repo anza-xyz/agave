@@ -8576,6 +8576,7 @@ dependencies = [
  "agave-logger",
  "clap 2.33.3",
  "log",
+ "serde_json",
  "solana-clap-utils",
  "solana-gossip",
  "solana-net-utils",
