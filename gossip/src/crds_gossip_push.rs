@@ -22,6 +22,7 @@ use {
         push_active_set::PushActiveSet,
         received_cache::ReceivedCache,
     },
+    agave_votor_messages::fraction::Fraction,
     itertools::Itertools,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
@@ -46,7 +47,7 @@ const CRDS_GOSSIP_PUSH_FANOUT: usize = 9;
 // might need more time to receive values. 15 seconds should be plenty.
 pub const CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS: u64 = 15000;
 const CRDS_GOSSIP_PRUNE_MSG_TIMEOUT_MS: u64 = 500;
-const CRDS_GOSSIP_PRUNE_STAKE_THRESHOLD_PCT: f64 = 0.15;
+const CRDS_GOSSIP_PRUNE_STAKE_THRESHOLD: Fraction = Fraction::from_percentage(15);
 const CRDS_GOSSIP_PRUNE_MIN_INGRESS_NODES: usize = 2;
 const CRDS_GOSSIP_PUSH_ACTIVE_SET_SIZE: usize = CRDS_GOSSIP_PUSH_FANOUT + 3;
 
@@ -105,7 +106,7 @@ impl CrdsGossipPush {
                     .prune(
                         self_pubkey,
                         origin,
-                        CRDS_GOSSIP_PRUNE_STAKE_THRESHOLD_PCT,
+                        CRDS_GOSSIP_PRUNE_STAKE_THRESHOLD,
                         CRDS_GOSSIP_PRUNE_MIN_INGRESS_NODES,
                         stakes,
                     )
