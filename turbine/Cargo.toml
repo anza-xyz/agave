@@ -31,6 +31,7 @@ lru = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
+scopeguard = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-cost-model = { workspace = true }
@@ -66,14 +67,19 @@ agave-votor-messages = { path = "../votor-messages", features = ["dev-context-on
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }
+clap = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-rayon-threadlimit = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-transaction = { workspace = true }
 solana-turbine = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
+
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
+jemallocator = { workspace = true }
 
 [[bench]]
 name = "cluster_info"
