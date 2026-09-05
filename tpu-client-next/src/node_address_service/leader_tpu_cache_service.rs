@@ -245,9 +245,13 @@ pub enum Error {
 /// [`LeaderTpuCacheService`] to estimate the next leader.
 #[async_trait]
 pub trait ClusterInfoProvider: Send + Sync {
+    /// Returns the slot to start leader tracking from.
     async fn initial_slot(&self) -> Result<Slot, Error>;
+    /// Returns the TPU socket address of every known cluster node, keyed by identity.
     async fn tpu_socket_map(&self) -> Result<HashMap<Pubkey, SocketAddr>, Error>;
+    /// Returns `(slots_in_epoch, last_slot_in_epoch)` for the epoch containing `first_slot`.
     async fn epoch_info(&self, first_slot: Slot) -> Result<(Slot, Slot), Error>;
+    /// Returns the leaders of slots `first_slot..first_slot + slots_limit`. It may return fewer.
     async fn slot_leaders(&self, first_slot: Slot, slots_limit: u64) -> Result<Vec<Pubkey>, Error>;
 }
 
@@ -269,17 +273,24 @@ async fn update_leader_info(
         )
         .await?;
     }
-    if estimated_current_slot.saturating_add(MAX_FANOUT_SLOTS) > slot_leaders.last_slot() {
+
+    // Cap the refresh lookahead at half the epoch: short epochs can never cache
+    // a full fanout, and demanding one would trigger a refetch per slot event.
+    let refresh_lookahead = MAX_FANOUT_SLOTS.min(epoch_info.slots_in_epoch / 2);
+    if estimated_current_slot.saturating_add(refresh_lookahead) > slot_leaders.last_slot() {
+        // The failed fetch may have crossed into the next epoch, which the RPC cannot serve while its
+        // root trails the boundary. Retry with the current epoch's remainder, which it can always serve.
+        // This can only occur with short epochs (test clusters, warmup).
+        let slot_limit = if *num_consecutive_failures > 0 {
+            epoch_info.remaining_slots(estimated_current_slot)
+        } else {
+            epoch_info.slots_in_epoch
+        };
+
         try_update(
             "slot leaders",
             slot_leaders,
-            || {
-                SlotLeaders::new(
-                    cluster_info,
-                    estimated_current_slot,
-                    epoch_info.slots_in_epoch,
-                )
-            },
+            || SlotLeaders::new(cluster_info, estimated_current_slot, slot_limit),
             num_consecutive_failures,
             max_consecutive_failures,
         )
@@ -345,22 +356,30 @@ async fn initialize_state(
         if leader_tpu_map.is_none() {
             leader_tpu_map = LeaderTpuMap::new(cluster_info).await.ok();
         }
-        if epoch_info.is_none() {
-            epoch_info = EpochInfo::new(cluster_info, slot_receiver.slot())
-                .await
-                .ok();
+
+        let current_slot = slot_receiver.slot();
+        if epoch_info
+            .as_ref()
+            .is_none_or(|info: &EpochInfo| current_slot > info.last_slot_in_epoch)
+        {
+            epoch_info = EpochInfo::new(cluster_info, current_slot).await.ok();
         }
 
         if let Some(epoch_info) = &epoch_info
             && slot_leaders.is_none()
         {
-            slot_leaders = SlotLeaders::new(
-                cluster_info,
-                slot_receiver.slot(),
-                epoch_info.slots_in_epoch,
-            )
-            .await
-            .ok();
+            // The failed fetch may have crossed into the next epoch, which the RPC cannot serve while its
+            // root trails the boundary. Retry with the current epoch's remainder, which it can always serve.
+            // This can only occur with short epochs (test clusters, warmup).
+            let slot_limit = if num_attempts > 0 {
+                epoch_info.remaining_slots(current_slot)
+            } else {
+                epoch_info.slots_in_epoch
+            };
+
+            slot_leaders = SlotLeaders::new(cluster_info, current_slot, slot_limit)
+                .await
+                .ok();
         }
         if leader_tpu_map.is_some() && epoch_info.is_some() && slot_leaders.is_some() {
             return Ok((
@@ -496,6 +515,11 @@ impl EpochInfo {
             last_slot_in_epoch,
         })
     }
+
+    /// Slots remaining in this epoch, counting `current_slot` itself.
+    fn remaining_slots(&self, current_slot: Slot) -> u64 {
+        (self.last_slot_in_epoch + 1).saturating_sub(current_slot)
+    }
 }
 
 #[async_trait]
@@ -545,4 +569,116 @@ fn extract_cluster_tpu_sockets(
             Some((pubkey, socket))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, tokio::sync::watch};
+
+    /// Provider where leader schedules end one epoch past `root`, matching `getSlotLeaders` behavior.
+    struct MockClusterInfo {
+        slots_in_epoch: u64,
+        root: Slot,
+    }
+
+    #[async_trait]
+    impl ClusterInfoProvider for MockClusterInfo {
+        async fn initial_slot(&self) -> Result<Slot, Error> {
+            unimplemented!()
+        }
+
+        async fn tpu_socket_map(&self) -> Result<HashMap<Pubkey, SocketAddr>, Error> {
+            Ok(HashMap::new())
+        }
+
+        async fn epoch_info(&self, first_slot: Slot) -> Result<(Slot, Slot), Error> {
+            let epoch = first_slot / self.slots_in_epoch;
+            Ok((self.slots_in_epoch, (epoch + 1) * self.slots_in_epoch - 1))
+        }
+
+        async fn slot_leaders(
+            &self,
+            first_slot: Slot,
+            slots_limit: u64,
+        ) -> Result<Vec<Pubkey>, Error> {
+            let last_servable = (self.root / self.slots_in_epoch + 2) * self.slots_in_epoch - 1;
+            if first_slot + slots_limit - 1 > last_servable {
+                return Err(Error::SlotLeadersConnectionFailed(
+                    "leader schedule unavailable".to_string(),
+                ));
+            }
+            Ok(vec![Pubkey::new_unique(); slots_limit as usize])
+        }
+    }
+
+    #[tokio::test]
+    async fn initialization_recovers_at_epoch_boundary() {
+        let cluster_info = MockClusterInfo {
+            slots_in_epoch: 32,
+            root: 14,
+        };
+        let current_slot = 45;
+        let (_, watch_rx) = watch::channel(current_slot);
+        let slot_receiver = SlotReceiver::new(watch_rx);
+        let max_consecutive_failures = 3;
+        let state = initialize_state(&cluster_info, slot_receiver, max_consecutive_failures).await;
+        assert!(state.is_ok(), "{:?}", state.err());
+    }
+
+    #[tokio::test]
+    async fn refresh_recovers_at_epoch_boundary() {
+        let cluster_info = MockClusterInfo {
+            slots_in_epoch: 32,
+            root: 14,
+        };
+        let mut epoch_info = EpochInfo {
+            slots_in_epoch: 32,
+            last_slot_in_epoch: 63,
+        };
+        // Stale cached window ending before tip + MAX_FANOUT_SLOTS forces a refresh.
+        let mut slot_leaders = SlotLeaders {
+            first_slot: 5,
+            leaders: vec![Pubkey::new_unique(); 32],
+        };
+        let current_slot = 45;
+        let max_consecutive_failures = 3;
+        let mut failures = 0;
+
+        // First refresh: full-width, fails, tolerated.
+        let res = update_leader_info(
+            current_slot,
+            &cluster_info,
+            &mut epoch_info,
+            &mut slot_leaders,
+            &mut failures,
+            max_consecutive_failures,
+        )
+        .await;
+        assert!(res.is_ok());
+        assert_eq!(failures, 1);
+
+        // Second refresh: capped to the epoch remainder, succeeds, counter resets.
+        let res = update_leader_info(
+            current_slot,
+            &cluster_info,
+            &mut epoch_info,
+            &mut slot_leaders,
+            &mut failures,
+            max_consecutive_failures,
+        )
+        .await;
+        assert!(res.is_ok());
+        assert_eq!(failures, 0);
+    }
+
+    #[test]
+    fn remaining_slots_counts_inclusive_and_saturates() {
+        let epoch_info = EpochInfo {
+            slots_in_epoch: 32,
+            last_slot_in_epoch: 63,
+        };
+        assert_eq!(epoch_info.remaining_slots(45), 19);
+        assert_eq!(epoch_info.remaining_slots(63), 1);
+        assert_eq!(epoch_info.remaining_slots(64), 0);
+    }
 }
