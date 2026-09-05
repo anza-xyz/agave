@@ -39,7 +39,8 @@ pub(crate) fn should_retain_crds_value(
 
     use GossipFilterDirection::*;
     match value.data() {
-        CrdsData::ContactInfo(node) => node.has_consistent_udp_ip(),
+        // All nodes can send ContactInfo
+        CrdsData::ContactInfo(_) => true,
         // Unstaked nodes can still serve snapshots.
         CrdsData::SnapshotHashes(_) => true,
         // Disabled once Alpenglow is active.
