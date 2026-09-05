@@ -73,6 +73,7 @@ jobs:
           echo "target_branch=$target_branch" | tee -a $GITHUB_OUTPUT
 
       - name: Create PR
+        id: create-pr
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         env:
           NEW_VERSION: ${{ steps.process.outputs.new_version }}
@@ -84,7 +85,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `Bump version to ${process.env.NEW_VERSION}`,
-              draft: true,
+              draft: false,
               head: `version-bump-${process.env.NEW_VERSION}`,
               base: process.env.TARGET_BRANCH
             })
@@ -94,4 +95,26 @@ jobs:
               repo: context.repo.repo,
               issue_number: pr.data.number,
               assignees: [context.actor],
+            })
+
+            core.setOutput('number', pr.data.number)
+
+      - name: Merge PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          NEW_VERSION: ${{ steps.process.outputs.new_version }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.number }}
+        with:
+          # the app is a ruleset bypass actor, GITHUB_TOKEN is not
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const pull_number = Number(process.env.PR_NUMBER)
+
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number,
+              merge_method: 'squash',
+              commit_title: `Bump version to ${process.env.NEW_VERSION} (#${pull_number})`,
+              commit_message: '',
             })
