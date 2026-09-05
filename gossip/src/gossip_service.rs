@@ -3,11 +3,16 @@
 use {
     crate::{
         cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
-        cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
+        engine_cluster_info::EngineClusterInfo,
         epoch_specs::EpochSpecs,
+        gossip_command::GOSSIP_COMMAND_CAPACITY,
+        gossip_engine::GossipEngine,
+        gossip_housekeeper::GossipHousekeeper,
+        gossip_policy::GossipPolicy,
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Sender, bounded},
+    rayon::ThreadPoolBuilder,
     solana_keypair::Keypair,
     solana_net_utils::{
         DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace,
@@ -16,6 +21,7 @@ use {
     },
     solana_perf::{packet::PacketBatch, recycler::Recycler},
     solana_pubkey::Pubkey,
+    solana_rayon_threadlimit::get_thread_count,
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -38,8 +44,6 @@ use {
     },
 };
 
-const SUBMIT_GOSSIP_STATS_INTERVAL: Duration = Duration::from_secs(2);
-
 pub struct GossipService {
     thread_hdls: Vec<JoinHandle<()>>,
 }
@@ -55,7 +59,17 @@ impl GossipService {
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (request_sender, request_receiver) =
+        let stakes = epoch_specs
+            .as_mut()
+            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
+            .unwrap_or_default();
+        let policy = Arc::new(GossipPolicy::new(
+            stakes,
+            cluster_info.is_full_alpenglow_epoch(),
+        ));
+        let (command_sender, command_receiver) = bounded(GOSSIP_COMMAND_CAPACITY);
+        let command_sender = cluster_info.attach_command_endpoint(command_sender);
+        let (ingress_packet_sender, ingress_packet_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         trace!(
             "GossipService: id: {}, listening on primary interface: {:?}, all available \
@@ -71,36 +85,52 @@ impl GossipService {
             gossip_sockets.clone(),
             cluster_info.bind_ip_addrs(),
             exit.clone(),
-            request_sender,
+            ingress_packet_sender,
             Recycler::default(),
             gossip_receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             false,
             false,
         );
-        let (consume_sender, listen_receiver) =
+        let (validated_sender, validated_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
-            epoch_specs.as_ref().map(|es| es.clone_box()),
-            request_receiver,
-            consume_sender,
+        let thread_pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(get_thread_count().min(8))
+                .thread_name(|i| format!("solGossipWork{i:02}"))
+                .build()
+                .unwrap(),
+        );
+        let t_ingress_validation = cluster_info.clone().start_ingress_validation_thread(
+            Arc::clone(&thread_pool),
+            Arc::clone(&policy),
+            ingress_packet_receiver,
+            validated_sender,
             exit.clone(),
         );
-        let (response_sender, response_receiver) =
+        let (outbound_sender, outbound_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let t_listen = cluster_info.clone().listen(
-            epoch_specs.as_ref().map(|es| es.clone_box()),
-            listen_receiver,
-            response_sender.clone(),
-            should_check_duplicate_instance,
-            exit.clone(),
-        );
-        let t_gossip = cluster_info.clone().gossip(
-            epoch_specs.as_ref().map(|es| es.clone_box()),
-            response_sender,
+        let t_engine = GossipEngine {
+            cluster_info: EngineClusterInfo::new(Arc::clone(cluster_info)),
+            epoch_specs,
+            thread_pool,
+            policy: Arc::clone(&policy),
+            command_sender,
+            command_receiver,
+            ingress_receiver: validated_receiver,
+            outbound_sender,
             gossip_validators,
-            exit.clone(),
-        );
+            should_check_duplicate_instance,
+            exit: exit.clone(),
+        }
+        .spawn();
+        let t_housekeeping = GossipHousekeeper {
+            cluster_info: Arc::clone(cluster_info),
+            policy,
+            receiver_stats: gossip_receiver_stats,
+            exit: exit.clone(),
+        }
+        .spawn();
         let gossip_responder_socket = match xdp_sender {
             Some(xdp_sender) => GossipResponderSocket::Xdp(xdp_sender),
             None => GossipResponderSocket::Udp {
@@ -112,34 +142,15 @@ impl GossipService {
         let t_responder = run_responder(
             "Gossip",
             gossip_responder_socket,
-            response_receiver,
+            outbound_receiver,
             stats_reporter_sender,
         );
-        let t_metrics = Builder::new()
-            .name("solGossipMetr".to_string())
-            .spawn({
-                let cluster_info = cluster_info.clone();
-                move || {
-                    while !exit.load(Ordering::Relaxed) {
-                        sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
-                        let stakes = epoch_specs
-                            .as_mut()
-                            .map(|es| es.current_epoch_staked_nodes())
-                            .unwrap_or_default();
-
-                        submit_gossip_stats(&cluster_info.stats, &cluster_info.gossip, &stakes);
-                        gossip_receiver_stats.report();
-                    }
-                }
-            })
-            .unwrap();
         let thread_hdls = vec![
             t_receiver,
             t_responder,
-            t_socket_consume,
-            t_listen,
-            t_gossip,
-            t_metrics,
+            t_ingress_validation,
+            t_engine,
+            t_housekeeping,
         ];
         Self { thread_hdls }
     }
@@ -481,30 +492,49 @@ mod tests {
     use {
         super::*,
         crate::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
+        solana_hash::Hash,
         std::sync::{Arc, atomic::AtomicBool},
     };
 
     #[test]
-    // test that stage will exit when flag is set
-    fn test_exit() {
-        let exit = Arc::new(AtomicBool::new(false));
+    #[should_panic(expected = "gossip engine already attached")]
+    fn test_rejects_multiple_command_endpoints() {
+        let keypair = Keypair::new();
+        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
+        let cluster_info =
+            ClusterInfo::new(node.info, Arc::new(keypair), SocketAddrSpace::Unspecified);
+        let (sender, _receiver) = bounded(1);
+        cluster_info.attach_command_endpoint(sender);
+        let (sender, _receiver) = bounded(1);
+        cluster_info.attach_command_endpoint(sender);
+    }
+
+    #[test]
+    fn test_commands_and_restart() {
         let kp = Keypair::new();
         let tn = Node::new_localhost_with_pubkey(&kp.pubkey());
         let cluster_info =
             ClusterInfo::new(tn.info.clone(), Arc::new(kp), SocketAddrSpace::Unspecified);
         let c = Arc::new(cluster_info);
-        let d = GossipService::new(
-            &c,
-            None,
-            tn.sockets.gossip,
-            None,
-            None,
-            true, // should_check_duplicate_instance
-            None,
-            exit.clone(),
-        );
-        exit.store(true, Ordering::Relaxed);
-        d.join().unwrap();
+        for slot in 1..=2 {
+            let exit = Arc::new(AtomicBool::new(false));
+            let service = GossipService::new(
+                &c,
+                None,
+                Arc::clone(&tn.sockets.gossip),
+                None,
+                None,
+                true, // should_check_duplicate_instance
+                None,
+                exit.clone(),
+            );
+            let full = (slot, Hash::new_unique());
+            c.push_snapshot_hashes(full, Vec::new()).unwrap();
+            c.flush_gossip_commands();
+            assert_eq!(c.get_snapshot_hashes_for_node(&c.id()).unwrap().full, full);
+            exit.store(true, Ordering::Relaxed);
+            service.join().unwrap();
+        }
     }
 
     #[test]

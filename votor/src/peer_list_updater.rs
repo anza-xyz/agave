@@ -230,8 +230,8 @@ mod tests {
         super::*,
         rand::Rng,
         solana_gossip::{
-            cluster_info::ClusterInfo, contact_info::ContactInfo, crds::GossipRoute,
-            crds_data::CrdsData, crds_value::CrdsValue, node::Node,
+            cluster_info::ClusterInfo, contact_info::ContactInfo, crds_data::CrdsData,
+            crds_value::CrdsValue, node::Node,
         },
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
@@ -244,7 +244,6 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_time_utils::timestamp,
         std::{
             collections::HashMap,
             net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -285,13 +284,7 @@ mod tests {
 
             assert_eq!(node_pubkey, entry.label().pubkey());
 
-            {
-                let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
-
-                gossip_crds
-                    .insert(entry, timestamp(), GossipRoute::LocalMessage)
-                    .unwrap();
-            }
+            cluster_info.insert_crds_value_for_tests(entry).unwrap();
         }
     }
 

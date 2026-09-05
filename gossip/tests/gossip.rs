@@ -389,10 +389,11 @@ pub fn cluster_info_scale() {
                     .iter()
                     .filter(|v| v.message.account_keys == tx.message.account_keys)
                     .count();
-                num_old += node.gossip.push.num_old.load(Ordering::Relaxed);
-                num_push_total += node.gossip.push.num_total.load(Ordering::Relaxed);
-                num_pushes += node.gossip.push.num_pushes.load(Ordering::Relaxed);
-                num_pulls += node.gossip.pull.num_pulls.load(Ordering::Relaxed);
+                let (old, total, pushes, pulls) = node.gossip_counters_for_tests();
+                num_old += old;
+                num_push_total += total;
+                num_pushes += pushes;
+                num_pulls += pulls;
                 if has_tx == 0 {
                     not_done += 1;
                 }
@@ -412,10 +413,7 @@ pub fn cluster_info_scale() {
         warn!("propagated vote {num_votes} in {time} success: {success}");
         sleep(Duration::from_millis(200));
         for (node, _, _) in nodes.iter() {
-            node.gossip.push.num_old.store(0, Ordering::Relaxed);
-            node.gossip.push.num_total.store(0, Ordering::Relaxed);
-            node.gossip.push.num_pushes.store(0, Ordering::Relaxed);
-            node.gossip.pull.num_pulls.store(0, Ordering::Relaxed);
+            node.reset_gossip_counters_for_tests();
         }
     }
 
