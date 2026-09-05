@@ -9,7 +9,8 @@ use {
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
-            ProcessShredsStats, ReedSolomonCache, Shred, Shredder, filter::ShredRecoveryContext,
+            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+            filter::ShredRecoveryContext,
         },
     },
     solana_packet::PACKET_DATA_SIZE,
@@ -23,7 +24,10 @@ use {
 fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let mut genesis_config = create_genesis_config(1).genesis_config;
     let shred_slot = shreds.first().map(Shred::slot).unwrap_or_default();
-    let slots_per_epoch = shred_slot.max(MINIMUM_SLOTS_PER_EPOCH);
+    let slots_per_epoch = shred_slot
+        .saturating_add(1)
+        .saturating_mul(2)
+        .max(MINIMUM_SLOTS_PER_EPOCH);
     genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
@@ -80,13 +84,14 @@ fn make_shreds_from_entries<R: Rng>(
     reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
 ) -> (Vec<Shred>, Vec<Shred>) {
+    let next_shred_index = rng.random_range(0..60) * DATA_SHREDS_PER_FEC_BLOCK as u32;
     let (data, code) = shredder.entries_to_merkle_shreds_for_tests(
         keypair,
         entries,
         is_last_in_slot,
         chained_merkle_root,
-        rng.random_range(0..2_000), // next_shred_index
-        rng.random_range(0..2_000), // next_code_index
+        next_shred_index,
+        next_shred_index,
         reed_solomon_cache,
         stats,
     );
@@ -200,6 +205,7 @@ fn run_recover_shreds(
     code.sort_unstable_by_key(|shred| shred.index());
     let mut shreds = data;
     shreds.extend(code);
+
     c.bench_function(name, |b| {
         let mut shred_recovery_context = new_shred_recovery_context(&shreds);
         b.iter(|| {
