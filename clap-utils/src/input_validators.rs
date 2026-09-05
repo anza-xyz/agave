@@ -372,8 +372,7 @@ where
     let (prefix, value) = value
         .as_ref()
         .split_once(':')
-        .ok_or("Seed must contain ':' as delimiter")
-        .unwrap();
+        .ok_or("Seed must contain ':' as delimiter")?;
     if prefix.is_empty() || value.is_empty() {
         Err(String::from("Seed prefix or value is empty"))
     } else {
@@ -491,6 +490,34 @@ mod tests {
         assert!(is_derivation("4294967296").is_err());
         assert!(is_derivation("a/b").is_err());
         assert!(is_derivation("0/4294967296").is_err());
+    }
+
+    #[test]
+    fn test_is_structured_seed() {
+        for seed in [
+            "string:value",
+            "pubkey:value",
+            "hex:value",
+            "u8:1",
+            "u16le:1",
+            "i128be:-1",
+            "string:value:with:delimiters",
+        ] {
+            assert_eq!(is_structured_seed(seed), Ok(()), "{seed}");
+        }
+
+        for seed in [":value", "string:"] {
+            assert_eq!(
+                is_structured_seed(seed),
+                Err(String::from("Seed prefix or value is empty")),
+                "{seed}"
+            );
+        }
+
+        assert_eq!(
+            is_structured_seed("missing-delimiter"),
+            Err(String::from("Seed must contain ':' as delimiter"))
+        );
     }
 
     #[test]
