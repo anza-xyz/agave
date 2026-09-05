@@ -56,6 +56,7 @@ use {
     self::traits::{Shred as _, ShredData as _},
     crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},
     bitflags::bitflags,
+    bytes::BufMut,
     itertools::Either,
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},
@@ -66,7 +67,7 @@ use {
     solana_entry::entry::{Entry, create_ticks},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sha256_hasher::hashv,
+    solana_sha256_hasher::Hasher,
     solana_signature::{SIGNATURE_BYTES, Signature},
     static_assertions::const_assert_eq,
     std::{fmt::Debug, mem::MaybeUninit, ops::Range},
@@ -335,13 +336,16 @@ impl ShredId {
 
     pub fn seed(&self, leader: &Pubkey) -> [u8; 32] {
         let ShredId(slot, index, shred_type) = self;
-        hashv(&[
-            &slot.to_le_bytes(),
-            &u8::from(*shred_type).to_le_bytes(),
-            &index.to_le_bytes(),
-            AsRef::<[u8]>::as_ref(leader),
-        ])
-        .to_bytes()
+        let mut bytes = [0u8; 8 + 1 + 4 + 32];
+        let mut cursor = bytes.as_mut_slice();
+        cursor.put_u64_le(*slot);
+        cursor.put_u8(u8::from(*shred_type));
+        cursor.put_u32_le(*index);
+        cursor.put_slice(leader.as_ref());
+        // One inlined update avoids hashv's wrapper and per-slice update overhead.
+        let mut hasher = Hasher::default();
+        hasher.hash(&bytes);
+        hasher.result().to_bytes()
     }
 }
 
