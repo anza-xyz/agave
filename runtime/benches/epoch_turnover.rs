@@ -80,13 +80,26 @@ fn create_stake_account(
     Account::from(account)
 }
 
-fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
+fn populate_vote_accounts(
+    bank: &Bank,
+    vote_pubkeys: Vec<Pubkey>,
+    external_inflation_collector: bool,
+) {
     for vote_pubkey in vote_pubkeys.into_iter() {
         let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
 
-        let mut vote_state = VoteStateHandler::new_v4(
-            VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
-        );
+        let mut v4 = VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
+        v4.pending_delegator_rewards = 1_000;
+        if external_inflation_collector {
+            let commission_collector = Pubkey::new_unique();
+            v4.inflation_rewards_collector = commission_collector;
+            let lamports = bank.rent_collector().rent.minimum_balance(0);
+            let account =
+                AccountSharedData::new(lamports, 0, &solana_sdk_ids::system_program::id());
+            bank.store_account(&commission_collector, &account);
+        }
+
+        let mut vote_state = VoteStateHandler::new_v4(v4);
 
         for i in 0..SYNTHETIC_VOTE_SLOTS {
             process_slot_vote_unchecked(&mut vote_state, i);
@@ -103,6 +116,7 @@ fn setup_bank(
     vote_accounts: usize,
     stake_accounts: usize,
     inactive_accounts: usize,
+    external_inflation_collector: bool,
 ) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
     let validators = (0..vote_accounts)
         .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -147,7 +161,7 @@ fn setup_bank(
     let (initial_bank, bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
-    populate_vote_accounts(&initial_bank, vote_pubkeys);
+    populate_vote_accounts(&initial_bank, vote_pubkeys, external_inflation_collector);
 
     let last_slot_in_epoch = initial_bank.get_slots_in_epoch(0).checked_sub(1).unwrap();
 
@@ -165,16 +179,37 @@ fn setup_bank(
 fn bench_epoch_turnover(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_epoch_turnover");
 
-    let mut cases =
-        iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS, [ONE_INACTIVE_ACCOUNT]).collect::<Vec<_>>();
-    cases.push((VOTE_ACCOUNTS[1], STAKE_ACCOUNTS[1], MANY_INACTIVE_ACCOUNTS));
+    let mut cases = iproduct!(
+        VOTE_ACCOUNTS,
+        STAKE_ACCOUNTS,
+        [ONE_INACTIVE_ACCOUNT],
+        [false, true]
+    )
+    .collect::<Vec<_>>();
+    cases.push((
+        VOTE_ACCOUNTS[1],
+        STAKE_ACCOUNTS[1],
+        MANY_INACTIVE_ACCOUNTS,
+        false,
+    ));
 
-    for (vote_accounts, stake_accounts, inactive_accounts) in cases.into_iter() {
+    for (vote_accounts, stake_accounts, inactive_accounts, external_inflation_collector) in
+        cases.into_iter()
+    {
+        let collector_type = if external_inflation_collector {
+            "external"
+        } else {
+            "vote_account"
+        };
         let name =
-            format!("{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive");
+            format!("{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive_{collector_type}_collector");
 
-        let (initial_bank, bank_forks) =
-            setup_bank(vote_accounts, stake_accounts, inactive_accounts);
+        let (initial_bank, bank_forks) = setup_bank(
+            vote_accounts,
+            stake_accounts,
+            inactive_accounts,
+            external_inflation_collector,
+        );
         let first_epoch_slot = initial_bank.slot() + 1;
 
         group.bench_function(name.as_str(), move |b| {
@@ -200,7 +235,7 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
         let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
 
         let (initial_bank, bank_forks) =
-            setup_bank(vote_accounts, stake_accounts, ONE_INACTIVE_ACCOUNT);
+            setup_bank(vote_accounts, stake_accounts, ONE_INACTIVE_ACCOUNT, false);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         let bank = Arc::new(Bank::new_from_parent(
