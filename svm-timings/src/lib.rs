@@ -23,15 +23,6 @@ pub struct ProgramTiming {
 }
 
 impl ProgramTiming {
-    pub fn coalesce_error_timings(&mut self, current_estimated_program_cost: u64) {
-        for tx_error_compute_consumed in self.errored_txs_compute_consumed.drain(..) {
-            let compute_units_update =
-                std::cmp::max(current_estimated_program_cost, tx_error_compute_consumed);
-            self.accumulated_units += compute_units_update;
-            self.count += 1;
-        }
-    }
-
     pub fn accumulate_program_timings(&mut self, other: &ProgramTiming) {
         self.accumulated_us += other.accumulated_us;
         self.accumulated_units += other.accumulated_units;
