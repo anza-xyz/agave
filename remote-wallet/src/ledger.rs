@@ -69,6 +69,10 @@ const LEDGER_NANO_GEN5_PIDS: [u16; 33] = [
 ];
 const LEDGER_TRANSPORT_HEADER_LEN: usize = 5;
 
+/// Bytes of the current-format app-configuration vector that are actually read:
+/// blind-signing flag, pubkey display mode, then major, minor and patch.
+const CURRENT_APP_CONFIGURATION_LEN: usize = 5;
+
 const HID_PACKET_SIZE: usize = 64 + HID_PREFIX_ZERO;
 
 #[cfg(windows)]
@@ -346,7 +350,11 @@ impl LedgerWallet {
 
     fn get_configuration_vector(&self) -> Result<ConfigurationVersion, RemoteWalletError> {
         if let Ok(config) = self._send_apdu(commands::GET_APP_CONFIGURATION, 0, 0, &[], false) {
-            if config.len() != 5 {
+            // Newer Solana app versions append fields to this vector, and only
+            // the first five bytes are read (see `get_settings` and
+            // `get_firmware_version`), so a longer one is forward compatible.
+            // App 1.16.0 returns seven.
+            if !is_parsable_app_config(config.len()) {
                 return Err(RemoteWalletError::Protocol("Version packet size mismatch"));
             }
             Ok(ConfigurationVersion::Current(config))
@@ -654,6 +662,16 @@ fn is_last_part(p2: u8) -> bool {
     p2 & P2_MORE == 0
 }
 
+/// Whether a current-format app-configuration payload is long enough to parse.
+///
+/// Only the first `CURRENT_APP_CONFIGURATION_LEN` bytes are read, so any vector
+/// at least that long is usable. Requiring an exact length rejected Solana app
+/// 1.16.0, which returns seven bytes, and prevented the device enumerating at
+/// all.
+fn is_parsable_app_config(len: usize) -> bool {
+    len >= CURRENT_APP_CONFIGURATION_LEN
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -680,6 +698,23 @@ mod tests {
         let p2 = P2_EXTEND | P2_MORE;
         assert!(!is_last_part(p2));
         assert!(is_last_part(p2 & !P2_MORE));
+    }
+
+    #[test]
+    fn test_is_parsable_app_config() {
+        // Exactly the fields that are read.
+        assert!(is_parsable_app_config(CURRENT_APP_CONFIGURATION_LEN));
+
+        // Solana app 1.16.0 answers with seven bytes: 00 00 01 10 00 00 00.
+        // The first five are unchanged -- blind-signing, pubkey display, then
+        // 1, 16, 0 -- and the two trailing bytes are simply not read here.
+        // Requiring exactly five made every Ledger running that app fail to
+        // enumerate.
+        assert!(is_parsable_app_config(7));
+
+        // Anything shorter cannot be indexed and must still be rejected.
+        assert!(!is_parsable_app_config(4));
+        assert!(!is_parsable_app_config(0));
     }
 
     #[test]
