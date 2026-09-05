@@ -2139,17 +2139,15 @@ pub mod test {
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 
-        // unstaked connection can handle up to 100tps, so we should send in ~1s.
-        let expected_num_txs = 100;
-        let start_time = tokio::time::Instant::now();
+        // Send one more than the unstaked allowance in a throttling window to
+        // exercise throttling without reaching the QUIC stream flow-control limit.
+        let expected_num_txs = 101;
         for i in 0..expected_num_txs {
             let mut send_stream = client_connection.open_uni().await.unwrap();
             let data = format!("{i}").into_bytes();
             send_stream.write_all(&data).await.unwrap();
             send_stream.finish().unwrap();
         }
-        let elapsed_sending: f64 = start_time.elapsed().as_secs_f64();
-        info!("Elapsed sending: {elapsed_sending}");
 
         // check that delivered all of them
         let start_time = tokio::time::Instant::now();
