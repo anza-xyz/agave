@@ -1150,7 +1150,7 @@ impl JsonRpcRequestProcessor {
             &bank,
             RpcSupply {
                 total: total_supply,
-                circulating: total_supply - non_circulating_supply.lamports,
+                circulating: total_supply.saturating_sub(non_circulating_supply.lamports),
                 non_circulating: non_circulating_supply.lamports,
                 non_circulating_accounts,
             },
@@ -5506,6 +5506,34 @@ pub mod tests {
             }
         };
         assert_eq!(result.value, expected);
+    }
+
+    // The stored capitalization counter can drift below the sum of balances
+    // reported by the non-circulating scan (this has happened in production).
+    // circulating must saturate at zero in that case, matching the REST
+    // /v0/circulating-supply handler, instead of wrapping around.
+    #[test]
+    fn test_get_supply_non_circulating_above_total_saturates() {
+        let rpc = RpcHandler::start();
+
+        let non_circulating_key = non_circulating_accounts()[0];
+        {
+            let bank = rpc.working_bank();
+            bank.process_transaction(&system_transaction::transfer(
+                &rpc.mint_keypair,
+                &non_circulating_key,
+                500_000,
+                bank.confirmed_last_blockhash(),
+            ))
+            .expect("process transaction");
+            bank.set_capitalization_for_tests(1);
+        }
+
+        let request = create_test_request("getSupply", None);
+        let result: RpcResponse<RpcSupply> = parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result.value.total, 1);
+        assert!(result.value.non_circulating >= 500_000);
+        assert_eq!(result.value.circulating, 0);
     }
 
     #[test]
