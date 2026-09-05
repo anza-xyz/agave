@@ -608,14 +608,12 @@ pub fn broadcast_shreds(
     match socket {
         BroadcastSocket::Udp(s) => {
             let packets: Vec<_> = packets.collect();
-            num_packets += packets.len();
+            let batch_len = packets.len();
+            num_packets += batch_len;
             let mut send_mmsg_time = Measure::start("send_mmsg");
             match batch_send(s, packets) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    transmit_stats.dropped_packets_udp += num_failed;
-                    result = Err(Error::Io(ioerr));
-                }
+                Ok(num_sent) => transmit_stats.dropped_packets_udp += batch_len - num_sent,
+                Err(SendPktsError::IoError(ioerr)) => result = Err(Error::Io(ioerr)),
             }
             send_mmsg_time.stop();
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
