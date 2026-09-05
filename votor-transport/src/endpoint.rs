@@ -2,8 +2,8 @@
 use {
     crate::{
         CONN_EVENT_CHANNEL_CAP, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
-        HANDSHAKE_WORKERS_PER_ENDPOINT, MAX_ALPENGLOW_VOTE_ACCOUNTS, MAX_ENDPOINTS,
-        MAX_INFLIGHT_HANDSHAKES, PeerListReceiver,
+        HANDSHAKE_WORKERS_PER_ENDPOINT, MAX_ENDPOINTS, MAX_INFLIGHT_HANDSHAKES, MAX_PEER_LIST_SIZE,
+        PeerListReceiver,
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundLoop},
@@ -363,8 +363,9 @@ struct BanCommand {
 pub struct BanSender(mpsc::Sender<BanCommand>);
 
 /// Ban channel capacity. Sized very generously (bans are rare and small) so the
-/// channel never drops a ban request.
-const BAN_CHANNEL_CAPACITY: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS * 2;
+/// channel never drops a ban request, including the epoch-churn overlap
+/// captured by [`MAX_PEER_LIST_SIZE`].
+const BAN_CHANNEL_CAPACITY: usize = MAX_PEER_LIST_SIZE * 2;
 
 impl BanSender {
     /// Request that `peer` be banned (which also closes its connections) for
