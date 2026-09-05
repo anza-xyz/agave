@@ -11,7 +11,7 @@ use {
         cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
     },
     solana_runtime::bank::Bank,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::transaction_with_meta::{TransactionWithMeta, writable_accounts},
     solana_transaction_error::TransactionError,
 };
 
@@ -19,9 +19,8 @@ mod transaction {
     pub use solana_transaction_error::TransactionResult as Result;
 }
 
-type TransactionCostResults<'a, Tx> = SmallVec<
-    [transaction::Result<TransactionCost<'a, Tx>>;
-        super::consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH],
+type TransactionCostResults = SmallVec<
+    [transaction::Result<TransactionCost>; super::consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH],
 >;
 
 // QosService is local to each banking thread, each instance of QosService provides services to
@@ -36,11 +35,11 @@ impl QosService {
     /// include in the slot, and accumulate costs in the cost tracker.
     /// Returns a vector of results containing selected transaction costs, and the number of
     /// transactions that were *NOT* selected.
-    pub fn select_and_accumulate_transaction_costs<'a, Tx: TransactionWithMeta>(
+    pub fn select_and_accumulate_transaction_costs<Tx: TransactionWithMeta>(
         bank: &Bank,
-        transactions: &'a [Tx],
+        transactions: &[Tx],
         pre_results: impl Iterator<Item = transaction::Result<()>>,
-    ) -> (TransactionCostResults<'a, Tx>, u64) {
+    ) -> (TransactionCostResults, u64) {
         let transaction_costs =
             Self::compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
         let (transactions_qos_cost_results, num_included) =
@@ -56,11 +55,11 @@ impl QosService {
 
     // invoke cost_model to calculate cost for the given list of transactions that have not
     // been filtered out already.
-    fn compute_transaction_costs<'a, Tx: TransactionWithMeta>(
+    fn compute_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
         feature_set: &FeatureSet,
         transactions: impl Iterator<Item = &'a Tx>,
         pre_results: impl Iterator<Item = transaction::Result<()>>,
-    ) -> TransactionCostResults<'a, Tx> {
+    ) -> TransactionCostResults {
         transactions
             .zip(pre_results)
             .map(|(tx, pre_result)| {
@@ -82,11 +81,11 @@ impl QosService {
     /// Given a list of transactions and their costs, this function returns a corresponding
     /// list of Results that indicate if a transaction is selected to be included in the current block,
     /// and a count of the number of transactions that would fit in the block
-    fn select_transactions_per_cost<'a, Tx: TransactionWithMeta>(
+    fn select_transactions_per_cost<'a, Tx: TransactionWithMeta + 'a>(
         transactions: impl Iterator<Item = &'a Tx>,
-        mut transactions_costs: TransactionCostResults<'a, Tx>,
+        mut transactions_costs: TransactionCostResults,
         bank: &Bank,
-    ) -> (TransactionCostResults<'a, Tx>, usize) {
+    ) -> (TransactionCostResults, usize) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
         transactions
@@ -96,7 +95,7 @@ impl QosService {
                     return;
                 };
 
-                match cost_tracker.try_add(cost) {
+                match cost_tracker.try_add(cost, writable_accounts(tx)) {
                     Ok(UpdatedCosts {
                         updated_block_cost,
                         updated_costliest_account_cost,
@@ -133,34 +132,42 @@ impl QosService {
     /// Removes transaction costs from the cost tracker if not committed or recorded, or
     /// updates the transaction costs for committed transactions.
     pub fn remove_or_update_costs<'a, Tx: TransactionWithMeta + 'a>(
-        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
+        transactions: impl Iterator<Item = &'a Tx>,
+        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
         transaction_committed_status: Option<&Vec<CommitTransactionDetails>>,
         bank: &Bank,
     ) {
         match transaction_committed_status {
             Some(transaction_committed_status) => {
                 Self::remove_or_update_recorded_transaction_costs(
+                    transactions,
                     transaction_cost_results,
                     transaction_committed_status,
                     bank,
                 )
             }
-            None => Self::remove_unrecorded_transaction_costs(transaction_cost_results, bank),
+            None => Self::remove_unrecorded_transaction_costs(
+                transactions,
+                transaction_cost_results,
+                bank,
+            ),
         }
     }
 
     /// For recorded transactions, remove units reserved by uncommitted transaction, or update
     /// units for committed transactions.
     fn remove_or_update_recorded_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
-        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
+        transactions: impl Iterator<Item = &'a Tx>,
+        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
         transaction_committed_status: &Vec<CommitTransactionDetails>,
         bank: &Bank,
     ) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
-        transaction_cost_results
+        transactions
+            .zip(transaction_cost_results)
             .zip(transaction_committed_status)
-            .for_each(|(tx_cost, transaction_committed_details)| {
+            .for_each(|((transaction, tx_cost), transaction_committed_details)| {
                 // Only transactions that the qos service included have to be
                 // checked for update
                 if let Ok(tx_cost) = tx_cost {
@@ -172,17 +179,23 @@ impl QosService {
                             result: _,
                             fee_payer_post_balance: _,
                         } => {
-                            cost_tracker.update_execution_cost(
-                                tx_cost,
-                                *compute_units,
+                            let estimated_load_and_execution_units = tx_cost
+                                .programs_execution_cost()
+                                .saturating_add(tx_cost.loaded_accounts_data_size_cost());
+                            let actual_load_and_execution_units = compute_units.saturating_add(
                                 CostModel::calculate_loaded_accounts_data_size_cost(
                                     *loaded_accounts_data_size,
                                     &bank.feature_set,
                                 ),
                             );
+                            cost_tracker.update_cost(
+                                estimated_load_and_execution_units,
+                                actual_load_and_execution_units,
+                                writable_accounts(transaction),
+                            );
                         }
                         CommitTransactionDetails::NotCommitted(_err) => {
-                            cost_tracker.remove(tx_cost);
+                            cost_tracker.remove(tx_cost, writable_accounts(transaction));
                         }
                     }
                 }
@@ -192,19 +205,22 @@ impl QosService {
 
     /// Remove reserved units for transaction batch that unsuccessfully recorded.
     fn remove_unrecorded_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
-        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
+        transactions: impl Iterator<Item = &'a Tx>,
+        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
         bank: &Bank,
     ) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
-        transaction_cost_results.for_each(|tx_cost| {
-            // Only transactions that the qos service included have to be
-            // removed
-            if let Ok(tx_cost) = tx_cost {
-                num_included += 1;
-                cost_tracker.remove(tx_cost);
-            }
-        });
+        transactions
+            .zip(transaction_cost_results)
+            .for_each(|(transaction, tx_cost)| {
+                // Only transactions that the qos service included have to be
+                // removed
+                if let Ok(tx_cost) = tx_cost {
+                    num_included += 1;
+                    cost_tracker.remove(tx_cost, writable_accounts(transaction));
+                }
+            });
         cost_tracker.sub_transactions_in_flight(num_included);
     }
 }
@@ -376,6 +392,7 @@ mod tests {
                     * transaction_count;
 
             QosService::remove_or_update_costs(
+                txs.iter(),
                 qos_cost_results.iter(),
                 Some(&committed_status),
                 &bank,
@@ -430,7 +447,7 @@ mod tests {
                 bank.read_cost_tracker().unwrap().block_cost()
             );
 
-            QosService::remove_or_update_costs(qos_cost_results.iter(), None, &bank);
+            QosService::remove_or_update_costs(txs.iter(), qos_cost_results.iter(), None, &bank);
             assert_eq!(0, bank.read_cost_tracker().unwrap().block_cost());
             assert_eq!(0, bank.read_cost_tracker().unwrap().transaction_count());
         }
@@ -505,6 +522,7 @@ mod tests {
                 .collect();
 
             QosService::remove_or_update_costs(
+                txs.iter(),
                 qos_cost_results.iter(),
                 Some(&committed_status),
                 &bank,
@@ -603,6 +621,7 @@ mod tests {
                 })
                 .collect();
             QosService::remove_or_update_costs(
+                txs.iter(),
                 qos_cost_results.iter(),
                 Some(&committed_status),
                 &bank,
@@ -655,6 +674,7 @@ mod tests {
                 })
                 .collect();
             QosService::remove_or_update_costs(
+                txs.iter(),
                 qos_cost_results.iter(),
                 Some(&committed_status),
                 &bank,

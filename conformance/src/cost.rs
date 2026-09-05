@@ -88,10 +88,7 @@ fn runtime_transaction_from_proto(
     .expect("failed to create RuntimeTransaction")
 }
 
-fn cost_result_to_proto<Tx>(cost: &TransactionCost<'_, Tx>) -> ProtoCostResult
-where
-    Tx: solana_runtime_transaction::transaction_meta::TransactionMeta,
-{
+fn cost_result_to_proto(cost: &TransactionCost) -> ProtoCostResult {
     ProtoCostResult {
         has_cost: true,
         signature_cost: cost.signature_cost(),

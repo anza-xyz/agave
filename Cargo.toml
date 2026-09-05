@@ -265,13 +265,8 @@ indexmap = "2.14.0"
 indicatif = "0.18.6"
 io-uring = { version = "0.7.14", features = ["io_safety"] }
 itertools = "0.15.0"
-jemalloc-ctl = { package = "tikv-jemalloc-ctl", version = "0.6.0", features = [
-    "stats",
-] }
-jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
-    "unprefixed_malloc_on_supported_platforms",
-    "stats",
-] }
+jemalloc-ctl = { package = "tikv-jemalloc-ctl", version = "0.6.0", features = ["stats"] }
+jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = ["unprefixed_malloc_on_supported_platforms", "stats"] }
 json5 = "1.3.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -282,10 +277,7 @@ jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
 libc = "0.2.189"
 libloading = "0.9.0"
-libsecp256k1 = { version = "0.7.2", default-features = false, features = [
-    "std",
-    "static-context",
-] }
+libsecp256k1 = { version = "0.7.2", default-features = false, features = ["std", "static-context"] }
 log = "0.4.34"
 lru = "0.18.2"
 lz4 = "1.28.1"

@@ -1495,6 +1495,21 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_signature_statuses_with_history(signatures))
     }
 
+    /// Gets the statuses of a list of transaction signatures with the given
+    /// [`RpcSignatureStatusConfig`], which can select a commitment level and a
+    /// minimum context slot.
+    ///
+    /// [`RpcSignatureStatusConfig`]: solana_rpc_client_api::config::RpcSignatureStatusConfig
+    pub fn get_signature_statuses_with_config(
+        &self,
+        signatures: &[Signature],
+        config: RpcSignatureStatusConfig,
+    ) -> RpcResult<Vec<Option<TransactionStatus>>> {
+        self.invoke(
+            (self.rpc_client.as_ref()).get_signature_statuses_with_config(signatures, config),
+        )
+    }
+
     /// Check if a transaction has been processed with the given [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
@@ -2604,6 +2619,7 @@ impl RpcClient {
     ///     encoding: Some(UiTransactionEncoding::Json),
     ///     commitment: Some(CommitmentConfig::confirmed()),
     ///     max_supported_transaction_version: Some(0),
+    ///     min_context_slot: None,
     /// };
     /// let transaction = rpc_client.get_transaction_with_config(
     ///     &signature,
@@ -4629,6 +4645,35 @@ mod tests {
         assert_eq!(commitment.total_stake, 42);
         let slots = commitment.commitment.expect("commitment available");
         assert_eq!(slots.len(), MAX_LOCKOUT_HISTORY + 1);
+    }
+
+    #[test]
+    fn test_get_signature_statuses_with_config() {
+        let signature = Signature::default();
+        let config = RpcSignatureStatusConfig {
+            search_transaction_history: false,
+            commitment: Some(CommitmentConfig::confirmed()),
+            min_context_slot: Some(1),
+        };
+
+        // The "succeeds" mock answers with one finalized status per signature.
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+        let statuses = rpc_client
+            .get_signature_statuses_with_config(&[signature], config)
+            .unwrap()
+            .value;
+        assert_eq!(statuses.len(), 1);
+        let status = statuses[0].as_ref().unwrap();
+        assert_eq!(status.slot, 1);
+        assert!(status.err.is_none());
+
+        // The "sig_not_found" mock answers with None per signature.
+        let rpc_client = RpcClient::new_mock("sig_not_found".to_string());
+        let statuses = rpc_client
+            .get_signature_statuses_with_config(&[signature], config)
+            .unwrap()
+            .value;
+        assert_eq!(statuses, vec![None]);
     }
 
     #[test]

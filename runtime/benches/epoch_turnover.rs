@@ -36,13 +36,19 @@ use {
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 const VOTE_ACCOUNTS: [usize; 2] = [10, 1_000];
-const STAKE_ACCOUNTS: [usize; 2] = [1_000, 1_000_000];
+const STAKE_ACCOUNTS: [usize; 2] = [1_000, 1_500_000];
+const ONE_INACTIVE_ACCOUNT: usize = 1;
+const MANY_INACTIVE_ACCOUNTS: usize = 250_000;
 const DELEGATED_STAKE_LAMPORTS: u64 = 1_000 * LAMPORTS_PER_SOL;
 const VALIDATOR_STAKE_LAMPORTS: u64 = 1_000 * LAMPORTS_PER_SOL;
 const GENESIS_MINT_LAMPORTS: u64 = 1_000_000 * LAMPORTS_PER_SOL;
 const SYNTHETIC_VOTE_SLOTS: u64 = (MAX_LOCKOUT_HISTORY as u64) + 42;
 
-fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Account {
+fn create_stake_account(
+    vote_pubkey: &Pubkey,
+    rent_exempt_reserve: u64,
+    deactivation_epoch: u64,
+) -> Account {
     let total_lamports = rent_exempt_reserve + DELEGATED_STAKE_LAMPORTS;
 
     let meta = Meta {
@@ -54,6 +60,7 @@ fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Accou
     let delegation = Delegation {
         voter_pubkey: *vote_pubkey,
         stake: DELEGATED_STAKE_LAMPORTS,
+        deactivation_epoch,
         ..Delegation::default()
     };
 
@@ -92,7 +99,11 @@ fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
     }
 }
 
-fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+fn setup_bank(
+    vote_accounts: usize,
+    stake_accounts: usize,
+    inactive_accounts: usize,
+) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
     let validators = (0..vote_accounts)
         .map(|_| ValidatorVoteKeypairs::new_rand())
         .collect::<Vec<_>>();
@@ -114,7 +125,7 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
     let stake_rent_exempt_reserve = genesis_config.rent.minimum_balance(StakeStateV2::size_of());
 
     for vote_pubkey in vote_pubkeys.iter() {
-        let stake_account = create_stake_account(vote_pubkey, stake_rent_exempt_reserve);
+        let stake_account = create_stake_account(vote_pubkey, stake_rent_exempt_reserve, u64::MAX);
 
         for _ in 0..stakes_per_vote {
             let stake_pubkey = Pubkey::new_unique();
@@ -122,6 +133,15 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
                 .accounts
                 .insert(stake_pubkey, stake_account.clone());
         }
+    }
+
+    let inactive_account = create_stake_account(&vote_pubkeys[0], stake_rent_exempt_reserve, 0);
+
+    for _ in 0..inactive_accounts {
+        let stake_pubkey = Pubkey::new_unique();
+        genesis_config
+            .accounts
+            .insert(stake_pubkey, inactive_account.clone());
     }
 
     let (initial_bank, bank_forks) =
@@ -145,10 +165,16 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
 fn bench_epoch_turnover(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_epoch_turnover");
 
-    for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
-        let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
+    let mut cases =
+        iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS, [ONE_INACTIVE_ACCOUNT]).collect::<Vec<_>>();
+    cases.push((VOTE_ACCOUNTS[1], STAKE_ACCOUNTS[1], MANY_INACTIVE_ACCOUNTS));
 
-        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
+    for (vote_accounts, stake_accounts, inactive_accounts) in cases.into_iter() {
+        let name =
+            format!("{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive");
+
+        let (initial_bank, bank_forks) =
+            setup_bank(vote_accounts, stake_accounts, inactive_accounts);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         group.bench_function(name.as_str(), move |b| {
@@ -173,7 +199,8 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
     for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
         let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
 
-        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
+        let (initial_bank, bank_forks) =
+            setup_bank(vote_accounts, stake_accounts, ONE_INACTIVE_ACCOUNT);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         let bank = Arc::new(Bank::new_from_parent(

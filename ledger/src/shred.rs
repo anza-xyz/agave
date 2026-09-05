@@ -444,6 +444,8 @@ impl Shred {
 
     dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
+    #[cfg(test)]
+    dispatch!(pub(crate) fn erasure_shard(&self) -> Result<&[u8], Error>);
 
     pub(super) fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
     where

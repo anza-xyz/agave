@@ -49,12 +49,8 @@ solana-clock = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-structure = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-last-restart-slot = { workspace = true }
@@ -98,11 +94,7 @@ solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { path = "../transaction-context", features = [
-    "agave-unstable-api",
-    "bincode",
-    "dev-context-only-utils",
-] }
+solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [lints]

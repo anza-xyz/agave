@@ -8415,7 +8415,6 @@ dependencies = [
  "solana-account 4.7.0",
  "solana-clock",
  "solana-compute-budget",
- "solana-instruction",
  "solana-program-runtime",
  "solana-pubkey 4.3.0",
  "solana-rent",
@@ -8424,7 +8423,6 @@ dependencies = [
  "solana-syscalls",
  "solana-system-interface 3.3.0",
  "solana-system-program",
- "solana-transaction-error",
 ]
 
 [[package]]

@@ -22,7 +22,7 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::{BankId, DEFAULT_MS_PER_SLOT},
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::bank_forks::SharableBanks,
@@ -47,24 +47,28 @@ const SATURATION_BUFFER_PCT: u8 = 99;
 const DESATURATION_BUFFER_PCT: u8 = 95;
 
 #[derive(Debug, PartialEq, Eq)]
-enum SchedulingSlotStatus {
+enum BankTransitionStatus {
     Ready,
     Transitioned,
     WaitingForInFlight,
 }
 
-fn update_scheduling_slot(
-    scheduling_slot: &mut Option<Slot>,
-    decision_slot: Option<Slot>,
+// bank_id is globally unique (monotonically assigned per bank, regardless of
+// slot), so it alone is sufficient to detect a transition: a bank replaced
+// mid-slot (e.g. during a sad leader handover) gets a new bank_id even though
+// the slot is unchanged.
+fn update_scheduling_bank(
+    scheduling_bank_id: &mut Option<BankId>,
+    decision_bank_id: Option<BankId>,
     has_in_flight_transactions: bool,
-) -> SchedulingSlotStatus {
-    if *scheduling_slot == decision_slot {
-        SchedulingSlotStatus::Ready
+) -> BankTransitionStatus {
+    if *scheduling_bank_id == decision_bank_id {
+        BankTransitionStatus::Ready
     } else if has_in_flight_transactions {
-        SchedulingSlotStatus::WaitingForInFlight
+        BankTransitionStatus::WaitingForInFlight
     } else {
-        *scheduling_slot = decision_slot;
-        SchedulingSlotStatus::Transitioned
+        *scheduling_bank_id = decision_bank_id;
+        BankTransitionStatus::Transitioned
     }
 }
 
@@ -210,7 +214,7 @@ where
     }
 
     pub fn run(&mut self) -> Result<(), SchedulerError> {
-        let mut scheduling_slot = None;
+        let mut scheduling_bank_id = None;
         let mut scheduling_blocked_at = None;
         let mut cost_pacer = None;
 
@@ -232,19 +236,23 @@ where
                 timing_metrics.decision_time_us += decision_time_us;
             });
             let new_leader_slot = decision.bank().map(|b| b.slot());
+            let new_leader_bank_id = decision.bank().map(|b| b.bank_id());
             self.count_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
             self.receive_completed()?;
-            let scheduling_slot_status = update_scheduling_slot(
-                &mut scheduling_slot,
-                new_leader_slot,
+            // bank_id alone (not slot) detects the transition: it's globally unique,
+            // so a bank replaced mid-slot during a sad leader handover still yields
+            // a new bank_id and correctly triggers a transition here.
+            let bank_transition_status = update_scheduling_bank(
+                &mut scheduling_bank_id,
+                new_leader_bank_id,
                 self.scheduler.has_in_flight_transactions(),
             );
             let scheduling_enabled =
-                scheduling_slot_status != SchedulingSlotStatus::WaitingForInFlight;
+                bank_transition_status != BankTransitionStatus::WaitingForInFlight;
             let scheduling_blocked =
                 !scheduling_enabled && matches!(decision, BufferedPacketsDecision::Consume(_));
             if scheduling_blocked {
@@ -255,7 +263,7 @@ where
                         blocked_at.elapsed().as_micros() as u64;
                 });
             }
-            if scheduling_slot_status == SchedulingSlotStatus::Transitioned {
+            if bank_transition_status == BankTransitionStatus::Transitioned {
                 self.container.flush_held_transactions();
                 cost_pacer = decision.bank().map(|b| {
                     let cost_tracker = b.read_cost_tracker().unwrap();
@@ -634,30 +642,33 @@ mod tests {
     };
 
     #[test]
-    fn test_scheduling_slot_waits_for_in_flight_and_adopts_latest_slot() {
-        let mut scheduling_slot = Some(10);
+    fn test_scheduling_bank_waits_for_in_flight_and_adopts_latest_bank() {
+        // bank_id is globally unique regardless of slot, so tracking it alone
+        // also correctly handles a sad leader handover: a new bank for the same
+        // slot still carries a new bank_id and is treated as a transition below.
+        let mut scheduling_bank_id = Some(100);
 
         assert_eq!(
-            update_scheduling_slot(&mut scheduling_slot, Some(11), true),
-            SchedulingSlotStatus::WaitingForInFlight
+            update_scheduling_bank(&mut scheduling_bank_id, Some(101), true),
+            BankTransitionStatus::WaitingForInFlight
         );
-        assert_eq!(scheduling_slot, Some(10));
+        assert_eq!(scheduling_bank_id, Some(100));
 
-        // Ingestion may observe a newer slot while old work is still in flight.
+        // Ingestion may observe a newer bank while old work is still in flight.
         assert_eq!(
-            update_scheduling_slot(&mut scheduling_slot, Some(12), true),
-            SchedulingSlotStatus::WaitingForInFlight
+            update_scheduling_bank(&mut scheduling_bank_id, Some(102), true),
+            BankTransitionStatus::WaitingForInFlight
         );
-        assert_eq!(scheduling_slot, Some(10));
+        assert_eq!(scheduling_bank_id, Some(100));
 
         assert_eq!(
-            update_scheduling_slot(&mut scheduling_slot, Some(12), false),
-            SchedulingSlotStatus::Transitioned
+            update_scheduling_bank(&mut scheduling_bank_id, Some(102), false),
+            BankTransitionStatus::Transitioned
         );
-        assert_eq!(scheduling_slot, Some(12));
+        assert_eq!(scheduling_bank_id, Some(102));
         assert_eq!(
-            update_scheduling_slot(&mut scheduling_slot, Some(12), true),
-            SchedulingSlotStatus::Ready
+            update_scheduling_bank(&mut scheduling_bank_id, Some(102), true),
+            BankTransitionStatus::Ready
         );
     }
 
