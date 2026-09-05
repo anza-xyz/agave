@@ -891,6 +891,7 @@ fn test_completed_shreds_signal_many() {
 fn test_handle_chaining_basic() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let mut slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
 
     let entries_per_slot = 5;
     let num_slots = 3;
@@ -904,6 +905,11 @@ fn test_handle_chaining_basic() {
         .drain(shreds_per_slot..2 * shreds_per_slot)
         .collect_vec();
     blockstore.insert_shreds(shreds1, false).unwrap();
+    assert_ne!(
+        slot_meta_topology_generation,
+        blockstore.slot_meta_topology_generation()
+    );
+    slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
     let meta1 = blockstore.meta(1).unwrap().unwrap();
     assert!(meta1.next_slots.is_empty());
     // Slot 1 is not connected because slot 0 hasn't been inserted yet
@@ -916,6 +922,11 @@ fn test_handle_chaining_basic() {
         .drain(shreds_per_slot..2 * shreds_per_slot)
         .collect_vec();
     blockstore.insert_shreds(shreds2, false).unwrap();
+    assert_ne!(
+        slot_meta_topology_generation,
+        blockstore.slot_meta_topology_generation()
+    );
+    slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
     let meta2 = blockstore.meta(2).unwrap().unwrap();
     assert!(meta2.next_slots.is_empty());
     // Slot 2 is not connected because slot 0 hasn't been inserted yet
@@ -934,6 +945,10 @@ fn test_handle_chaining_basic() {
     // 3) Write to the zeroth slot, check that every slot
     // is now part of the trunk
     blockstore.insert_shreds(shreds, false).unwrap();
+    assert_eq!(
+        slot_meta_topology_generation,
+        blockstore.slot_meta_topology_generation()
+    );
     for slot in 0..3 {
         let meta = blockstore.meta(slot).unwrap().unwrap();
         // The last slot will not chain to any other slots
@@ -6787,9 +6802,14 @@ fn test_block_id_reads_remain_consistent_after_switch() {
         .unwrap();
     assert!(blockstore.has_duplicate_shreds_in_slot(slot));
 
+    let slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
     blockstore
         .switch_block_from_alternate(slot, temporary_alternate_location)
         .unwrap();
+    assert_ne!(
+        slot_meta_topology_generation,
+        blockstore.slot_meta_topology_generation()
+    );
 
     let duplicate_proof = blockstore.get_duplicate_slot(slot).unwrap();
     assert_eq!(duplicate_proof.shred1, *original_shreds[0].payload());
@@ -7595,6 +7615,7 @@ fn test_multiple_children_reparenting() {
             .unwrap();
     }
     verify_next_slots(&blockstore, 35, &[40, 44, 48]);
+    let mut slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
 
     blockstore
         .insert_shreds(
@@ -7602,6 +7623,11 @@ fn test_multiple_children_reparenting() {
             true,
         )
         .unwrap();
+    assert_ne!(
+        slot_meta_topology_generation,
+        blockstore.slot_meta_topology_generation()
+    );
+    slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
     verify_next_slots(&blockstore, 35, &[40, 48]);
     verify_next_slots(&blockstore, 32, &[44]);
 
@@ -7611,6 +7637,10 @@ fn test_multiple_children_reparenting() {
             true,
         )
         .unwrap();
+    assert_ne!(
+        slot_meta_topology_generation,
+        blockstore.slot_meta_topology_generation()
+    );
     verify_next_slots(&blockstore, 35, &[48]);
     verify_next_slots(&blockstore, 33, &[40]);
 }
