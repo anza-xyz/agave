@@ -193,6 +193,47 @@ pub enum ReplicaTransactionInfoVersions<'a> {
     V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
 }
 
+/// Information about a transaction received on the RPC `sendTransaction` path, at the
+/// point it is admitted to the send transaction service and before it is forwarded to
+/// the current leader.
+///
+/// No execution has occurred when this is sent, so unlike `ReplicaTransactionInfo` there
+/// is no status, log, compute-unit, or balance information available.
+///
+/// The payload is unverified intent. Signature verification only runs when the client
+/// did not request `skipPreflight`, so when `preflight_skipped` is true the transaction's
+/// signatures have not been checked. Consumers must not treat the payload as valid.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReceivedTransactionInfo<'a> {
+    /// The first signature of the transaction, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// The serialized wire transaction, exactly as received.
+    pub transaction: &'a [u8],
+
+    /// Timestamp at admission to the send transaction service, in nanoseconds since
+    /// the UNIX epoch on the node's wall clock.
+    pub received_ns: u64,
+
+    /// The node's view of the current slot at admission (best-effort).
+    pub slot_hint: Slot,
+
+    /// Whether the transaction's signatures were left unverified before admission. This
+    /// is the case when the client requested `skipPreflight`, and on the `requestAirdrop`
+    /// path.
+    pub preflight_skipped: bool,
+}
+
+/// A wrapper to future-proof ReceivedTransactionInfo handling.
+/// If there were a change to the structure of ReceivedTransactionInfo,
+/// there would be new enum entry for the newer version, forcing
+/// plugin implementations to handle the change.
+#[repr(u32)]
+pub enum ReceivedTransactionInfoVersions<'a> {
+    V0_0_1(&'a ReceivedTransactionInfo<'a>),
+}
+
 /// Information about a transaction after deshredding (when entries are formed from shreds).
 /// This is sent before any execution occurs.
 /// Unlike ReplicaTransactionInfo, this does not include TransactionStatusMeta
@@ -757,6 +798,26 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         self.notify_transaction(transaction, slot)
     }
 
+    /// Called when a transaction is received on the RPC `sendTransaction` path and
+    /// admitted to the send transaction service, before and independent of forwarding it
+    /// to the current leader.
+    ///
+    /// This is invoked synchronously on an RPC request thread, after the transaction has
+    /// been handed to the send transaction service. Implementations must be a cheap
+    /// enqueue (bounded queue, drop-oldest) and must never block: time spent here is
+    /// added directly to the `sendTransaction` response latency.
+    ///
+    /// Fires once per admission. Periodic re-forwarding by the send transaction service
+    /// does not re-notify, and a client resubmitting the same signature is a fresh
+    /// admission that fires again, so consumers should dedupe by signature.
+    #[allow(unused_variables)]
+    fn notify_transaction_received(
+        &self,
+        transaction: ReceivedTransactionInfoVersions,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Called when an entry is executed.
     #[deprecated(
         since = "4.3.0",
@@ -882,6 +943,14 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Default is false -- if the plugin is interested in
     /// transaction data, please return true.
     fn transaction_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check if the plugin is interested in transactions received on the RPC
+    /// `sendTransaction` path.
+    /// Default is false -- if the plugin is interested in ingress transaction
+    /// data, return true.
+    fn transaction_received_notifications_enabled(&self) -> bool {
         false
     }
 

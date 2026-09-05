@@ -7,7 +7,9 @@ use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
+        parsed_token_accounts::*,
+        received_transaction_notifier_interface::ReceivedTransactionNotifierArc,
+        rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
     agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
@@ -114,7 +116,7 @@ use {
             Arc, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
-        time::Duration,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     },
     tokio::runtime::Runtime,
 };
@@ -258,6 +260,7 @@ pub struct JsonRpcRequestProcessor {
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     runtime: Arc<Runtime>,
+    received_transaction_notifiers: Vec<ReceivedTransactionNotifierArc>,
 }
 impl Metadata for JsonRpcRequestProcessor {}
 
@@ -422,6 +425,7 @@ impl JsonRpcRequestProcessor {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<Runtime>,
+        received_transaction_notifiers: Vec<ReceivedTransactionNotifierArc>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (transaction_sender, transaction_receiver) = unbounded();
         (
@@ -444,6 +448,7 @@ impl JsonRpcRequestProcessor {
                 max_complete_transaction_status_slot,
                 prioritization_fee_cache,
                 runtime,
+                received_transaction_notifiers,
             },
             transaction_receiver,
         )
@@ -531,6 +536,7 @@ impl JsonRpcRequestProcessor {
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
             prioritization_fee_cache: Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
+            received_transaction_notifiers: Vec::new(),
         }
     }
 
@@ -2785,6 +2791,7 @@ fn get_token_program_id_and_mint(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn _send_transaction(
     meta: JsonRpcRequestProcessor,
     message_hash: Hash,
@@ -2794,7 +2801,20 @@ fn _send_transaction(
     last_valid_block_height: u64,
     durable_nonce_info: Option<(Pubkey, Hash)>,
     max_retries: Option<usize>,
+    slot_hint: Slot,
+    preflight_skipped: bool,
 ) -> Result<String> {
+    // The wire transaction is moved into the send transaction service below, so copy it
+    // for the ingress notification beforehand -- but only when something is actually
+    // listening, so that the common path pays nothing.
+    let notification = (!meta.received_transaction_notifiers.is_empty()).then(|| {
+        let received_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|since_epoch| since_epoch.as_nanos() as u64)
+            .unwrap_or_default();
+        (wire_transaction.clone(), received_ns)
+    });
+
     let transaction_info = TransactionInfo::new(
         message_hash,
         signature,
@@ -2808,6 +2828,20 @@ fn _send_transaction(
     meta.transaction_sender
         .send(transaction_info)
         .unwrap_or_else(|err| warn!("Failed to enqueue transaction: {err}"));
+
+    // Notify after the hand-off, so that a slow consumer can never delay forwarding to the
+    // leader. This still sits on the RPC response path, so consumers must not block here.
+    if let Some((wire_transaction, received_ns)) = notification {
+        for notifier in &meta.received_transaction_notifiers {
+            notifier.notify_transaction_received(
+                &signature,
+                &wire_transaction,
+                received_ns,
+                slot_hint,
+                preflight_skipped,
+            );
+        }
+    }
 
     Ok(signature.to_string())
 }
@@ -3875,6 +3909,7 @@ pub mod rpc_full {
 
             let config = config.unwrap_or_default();
             let bank = meta.bank(config.commitment);
+            let slot_hint = bank.slot();
 
             let blockhash = if let Some(blockhash) = config.recent_blockhash {
                 verify_hash(&blockhash)?
@@ -3914,6 +3949,8 @@ pub mod rpc_full {
                 last_valid_block_height,
                 None,
                 None,
+                slot_hint,
+                true,
             )
         }
 
@@ -3949,6 +3986,8 @@ pub mod rpc_full {
                 commitment: preflight_commitment,
                 min_context_slot,
             })?;
+
+            let slot_hint = preflight_bank.slot();
 
             let transaction = sanitize_transaction(
                 unsanitized_tx,
@@ -4059,6 +4098,8 @@ pub mod rpc_full {
                 last_valid_block_height,
                 durable_nonce_info,
                 max_retries,
+                slot_hint,
+                skip_preflight,
             )
         }
 
@@ -4965,6 +5006,7 @@ pub mod tests {
                 max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache,
                 service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
+                Vec::new(),
             )
             .0;
 
@@ -7105,6 +7147,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime.clone(),
+            Vec::new(),
         );
 
         let (tpu_sender, _client) =
@@ -7244,6 +7287,171 @@ pub mod tests {
                 r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid transaction: Transaction failed to sanitize accounts offsets correctly"},"id":1}"#.to_string(),
             )
         );
+    }
+
+    /// (signature, wire transaction, slot hint, preflight skipped)
+    type ReceivedNotification = (Signature, Vec<u8>, Slot, bool);
+
+    #[derive(Default)]
+    struct TestReceivedTransactionNotifier {
+        notifications: RwLock<Vec<ReceivedNotification>>,
+    }
+
+    impl crate::received_transaction_notifier_interface::ReceivedTransactionNotifier
+        for TestReceivedTransactionNotifier
+    {
+        fn notify_transaction_received(
+            &self,
+            signature: &Signature,
+            wire_transaction: &[u8],
+            received_ns: u64,
+            slot_hint: Slot,
+            preflight_skipped: bool,
+        ) {
+            assert!(received_ns > 0, "admission timestamp should be populated");
+            self.notifications.write().unwrap().push((
+                *signature,
+                wire_transaction.to_vec(),
+                slot_hint,
+                preflight_skipped,
+            ));
+        }
+    }
+
+    #[test]
+    fn test_rpc_send_transaction_notifies_received() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let validator_exit = create_validator_exit(exit.clone());
+        let ledger_path = get_tmp_ledger_path!();
+        let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
+        let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
+        let (bank_forks, mint_keypair, ..) = new_bank_forks();
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let health = RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone());
+        health.stub_set_health_status(Some(RpcHealthStatus::Ok));
+
+        // Freeze bank 0 to prevent a panic in `run_transaction_simulation()`
+        bank_forks.write().unwrap().get(0).unwrap().freeze();
+
+        let mut io = MetaIoHandler::default();
+        io.extend_with(rpc_full::FullImpl.to_delegate());
+        let cluster_info = Arc::new({
+            let keypair = Arc::new(Keypair::new());
+            let contact_info = ContactInfo::new_with_socketaddr(
+                &keypair.pubkey(),
+                &socketaddr!(Ipv4Addr::LOCALHOST, 1234),
+            );
+            ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified)
+        });
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
+        let config = JsonRpcConfig::default();
+        let JsonRpcConfig {
+            rpc_threads,
+            rpc_blocking_threads,
+            rpc_niceness_adj,
+            ..
+        } = config;
+        let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
+        let notifier = Arc::new(TestReceivedTransactionNotifier::default());
+        let (meta, receiver) = JsonRpcRequestProcessor::new(
+            config,
+            None,
+            bank_forks.clone(),
+            block_commitment_cache,
+            blockstore,
+            validator_exit,
+            health.clone(),
+            cluster_info,
+            Hash::default(),
+            None,
+            optimistically_confirmed_bank,
+            Arc::new(RwLock::new(LargestAccountsCache::new(30))),
+            Arc::new(MaxSlots::default()),
+            Arc::new(LeaderScheduleCache::default()),
+            Arc::new(AtomicU64::default()),
+            Some(Arc::new(PrioritizationFeeCache::default())),
+            runtime.clone(),
+            vec![notifier.clone()],
+        );
+
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        SendTransactionService::new(
+            bank_forks.clone(),
+            receiver,
+            tpu_sender,
+            SendTransactionServiceConfig {
+                retry_rate_ms: 1_000,
+                leader_forward_count: 1,
+                ..SendTransactionServiceConfig::default()
+            },
+            exit.clone(),
+        );
+
+        let recent_blockhash = bank_forks.read().unwrap().root_bank().last_blockhash();
+        let expected_slot = bank_forks.read().unwrap().root_bank().slot();
+        // must clear rent exemption, or preflight rejects the transfer
+        let good_transaction = system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            1_000_000,
+            recent_blockhash,
+        );
+        let good_wire_transaction = wincode::serialize(&good_transaction).unwrap();
+
+        // A transaction that fails preflight never reaches the send transaction service, so
+        // it must not notify.
+        let failing_transaction = system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            42,
+            Hash::default(),
+        );
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
+            bs58::encode(wincode::serialize(&failing_transaction).unwrap()).into_string()
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        assert!(res.unwrap().contains("Blockhash not found"));
+        assert!(notifier.notifications.read().unwrap().is_empty());
+
+        // An admitted transaction notifies once, carrying the wire bytes verbatim.
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
+            bs58::encode(&good_wire_transaction).into_string()
+        );
+        let res = io.handle_request_sync(&req, meta.clone()).unwrap();
+        assert!(
+            res.contains(&good_transaction.signatures[0].to_string()),
+            "unexpected sendTransaction response: {res}"
+        );
+        {
+            let notifications = notifier.notifications.read().unwrap();
+            assert_eq!(notifications.len(), 1);
+            let (signature, wire_transaction, slot_hint, preflight_skipped) = &notifications[0];
+            assert_eq!(signature, &good_transaction.signatures[0]);
+            assert_eq!(wire_transaction, &good_wire_transaction);
+            assert_eq!(*slot_hint, expected_slot);
+            // preflight ran, so the signatures were verified
+            assert!(!preflight_skipped);
+        }
+
+        // Resubmitting the same signature is a fresh admission and notifies again, this time
+        // flagged as unverified because preflight was skipped.
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}", {{"skipPreflight": true}}]}}"#,
+            bs58::encode(&good_wire_transaction).into_string()
+        );
+        io.handle_request_sync(&req, meta).unwrap();
+        {
+            let notifications = notifier.notifications.read().unwrap();
+            assert_eq!(notifications.len(), 2);
+            let (signature, wire_transaction, _, preflight_skipped) = &notifications[1];
+            assert_eq!(signature, &good_transaction.signatures[0]);
+            assert_eq!(wire_transaction, &good_wire_transaction);
+            assert!(preflight_skipped);
+        }
     }
 
     #[test]
@@ -7420,6 +7628,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
+            Vec::new(),
         );
 
         SendTransactionService::new(
@@ -9267,6 +9476,7 @@ pub mod tests {
             max_complete_transaction_status_slot,
             prioritization_fee_cache_inner.clone(),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
+            Vec::new(),
         );
 
         let mut io = MetaIoHandler::default();

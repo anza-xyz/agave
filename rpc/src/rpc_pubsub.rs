@@ -30,7 +30,8 @@ use {
         },
         response::{
             Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVersionInfo, RpcVote, SlotInfo, SlotUpdate,
+            RpcReceivedTransaction, RpcSignatureResult, RpcVersionInfo, RpcVote, SlotInfo,
+            SlotUpdate,
         },
     },
     solana_signature::Signature,
@@ -235,6 +236,31 @@ pub trait RpcSolPubSub {
         id: PubSubSubscriptionId,
     ) -> Result<bool>;
 
+    // Get notification when the node accepts a transaction on the sendTransaction path,
+    // before it is forwarded to the current leader
+    #[pubsub(
+        subscription = "transactionReceivedNotification",
+        subscribe,
+        name = "transactionReceivedSubscribe"
+    )]
+    fn transaction_received_subscribe(
+        &self,
+        meta: Self::Metadata,
+        subscriber: Subscriber<RpcReceivedTransaction>,
+    );
+
+    // Unsubscribe from transaction received notification subscription.
+    #[pubsub(
+        subscription = "transactionReceivedNotification",
+        unsubscribe,
+        name = "transactionReceivedUnsubscribe"
+    )]
+    fn transaction_received_unsubscribe(
+        &self,
+        meta: Option<Self::Metadata>,
+        id: PubSubSubscriptionId,
+    ) -> Result<bool>;
+
     // Get notification when a new root is set
     #[pubsub(subscription = "rootNotification", subscribe, name = "rootSubscribe")]
     fn root_subscribe(&self, meta: Self::Metadata, subscriber: Subscriber<Slot>);
@@ -346,6 +372,14 @@ mod internal {
         // Unsubscribe from vote notification subscription.
         #[rpc(name = "voteUnsubscribe")]
         fn vote_unsubscribe(&self, id: SubscriptionId) -> Result<bool>;
+
+        // Get notification when the node accepts a transaction on the sendTransaction path
+        #[rpc(name = "transactionReceivedSubscribe")]
+        fn transaction_received_subscribe(&self) -> Result<SubscriptionId>;
+
+        // Unsubscribe from transaction received notification subscription.
+        #[rpc(name = "transactionReceivedUnsubscribe")]
+        fn transaction_received_unsubscribe(&self, id: SubscriptionId) -> Result<bool>;
 
         // Get notification when a new root is set
         #[rpc(name = "rootSubscribe")]
@@ -587,6 +621,14 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         self.unsubscribe(id)
     }
 
+    fn transaction_received_subscribe(&self) -> Result<SubscriptionId> {
+        self.subscribe(SubscriptionParams::TransactionReceived)
+    }
+
+    fn transaction_received_unsubscribe(&self, id: SubscriptionId) -> Result<bool> {
+        self.unsubscribe(id)
+    }
+
     fn vote_subscribe(&self) -> Result<SubscriptionId> {
         if !self.config.enable_vote_subscription {
             return Err(Error::new(jsonrpc_core::ErrorCode::MethodNotFound));
@@ -622,6 +664,7 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
 mod tests {
     use {
         super::{RpcSolPubSubInternal, *},
+        crate::received_transaction_notifier_interface::ReceivedTransactionNotifier,
         crate::{
             optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank, rpc_pubsub_service,
             rpc_subscriptions::RpcSubscriptions,
@@ -1288,6 +1331,52 @@ mod tests {
            }
         });
         let response = receiver.recv();
+        assert_eq!(
+            expected,
+            serde_json::from_str::<serde_json::Value>(&response).unwrap(),
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_transaction_received_subscribe() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
+        let rpc_subscriptions = Arc::new(RpcSubscriptions::default_with_bank_forks(
+            max_complete_transaction_status_slot,
+            bank_forks,
+        ));
+        let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&rpc_subscriptions);
+        rpc.transaction_received_subscribe().unwrap();
+
+        let signature = Signature::from([7u8; 64]);
+        let wire_transaction = vec![1u8, 2, 3, 4];
+        ReceivedTransactionNotifier::notify_transaction_received(
+            &*rpc_subscriptions,
+            &signature,
+            &wire_transaction,
+            1_700_000_000_000_000_000,
+            42,
+            true,
+        );
+
+        let response = receiver.recv();
+        let expected = json!({
+            "jsonrpc": "2.0",
+            "method": "transactionReceivedNotification",
+            "params": {
+                "result": {
+                    "signature": signature.to_string(),
+                    "transaction": BASE64_STANDARD.encode(&wire_transaction),
+                    "receivedNs": 1_700_000_000_000_000_000u64,
+                    "slotHint": 42,
+                    "preflightSkipped": true,
+                },
+                "subscription": 0,
+            }
+        });
         assert_eq!(
             expected,
             serde_json::from_str::<serde_json::Value>(&response).unwrap(),
