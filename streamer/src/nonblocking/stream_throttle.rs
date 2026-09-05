@@ -31,9 +31,17 @@ const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
 
 const STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.95;
 
-pub(crate) struct StakedStreamLoadEMA {
-    current_load_ema: AtomicU64,
-    load_in_recent_interval: AtomicU64,
+/// Tracks stream load as exponential moving averages, kept separately for
+/// staked and unstaked streams. Both EMAs are advanced in the same update so
+/// they share a time grid and their sum is the total load.
+///
+/// Only the staked EMA drives throttling decisions; the unstaked EMA is
+/// currently reported for observability.
+pub(crate) struct StreamLoadEMA {
+    staked_load_ema: AtomicU64,
+    staked_load_in_recent_interval: AtomicU64,
+    unstaked_load_ema: AtomicU64,
+    unstaked_load_in_recent_interval: AtomicU64,
     last_update: RwLock<Instant>,
     stats: Arc<StreamerStats>,
     max_staked_load_in_throttling_window: u64,
@@ -43,7 +51,7 @@ pub(crate) struct StakedStreamLoadEMA {
     staked_throttling_enabled: AtomicBool,
 }
 
-impl StakedStreamLoadEMA {
+impl StreamLoadEMA {
     pub(crate) fn new(
         stats: Arc<StreamerStats>,
         max_unstaked_connections: usize,
@@ -72,8 +80,10 @@ impl StakedStreamLoadEMA {
             as u64;
 
         Self {
-            current_load_ema: AtomicU64::default(),
-            load_in_recent_interval: AtomicU64::default(),
+            staked_load_ema: AtomicU64::default(),
+            staked_load_in_recent_interval: AtomicU64::default(),
+            unstaked_load_ema: AtomicU64::default(),
+            unstaked_load_in_recent_interval: AtomicU64::default(),
             last_update: RwLock::new(Instant::now()),
             stats,
             max_staked_load_in_throttling_window,
@@ -106,41 +116,76 @@ impl StakedStreamLoadEMA {
         let num_extra_updates =
             time_since_last_update_ms.saturating_sub(1) / u128::from(STREAM_LOAD_EMA_INTERVAL_MS);
 
-        let load_in_recent_interval =
-            u128::from(self.load_in_recent_interval.swap(0, Ordering::Relaxed));
+        // Reset both counters before advancing either EMA so the two
+        // estimates cover the same interval.
+        let staked_load_in_recent_interval = self
+            .staked_load_in_recent_interval
+            .swap(0, Ordering::Relaxed);
+        let unstaked_load_in_recent_interval = self
+            .unstaked_load_in_recent_interval
+            .swap(0, Ordering::Relaxed);
 
-        let mut updated_load_ema = Self::ema_function(
-            u128::from(self.current_load_ema.load(Ordering::Relaxed)),
-            load_in_recent_interval,
+        if let Some(staked_load_ema) = self.advance_ema(
+            &self.staked_load_ema,
+            staked_load_in_recent_interval,
+            num_extra_updates,
+        ) {
+            if self.staked_throttling_on_load_threshold > 0 {
+                self.staked_throttling_enabled.store(
+                    staked_load_ema >= self.staked_throttling_on_load_threshold,
+                    Ordering::Relaxed,
+                );
+            }
+            self.stats
+                .staked_stream_load_ema
+                .store(staked_load_ema as usize, Ordering::Relaxed);
+        }
+
+        if let Some(unstaked_load_ema) = self.advance_ema(
+            &self.unstaked_load_ema,
+            unstaked_load_in_recent_interval,
+            num_extra_updates,
+        ) {
+            self.stats
+                .unstaked_stream_load_ema
+                .store(unstaked_load_ema as usize, Ordering::Relaxed);
+        }
+    }
+
+    /// Advances `ema` by one interval carrying `recent_load`, followed by
+    /// `num_extra_updates` empty intervals. Returns the new value, or `None`
+    /// if it does not fit in a u64, in which case `ema` is left unchanged.
+    fn advance_ema(
+        &self,
+        ema: &AtomicU64,
+        recent_load: u64,
+        num_extra_updates: u128,
+    ) -> Option<u64> {
+        let mut updated_ema = Self::ema_function(
+            u128::from(ema.load(Ordering::Relaxed)),
+            u128::from(recent_load),
         );
 
         for _ in 0..num_extra_updates {
-            updated_load_ema = Self::ema_function(updated_load_ema, 0);
-            if updated_load_ema == 0 {
+            updated_ema = Self::ema_function(updated_ema, 0);
+            if updated_ema == 0 {
                 break;
             }
         }
 
-        let Ok(updated_load_ema) = u64::try_from(updated_load_ema) else {
-            error!("Failed to convert EMA {updated_load_ema} to a u64. Not updating the load EMA");
-            self.stats
-                .stream_load_ema_overflow
-                .fetch_add(1, Ordering::Relaxed);
-            return;
-        };
-
-        if self.staked_throttling_on_load_threshold > 0 {
-            self.staked_throttling_enabled.store(
-                updated_load_ema >= self.staked_throttling_on_load_threshold,
-                Ordering::Relaxed,
-            );
+        match u64::try_from(updated_ema) {
+            Ok(updated_ema) => {
+                ema.store(updated_ema, Ordering::Relaxed);
+                Some(updated_ema)
+            }
+            Err(_) => {
+                error!("Failed to convert EMA {updated_ema} to a u64. Not updating the load EMA");
+                self.stats
+                    .stream_load_ema_overflow
+                    .fetch_add(1, Ordering::Relaxed);
+                None
+            }
         }
-
-        self.current_load_ema
-            .store(updated_load_ema, Ordering::Relaxed);
-        self.stats
-            .stream_load_ema
-            .store(updated_load_ema as usize, Ordering::Relaxed);
     }
 
     pub(crate) fn update_ema_if_needed(&self) {
@@ -158,9 +203,12 @@ impl StakedStreamLoadEMA {
     }
 
     pub(crate) fn increment_load(&self, peer_type: ConnectionPeerType) {
-        if peer_type.is_staked() {
-            self.load_in_recent_interval.fetch_add(1, Ordering::Relaxed);
-        }
+        let load_in_recent_interval = if peer_type.is_staked() {
+            &self.staked_load_in_recent_interval
+        } else {
+            &self.unstaked_load_in_recent_interval
+        };
+        load_in_recent_interval.fetch_add(1, Ordering::Relaxed);
         self.update_ema_if_needed();
     }
 
@@ -288,8 +336,8 @@ pub mod test {
     // connections disabled) and an unstaked window of 200 * 100 / 1000 = 20.
     const TEST_MAX_STREAMS_PER_MS: u64 = 500;
 
-    fn new_throttled_load_ema(allow_unstaked_connections: bool) -> StakedStreamLoadEMA {
-        let load_ema = StakedStreamLoadEMA::new(
+    fn new_throttled_load_ema(allow_unstaked_connections: bool) -> StreamLoadEMA {
+        let load_ema = StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             usize::from(allow_unstaked_connections),
             TEST_MAX_STREAMS_PER_MS,
@@ -302,7 +350,7 @@ pub mod test {
 
     #[test]
     fn test_max_streams_for_unstaked_connection() {
-        let load_ema = Arc::new(StakedStreamLoadEMA::new(
+        let load_ema = Arc::new(StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
@@ -318,7 +366,7 @@ pub mod test {
 
     #[test]
     fn test_staked_throttling_on_off() {
-        let mut load_ema = StakedStreamLoadEMA::new(
+        let mut load_ema = StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
@@ -326,15 +374,17 @@ pub mod test {
 
         load_ema.staked_throttling_on_load_threshold = 10;
 
-        load_ema.current_load_ema.store(12, Ordering::Relaxed);
+        load_ema.staked_load_ema.store(12, Ordering::Relaxed);
         load_ema
-            .load_in_recent_interval
+            .staked_load_in_recent_interval
             .store(12, Ordering::Relaxed);
         load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
         assert!(load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
 
-        load_ema.current_load_ema.store(4, Ordering::Relaxed);
-        load_ema.load_in_recent_interval.store(0, Ordering::Relaxed);
+        load_ema.staked_load_ema.store(4, Ordering::Relaxed);
+        load_ema
+            .staked_load_in_recent_interval
+            .store(0, Ordering::Relaxed);
         load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
         assert!(!load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
     }
@@ -420,7 +470,7 @@ pub mod test {
 
     #[test]
     fn test_no_throttle_below_threshold() {
-        let mut load_ema = StakedStreamLoadEMA::new(
+        let mut load_ema = StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
@@ -443,27 +493,90 @@ pub mod test {
 
     #[test]
     fn test_ema_decay_handles_missing_intervals() {
-        let load_ema = StakedStreamLoadEMA::new(
+        let load_ema = StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         );
 
-        load_ema.current_load_ema.store(100, Ordering::Relaxed);
+        load_ema.staked_load_ema.store(100, Ordering::Relaxed);
         load_ema
-            .load_in_recent_interval
+            .staked_load_in_recent_interval
             .store(100, Ordering::Relaxed);
 
         load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS * 3));
 
-        let expected = StakedStreamLoadEMA::ema_function(
-            StakedStreamLoadEMA::ema_function(StakedStreamLoadEMA::ema_function(100, 100), 0),
+        let expected = StreamLoadEMA::ema_function(
+            StreamLoadEMA::ema_function(StreamLoadEMA::ema_function(100, 100), 0),
             0,
         );
         assert_eq!(
-            load_ema.current_load_ema.load(Ordering::Relaxed),
+            load_ema.staked_load_ema.load(Ordering::Relaxed),
             u64::try_from(expected).unwrap()
         );
+    }
+
+    #[test]
+    fn test_unstaked_load_tracked_separately() {
+        let mut load_ema = StreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
+        );
+        load_ema.staked_throttling_on_load_threshold = 10;
+
+        load_ema
+            .staked_load_in_recent_interval
+            .store(100, Ordering::Relaxed);
+        load_ema
+            .unstaked_load_in_recent_interval
+            .store(1000, Ordering::Relaxed);
+        load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
+
+        // Both counters are consumed by the same update.
+        assert_eq!(
+            load_ema
+                .staked_load_in_recent_interval
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            load_ema
+                .unstaked_load_in_recent_interval
+                .load(Ordering::Relaxed),
+            0
+        );
+
+        let expected_staked = u64::try_from(StreamLoadEMA::ema_function(0, 100)).unwrap();
+        let expected_unstaked = u64::try_from(StreamLoadEMA::ema_function(0, 1000)).unwrap();
+        assert_eq!(
+            load_ema.staked_load_ema.load(Ordering::Relaxed),
+            expected_staked
+        );
+        assert_eq!(
+            load_ema.unstaked_load_ema.load(Ordering::Relaxed),
+            expected_unstaked
+        );
+        assert_eq!(
+            load_ema
+                .stats
+                .staked_stream_load_ema
+                .load(Ordering::Relaxed),
+            expected_staked as usize
+        );
+        assert_eq!(
+            load_ema
+                .stats
+                .unstaked_stream_load_ema
+                .load(Ordering::Relaxed),
+            expected_unstaked as usize
+        );
+
+        // Unstaked load alone must not enable staked throttling, even when it
+        // is far above the staked threshold.
+        assert!(expected_unstaked >= load_ema.staked_throttling_on_load_threshold);
+        assert!(expected_staked < load_ema.staked_throttling_on_load_threshold);
+        assert!(!load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
     }
 
     #[test]
