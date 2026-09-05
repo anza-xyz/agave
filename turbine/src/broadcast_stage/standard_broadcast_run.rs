@@ -143,6 +143,7 @@ impl StandardBroadcastRun {
         let Some(parent_bank) = bank.parent() else {
             // If our broadcast is quite backed up, the parent bank could have already been
             // pruned from BankForks by a newer window getting rooted
+            self.blacklist_broadcast_slot(bank.slot());
             return Err(Error::WindowSkipped(bank.slot()));
         };
         debug_assert!(parent_bank.is_frozen());
@@ -1268,6 +1269,102 @@ mod test {
         assert!(!standard_broadcast_run.is_broadcast_blacklisted(2));
         assert!(standard_broadcast_run.is_broadcast_blacklisted(3));
         assert!(standard_broadcast_run.is_broadcast_blacklisted(18));
+    }
+
+    #[test]
+    fn test_window_skipped_blacklists_descendants() {
+        let num_shreds_per_slot = 2;
+        let (
+            blockstore,
+            genesis_config,
+            _cluster_info,
+            parent_bank,
+            leader_keypair,
+            _socket,
+            _bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank1 = new_child_bank(&parent_bank, 1);
+        let bank2 = Arc::new(Bank::new_from_parent(
+            bank1.clone(),
+            *bank1.leader(),
+            bank1.slot() + 1,
+        ));
+
+        // Rooting a bank squashes its parent. If broadcast is far enough behind, it can
+        // receive the bank after this has happened and before its block id was populated.
+        assert!(bank1.is_frozen());
+        assert!(bank1.block_id().is_none());
+        bank1.squash();
+        assert!(bank1.parent().is_none());
+
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank1),
+        );
+        let (bsend, brecv) = bounded(1024);
+        let (ssend, srecv) = bounded(1024);
+        let ticks = create_ticks(1, 0, genesis_config.hash());
+        let receive_results = |bank: Arc<Bank>| ReceiveResults {
+            component: BlockComponent::EntryBatch(ticks.clone()),
+            last_tick_height: bank.tick_height() + ticks.len() as u64,
+            bank,
+        };
+
+        let err = standard_broadcast_run
+            .process_receive_results(
+                &leader_keypair,
+                &blockstore,
+                &ssend,
+                &bsend,
+                receive_results(bank1.clone()),
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap_err();
+        assert_matches!(err, Error::WindowSkipped(1));
+        assert!(standard_broadcast_run.is_broadcast_blacklisted(1));
+
+        // Further components for this window are drained without broadcasting.
+        standard_broadcast_run
+            .process_receive_results(
+                &leader_keypair,
+                &blockstore,
+                &ssend,
+                &bsend,
+                receive_results(bank1),
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap();
+
+        // The blacklist propagates to descendants, so bank2 never tries to read bank1's
+        // missing block id.
+        let err = standard_broadcast_run
+            .process_receive_results(
+                &leader_keypair,
+                &blockstore,
+                &ssend,
+                &bsend,
+                receive_results(bank2.clone()),
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap_err();
+        assert_matches!(err, Error::DuplicateSlotBroadcast(2));
+        assert!(standard_broadcast_run.is_broadcast_blacklisted(2));
+
+        standard_broadcast_run
+            .process_receive_results(
+                &leader_keypair,
+                &blockstore,
+                &ssend,
+                &bsend,
+                receive_results(bank2),
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap();
+        assert!(brecv.try_recv().is_err());
+        assert!(srecv.try_recv().is_err());
     }
 
     #[test]
