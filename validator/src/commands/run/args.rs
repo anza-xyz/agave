@@ -7,7 +7,7 @@ use {
     agave_snapshots::{SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion},
     bytesize::ByteSize,
     clap::{App, Arg, ArgMatches, values_t},
-    solana_accounts_db::utils::create_and_canonicalize_directory,
+    solana_accounts_db::{accounts_index::BINS_DEFAULT, utils::create_and_canonicalize_directory},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
@@ -31,11 +31,14 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::{collections::HashSet, net::SocketAddr, path::PathBuf},
+    std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::LazyLock},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
+static ACCOUNTS_INDEX_BINS_HELP: LazyLock<String> = LazyLock::new(|| {
+    format!("Number of bins to divide the accounts index into [default: {BINS_DEFAULT}]")
+});
 
 pub mod account_secondary_indexes;
 pub mod blockstore_options;
@@ -1062,7 +1065,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("BINS")
             .validator(is_pow2)
             .takes_value(true)
-            .help("Number of bins to divide the accounts index into"),
+            .help(&ACCOUNTS_INDEX_BINS_HELP),
     )
     .arg(
         Arg::with_name("accounts_index_limit")
@@ -1387,6 +1390,42 @@ mod tests {
             [&["run_command"], &args[..]].concat(),
             expected_args,
         );
+    }
+
+    #[test]
+    fn test_accounts_index_bins_default_is_shown_in_help() {
+        let default_args = DefaultArgs::default();
+        let mut app = add_args(App::new("run_command"), &default_args);
+
+        let matches = app.clone().get_matches_from_safe(["run_command"]).unwrap();
+        assert_eq!(matches.value_of("accounts_index_bins"), None);
+
+        let explicit_bins = (BINS_DEFAULT * 2).to_string();
+        let matches = app
+            .clone()
+            .get_matches_from_safe(["run_command", "--accounts-index-bins", &explicit_bins])
+            .unwrap();
+        assert_eq!(
+            matches
+                .value_of("accounts_index_bins")
+                .unwrap()
+                .parse::<usize>()
+                .unwrap(),
+            BINS_DEFAULT * 2
+        );
+
+        let mut help = Vec::new();
+        app.write_long_help(&mut help).unwrap();
+        let help = String::from_utf8(help).unwrap();
+        let accounts_index_bins_help = help
+            .split("--accounts-index-bins <BINS>")
+            .nth(1)
+            .expect("accounts index bins argument should be present")
+            .split("\n    --")
+            .next()
+            .unwrap();
+
+        assert!(accounts_index_bins_help.contains(&format!("[default: {BINS_DEFAULT}]")));
     }
 
     #[test]
