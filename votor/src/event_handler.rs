@@ -242,7 +242,10 @@ impl EventHandler {
         }
 
         vctx.vote_history.add_parent_ready(slot, parent_block);
-        Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
+        // During standstill, defer pending-block retries until the scaled block timeout.
+        if local_context.standstill_slot.is_none() {
+            Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
+        }
         let root_bank = vctx.sharable_banks.root();
         let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
         let delta_first_fec_set = delta_block;
@@ -301,14 +304,18 @@ impl EventHandler {
                     "{}: Block {block:?} parent {parent_block:?}",
                     local_context.my_pubkey
                 );
-                if Self::try_notar(
-                    &local_context.my_pubkey,
-                    block,
-                    parent_block,
-                    &mut local_context.pending_blocks,
-                    vctx,
-                    &mut votes,
-                )? {
+                // Keep completed blocks pending during standstill so Block events cannot bypass
+                // the scaled timeout.
+                let voted_notar = local_context.standstill_slot.is_none()
+                    && Self::try_notar(
+                        &local_context.my_pubkey,
+                        block,
+                        parent_block,
+                        &mut local_context.pending_blocks,
+                        vctx,
+                        &mut votes,
+                    )?;
+                if voted_notar {
                     Self::check_pending_blocks(
                         &local_context.my_pubkey,
                         &mut local_context.pending_blocks,
@@ -391,7 +398,12 @@ impl EventHandler {
 
             VotorEvent::TimeoutCrashedLeader(slot) => {
                 info!("{}: TimeoutCrashedLeader {slot}", local_context.my_pubkey);
-                if vctx.vote_history.voted(slot) || local_context.received_shred.contains(&slot) {
+                // A completed block proves the leader produced a block even if FirstShred was not
+                // observed.
+                if vctx.vote_history.voted(slot)
+                    || local_context.received_shred.contains(&slot)
+                    || local_context.pending_blocks.contains_key(&slot)
+                {
                     return Ok(votes);
                 }
                 Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
@@ -415,6 +427,17 @@ impl EventHandler {
                     .map_err(EventLoopError::ChannelDisconnected)?;
                 }
                 if vctx.vote_history.voted(slot) {
+                    return Ok(votes);
+                }
+                // Retry the timed-out slot before Skip; standstill may have ended after the block
+                // was deferred.
+                if Self::try_notar_pending_blocks_for_slot(
+                    &local_context.my_pubkey,
+                    slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )? {
                     return Ok(votes);
                 }
                 Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
@@ -821,23 +844,43 @@ impl EventHandler {
         voting_context: &mut VotingContext,
         votes: &mut Vec<BLSOp>,
     ) -> Result<(), VoteError> {
-        let blocks_to_check: Vec<(Block, Block)> = pending_blocks
-            .values()
-            .flat_map(|blocks| blocks.iter())
-            .copied()
-            .collect();
+        let slots_to_check: Vec<Slot> = pending_blocks.keys().copied().collect();
 
-        for (block, parent_block) in blocks_to_check {
-            Self::try_notar(
+        for slot in slots_to_check {
+            Self::try_notar_pending_blocks_for_slot(
                 my_pubkey,
-                block,
-                parent_block,
+                slot,
                 pending_blocks,
                 voting_context,
                 votes,
             )?;
         }
         Ok(())
+    }
+
+    /// Tries to vote notarize on pending blocks for `slot` only.
+    fn try_notar_pending_blocks_for_slot(
+        my_pubkey: &Pubkey,
+        slot: Slot,
+        pending_blocks: &mut PendingBlocks,
+        voting_context: &mut VotingContext,
+        votes: &mut Vec<BLSOp>,
+    ) -> Result<bool, VoteError> {
+        let blocks_to_check = pending_blocks.get(&slot).cloned().unwrap_or_default();
+
+        for (block, parent_block) in blocks_to_check {
+            if Self::try_notar(
+                my_pubkey,
+                block,
+                parent_block,
+                pending_blocks,
+                voting_context,
+                votes,
+            )? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Tries to send a finalize vote for the block if
@@ -1724,6 +1767,170 @@ mod tests {
     }
 
     #[test]
+    fn test_standstill_delays_notar_when_block_precedes_parent_ready() {
+        let mut test_context = setup();
+        test_context.send_standstill_event(0);
+
+        let slot = 1;
+        let parent_block = Block::default();
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank = test_context.create_block_and_send_block_event(slot, root_bank);
+        let block = Block {
+            slot,
+            block_id: bank.block_id().unwrap(),
+        };
+
+        test_context.check_no_vote_or_commitment();
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&slot)
+        );
+
+        test_context.send_parent_ready_event(slot, parent_block);
+        test_context.check_timeout_set(slot);
+        test_context.check_no_vote_or_commitment();
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&slot)
+        );
+
+        test_context.send_timeout_event(slot);
+        test_context.check_for_vote(&Vote::new_notarization_vote(block));
+        test_context.check_for_commitment(CommitmentType::Notarize, slot);
+        test_context.check_no_vote_or_commitment();
+        assert!(
+            !test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&slot)
+        );
+    }
+
+    #[test]
+    fn test_standstill_delays_notar_when_parent_ready_precedes_block() {
+        let mut test_context = setup();
+        test_context.send_standstill_event(0);
+
+        let slot = 1;
+        test_context.send_parent_ready_event(slot, Block::default());
+        test_context.check_timeout_set(slot);
+
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank = test_context.create_block_and_send_block_event(slot, root_bank);
+        let block = Block {
+            slot,
+            block_id: bank.block_id().unwrap(),
+        };
+
+        test_context.check_no_vote_or_commitment();
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&slot)
+        );
+
+        test_context.send_timeout_event(slot);
+        test_context.check_for_vote(&Vote::new_notarization_vote(block));
+        test_context.check_for_commitment(CommitmentType::Notarize, slot);
+        test_context.check_no_vote_or_commitment();
+        assert!(
+            !test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&slot)
+        );
+    }
+
+    #[test]
+    fn test_standstill_timeout_skips_without_pending_block() {
+        let mut test_context = setup();
+        test_context.send_standstill_event(0);
+
+        let slot = 4;
+        test_context.send_parent_ready_event(slot, Block::default());
+        test_context.check_timeout_set(slot);
+        test_context.send_timeout_event(slot);
+
+        for skipped_slot in slot..=last_of_consecutive_leader_slots(slot) {
+            test_context.check_for_vote(&Vote::new_skip_vote(skipped_slot));
+        }
+        test_context.check_no_vote_or_commitment();
+    }
+
+    #[test]
+    fn test_standstill_timeout_only_notars_timed_out_slot() {
+        let mut test_context = setup();
+        test_context.send_standstill_event(0);
+
+        let first_slot = 1;
+        test_context.send_parent_ready_event(first_slot, Block::default());
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let first_bank = test_context.create_block_and_send_block_event(first_slot, root_bank);
+        let first_block = Block {
+            slot: first_slot,
+            block_id: first_bank.block_id().unwrap(),
+        };
+
+        let second_slot = first_slot + 1;
+        let second_bank = test_context.create_block_and_send_block_event(second_slot, first_bank);
+        let second_block = Block {
+            slot: second_slot,
+            block_id: second_bank.block_id().unwrap(),
+        };
+
+        test_context.check_no_vote_or_commitment();
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&first_slot)
+        );
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&second_slot)
+        );
+
+        test_context.send_timeout_event(first_slot);
+        test_context.check_for_vote(&Vote::new_notarization_vote(first_block));
+        test_context.check_for_commitment(CommitmentType::Notarize, first_slot);
+        test_context.check_no_vote_or_commitment();
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&second_slot)
+        );
+
+        test_context.send_timeout_event(second_slot);
+        test_context.check_for_vote(&Vote::new_notarization_vote(second_block));
+        test_context.check_for_commitment(CommitmentType::Notarize, second_slot);
+        test_context.check_no_vote_or_commitment();
+        assert!(test_context.local_context.pending_blocks.is_empty());
+    }
+
+    #[test]
     fn test_restored_parent_ready_sets_timeout() {
         let mut test_context = setup();
         let slot = 4;
@@ -1858,6 +2065,98 @@ mod tests {
         );
         test_context.send_timeout_crashed_leader_event(8);
         test_context.check_no_vote_or_commitment();
+    }
+
+    #[test]
+    fn test_standstill_timeout_crashed_leader_with_pending_block_does_not_skip() {
+        let mut test_context = setup();
+        test_context.send_standstill_event(0);
+
+        let slot = 4;
+        test_context.send_parent_ready_event(slot, Block::default());
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        test_context.create_block_and_send_block_event(slot, root_bank);
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&slot)
+        );
+
+        test_context.send_timeout_crashed_leader_event(slot);
+        test_context.check_no_vote_or_commitment();
+    }
+
+    #[test]
+    fn test_standstill_exit_timeout_notars_pending_block_before_skip() {
+        let mut test_context = setup();
+        test_context.send_standstill_event(0);
+
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let parent_bank = test_context.create_block_only(1, root_bank);
+        let parent_block = Block {
+            slot: parent_bank.slot(),
+            block_id: parent_bank.block_id().unwrap(),
+        };
+        let slot = 4;
+        test_context.send_parent_ready_event(slot, parent_block);
+        let bank = test_context.create_block_and_send_block_event(slot, parent_bank);
+        let block = Block {
+            slot,
+            block_id: bank.block_id().unwrap(),
+        };
+
+        assert!(
+            test_context
+                .voting_context
+                .vote_history
+                .is_parent_ready(slot, &parent_block)
+        );
+        assert!(!test_context.voting_context.vote_history.voted(slot));
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&slot)
+        );
+
+        test_context.send_finalized_event(parent_block, true);
+        assert!(test_context.local_context.standstill_slot.is_none());
+        assert!(
+            test_context
+                .voting_context
+                .vote_history
+                .is_parent_ready(slot, &parent_block)
+        );
+        assert!(!test_context.voting_context.vote_history.voted(slot));
+        assert!(
+            test_context
+                .local_context
+                .pending_blocks
+                .contains_key(&slot)
+        );
+
+        test_context.send_timeout_event(slot);
+        assert_eq!(
+            (
+                test_context.voting_context.vote_history.voted_notar(slot),
+                test_context.voting_context.vote_history.skipped(slot),
+            ),
+            (Some(block.block_id), false),
+            "timeout must notarize the eligible pending block before skipping",
+        );
+        test_context.check_for_vote(&Vote::new_notarization_vote(block));
+        test_context.check_for_commitment(CommitmentType::Notarize, slot);
     }
 
     #[test]
