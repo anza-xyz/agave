@@ -4984,6 +4984,10 @@ impl Bank {
             .flush_accounts_cache(true, Some(self.slot()))
     }
 
+    pub fn has_cached_accounts_for_slot(&self, slot: Slot) -> bool {
+        self.rc.accounts.accounts_db.accounts_cache.contains(slot)
+    }
+
     /// Technically this issues (or even burns!) new lamports,
     /// so be extra careful for its usage
     pub(crate) fn store_account_and_update_capitalization(
