@@ -6911,6 +6911,7 @@ dependencies = [
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
+ "semver 1.0.28",
  "seqlock",
  "serde",
  "serde_bytes",

@@ -52,6 +52,7 @@ num_cpus = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 rayon = { workspace = true }
+semver = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 smallvec = { workspace = true, features = ["const_generics"] }

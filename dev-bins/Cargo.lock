@@ -5681,6 +5681,7 @@ dependencies = [
  "qualifier_attr",
  "rand 0.9.4",
  "rayon",
+ "semver",
  "seqlock",
  "serde",
  "smallvec",
