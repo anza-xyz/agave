@@ -413,9 +413,7 @@ impl ValidatedBlockFinalizationCert {
 mod tests {
     use {
         super::*,
-        crate::genesis_utils::{
-            ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-        },
+        crate::genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         agave_votor_messages::{vote::Vote, wire::get_vote_payload_to_sign},
         bitvec::prelude::*,
         rand::Rng,
@@ -436,11 +434,8 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect();
 
-        let genesis_config_info = create_genesis_config_with_alpenglow_vote_accounts(
-            10_000_000,
-            &validator_keypairs,
-            stakes,
-        );
+        let genesis_config_info =
+            create_genesis_config_with_vote_accounts(10_000_000, &validator_keypairs, stakes);
 
         let bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
         (bank, validator_keypairs)

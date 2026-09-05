@@ -2925,11 +2925,6 @@ mod tests {
         } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        bank_forks
-            .read()
-            .unwrap()
-            .migration_status()
-            .enable_alpenglow_for_tests();
 
         let staked_nodes = bank_forks
             .read()
@@ -2976,11 +2971,6 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        bank_forks
-            .read()
-            .unwrap()
-            .migration_status()
-            .enable_alpenglow_for_tests();
 
         let slot = 1;
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
