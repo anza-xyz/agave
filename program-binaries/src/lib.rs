@@ -110,6 +110,7 @@ pub fn bpf_loader_upgradeable_program_accounts(
     program_id: &Pubkey,
     elf: &[u8],
     rent: &Rent,
+    upgrade_authority_address: Option<Pubkey>,
 ) -> [(Pubkey, Account); 2] {
     let programdata_address = get_program_data_address(program_id);
     let program_account = {
@@ -132,7 +133,7 @@ pub fn bpf_loader_upgradeable_program_accounts(
         let lamports = rent.minimum_balance(space);
         let mut data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::default()),
+            upgrade_authority_address,
         })
         .unwrap();
         data.extend_from_slice(elf);
@@ -156,8 +157,12 @@ pub fn spl_programs(rent: &Rent) -> Vec<(Pubkey, AccountSharedData)> {
         .flat_map(|(program_id, loader_id, elf)| {
             let mut accounts = vec![];
             if loader_id.eq(&solana_sdk_ids::bpf_loader_upgradeable::ID) {
-                for (key, account) in bpf_loader_upgradeable_program_accounts(program_id, elf, rent)
-                {
+                for (key, account) in bpf_loader_upgradeable_program_accounts(
+                    program_id,
+                    elf,
+                    rent,
+                    Some(Pubkey::default()),
+                ) {
                     accounts.push((key, AccountSharedData::from(account)));
                 }
             } else {
@@ -178,8 +183,12 @@ where
         .flat_map(|(program_id, feature_id, elf)| {
             let mut accounts = vec![];
             if feature_id.is_none() || feature_id.is_some_and(|f| is_feature_active(&f)) {
-                for (key, account) in bpf_loader_upgradeable_program_accounts(program_id, elf, rent)
-                {
+                for (key, account) in bpf_loader_upgradeable_program_accounts(
+                    program_id,
+                    elf,
+                    rent,
+                    Some(Pubkey::default()),
+                ) {
                     accounts.push((key, AccountSharedData::from(account)));
                 }
             }

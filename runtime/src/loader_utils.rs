@@ -59,7 +59,12 @@ pub fn create_program(bank: &Bank, loader_id: &Pubkey, name: &str) -> Pubkey {
     let rent = Rent::default();
     if bpf_loader_upgradeable::check_id(loader_id) {
         let [(_, program_account), (programdata_id, programdata_account)] =
-            bpf_loader_upgradeable_program_accounts(&program_id, &elf, &rent);
+            bpf_loader_upgradeable_program_accounts(
+                &program_id,
+                &elf,
+                &rent,
+                Some(Pubkey::default()),
+            );
         bank.store_account(&program_id, &AccountSharedData::from(program_account));
         bank.store_account(
             &programdata_id,
