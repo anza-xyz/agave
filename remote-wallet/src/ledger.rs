@@ -658,6 +658,10 @@ pub fn get_wallet_from_info(
 }
 
 //
+fn is_last_part(p2: u8) -> bool {
+    p2 & P2_MORE == 0
+}
+
 /// Whether a current-format app-configuration payload is long enough to parse.
 ///
 /// Only the first `CURRENT_APP_CONFIGURATION_LEN` bytes are read, so any vector
@@ -666,10 +670,6 @@ pub fn get_wallet_from_info(
 /// all.
 fn is_parsable_app_config(len: usize) -> bool {
     len >= CURRENT_APP_CONFIGURATION_LEN
-}
-
-fn is_last_part(p2: u8) -> bool {
-    p2 & P2_MORE == 0
 }
 
 #[cfg(test)]
