@@ -200,11 +200,19 @@ impl NetworkDevice {
             return Err(io::Error::last_os_error());
         }
 
-        Ok(RingSizes {
-            rx: rp.rx_pending as usize,
-            tx: rp.tx_pending as usize,
-        })
+        validate_ring_sizes(if_name, rp.rx_pending as usize, rp.tx_pending as usize)
     }
+}
+
+fn validate_ring_sizes(if_name: &str, rx: usize, tx: usize) -> io::Result<RingSizes> {
+    // A single zero means "no ring" and is valid.
+    if rx == 0 && tx == 0 {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            format!("{if_name} reported zero ring sizes (rx={rx}, tx={tx})"),
+        ));
+    }
+    Ok(RingSizes { rx, tx })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -496,6 +504,23 @@ pub(crate) unsafe fn mmap_ring<T>(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_validate_ring_sizes() {
+        for (rx, tx) in [(1024, 512), (0, 512), (1024, 0)] {
+            assert_eq!(
+                validate_ring_sizes("eth0", rx, tx).unwrap(),
+                RingSizes { rx, tx }
+            );
+        }
+
+        let err = validate_ring_sizes("eth0", 0, 0).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            "eth0 reported zero ring sizes (rx=0, tx=0)"
+        );
+    }
 
     #[test]
     fn test_ring_producer() {
