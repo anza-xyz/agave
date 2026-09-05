@@ -42,7 +42,7 @@ jobs:
           echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
 
           # print the info
-          echo "::notice::commit: ${{ env.COMMIT }}"
+          echo "::notice::commit: $COMMIT"
           echo "::notice::tag: $CI_TAG"
           echo "::notice::channel: $CHANNEL"
 
@@ -51,8 +51,9 @@ jobs:
       - name: Prepare Upload Files
         if: ${{ steps.build.outputs.channel != '' || steps.build.outputs.tag != '' }}
         shell: bash
+        env:
+          FOLDER_NAME: ${{ steps.build.outputs.tag || steps.build.outputs.channel }}
         run: |
-          FOLDER_NAME=${{ steps.build.outputs.tag || steps.build.outputs.channel }}
           mkdir -p "windows-release/$FOLDER_NAME"
           cp -v "solana-release-x86_64-pc-windows-msvc.tar.bz2" "windows-release/$FOLDER_NAME/"
           cp -v "solana-release-x86_64-pc-windows-msvc.yml" "windows-release/$FOLDER_NAME/"
