@@ -55,6 +55,18 @@ still accepted for backwards compatibility but slated for full removal in the fu
   * `--limit-blockstore-size` may occupy more disk footprint at steady state with current cluster
   activity; however, disk usage should be more stable during abnormal cluster activity.
 #### Changes
+* Added the versioned `--config-file <PATH>` TOML configuration. The file is parsed and validated
+  on every platform; its XDP transmit settings are applied on Linux and reported as inactive
+  elsewhere.
+  The embedded policy is complete, user files patch it with atomic device/worker choices, and
+  matching CLI arguments form the final layer. Interfaces use stable logical labels, worker modes
+  are expressed as `workers.auto`, `workers.cpus`, or `workers.bindings`, and each module selects
+  `tx.queues = "all"` or hardware queue ids on the sole interface. `--print-default-config` prints
+  the embedded reference policy. `--no-xdp-zero-copy` can override a file's strict zero-copy
+  request.
+* `--xdp-cpu-cores` now preserves module-specific queue scoping instead of silently assigning every
+  CLI-created sender to every XDP-enabled module. A CLI worker replacement that could reinterpret
+  user-authored numeric queue ids is rejected; use `tx.queues = "all"` for portable policy.
 * Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
   store transaction signature keys in the status cache. Message hashes remain cached for duplicate
   transaction detection.

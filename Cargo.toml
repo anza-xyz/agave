@@ -550,6 +550,7 @@ tokio-serde = "0.9.0"
 tokio-stream = "0.1.19"
 tokio-tungstenite = "0.28.0"
 tokio-util = "0.7.19"
+toml = "0.5.8"
 tonic = { version = "0.14.6", default-features = false }
 tonic-prost = "0.14.6"
 tonic-prost-build = "0.14.6"
