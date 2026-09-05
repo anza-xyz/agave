@@ -17,11 +17,24 @@ use {
         sync::{Arc, Condvar, Mutex, MutexGuard, atomic::Ordering},
         time::Duration,
     },
-    tokio::{runtime::Runtime, time::timeout},
+    tokio::{
+        runtime::Runtime,
+        sync::mpsc::{Receiver, Sender, error::TrySendError},
+        time::timeout,
+    },
 };
 
 pub const MAX_OUTSTANDING_TASK: u64 = 2000;
 const SEND_DATA_TIMEOUT: Duration = Duration::from_secs(10);
+/// Per-peer send-queue depth. Packets beyond this (e.g. while a peer is
+/// unreachable or its connection attempt is in flight) are dropped.
+/// Sized to exceed the reasonable amount of votes we may send while
+/// connection is getting set up.
+const PEER_QUEUE_CAPACITY: usize = 1024;
+/// How long a peer's driver task waits idle for the next packet before tearing
+/// down and releasing its async-send permit. The cached connection itself is
+/// unaffected, so a later send simply re-spawns a driver and reuses it.
+const DRIVER_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// A semaphore used for limiting the number of asynchronous tasks spawn to the
 /// runtime. Before spawning a task, use acquire. After the task is done (be it
@@ -56,6 +69,17 @@ impl AsyncTaskSemaphore {
         count
     }
 
+    /// Increments semaphore and returns true if a permit was available, otherwise
+    /// returns false. The caller is responsible for a matching `release` on success.
+    pub fn try_acquire(&self) -> bool {
+        let mut count = self.counter.lock().unwrap();
+        if *count >= self.permits {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+
     /// Acquire the lock and decrement the usage count
     pub fn release(&self) {
         let mut count = self.counter.lock().unwrap();
@@ -78,13 +102,28 @@ pub fn get_runtime() -> &'static Runtime {
     &RUNTIME
 }
 
-async fn send_data_async(
+/// Single long-lived task that drains one peer's send queue. Exactly one of
+/// these exists per peer. It holds one async-send permit for its lifetime and
+/// serves every queued packet over the cached connection. Because there is at most
+/// one driver per peer, the number of outstanding permits is bounded by the
+/// peer count rather than by send volume.
+async fn drive_connection_for_peer(
     connection: Arc<NonblockingQuicConnection>,
-    buffer: Arc<Vec<u8>>,
-) -> TransportResult<()> {
-    let result = timeout(SEND_DATA_TIMEOUT, connection.send_data(&buffer)).await;
+    mut rx: Receiver<Arc<Vec<u8>>>,
+) {
+    while let Ok(Some(buffer)) = timeout(DRIVER_IDLE_TIMEOUT, rx.recv()).await {
+        let result = timeout(SEND_DATA_TIMEOUT, connection.send_data(&buffer)).await;
+        if handle_send_result(result, connection.clone()).is_err() {
+            // Send/connect failed or timed out (e.g. unreachable peer).
+            // Tear down and drop any still-queued packets; the next send
+            // re-registers a driver and re-dials.
+            break;
+        }
+    }
+
+    // Unregister so the next caller spawns a fresh driver.
+    connection.client.pkt_tx.store(None);
     ASYNC_TASK_SEMAPHORE.release();
-    handle_send_result(result, connection)
 }
 
 async fn send_data_batch_async(
@@ -160,12 +199,53 @@ impl ClientConnection for QuicClientConnection {
         Ok(())
     }
 
-    fn send_data_async(&self, data: Arc<Vec<u8>>) -> TransportResult<()> {
-        let _lock = ASYNC_TASK_SEMAPHORE.acquire();
-        let inner = self.inner.clone();
-
-        let _handle = RUNTIME.spawn(send_data_async(inner, data));
-        Ok(())
+    fn send_data_async(&self, mut data: Arc<Vec<u8>>) -> TransportResult<()> {
+        let client = &self.inner.client;
+        loop {
+            // Fast path: a driver is already running for this peer; just enqueue.
+            // This never blocks and never touches the global send semaphore.
+            if let Some(tx) = client.pkt_tx.load_full() {
+                match tx.try_send(data) {
+                    Ok(()) => return Ok(()),
+                    Err(TrySendError::Full(_)) => {
+                        // Queue saturated: drop rather than block the caller.
+                        self.inner
+                            .connection_stats
+                            .send_backpressure_drops
+                            .fetch_add(1, Ordering::Relaxed);
+                        return Ok(());
+                    }
+                    // Driver just tore down; reclaim the packet and start a new one.
+                    Err(TrySendError::Closed(d)) => data = d,
+                }
+            }
+            // No active driver: try to become one
+            let (tx, rx) = tokio::sync::mpsc::channel(PEER_QUEUE_CAPACITY);
+            let tx = Arc::new(tx);
+            if client
+                .pkt_tx
+                .compare_and_swap(&None::<Arc<Sender<Arc<Vec<u8>>>>>, Some(tx.clone()))
+                .is_some()
+            {
+                // Lost the race; another caller just installed a driver. Retry
+                // the loop to enqueue into theirs.
+                continue;
+            }
+            // Won the race. Bound the number of concurrent driver tasks without
+            // blocking the caller.
+            if !ASYNC_TASK_SEMAPHORE.try_acquire() {
+                client.pkt_tx.store(None);
+                self.inner
+                    .connection_stats
+                    .send_backpressure_drops
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+            // The channel is empty, so this enqueue always succeeds.
+            let _ = tx.try_send(data);
+            let _handle = RUNTIME.spawn(drive_connection_for_peer(self.inner.clone(), rx));
+            return Ok(());
+        }
     }
 
     fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()> {
