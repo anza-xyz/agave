@@ -1538,4 +1538,133 @@ mod tests {
             }
         }
     }
+
+    /// Every stage x event cell: `Ok(next)` asserts the transition, `Err(e)`
+    /// asserts the error and that the stage is unchanged.
+    #[test]
+    fn test_stage_transitions() {
+        type Event =
+            Box<dyn Fn(&mut BlockComponentStage) -> Result<(), BlockComponentProcessorError>>;
+
+        let update_parent_marker = VersionedUpdateParent::V1(UpdateParentV1 {
+            new_parent_slot: 0,
+            new_parent_block_id: Hash::default(),
+        });
+        let abandoned =
+            || BlockComponentProcessorError::AbandonedBank(update_parent_marker.clone());
+
+        // Events: one direct stage method call each
+        let on_header = || -> Event { Box::new(|stage| stage.on_header()) };
+        let on_genesis_certificate =
+            || -> Event { Box::new(|stage| stage.on_genesis_certificate()) };
+        let on_entry_batch = || -> Event { Box::new(|stage| stage.on_entry_batch()) };
+        let on_update_parent = |allow_initial_update_parent: bool| -> Event {
+            let marker = update_parent_marker.clone();
+            Box::new(move |stage| stage.on_update_parent(&marker, allow_initial_update_parent))
+        };
+        let on_footer = || -> Event { Box::new(|stage| stage.on_footer()) };
+        let on_alpentick = || -> Event { Box::new(|stage| stage.on_alpentick()) };
+        let on_final = || -> Event { Box::new(|stage| stage.on_final()) };
+
+        let pre_parent_marker = BlockComponentStage::PreParentMarker;
+        let genesis_or_entries = BlockComponentStage::AcceptingGenesisOrEntries;
+        let entries_after_header = BlockComponentStage::AcceptingEntriesOrFooter {
+            parent_marker: EntryParentMarker::BlockHeader,
+        };
+        let entries_after_update_parent = BlockComponentStage::AcceptingEntriesOrFooter {
+            parent_marker: EntryParentMarker::UpdateParent,
+        };
+        let accepting_alpentick = BlockComponentStage::AcceptingAlpentick;
+        let done = BlockComponentStage::Done;
+
+        #[rustfmt::skip]
+        let cases: Vec<(&BlockComponentStage, Event, Result<BlockComponentStage, BlockComponentProcessorError>)> = vec![
+            // - PreParentMarker: only a parent marker
+            (&pre_parent_marker, on_header(), Ok(genesis_or_entries.clone())),
+            (&pre_parent_marker, on_genesis_certificate(), Err(BlockComponentProcessorError::MissingParentMarker)),
+            (&pre_parent_marker, on_entry_batch(), Err(BlockComponentProcessorError::MissingParentMarker)),
+            (&pre_parent_marker, on_update_parent(false), Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent)),
+            (&pre_parent_marker, on_update_parent(true), Ok(entries_after_update_parent.clone())),
+            (&pre_parent_marker, on_footer(), Err(BlockComponentProcessorError::MissingParentMarker)),
+            (&pre_parent_marker, on_alpentick(), Err(BlockComponentProcessorError::MissingParentMarker)),
+
+            // - AcceptingGenesisOrEntries: right after the header
+            (&genesis_or_entries, on_header(), Err(BlockComponentProcessorError::MultipleBlockHeaders)),
+            (&genesis_or_entries, on_genesis_certificate(), Ok(entries_after_header.clone())),
+            (&genesis_or_entries, on_entry_batch(), Ok(entries_after_header.clone())),
+            (&genesis_or_entries, on_update_parent(false), Err(abandoned())),
+            (&genesis_or_entries, on_update_parent(true), Err(abandoned())),
+            (&genesis_or_entries, on_footer(), Ok(accepting_alpentick.clone())),
+            (&genesis_or_entries, on_alpentick(), Err(BlockComponentProcessorError::InvalidAlpentickPosition)),
+
+            // - AcceptingEntriesOrFooter { BlockHeader }
+            (&entries_after_header, on_header(), Err(BlockComponentProcessorError::MultipleBlockHeaders)),
+            (&entries_after_header, on_genesis_certificate(), Err(BlockComponentProcessorError::GenesisCertificateOutOfOrder)),
+            (&entries_after_header, on_entry_batch(), Ok(entries_after_header.clone())),
+            (&entries_after_header, on_update_parent(false), Err(abandoned())),
+            (&entries_after_header, on_update_parent(true), Err(abandoned())),
+            (&entries_after_header, on_footer(), Ok(accepting_alpentick.clone())),
+            (&entries_after_header, on_alpentick(), Err(BlockComponentProcessorError::InvalidAlpentickPosition)),
+
+            // - AcceptingEntriesOrFooter { UpdateParent }
+            // a header here is reported as a spurious UpdateParent, not a second header
+            (&entries_after_update_parent, on_header(), Err(BlockComponentProcessorError::SpuriousUpdateParent)),
+            (&entries_after_update_parent, on_genesis_certificate(), Err(BlockComponentProcessorError::GenesisCertificateOutOfOrder)),
+            (&entries_after_update_parent, on_entry_batch(), Ok(entries_after_update_parent.clone())),
+            (&entries_after_update_parent, on_update_parent(false), Err(BlockComponentProcessorError::MultipleUpdateParents)),
+            (&entries_after_update_parent, on_update_parent(true), Err(BlockComponentProcessorError::MultipleUpdateParents)),
+            (&entries_after_update_parent, on_footer(), Ok(accepting_alpentick.clone())),
+            (&entries_after_update_parent, on_alpentick(), Err(BlockComponentProcessorError::InvalidAlpentickPosition)),
+
+            // - AcceptingAlpentick: only the alpentick
+            (&accepting_alpentick, on_header(), Err(BlockComponentProcessorError::MultipleBlockHeaders)),
+            (&accepting_alpentick, on_genesis_certificate(), Err(BlockComponentProcessorError::GenesisCertificateOutOfOrder)),
+            (&accepting_alpentick, on_entry_batch(), Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)),
+            (&accepting_alpentick, on_update_parent(false), Err(BlockComponentProcessorError::SpuriousUpdateParent)),
+            (&accepting_alpentick, on_update_parent(true), Err(BlockComponentProcessorError::SpuriousUpdateParent)),
+            (&accepting_alpentick, on_footer(), Err(BlockComponentProcessorError::MultipleBlockFooters)),
+            (&accepting_alpentick, on_alpentick(), Ok(done.clone())),
+
+            // - Done: nothing more
+            // MultipleBlockHeaders even if the block started with an UpdateParent
+            (&done, on_header(), Err(BlockComponentProcessorError::MultipleBlockHeaders)),
+            (&done, on_genesis_certificate(), Err(BlockComponentProcessorError::GenesisCertificateOutOfOrder)),
+            (&done, on_entry_batch(), Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)),
+            (&done, on_update_parent(false), Err(BlockComponentProcessorError::SpuriousUpdateParent)),
+            (&done, on_update_parent(true), Err(BlockComponentProcessorError::SpuriousUpdateParent)),
+            (&done, on_footer(), Err(BlockComponentProcessorError::MultipleBlockFooters)),
+            (&done, on_alpentick(), Err(BlockComponentProcessorError::InvalidAlpentickPosition)),
+
+            // - on_final: Ok only from Done
+            (&pre_parent_marker, on_final(), Err(BlockComponentProcessorError::MissingBlockFooter)),
+            (&genesis_or_entries, on_final(), Err(BlockComponentProcessorError::MissingBlockFooter)),
+            (&entries_after_header, on_final(), Err(BlockComponentProcessorError::MissingBlockFooter)),
+            (&entries_after_update_parent, on_final(), Err(BlockComponentProcessorError::MissingBlockFooter)),
+            (&accepting_alpentick, on_final(), Err(BlockComponentProcessorError::InvalidAlpentickPosition)),
+            (&done, on_final(), Ok(done.clone())),
+        ];
+
+        for (case_index, (start, event, expected)) in cases.into_iter().enumerate() {
+            let mut stage = start.clone();
+            let result = event(&mut stage);
+            match (result, expected) {
+                (Ok(()), Ok(next)) => {
+                    assert_eq!(stage, next, "case {case_index}: from {start:?}");
+                }
+                (Err(err), Err(expected_err)) => {
+                    assert_eq!(
+                        std::mem::discriminant(&err),
+                        std::mem::discriminant(&expected_err),
+                        "case {case_index}: from {start:?}, got {err:?}, expected {expected_err:?}"
+                    );
+                    assert_eq!(&stage, start, "case {case_index}: stage changed on error");
+                }
+                (result, expected) => {
+                    panic!(
+                        "case {case_index}: from {start:?}, got {result:?}, expected {expected:?}"
+                    );
+                }
+            }
+        }
+    }
 }
