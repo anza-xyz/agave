@@ -100,44 +100,105 @@ impl OutgoingMessage {
     }
 }
 
-/// We prioritize requests with lower slot #s,
-/// and then prefer metadata requests before shred requests.
+/// We prioritize requests with lower slot #s, prefer metadata requests before
+/// shred requests, and order remaining requests by their fec set / shred index.
+///
+/// Any priority ties are broken by the remaining message fields so that this
+/// implementation stays consistent with the derived [`PartialEq`] (as required
+/// by the [`Ord`] trait).
 impl Ord for OutgoingMessage {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use {
-            BlockIdRepairType::*, OutgoingMessage::*, ShredRepairType::ShredForBlockId,
+            BlockIdRepairType::{FecSetRoot, ParentAndFecSetCount},
+            OutgoingMessage::{Metadata, Shred},
             std::cmp::Ordering,
         };
 
+        // `BinaryHeap` pops the greatest, so "higher priority" == "greater".
+
+        // Lower slot is higher priority.
         if self.slot() != other.slot() {
-            // lower slot is higher priority
             return other.slot().cmp(&self.slot());
         }
 
-        match (&self, &other) {
-            // prioritize metadata requests
+        match (self, other) {
+            // Prioritize metadata requests over shred requests.
             (Metadata(_), Shred(_)) => Ordering::Greater,
             (Shred(_), Metadata(_)) => Ordering::Less,
 
-            // prioritize top level metadata request
-            (Metadata(ParentAndFecSetCount { .. }), _) => Ordering::Greater,
-            (_, Metadata(ParentAndFecSetCount { .. })) => Ordering::Less,
+            (Metadata(a), Metadata(b)) => match (a, b) {
+                // Prioritize ParentAndFecSetCount over FecSetRoot.
+                (ParentAndFecSetCount { .. }, FecSetRoot { .. }) => Ordering::Greater,
+                (FecSetRoot { .. }, ParentAndFecSetCount { .. }) => Ordering::Less,
+                // Slot is already equal; tie-break by block_id.
+                (
+                    ParentAndFecSetCount { block_id: a, .. },
+                    ParentAndFecSetCount { block_id: b, .. },
+                ) => a.cmp(b),
+                // Lower fec_set_index is higher priority; tie-break by block_id.
+                (
+                    FecSetRoot {
+                        fec_set_index: ai,
+                        block_id: ab,
+                        ..
+                    },
+                    FecSetRoot {
+                        fec_set_index: bi,
+                        block_id: bb,
+                        ..
+                    },
+                ) => bi.cmp(ai).then_with(|| ab.cmp(bb)),
+            },
 
-            // prioritize lower shred indices
-            (
-                Metadata(FecSetRoot {
-                    fec_set_index: a, ..
-                }),
-                Metadata(FecSetRoot {
-                    fec_set_index: b, ..
-                }),
-            ) => b.cmp(a),
-            (Shred(ShredForBlockId { index: a, .. }), Shred(ShredForBlockId { index: b, .. })) => {
-                b.cmp(a)
-            }
-
-            _ => Ordering::Equal,
+            (Shred(a), Shred(b)) => cmp_shred(a, b),
         }
+    }
+}
+
+/// Compares two [`ShredRepairType`]s within the context of [`OutgoingMessage`],
+/// where the slot is already known to be equal.
+///
+/// Only `ShredForBlockId` is constructed for `OutgoingMessage::Shred` today,
+/// but the other variants still need a deterministic total order so that
+/// [`Ord`] stays consistent with [`PartialEq`].
+fn cmp_shred(a: &ShredRepairType, b: &ShredRepairType) -> std::cmp::Ordering {
+    use {
+        ShredRepairType::{HighestShred, Orphan, Shred, ShredForBlockId},
+        std::cmp::Ordering,
+    };
+
+    fn variant_rank(s: &ShredRepairType) -> u8 {
+        match s {
+            Orphan(_) => 0,
+            HighestShred(_, _) => 1,
+            Shred(_, _) => 2,
+            ShredForBlockId { .. } => 3,
+        }
+    }
+
+    assert_eq!(a.slot(), b.slot());
+    match (a, b) {
+        // Lower shred index is higher priority; tie-break by the remaining
+        // fields so distinct requests compare unequal.
+        (
+            ShredForBlockId {
+                index: ai,
+                fec_set_merkle_root: ar,
+                block_id: ab,
+                ..
+            },
+            ShredForBlockId {
+                index: bi,
+                fec_set_merkle_root: br,
+                block_id: bb,
+                ..
+            },
+        ) => bi.cmp(ai).then_with(|| ar.cmp(br)).then_with(|| ab.cmp(bb)),
+        // Same-variant tie-breaks (slot is already equal).
+        (Orphan(_), Orphan(_)) => Ordering::Equal,
+        (HighestShred(_, ai), HighestShred(_, bi)) | (Shred(_, ai), Shred(_, bi)) => ai.cmp(bi),
+        // Cross-variant: order by variant rank.
+        _ => variant_rank(a).cmp(&variant_rank(b)),
     }
 }
 
