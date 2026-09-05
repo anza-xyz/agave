@@ -957,6 +957,11 @@ pub struct AccountsDb {
     /// eligibility.
     last_swept_full_snapshot_slot: AtomicU64,
 
+    /// The highest root that has been cleaned at least once by clean_accounts
+    /// Clean reclaims every slot older than the newest slot at or below its max_clean_root, so
+    /// each account has at most one entry at or below this slot
+    max_cleaned_root: AtomicU64,
+
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
     /// are sorted from the largest dead bytes to the smallest.
@@ -1109,6 +1114,7 @@ impl AccountsDb {
             accounts_file_provider: accounts_db_config.accounts_file_provider,
             latest_full_snapshot_slot: SeqLock::new(None),
             last_swept_full_snapshot_slot: AtomicU64::new(0),
+            max_cleaned_root: AtomicU64::new(0),
             best_ancient_slots_to_shrink: RwLock::default(),
             max_root: AtomicU64::new(0),
         };
@@ -1720,6 +1726,10 @@ impl AccountsDb {
         self.clean_accounts_older_than_root(&reclaims);
         clean_old_rooted.stop();
         drop(active_guard);
+
+        // Advance only once clean has finished.
+        self.max_cleaned_root
+            .fetch_max(max_clean_root_inclusive, Ordering::Relaxed);
 
         measure_all.stop();
 
@@ -2439,18 +2449,30 @@ impl AccountsDb {
         (shrink_slots, shrink_slots_next_batch)
     }
 
-    /// return all slots that are more than one epoch old and thus could already be an ancient append vec
-    /// or which could need to be combined into a new or existing ancient append vec
-    /// offset is used to combine newer slots than we normally would. This is designed to be used for testing.
+    /// return all slots that are more than one epoch old and at or below `max_cleaned_root`,
+    /// and thus could be combined into a new or existing ancient append vec
     fn get_sorted_potential_ancient_slots(&self, oldest_non_ancient_slot: Slot) -> Vec<Slot> {
+        // Limit the slots considered for ancient slots to slots that have been cleaned.
+        // This simplifies the logic as it is guaranteed that any given pubkey is only
+        // indexed once in any slot older than the max cleaned root.
+        let max_slot_exclusive = oldest_non_ancient_slot.min(
+            self.max_cleaned_root
+                .load(Ordering::Relaxed)
+                .saturating_add(1),
+        );
+        if max_slot_exclusive < oldest_non_ancient_slot {
+            self.shrink_ancient_stats
+                .shrinks_bounded_by_max_cleaned_root
+                .fetch_add(1, Ordering::Relaxed);
+        }
         // Only storages can be combined into ancient append vecs, so the storage map is the
         // source of truth here.
-        let mut ancient_slots = self.storage.slots_less_than(oldest_non_ancient_slot);
+        let mut ancient_slots = self.storage.slots_less_than(max_slot_exclusive);
         ancient_slots.sort_unstable();
         ancient_slots
     }
 
-    /// get a sorted list of slots older than an epoch
+    /// get a sorted list of slots older than an epoch and at or below `max_cleaned_root`
     /// squash those slots into ancient append vecs
     pub fn shrink_ancient_slots(&self, epoch_schedule: &EpochSchedule) {
         if self.ancient_append_vec_offset.is_none() {
@@ -5463,6 +5485,11 @@ impl AccountsDb {
         let slot_marked_obsolete = storages.last().unwrap().slot();
         let obsolete_account_stats =
             self.mark_obsolete_accounts_at_startup(slot_marked_obsolete, unique_pubkeys_by_bin);
+
+        // mark_obsolete_accounts_at_startup is effectively a clean up to slot_marked_obsolete
+        // so set max_cleaned_root
+        self.max_cleaned_root
+            .fetch_max(slot_marked_obsolete, Ordering::Relaxed);
 
         mark_obsolete_accounts_time.stop();
         timings.mark_obsolete_accounts_us = mark_obsolete_accounts_time.as_us();

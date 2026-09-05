@@ -309,6 +309,7 @@ pub struct ShrinkAncientStats {
     pub select_slots_us: AtomicU64,
     pub random_shrink: AtomicU64,
     pub slots_considered: AtomicU64,
+    pub shrinks_bounded_by_max_cleaned_root: AtomicU64,
     pub bytes_ancient_created: AtomicU64,
     pub bytes_from_must_shrink: AtomicU64,
     pub bytes_from_smallest_storages: AtomicU64,
@@ -724,6 +725,12 @@ impl ShrinkAncientStats {
             (
                 "slots_considered",
                 self.slots_considered.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "shrinks_bounded_by_max_cleaned_root",
+                self.shrinks_bounded_by_max_cleaned_root
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             ("total_us", self.total_us.swap(0, Ordering::Relaxed), i64),

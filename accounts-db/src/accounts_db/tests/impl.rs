@@ -5787,6 +5787,8 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
 #[test]
 fn test_get_sorted_potential_ancient_slots() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    // Ensure all slots are considered for ancients
+    db.max_cleaned_root.store(Slot::MAX, Ordering::Relaxed);
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap();
     let epoch_schedule = EpochSchedule::default();
     let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
@@ -5845,6 +5847,70 @@ fn test_get_sorted_potential_ancient_slots() {
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
         vec![root2]
     );
+}
+
+/// Storages above `max_cleaned_root` are not a potential for packing, since clean may not have
+/// reclaimed their older duplicates yet.
+#[test]
+fn test_get_sorted_potential_ancient_slots_bounded_by_max_cleaned_root() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap();
+    let epoch_schedule = EpochSchedule::default();
+
+    let root1 = DEFAULT_MAX_ANCIENT_STORAGES as u64 + ancient_append_vec_offset as u64 + 1;
+    let root2 = root1 + 1;
+    for root in [root1, root2] {
+        db.add_root(root);
+        db.storage.insert(Arc::new(db.create_store(root, 4096)));
+    }
+    // put both roots more than an epoch behind, so only the cleaned root bound is in play
+    db.add_root(AccountsDb::apply_offset_to_slot(
+        epoch_schedule.slots_per_epoch + root2,
+        ancient_append_vec_offset,
+    ));
+    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+
+    // clean has not run
+    assert!(
+        db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
+            .is_empty()
+    );
+
+    // cleaned root1; root2 is still uncleaned, so not included
+    db.max_cleaned_root.store(root1, Ordering::Relaxed);
+    assert_eq!(
+        db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
+        vec![root1]
+    );
+
+    // cleaned root2 so it is included
+    db.max_cleaned_root.store(root2, Ordering::Relaxed);
+    assert_eq!(
+        db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
+        vec![root1, root2]
+    );
+}
+
+/// Clean advances `max_cleaned_root` to the root it cleaned, and never backwards.
+#[test]
+fn test_max_cleaned_root_advances_with_clean() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    assert_eq!(db.max_cleaned_root.load(Ordering::Relaxed), 0);
+
+    let key = Pubkey::new_unique();
+    for slot in 1..=3 {
+        store_rooted_nonzero_accounts(&db, slot, [&key]);
+    }
+
+    db.clean_accounts(2, false);
+    assert_eq!(db.max_cleaned_root.load(Ordering::Relaxed), 2);
+
+    // a lower bound does not decrease max_cleaned_root
+    db.clean_accounts(1, false);
+    assert_eq!(db.max_cleaned_root.load(Ordering::Relaxed), 2);
+
+    db.clean_accounts(3, false);
+    assert_eq!(db.max_cleaned_root.load(Ordering::Relaxed), 3);
 }
 
 #[test]
