@@ -71,5 +71,9 @@ tokio = { workspace = true }
 name = "bls_vote_sigverify"
 harness = false
 
+[[bench]]
+name = "bls_sigverifier"
+harness = false
+
 [lints]
 workspace = true

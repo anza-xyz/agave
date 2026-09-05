@@ -1,5 +1,7 @@
 //! The BLS signature verifier.
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
@@ -121,11 +123,13 @@ pub fn spawn_service(
         .unwrap()
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 struct ExtractedMsgs {
     certs: HashMap<CertificateType, Vec<CertPayload>>,
     votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>>,
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 struct SigVerifier {
     migration_status: Arc<MigrationStatus>,
     ban_sender: BanSender,
@@ -149,6 +153,7 @@ struct SigVerifier {
 }
 
 impl SigVerifier {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new(context: SigVerifierContext, channels: SigVerifierChannels) -> Self {
         let SigVerifierContext {
             migration_status,
@@ -317,6 +322,7 @@ impl SigVerifier {
             });
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn extract_and_filter_msgs(
         &mut self,
         datagrams: &[Datagram],
