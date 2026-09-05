@@ -42,35 +42,33 @@ pub(crate) const EMA_SCALE: u64 = 1_000;
 impl ProgramStatistics {
     fn observe_ema<const WINDOW_SIZE: u64>(counter: &AtomicU64, duration_us: u64) {
         let duration_ema = duration_us.saturating_mul(EMA_SCALE);
-        counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |ema| {
-                // Exponential moving average iteratively is computed as $ema' = alpha *
-                // observation + (1 - alpha) * ema$. This works great for floating point, but we
-                // want integers. For purposes of convenience we also want to really think in terms
-                // of simple moving average window sizes as that is easier to reason about.
-                //
-                // Exponential moving average and simple moving average of window N has a rough
-                // equivalence of `alpha ≈ 2 / (N + 1)`. Slotting this into our original iterative
-                // formula:
-                //
-                // $$ ema' = 2 / (N+1) * observation + (1 - 2/(N+1)) * ema $$
-                //
-                // we get
-                //
-                // $$ ema' = (2*observation)/(N+1) + (N+1-2)*ema/(N+1) $$
-                let (numer, denom) = const { (2, 1 + WINDOW_SIZE) };
-                Some(if ema == 0 {
-                    duration_ema
-                } else {
-                    let weighted_observation = duration_ema.saturating_mul(numer);
-                    let previous_observations = ema.saturating_mul(denom.saturating_sub(numer));
-                    weighted_observation
-                        .saturating_add(previous_observations)
-                        .checked_div(denom)
-                        .expect("unreachable: denom is >= 1")
-                })
-            })
-            .expect("unreachable: closure always returns a Some");
+        counter.update(Ordering::Relaxed, Ordering::Relaxed, |ema| {
+            // Exponential moving average iteratively is computed as $ema' = alpha *
+            // observation + (1 - alpha) * ema$. This works great for floating point, but we
+            // want integers. For purposes of convenience we also want to really think in terms
+            // of simple moving average window sizes as that is easier to reason about.
+            //
+            // Exponential moving average and simple moving average of window N has a rough
+            // equivalence of `alpha ≈ 2 / (N + 1)`. Slotting this into our original iterative
+            // formula:
+            //
+            // $$ ema' = 2 / (N+1) * observation + (1 - 2/(N+1)) * ema $$
+            //
+            // we get
+            //
+            // $$ ema' = (2*observation)/(N+1) + (N+1-2)*ema/(N+1) $$
+            let (numer, denom) = const { (2, 1 + WINDOW_SIZE) };
+            if ema == 0 {
+                duration_ema
+            } else {
+                let weighted_observation = duration_ema.saturating_mul(numer);
+                let previous_observations = ema.saturating_mul(denom.saturating_sub(numer));
+                weighted_observation
+                    .saturating_add(previous_observations)
+                    .checked_div(denom)
+                    .expect("unreachable: denom is >= 1")
+            }
+        });
     }
 
     /// Record information about JIT compilation.
