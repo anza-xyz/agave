@@ -5,7 +5,8 @@ use {
     solana_measure::measure::Measure,
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
-        Client, ClientBuilder, ClientError, TransactionSender, leader_updater::LeaderUpdater,
+        Client, ClientBuilder, ClientError, TransactionSender,
+        leader_updater::{LeaderUpdater, SlotEstimate},
     },
     std::{
         net::{SocketAddr, UdpSocket},
@@ -188,7 +189,11 @@ impl<T> LeaderUpdater for SendTransactionServiceLeaderUpdater<T>
 where
     T: TpuInfoWithSendStatic,
 {
-    fn next_leaders(&mut self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
+    fn next_leaders(
+        &mut self,
+        lookahead_leaders: usize,
+        leaders: &mut Vec<SocketAddr>,
+    ) -> Option<SlotEstimate> {
         if let Some(tpu_peers) = &self.tpu_peers {
             leaders.extend_from_slice(tpu_peers);
         }
@@ -203,5 +208,6 @@ where
         } else {
             leaders.push(self.my_tpu_address);
         }
+        None
     }
 }

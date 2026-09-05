@@ -32,7 +32,7 @@ use {
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
-        leader_updater::LeaderUpdater,
+        leader_updater::{LeaderUpdater, SlotEstimate},
     },
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransportError,
@@ -504,8 +504,13 @@ impl ForwardingClient for VoteClient {
 }
 
 impl LeaderUpdater for ForwardAddressGetter {
-    fn next_leaders(&mut self, lookahead_slots: usize, leaders: &mut Vec<SocketAddr>) {
+    fn next_leaders(
+        &mut self,
+        lookahead_slots: usize,
+        leaders: &mut Vec<SocketAddr>,
+    ) -> Option<SlotEstimate> {
         self.non_vote_forwarding_addresses(lookahead_slots as u64, leaders);
+        None
     }
 }
 
@@ -562,6 +567,8 @@ impl TpuClientNextClient {
             num_connections: NonZeroUsize::new(128).unwrap(),
             worker_channel_size: WORKER_CHANNEL_CAPACITY,
             max_reconnect_attempts: 4,
+            skip_current_leader_if_late: false,
+            slot_update_latency: 0,
             // Send to the next leader only, but verify that connections exist
             // for the leaders of the next `4 * NUM_CONSECUTIVE_SLOTS`.
             leaders_fanout: Fanout {

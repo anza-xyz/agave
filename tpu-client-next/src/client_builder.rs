@@ -85,6 +85,8 @@ pub struct ClientBuilder {
     sender_channel_size: usize,
     worker_channel_size: Option<usize>,
     max_reconnect_attempts: usize,
+    skip_current_leader_if_late: bool,
+    slot_update_latency: u64,
     broadcaster: Box<dyn WorkersBroadcaster>,
     report_fn: Option<ReportFn>,
     cancel_scheduler: CancellationToken,
@@ -107,6 +109,8 @@ impl ClientBuilder {
             // By default, use the same size for the worker channel.
             worker_channel_size: None,
             max_reconnect_attempts: 2,
+            skip_current_leader_if_late: true,
+            slot_update_latency: 50,
             broadcaster: Box::new(NonblockingBroadcaster),
             report_fn: None,
             cancel_scheduler: CancellationToken::new(),
@@ -183,6 +187,19 @@ impl ClientBuilder {
         self
     }
 
+    /// Enable or disable skipping the current leader when a transaction is expected to arrive
+    /// after its leader window ends. Enabled by default.
+    pub fn skip_current_leader_if_late(mut self, enabled: bool) -> Self {
+        self.skip_current_leader_if_late = enabled;
+        self
+    }
+
+    /// Set the assumed delay between slot progress and receiving the corresponding slot update.
+    pub fn slot_update_latency(mut self, latency: u64) -> Self {
+        self.slot_update_latency = latency;
+        self
+    }
+
     /// Set the initial congestion window size in bytes.
     ///
     /// If not set, defaults to INITIAL_CONGESTION_WINDOW.
@@ -220,6 +237,8 @@ impl ClientBuilder {
             num_connections: self.num_connections,
             worker_channel_size: self.worker_channel_size.unwrap_or(self.sender_channel_size),
             max_reconnect_attempts: self.max_reconnect_attempts,
+            skip_current_leader_if_late: self.skip_current_leader_if_late,
+            slot_update_latency: self.slot_update_latency,
             // We open connection to one more leader in advance, which time-wise means ~1.6s
             leaders_fanout: Fanout {
                 connect: self.leader_send_fanout.saturating_add(1),

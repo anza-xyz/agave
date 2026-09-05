@@ -7,20 +7,27 @@ use solana_clock::Slot;
 /// [`SlotEvent`] represents slot start and end events.
 #[derive(Debug, Clone)]
 pub enum SlotEvent {
-    Start(Slot),
-    End(Slot),
+    Start { slot: Slot, timestamp: u64 },
+    End { slot: Slot, timestamp: u64 },
 }
 
 impl SlotEvent {
     /// Get the slot associated with the event.
     pub fn slot(&self) -> Slot {
         match self {
-            SlotEvent::Start(slot) | SlotEvent::End(slot) => *slot,
+            SlotEvent::Start { slot, .. } | SlotEvent::End { slot, .. } => *slot,
+        }
+    }
+
+    /// Get the timestamp in milliseconds associated with the event.
+    pub fn timestamp(&self) -> u64 {
+        match self {
+            SlotEvent::Start { timestamp, .. } | SlotEvent::End { timestamp, .. } => *timestamp,
         }
     }
 
     /// Check if the event is a start event.
     pub fn is_start(&self) -> bool {
-        matches!(self, SlotEvent::Start(_))
+        matches!(self, SlotEvent::Start { .. })
     }
 }

@@ -16,6 +16,7 @@ use {
     itertools::Itertools,
     quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
+    solana_time_utils::timestamp,
     std::{
         net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
@@ -93,6 +94,13 @@ pub struct ConnectionWorkersSchedulerConfig {
     /// The maximum number of reconnection attempts allowed in case of
     /// connection failure.
     pub max_reconnect_attempts: usize,
+
+    /// Whether to skip the current leader when a transaction is expected to arrive after its
+    /// leader window ends.
+    pub skip_current_leader_if_late: bool,
+
+    /// Assumed delay between slot progress and receiving the corresponding slot update in ms.
+    pub slot_update_latency: u64,
 
     /// Configures the number of leaders to connect to and send transactions to.
     pub leaders_fanout: Fanout,
@@ -211,6 +219,8 @@ impl ConnectionWorkersScheduler {
             num_connections,
             worker_channel_size,
             max_reconnect_attempts,
+            skip_current_leader_if_late,
+            slot_update_latency,
             leaders_fanout,
             override_initial_congestion_window: initial_congestion_window,
         }: ConnectionWorkersSchedulerConfig,
@@ -276,7 +286,8 @@ impl ConnectionWorkersScheduler {
             };
 
             next_leaders.clear();
-            leader_updater.next_leaders(leaders_fanout.connect, &mut next_leaders);
+            let leader_window_timing =
+                leader_updater.next_leaders(leaders_fanout.connect, &mut next_leaders);
             select_unique_leaders(&next_leaders, leaders_fanout.connect, &mut connect_leaders);
 
             // add future leaders to the cache to hide the latency of opening the connection.
@@ -293,7 +304,19 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            select_unique_leaders(&next_leaders, leaders_fanout.send, &mut send_leaders);
+            if next_leaders.len() > 1
+                && should_skip_current_leader(
+                    skip_current_leader_if_late,
+                    leader_window_timing.and_then(|estimate| estimate.leader_window_end_ms),
+                    next_leaders.first().and_then(|peer| workers.rtt_ms(peer)),
+                    timestamp(),
+                    slot_update_latency,
+                )
+            {
+                select_unique_leaders(&next_leaders[1..], leaders_fanout.send, &mut send_leaders);
+            } else {
+                select_unique_leaders(&next_leaders, leaders_fanout.send, &mut send_leaders);
+            }
 
             if let Err(error) = broadcaster
                 .send_to_workers(&mut workers, &send_leaders, transaction)
@@ -373,4 +396,27 @@ fn select_unique_leaders(
 ) {
     selected_leaders.clear();
     selected_leaders.extend(leaders.iter().take(max_leaders).copied().unique());
+}
+
+/// Returns whether the current leader window has expired or estimated arrival is at or past its end.
+/// Without RTT, only an already expired window is skipped; without timing, it is retained.
+fn should_skip_current_leader(
+    enabled: bool,
+    leader_window_end_ms: Option<u64>,
+    rtt_ms: Option<u64>,
+    now_ms: u64,
+    slot_update_latency_ms: u64,
+) -> bool {
+    if !enabled {
+        return false;
+    }
+    let Some(leader_window_end_ms) = leader_window_end_ms else {
+        return false;
+    };
+    let remaining_ms = leader_window_end_ms.saturating_sub(now_ms);
+    remaining_ms == 0
+        || rtt_ms.is_some_and(|rtt_ms| {
+            let delivery_ms = rtt_ms.div_ceil(2).saturating_add(slot_update_latency_ms);
+            remaining_ms <= delivery_ms
+        })
 }

@@ -6,11 +6,11 @@ use {
     crate::{
         QuicError, WireTransaction,
         logging::{debug, error, trace, warn},
+        node_address_service::recent_leader_slots::MS_PER_SLOT,
         quic_networking::send_data_over_stream,
         send_transaction_stats::record_error,
     },
     quinn::{ConnectError, Connection, ConnectionError, Endpoint},
-    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_measure::measure::Measure,
     solana_tls_utils::socket_addr_to_quic_server_name,
@@ -38,7 +38,7 @@ pub(crate) const DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::
 /// Interval between retry attempts for creating a new connection. This value is
 /// a best-effort estimate, based on current network conditions.
 const RETRY_SLEEP_INTERVAL: Duration =
-    Duration::from_millis(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64 * DEFAULT_MS_PER_SLOT);
+    Duration::from_millis(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64 * MS_PER_SLOT);
 
 /// [`ConnectionState`] represents the current state of a quic connection.
 ///
