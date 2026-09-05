@@ -766,22 +766,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    pub fn merge(
-        &mut self,
-        program_runtime_environment: &ProgramRuntimeEnvironment,
-        current_slot: Slot,
-        modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>,
-    ) {
-        modified_entries.iter().for_each(|(key, entry)| {
-            self.assign_program(
-                program_runtime_environment,
-                *key,
-                current_slot,
-                entry.clone(),
-            );
-        })
-    }
-
     /// Returns the list of entries which are verified and compiled.
     pub fn get_flattened_entries(&self) -> Vec<(Pubkey, Arc<ProgramCacheEntry>)> {
         match &self.index {

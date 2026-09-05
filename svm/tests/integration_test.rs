@@ -41,10 +41,7 @@ use {
         },
         nonce_info::NonceInfo,
         transaction_execution_result::TransactionExecutionDetails,
-        transaction_processing_result::{
-            ProcessedTransaction, TransactionProcessingResult,
-            TransactionProcessingResultExtensions,
-        },
+        transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
         transaction_processor::{
             ExecutionRecordingConfig, LoadAndExecuteSanitizedTransactionsOutput,
             TransactionBatchProcessor, TransactionProcessingConfig,
@@ -330,26 +327,6 @@ impl SvmTestEnvironment<'_> {
         // merge new account states into the bank for multi-batch tests
         let mut mock_bank_accounts = self.mock_bank.account_shared_data.write().unwrap();
         mock_bank_accounts.extend(final_accounts_actual);
-
-        // update global program cache
-        for processing_result in batch_output.processing_results.iter() {
-            if let Some(ProcessedTransaction::Executed(executed_tx)) =
-                processing_result.processed_transaction()
-            {
-                let programs_modified_by_tx = &executed_tx.programs_modified_by_tx;
-                if executed_tx.was_successful() && !programs_modified_by_tx.is_empty() {
-                    self.batch_processor
-                        .global_program_cache
-                        .write()
-                        .unwrap()
-                        .merge(
-                            &self.batch_processor.program_runtime_environment,
-                            self.batch_processor.slot,
-                            programs_modified_by_tx,
-                        );
-                }
-            }
-        }
 
         batch_output
     }
@@ -3293,7 +3270,6 @@ fn program_cache_stats() {
         &[&fee_payer_keypair],
         Hash::default(),
     ));
-    noop_tx_usage += 1;
 
     test_entry.drop_expected_account(buffer_address);
 
@@ -3326,6 +3302,7 @@ fn program_cache_stats() {
     );
 
     // third batch, this creates a delayed visibility tombstone
+    let mut noop_tx_usage = 0;
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
         final_accounts: env.test_entry.final_accounts.clone(),
