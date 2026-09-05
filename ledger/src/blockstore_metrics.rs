@@ -19,6 +19,7 @@ use {
 pub struct BlockstoreInsertionMetrics {
     pub insert_lock_elapsed_us: u64,
     pub insert_shreds_elapsed_us: u64,
+    pub prepare_recovery_elapsed_us: u64,
     pub shred_recovery_elapsed_us: u64,
     pub chaining_elapsed_us: u64,
     pub commit_working_sets_elapsed_us: u64,
@@ -33,6 +34,7 @@ pub struct BlockstoreInsertionMetrics {
     pub num_recovered_inserted: usize,
     pub num_recovered_failed_invalid: usize,
     pub num_recovered_exists: usize,
+    pub num_recovered_stale: usize,
     pub num_repaired_data_shreds_exists: usize,
     pub num_turbine_data_shreds_exists: usize,
     pub num_data_shreds_invalid: usize,
@@ -71,9 +73,10 @@ impl BlockstoreSwitchBankMetrics {
 impl BlockstoreInsertionMetrics {
     const NAME: &str = "blockstore-insert-shreds";
 
-    pub fn report_metrics(&self) {
+    pub fn report_metrics(&self, source: &'static str) {
         datapoint_info!(
             Self::NAME,
+            "source" => source,
             ("num_shreds", self.num_shreds as i64, i64),
             ("total_elapsed_us", self.total_elapsed_us as i64, i64),
             (
@@ -84,6 +87,11 @@ impl BlockstoreInsertionMetrics {
             (
                 "insert_shreds_elapsed_us",
                 self.insert_shreds_elapsed_us as i64,
+                i64
+            ),
+            (
+                "prepare_recovery_elapsed_us",
+                self.prepare_recovery_elapsed_us as i64,
                 i64
             ),
             (
@@ -120,6 +128,7 @@ impl BlockstoreInsertionMetrics {
                 self.num_recovered_exists as i64,
                 i64
             ),
+            ("num_recovered_stale", self.num_recovered_stale as i64, i64),
             (
                 "num_recovered_blockstore_error",
                 self.num_recovered_blockstore_error,
