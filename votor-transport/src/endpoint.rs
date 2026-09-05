@@ -2,8 +2,8 @@
 use {
     crate::{
         CONN_EVENT_CHANNEL_CAP, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
-        HANDSHAKE_WORKERS_PER_ENDPOINT, MAX_ENDPOINTS, MAX_INFLIGHT_HANDSHAKES,
-        MAX_PEER_LIST_SIZE, PeerListReceiver,
+        HANDSHAKE_WORKERS_PER_ENDPOINT, MAX_ENDPOINTS, MAX_INFLIGHT_HANDSHAKES, MAX_PEER_LIST_SIZE,
+        PeerListReceiver,
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundLoop},
