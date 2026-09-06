@@ -3069,7 +3069,7 @@ fn verify_elf(
         executable.get_sbpf_version(),
         executable.get_loader().get_function_registry(),
     )
-    .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
+    .map_err(|err| format!("Verifier error: {err} (local pre-flight)").into())
 }
 
 /// Turns an `EbpfError` from local ELF verification into a concise error
