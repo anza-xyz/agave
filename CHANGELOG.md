@@ -42,6 +42,10 @@ still accepted for backwards compatibility but slated for full removal in the fu
 * Unstaked nodes can now receive consensus messages via votor from any staked node.
   Specify `--votor-peer-overrides <VALIDATOR IDENTITY>...` to additionally send votor
   messages to identities outside the staked set.
+* Added an optional web dashboard, served by the validator itself and enabled with `--dashboard-port`.
+  It has no authentication and binds `127.0.0.1` unless `--dashboard-bind-address` says otherwise;
+  `--dashboard-allowed-host` names the domains it answers to behind a reverse proxy. The host and
+  socket panels read `/proc` and appear on Linux only.
 ### Geyser
 #### Deprecations
 * The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and

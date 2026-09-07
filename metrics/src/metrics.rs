@@ -413,9 +413,27 @@ pub fn get_host_id() -> String {
     HOST_ID.read().unwrap().clone()
 }
 
+/// Called with every point submitted, in the order they are submitted.
+pub type DataPointObserver = Box<dyn Fn(&DataPoint) + Send + Sync>;
+
+static OBSERVER: std::sync::OnceLock<DataPointObserver> = std::sync::OnceLock::new();
+
+/// Installs a hook that sees every point submitted, whether or not a metrics
+/// host is configured. Returns false if one is already installed.
+///
+/// The observer runs on the submitting thread, which is a validator thread, so
+/// it must be cheap, must not block, and must not panic: the validator's panic
+/// hook exits the process before anything could catch it.
+pub fn set_datapoint_observer(observer: DataPointObserver) -> bool {
+    OBSERVER.set(observer).is_ok()
+}
+
 /// Submits a new point from any thread.  Note that points are internally queued
 /// and transmitted periodically in batches.
 pub fn submit(point: DataPoint, level: log::Level) {
+    if let Some(observe) = OBSERVER.get() {
+        observe(&point);
+    }
     let agent = get_singleton_agent();
     agent.submit(point, level);
 }
@@ -586,6 +604,28 @@ pub mod test_mocks {
 #[cfg(test)]
 mod test {
     use {super::*, test_mocks::MockMetricsWriter};
+
+    #[test]
+    fn test_datapoint_observer() {
+        // One test, because the cell is process-wide and set once.
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        assert!(set_datapoint_observer(Box::new(move |point| {
+            // Other tests in this binary submit points too; record only ours.
+            if let Some(name) = point.name.strip_prefix("observer_test_") {
+                recorder.lock().unwrap().push(name);
+            }
+        })));
+
+        submit(
+            DataPoint::new("observer_test_watched").to_owned(),
+            Level::Info,
+        );
+        assert_eq!(seen.lock().unwrap().as_slice(), ["watched"]);
+
+        // The first observer keeps the cell.
+        assert!(!set_datapoint_observer(Box::new(|_| {})));
+    }
 
     #[test]
     fn test_submit() {

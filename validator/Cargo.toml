@@ -22,6 +22,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-cpu-utils = { workspace = true }
+agave-dashboard = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }

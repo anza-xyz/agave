@@ -1,0 +1,12 @@
+<!--
+  The Anza mark, traced from the project logo. If you have the official SVG,
+  replace this file and rebuild the frontend; nothing else references it by
+  anything other than name.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" rx="24" fill="#dde1d0" />
+  <g fill="#16210a">
+    <path d="M92 18 L157 61 L180 168 L112 168 L58 72 Z" />
+    <path d="M47 88 L88 126 L95 168 L30 168 L24 120 Z" />
+  </g>
+</svg>

@@ -1,0 +1,5 @@
+# build.rs embeds frontend/dist verbatim with include_bytes!, so line endings
+# become part of the validator binary. Without this, a checkout on a machine
+# with core.autocrlf=true would produce a different binary from a checkout on
+# Linux. Pin the whole tree to LF so every checkout yields the same bytes.
+* text=auto eol=lf

@@ -1,0 +1,61 @@
+[package]
+name = "agave-dashboard"
+documentation = "https://docs.rs/agave-dashboard"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+bincode = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+soketto = { workspace = true }
+solana-account = { workspace = true }
+solana-accounts-db = { workspace = true }
+solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
+solana-config-interface = { workspace = true }
+solana-core = { workspace = true }
+solana-gossip = { workspace = true }
+solana-leader-schedule = { workspace = true }
+solana-ledger = { workspace = true }
+solana-metrics = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-runtime = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-version = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["compat"] }
+
+[dev-dependencies]
+agave-dashboard = { path = ".", features = ["agave-unstable-api"] }
+# Feature unification means `cargo test` compiles this crate with
+# `dev-context-only-utils` on, which the validator build does not. Run
+# `cargo check -p agave-dashboard` as well before committing.
+solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
+solana-keypair = { workspace = true }
+solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { workspace = true }
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signer = { workspace = true }
+solana-system-transaction = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

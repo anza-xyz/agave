@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Agave Dashboard</title>
+<style>
+  body { background:#0d1117; color:#c9d1d9; font:14px/1.6 ui-monospace,monospace; padding:3rem; }
+  code { background:#161b22; padding:.15rem .4rem; border-radius:4px; }
+  a { color:#58a6ff; }
+</style>
+<h1>Agave Dashboard</h1>
+<p>
+  The websocket feed is live at <code>/websocket</code>, but this binary was
+  built without the frontend bundle.
+</p>
+<p>To build it:</p>
+<pre><code>cd dashboard/frontend
+npm install
+npm run build
+cargo build --release --bin agave-validator</code></pre>

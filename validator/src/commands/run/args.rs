@@ -239,6 +239,45 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
     )
     .arg(
+        Arg::with_name("dashboard_port")
+            .long("dashboard-port")
+            .value_name("PORT")
+            .takes_value(true)
+            .validator(port_validator)
+            .help(
+                "Serve the web dashboard on this port. The dashboard exposes validator internals \
+                 and is unauthenticated, so it binds to localhost unless --dashboard-bind-address \
+                 is also given. Choose a port outside --dynamic-port-range",
+            ),
+    )
+    .arg(
+        Arg::with_name("dashboard_allowed_host")
+            .long("dashboard-allowed-host")
+            .value_name("HOST")
+            .takes_value(true)
+            .multiple(true)
+            .number_of_values(1)
+            .requires("dashboard_port")
+            .help(
+                "Additional host name the dashboard answers to. Repeat the flag for more than \
+                 one. Required when serving the dashboard through a reverse proxy, which forwards \
+                 the name the visitor typed. IP addresses and 'localhost' are always accepted and \
+                 need no configuration",
+            ),
+    )
+    .arg(
+        Arg::with_name("dashboard_bind_address")
+            .long("dashboard-bind-address")
+            .value_name("HOST")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host)
+            .requires("dashboard_port")
+            .help(
+                "Address the web dashboard listens on [default: 127.0.0.1]. Binding to a public \
+                 address exposes validator internals to anyone who can reach it",
+            ),
+    )
+    .arg(
         Arg::with_name("private_rpc")
             .long("private-rpc")
             .takes_value(false)

@@ -1,0 +1,10 @@
+node_modules/
+
+# Scratch output from `npm run verify-dist`, removed when it finishes.
+.dist-verify/
+
+# dist/ is deliberately not ignored. It is checked in so that `cargo build`
+# works without a Node toolchain. The negation is here because some forks
+# ignore `dist/` repo-wide for their own build output, and a deeper .gitignore
+# is what overrides that for this one directory.
+!dist/
