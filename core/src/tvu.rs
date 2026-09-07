@@ -41,7 +41,7 @@ use {
         votor::{Votor, VotorConfig},
     },
     agave_votor_messages::{
-        VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
+        VerifiedVotorSlotsMessage, consensus_message::Block,
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
     agave_votor_transport::{PeerList, endpoint::QuicDatagramEndpoint},
@@ -243,8 +243,8 @@ impl Tvu {
         vote_tracker: Arc<VoteTracker>,
         retransmit_slots_sender: Sender<Slot>,
         gossip_verified_vote_hash_receiver: GossipVerifiedVoteHashReceiver,
-        verified_voter_slots_sender: VerifiedVoterSlotsSender,
-        verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
+        verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
+        verified_voter_slots_receiver: Receiver<VerifiedVotorSlotsMessage>,
         replay_vote_sender: ReplayVoteSender,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -821,7 +821,8 @@ pub mod tests {
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let (retransmit_slots_sender, _retransmit_slots_receiver) = bounded(1024);
         let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
         let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let (_, gossip_confirmed_slots_receiver) = bounded(1024);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());

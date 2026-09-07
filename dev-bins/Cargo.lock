@@ -104,6 +104,7 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-runtime",
  "solana-signer-store",
+ "solana-streamer",
  "thiserror 2.0.20",
  "wincode",
 ]

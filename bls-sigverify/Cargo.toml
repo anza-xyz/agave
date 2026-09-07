@@ -49,6 +49,7 @@ solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signer-store = { workspace = true }
+solana-streamer = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 

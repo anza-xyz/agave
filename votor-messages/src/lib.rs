@@ -3,12 +3,7 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![deny(missing_docs)]
 
-use {
-    crossbeam_channel::{Receiver, Sender},
-    solana_clock::Slot,
-    solana_pubkey::Pubkey,
-    std::collections::HashMap,
-};
+use {solana_clock::Slot, solana_pubkey::Pubkey, std::collections::HashMap};
 
 pub mod certificate;
 pub mod consensus_message;
@@ -29,8 +24,4 @@ extern crate solana_frozen_abi_macro;
 /// Message type for the verified voter channel.
 /// A message is a HashMap mapping slots to the list of validators from whom a valid vote in that
 /// slot was received.
-type VerifiedVotorSlotsMessage = HashMap<Slot, Vec<Pubkey>>;
-/// Send side of verified voter channel.
-pub type VerifiedVoterSlotsSender = Sender<VerifiedVotorSlotsMessage>;
-/// Receive side of verified voter channel.
-pub type VerifiedVoterSlotsReceiver = Receiver<VerifiedVotorSlotsMessage>;
+pub type VerifiedVotorSlotsMessage = HashMap<Slot, Vec<Pubkey>>;

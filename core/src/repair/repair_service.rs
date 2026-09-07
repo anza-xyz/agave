@@ -17,7 +17,7 @@ use {
             },
         },
     },
-    agave_votor_messages::{VerifiedVoterSlotsReceiver, migration::MigrationStatus},
+    agave_votor_messages::{VerifiedVotorSlotsMessage, migration::MigrationStatus},
     ahash::AHashMap,
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
@@ -558,7 +558,7 @@ impl Default for RepairSlotRange {
 }
 
 struct RepairChannels {
-    verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
+    verified_voter_slots_receiver: CrossbeamReceiver<VerifiedVotorSlotsMessage>,
     dumped_slots_receiver: DumpedSlotsReceiver,
     popular_pruned_forks_sender: PopularPrunedForksSender,
 }
@@ -570,7 +570,7 @@ pub struct RepairServiceChannels {
 
 impl RepairServiceChannels {
     pub fn new(
-        verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
+        verified_voter_slots_receiver: CrossbeamReceiver<VerifiedVotorSlotsMessage>,
         dumped_slots_receiver: DumpedSlotsReceiver,
         popular_pruned_forks_sender: PopularPrunedForksSender,
         ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
@@ -656,7 +656,7 @@ impl RepairService {
         repair_weight: &mut RepairWeight,
         popular_pruned_forks_requests: &mut HashSet<Slot>,
         dumped_slots_receiver: &DumpedSlotsReceiver,
-        verified_voter_slots_receiver: &VerifiedVoterSlotsReceiver,
+        verified_voter_slots_receiver: &CrossbeamReceiver<VerifiedVotorSlotsMessage>,
         migration_status: &MigrationStatus,
         repair_metrics: &mut RepairMetrics,
     ) {

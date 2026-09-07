@@ -143,6 +143,7 @@ use {
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_streamer::{
+        evicting_sender::EvictingSender,
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
         streamer::StakedNodes,
@@ -1629,7 +1630,7 @@ impl Validator {
         let vote_tracker = Arc::<VoteTracker>::default();
 
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
-        let (verified_vote_sender, verified_vote_receiver) = bounded(4096);
+        let (verified_vote_sender, verified_vote_receiver) = EvictingSender::new_bounded(4096);
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
 

@@ -8,7 +8,7 @@ use {
         sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_votor_messages::{VerifiedVoterSlotsSender, migration::MigrationStatus},
+    agave_votor_messages::{VerifiedVotorSlotsMessage, migration::MigrationStatus},
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     solana_clock::{BankId, Slot},
@@ -33,6 +33,7 @@ use {
         vote_sender_types::{ReplayVoteMessage, ReplayVoteReceiver},
     },
     solana_signature::Signature,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_time_utils::AtomicInterval,
     solana_transaction::Transaction,
     solana_vote::{
@@ -71,7 +72,7 @@ const MAX_VOTE_HASHES_PER_PUBKEY_PER_SLOT: u8 = 2;
 /// etc.) together with the migration status that gates some notifications.
 struct ConfirmationNotifiers {
     gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
-    verified_voter_slots_sender: VerifiedVoterSlotsSender,
+    verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     bank_notification_sender: Option<BankNotificationSenderConfig>,
     duplicate_confirmed_slot_sender: Option<DuplicateConfirmedSlotsSender>,
@@ -451,7 +452,7 @@ impl ClusterInfoVoteListener {
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
         subscriptions: Option<Arc<RpcSubscriptions>>,
-        verified_voter_slots_sender: VerifiedVoterSlotsSender,
+        verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_votes_receiver: ReplayVoteReceiver,
         blockstore: Arc<Blockstore>,
@@ -950,7 +951,7 @@ impl ClusterInfoVoteListener {
             }
             let _ = notifiers
                 .verified_voter_slots_sender
-                .send(verified_voter_slots);
+                .try_send(verified_voter_slots);
         }
     }
 
@@ -1249,7 +1250,8 @@ mod tests {
             ..
         } = setup();
         let (votes_sender, votes_receiver) = bounded(1024);
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
@@ -1379,7 +1381,8 @@ mod tests {
         let (votes_txs_sender, votes_txs_receiver) = bounded(1024);
         let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let gossip_vote_slots = vec![1, 2];
@@ -1526,7 +1529,8 @@ mod tests {
         let (votes_sender, votes_receiver) = bounded(1024);
         let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slot_receiver) = bounded(1024);
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender,
@@ -1623,7 +1627,8 @@ mod tests {
         // Send some votes to process
         let (votes_txs_sender, votes_txs_receiver) = bounded(1024);
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
         let (_replay_votes_sender, replay_votes_receiver) = bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
@@ -1718,7 +1723,8 @@ mod tests {
 
     fn run_test_process_votes3(switch_proof_hash: Option<Hash>) {
         let (votes_sender, votes_receiver) = bounded(1024);
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let (replay_votes_sender, replay_votes_receiver): (ReplayVoteSender, ReplayVoteReceiver) =
             bounded(1024);
@@ -2120,7 +2126,8 @@ mod tests {
             None,
         )];
 
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
@@ -2370,7 +2377,8 @@ mod tests {
         ));
         let mut latest_vote_slot_per_validator = HashMap::new();
 
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let mut diff = HashMap::default();
         let mut new_optimistic_confirmed_slots = vec![];

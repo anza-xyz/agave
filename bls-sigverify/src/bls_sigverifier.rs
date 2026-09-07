@@ -11,7 +11,7 @@ use {
         vote_pool::{VotePool, VotePoolError},
     },
     agave_votor_messages::{
-        VerifiedVoterSlotsSender,
+        VerifiedVotorSlotsMessage,
         certificate::CertificateType,
         consensus_message::Block,
         metric_types::ConsensusMetricsEventSender,
@@ -34,6 +34,7 @@ use {
     solana_perf::packet::packet_config,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyToRankMap},
+    solana_streamer::evicting_sender::EvictingSender,
     std::{
         cmp,
         collections::{HashMap, HashSet, hash_map::Entry},
@@ -81,7 +82,7 @@ pub struct SigVerifierContext {
 pub struct SigVerifierChannels {
     pub(crate) packet_receiver: Receiver<Datagram>,
     pub(crate) certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
-    pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
+    pub(crate) channel_to_repair: EvictingSender<VerifiedVotorSlotsMessage>,
     pub(crate) channel_to_reward: Sender<RewardInput>,
     pub(crate) channel_to_pool: Sender<SigVerifiedBatch>,
     pub(crate) channel_to_metrics: ConsensusMetricsEventSender,
@@ -91,7 +92,7 @@ impl SigVerifierChannels {
     pub fn new(
         packet_receiver: Receiver<Datagram>,
         certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
-        channel_to_repair: VerifiedVoterSlotsSender,
+        channel_to_repair: EvictingSender<VerifiedVotorSlotsMessage>,
         channel_to_reward: Sender<RewardInput>,
         channel_to_pool: Sender<SigVerifiedBatch>,
         channel_to_metrics: ConsensusMetricsEventSender,
@@ -550,7 +551,6 @@ mod tests {
             test_create_base3_certificate,
         },
         agave_votor_messages::{
-            VerifiedVoterSlotsReceiver,
             certificate::{Certificate, CertificateType},
             consensus_message::{Block, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
@@ -606,7 +606,7 @@ mod tests {
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
         ban_receiver: mpsc::Receiver<BanCommand>,
         _packet_sender: Sender<Datagram>,
-        repair_receiver: VerifiedVoterSlotsReceiver,
+        repair_receiver: Receiver<VerifiedVotorSlotsMessage>,
         _reward_receiver: Receiver<RewardInput>,
         pool_receiver: Receiver<SigVerifiedBatch>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
@@ -660,7 +660,7 @@ mod tests {
             let leader_schedule =
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
-            let (channel_to_repair, repair_receiver) = bounded(1024);
+            let (channel_to_repair, repair_receiver) = EvictingSender::new_bounded(1024);
             let (channel_to_reward, reward_receiver) = bounded(1024);
             let (packet_sender, packet_receiver) = bounded(1024);
             let (certificate_sender, certificate_receiver) = bounded(1024);
@@ -1632,7 +1632,7 @@ mod tests {
     #[test]
     fn test_verify_old_vote_and_cert() {
         let (channel_to_pool, pool_receiver) = bounded(1024);
-        let (channel_to_repair, _repair_receiver) = bounded(1024);
+        let (channel_to_repair, _repair_receiver) = EvictingSender::new_bounded(1024);
         let (channel_to_metrics, _metrics_receiver) = bounded(1024);
         let (channel_to_reward, _reward_receiver) = bounded(1024);
         let validator_keypairs = (0..10)

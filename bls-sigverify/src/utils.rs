@@ -5,7 +5,7 @@ use {
         stats::{SenderStats, VoteSenderStats},
     },
     agave_votor_messages::{
-        VerifiedVoterSlotsSender,
+        VerifiedVotorSlotsMessage,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
@@ -13,6 +13,7 @@ use {
     log::{error, info, warn},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{collections::HashMap, time::Instant},
 };
 
@@ -102,7 +103,7 @@ pub(super) fn send_sig_verified_batch_to_pool(
 pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
     votes: HashMap<Slot, Vec<Pubkey>>,
-    channel: &VerifiedVoterSlotsSender,
+    channel: &EvictingSender<VerifiedVotorSlotsMessage>,
     stats: &mut VoteSenderStats,
 ) {
     if votes.is_empty() {
