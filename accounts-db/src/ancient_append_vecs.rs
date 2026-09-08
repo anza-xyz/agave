@@ -490,7 +490,6 @@ impl AccountsDb {
             store_accounts_stats,
             rewrite_elapsed_us: Saturating(rewrite_elapsed_us),
             create_and_insert_store_elapsed_us: Saturating(create_and_insert_store_elapsed_us),
-            ..SquashStatsSub::default()
         });
 
         write_ancient_accounts
