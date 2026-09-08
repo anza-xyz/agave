@@ -1035,7 +1035,7 @@ fn handle_parent_ready(
                 TransactionHistoryPurgeSource::LeaderWindow,
                 TransactionHistoryPurgeInput::Bcl(Arc::clone(&accumulated_txs)),
             )
-            .expect("failed to enqueue UpdateParent transaction-history purge");
+            .map_err(|err| PohRecorderError::PurgeTransactionHistory(slot, err))?;
     }
 
     if let Some(sender) = &ctx.entry_notification_sender
