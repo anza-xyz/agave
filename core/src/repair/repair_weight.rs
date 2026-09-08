@@ -14,14 +14,16 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_ledger::{
-        ancestor_iterator::AncestorIterator, blockstore::Blockstore,
-        blockstore_db::DBPinnableSlice, blockstore_meta::SlotMetaRepair,
+        ancestor_iterator::AncestorIterator,
+        blockstore::Blockstore,
+        blockstore_db::DBPinnableSlice,
+        blockstore_meta::{NextSlots, SlotMetaRepair},
     },
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::epoch_stakes::VersionedEpochStakes,
     std::{
-        collections::{HashMap, HashSet, VecDeque},
+        collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
         iter,
     },
 };
@@ -230,6 +232,7 @@ impl RepairWeight {
         repair_eligibility: &mut RepairEligibility,
         repair_metrics: &mut RepairMetrics,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
+        full_slots_cache: &mut AHashMap<Slot, NextSlots>,
     ) -> Vec<ShredRepairType> {
         let mut repairs = vec![];
         let mut processed_slots = AHashSet::from([self.root]);
@@ -258,6 +261,8 @@ impl RepairWeight {
             blockstore,
             pinnable_slice,
             &mut slot_meta_cache,
+            full_slots_cache,
+            &mut processed_slots,
             &mut best_shreds_repairs,
             max_new_shreds,
             repair_eligibility,
@@ -309,6 +314,16 @@ impl RepairWeight {
         repairs.extend(closest_completion_repairs);
         get_closest_completion_us.stop();
 
+        // Preserve only the stable part of the per-iteration metadata cache. Incomplete metadata
+        // must be fetched again because new shreds can change it at any time.
+        for (slot, slot_meta) in &slot_meta_cache {
+            if let Some(slot_meta) = slot_meta
+                && slot_meta.is_full()
+                && let Entry::Vacant(entry) = full_slots_cache.entry(*slot)
+            {
+                entry.insert(slot_meta.next_slots.clone());
+            }
+        }
         repair_metrics.best_repairs_stats.update(
             num_orphan_slots as u64,
             num_orphan_repairs as u64,
@@ -535,11 +550,14 @@ impl RepairWeight {
     }
 
     // Generate shred repairs for main subtree rooted at `self.root`
+    #[allow(clippy::too_many_arguments)]
     fn get_best_shreds<'db>(
         &mut self,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
+        full_slots_cache: &mut AHashMap<Slot, NextSlots>,
+        processed_slots: &mut AHashSet<Slot>,
         repairs: &mut Vec<ShredRepairType>,
         max_new_shreds: usize,
         repair_eligibility: &mut RepairEligibility,
@@ -551,6 +569,8 @@ impl RepairWeight {
             blockstore,
             pinnable_slice,
             slot_meta_cache,
+            full_slots_cache,
+            processed_slots,
             repairs,
             max_new_shreds,
             repair_eligibility,

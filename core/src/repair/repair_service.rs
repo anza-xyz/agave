@@ -18,7 +18,7 @@ use {
         },
     },
     agave_votor_messages::{VerifiedVoterSlotsReceiver, migration::MigrationStatus},
-    ahash::AHashMap,
+    ahash::{AHashMap, AHashSet},
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lazy_lru::LruCache,
@@ -31,7 +31,7 @@ use {
     solana_ledger::{
         blockstore::Blockstore,
         blockstore_db::DBPinnableSlice,
-        blockstore_meta::{BlockLocation, SlotMetaRepair},
+        blockstore_meta::{BlockLocation, NextSlots, SlotMetaRepair},
         shred,
     },
     solana_measure::measure::Measure,
@@ -588,6 +588,58 @@ impl RepairServiceChannels {
     }
 }
 
+/// Caches child links for slots known to be full across repair iterations.
+///
+/// Full slots do not need to be checked for missing shreds again, but their [`NextSlots`] can
+/// still change when Blockstore inserts or removes descendants. `slot_meta_topology_generation`
+/// records the Blockstore topology generation for which `entries` are valid. Before each
+/// traversal, [`Self::invalidate_if_stale`] clears all entries if Blockstore has advanced that
+/// generation. Root advancement prunes older entries separately through
+/// [`Self::retain_from_root`].
+struct FullSlotsCache {
+    /// Maps each cached full slot to its children in Blockstore.
+    entries: AHashMap<Slot, NextSlots>,
+    /// Blockstore metadata generation observed when `entries` was last validated.
+    slot_meta_topology_generation: u64,
+}
+
+impl FullSlotsCache {
+    fn new(blockstore: &Blockstore) -> Self {
+        Self {
+            entries: AHashMap::new(),
+            slot_meta_topology_generation: blockstore.slot_meta_topology_generation(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    fn retain_from_root(&mut self, root: Slot) {
+        self.entries.retain(|slot, _next_slots| *slot >= root);
+    }
+
+    /// Clears cached child links if Blockstore metadata changed since they were last validated.
+    ///
+    /// This must run before the cache is used for a repair traversal. Adopting the current
+    /// generation only after clearing the entries keeps the map and its generation synchronized.
+    fn invalidate_if_stale(&mut self, blockstore: &Blockstore) {
+        let current_generation = blockstore.slot_meta_topology_generation();
+        if current_generation != self.slot_meta_topology_generation {
+            self.entries.clear();
+            self.slot_meta_topology_generation = current_generation;
+        }
+    }
+
+    /// Exposes the validated entries for traversal lookups and cache population.
+    ///
+    /// [`Self::invalidate_if_stale`] must be called before using the returned map in a new repair
+    /// traversal.
+    fn entries_mut(&mut self) -> &mut AHashMap<Slot, NextSlots> {
+        &mut self.entries
+    }
+}
+
 struct RepairTracker {
     sharable_banks: SharableBanks,
     repair_weight: RepairWeight,
@@ -598,6 +650,7 @@ struct RepairTracker {
     // Maps a repair that may still be outstanding to the timestamp it was requested.
     outstanding_repairs: HashMap<ShredRepairType, u64>,
     repair_eligibility: RepairEligibility,
+    full_slots_cache: FullSlotsCache,
 }
 
 pub struct RepairService {
@@ -650,6 +703,7 @@ impl RepairService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update_weighting_heuristic(
         blockstore: &Blockstore,
         root_bank: Arc<Bank>,
@@ -659,17 +713,25 @@ impl RepairService {
         verified_voter_slots_receiver: &VerifiedVoterSlotsReceiver,
         migration_status: &MigrationStatus,
         repair_metrics: &mut RepairMetrics,
+        full_slots_cache: &mut FullSlotsCache,
     ) {
         if repair_weight.is_pruned_tree_tracking_enabled()
             && migration_status.is_alpenglow_enabled()
         {
             repair_weight.disable_pruned_tree_tracking();
             popular_pruned_forks_requests.clear();
+            // Migration purges all TowerBFT slots above the Alpenglow genesis without emitting
+            // individual dumped-slot notifications.
+            full_slots_cache.clear();
         }
 
         // Purge outdated slots from the weighting heuristic
         let mut set_root_us = Measure::start("set_root_us");
+        let old_root = repair_weight.root();
         repair_weight.set_root(root_bank.slot());
+        if repair_weight.root() != old_root {
+            full_slots_cache.retain_from_root(repair_weight.root());
+        }
         set_root_us.stop();
 
         // Remove dumped slots from the weighting heuristic
@@ -701,6 +763,8 @@ impl RepairService {
                 }
             });
         dump_slots_us.stop();
+
+        full_slots_cache.invalidate_if_stale(blockstore);
 
         // Add new votes to the weighting heuristic
         let mut get_votes_us = Measure::start("get_votes_us");
@@ -743,6 +807,7 @@ impl RepairService {
         repair_eligibility: &mut RepairEligibility,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
         repair_metrics: &mut RepairMetrics,
+        full_slots_cache: &mut AHashMap<Slot, NextSlots>,
     ) -> Vec<ShredRepairType> {
         let mut purge_outstanding_repairs_us = Measure::start("purge_outstanding_repairs_us");
         // Purge old entries. They've either completed or need to be retried.
@@ -765,6 +830,7 @@ impl RepairService {
             repair_eligibility,
             repair_metrics,
             outstanding_repairs,
+            full_slots_cache,
         )
     }
 
@@ -886,6 +952,7 @@ impl RepairService {
             popular_pruned_forks_requests,
             outstanding_repairs,
             repair_eligibility,
+            full_slots_cache,
         } = repair_tracker;
         let root_bank = sharable_banks.root();
 
@@ -898,6 +965,7 @@ impl RepairService {
             verified_voter_slots_receiver,
             migration_status,
             repair_metrics,
+            full_slots_cache,
         );
 
         let repairs = Self::identify_repairs(
@@ -909,6 +977,7 @@ impl RepairService {
             repair_eligibility,
             outstanding_repairs,
             repair_metrics,
+            full_slots_cache.entries_mut(),
         );
 
         if !migration_status.is_alpenglow_enabled() {
@@ -967,6 +1036,7 @@ impl RepairService {
             popular_pruned_forks_requests: HashSet::new(),
             outstanding_repairs: HashMap::new(),
             repair_eligibility: RepairEligibility::default(),
+            full_slots_cache: FullSlotsCache::new(&blockstore),
         };
 
         let mut pinnable_slice = blockstore.new_pinnable_slice();
@@ -1036,7 +1106,7 @@ impl RepairService {
         }
     }
 
-    /// Repairs any fork starting at the input slot (uses blockstore for fork info)
+    /// Repairs any fork starting at the input slot (uses blockstore for fork info).
     pub fn generate_repairs_for_fork<'db>(
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
@@ -1046,10 +1116,45 @@ impl RepairService {
         repair_eligibility: &mut RepairEligibility,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) {
+        Self::generate_repairs_for_fork_with_cache(
+            blockstore,
+            pinnable_slice,
+            repairs,
+            max_repairs,
+            slot,
+            &mut AHashMap::new(),
+            &mut AHashSet::new(),
+            repair_eligibility,
+            outstanding_repairs,
+        );
+    }
+
+    /// Repairs a Blockstore fork starting at `slot`, reusing validated metadata for full slots.
+    ///
+    /// Full slots cannot need shred repair, so their child topology is retained across repair
+    /// iterations and they are recorded in `processed_slots` for the remaining repair strategies.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn generate_repairs_for_fork_with_cache<'db>(
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+        repairs: &mut Vec<ShredRepairType>,
+        max_repairs: usize,
+        slot: Slot,
+        full_slots_cache: &mut AHashMap<Slot, NextSlots>,
+        processed_slots: &mut AHashSet<Slot>,
+        repair_eligibility: &mut RepairEligibility,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
+    ) {
         let mut pending_slots = vec![slot];
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
             let slot = pending_slots.pop().unwrap();
+            if let Some(next_slots) = full_slots_cache.get(&slot) {
+                processed_slots.insert(slot);
+                pending_slots.extend(next_slots.iter().copied());
+                continue;
+            }
             if let Some(slot_meta) = blockstore.meta_repair_into(slot, pinnable_slice).unwrap() {
+                let is_full = slot_meta.is_full();
                 let new_repairs = Self::generate_repairs_for_slot(
                     blockstore,
                     slot,
@@ -1060,7 +1165,13 @@ impl RepairService {
                 );
                 repairs.extend(new_repairs);
                 let next_slots = slot_meta.next_slots;
-                pending_slots.extend(next_slots);
+                if is_full {
+                    processed_slots.insert(slot);
+                    pending_slots.extend(next_slots.iter().copied());
+                    full_slots_cache.insert(slot, next_slots);
+                } else {
+                    pending_slots.extend(next_slots);
+                }
             } else {
                 break;
             }
@@ -1430,6 +1541,7 @@ mod test {
             blockstore::{
                 Blockstore, make_chaining_slot_entries, make_many_slot_entries, make_slot_entries,
             },
+            blockstore_meta::SlotMeta,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             shred::max_ticks_per_n_shreds,
@@ -1446,6 +1558,115 @@ mod test {
         let keypair = Arc::new(Keypair::new());
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
         ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified)
+    }
+
+    #[test]
+    fn test_alpenglow_transition_clears_full_slots_cache() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let (root_bank, migration_status) = {
+            let bank_forks = bank_forks.read().unwrap();
+            (bank_forks.root_bank(), bank_forks.migration_status())
+        };
+        migration_status.enable_alpenglow_for_tests();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let (_dumped_slots_sender, dumped_slots_receiver) = crossbeam_channel::unbounded();
+        let (_verified_voter_slots_sender, verified_voter_slots_receiver) =
+            crossbeam_channel::unbounded();
+        let mut repair_weight = RepairWeight::new(root_bank.slot());
+        let mut full_slots_cache = FullSlotsCache::new(&blockstore);
+        full_slots_cache.entries = AHashMap::from([(1, vec![2].into()), (2, vec![].into())]);
+        let mut repair_metrics = RepairMetrics::default();
+
+        RepairService::update_weighting_heuristic(
+            &blockstore,
+            root_bank,
+            &mut repair_weight,
+            &mut HashSet::new(),
+            &dumped_slots_receiver,
+            &verified_voter_slots_receiver,
+            migration_status.as_ref(),
+            &mut repair_metrics,
+            &mut full_slots_cache,
+        );
+
+        assert!(full_slots_cache.entries.is_empty());
+        assert!(!repair_weight.is_pruned_tree_tracking_enabled());
+    }
+
+    #[test]
+    fn test_slot_meta_invalidation_clears_full_slots_cache() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let (root_bank, migration_status) = {
+            let bank_forks = bank_forks.read().unwrap();
+            (bank_forks.root_bank(), bank_forks.migration_status())
+        };
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let (_dumped_slots_sender, dumped_slots_receiver) = crossbeam_channel::unbounded();
+        let (_verified_voter_slots_sender, verified_voter_slots_receiver) =
+            crossbeam_channel::unbounded();
+        let mut repair_weight = RepairWeight::new(root_bank.slot());
+        let mut full_slots_cache = FullSlotsCache::new(&blockstore);
+        full_slots_cache.entries = AHashMap::from([(0, vec![1].into()), (1, vec![].into())]);
+        let mut repair_metrics = RepairMetrics::default();
+
+        let meta = SlotMeta {
+            slot: 42,
+            ..SlotMeta::default()
+        };
+        blockstore.put_meta(42, &meta).unwrap();
+        RepairService::update_weighting_heuristic(
+            &blockstore,
+            root_bank.clone(),
+            &mut repair_weight,
+            &mut HashSet::new(),
+            &dumped_slots_receiver,
+            &verified_voter_slots_receiver,
+            migration_status.as_ref(),
+            &mut repair_metrics,
+            &mut full_slots_cache,
+        );
+
+        assert!(full_slots_cache.entries.is_empty());
+        full_slots_cache.entries.insert(0, NextSlots::new());
+        RepairService::update_weighting_heuristic(
+            &blockstore,
+            root_bank,
+            &mut repair_weight,
+            &mut HashSet::new(),
+            &dumped_slots_receiver,
+            &verified_voter_slots_receiver,
+            migration_status.as_ref(),
+            &mut repair_metrics,
+            &mut full_slots_cache,
+        );
+        assert_eq!(full_slots_cache.entries.len(), 1);
+    }
+
+    #[test]
+    fn test_full_slots_cache_retain_from_root() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut full_slots_cache = FullSlotsCache::new(&blockstore);
+        full_slots_cache.entries = AHashMap::from([
+            (1, NextSlots::new()),
+            (2, NextSlots::new()),
+            (3, NextSlots::new()),
+        ]);
+
+        full_slots_cache.retain_from_root(2);
+
+        assert_eq!(
+            full_slots_cache
+                .entries
+                .keys()
+                .copied()
+                .collect::<HashSet<_>>(),
+            HashSet::from([2, 3])
+        );
     }
 
     #[test]
@@ -1518,6 +1739,7 @@ mod test {
                 &mut RepairEligibility::default(),
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
+                &mut AHashMap::default(),
             ),
             vec![
                 ShredRepairType::Orphan(2),
@@ -1553,6 +1775,7 @@ mod test {
                 &mut RepairEligibility::default(),
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
+                &mut AHashMap::default(),
             ),
             vec![ShredRepairType::HighestShred(0, 0)]
         );
@@ -1611,6 +1834,7 @@ mod test {
                 &mut repair_eligibility,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
+                &mut AHashMap::default(),
             ),
             vec![]
         );
@@ -1629,6 +1853,7 @@ mod test {
                 &mut repair_eligibility,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
+                &mut AHashMap::default(),
             ),
             expected
         );
@@ -1646,6 +1871,7 @@ mod test {
                 &mut repair_eligibility,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
+                &mut AHashMap::default(),
             )[..],
             expected[0..expected.len() - 2]
         );
@@ -1788,6 +2014,7 @@ mod test {
                 &mut repair_eligibility,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
+                &mut AHashMap::default(),
             ),
             vec![]
         );
@@ -1806,6 +2033,7 @@ mod test {
                 &mut repair_eligibility,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
+                &mut AHashMap::default(),
             ),
             expected
         );
