@@ -11,6 +11,7 @@ use {
         },
         event_handler::stats::EventHandlerStats,
         root_utils::{self, RootContext},
+        standstill::StandstillSignal,
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
         voting_service::BLSOp,
@@ -64,6 +65,7 @@ pub(crate) struct EventHandlerContext {
 
     pub(crate) event_receiver: VotorEventReceiver,
     pub(crate) timer_manager: Arc<RwLock<TimerManager>>,
+    pub(crate) standstill_signal: Arc<StandstillSignal>,
 
     // Contexts
     pub(crate) shared_context: SharedContext,
@@ -92,11 +94,11 @@ struct LocalContext {
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
     pub(crate) stats: EventHandlerStats,
-    /// When in standstill, tracks the highest finalized slot at the time standstill was detected.
-    /// Used to calculate dynamic timeout extensions (5% per leader window since standstill).
-    /// Reset to `None` when a later finalization is observed, including through identity root
+    /// Shared standstill state used for scaling timeouts.
+    /// Set when a [`VotorEvent::Standstill`] event arrives.
+    /// Cleared when a later finalization is observed, including through identity root
     /// reconciliation.
-    pub(crate) standstill_slot: Option<Slot>,
+    pub(crate) standstill_signal: Arc<StandstillSignal>,
 }
 
 impl EventHandler {
@@ -120,6 +122,7 @@ impl EventHandler {
             migration_status,
             event_receiver,
             timer_manager,
+            standstill_signal,
             shared_context: ctx,
             voting_context: mut vctx,
             root_context: rctx,
@@ -134,7 +137,7 @@ impl EventHandler {
                 finalized_blocks: BTreeSet::default(),
                 received_shred: BTreeSet::default(),
                 stats: EventHandlerStats::new(),
-                standstill_slot: None,
+                standstill_signal,
             };
 
             // Wait until migration has completed
@@ -246,9 +249,12 @@ impl EventHandler {
         let root_bank = vctx.sharable_banks.root();
         let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
         let delta_first_fec_set = delta_block;
+        // Publish the backoff this slot implies, so subsystems whose own progress
+        // stalls during a standstill (e.g. repair) scale on the same curve.
+        local_context.standstill_signal.record_timeout_slot(slot);
         let timeout_inserted = timer_manager.write().set_timeouts(
             slot,
-            local_context.standstill_slot,
+            local_context.standstill_signal.get(),
             delta_first_fec_set,
             delta_block,
         );
@@ -493,10 +499,10 @@ impl EventHandler {
                     &mut local_context.stats,
                 );
 
-                if let Some(slot) = local_context.standstill_slot
+                if let Some(slot) = local_context.standstill_signal.get()
                     && block.slot > slot
                 {
-                    local_context.standstill_slot = None;
+                    local_context.standstill_signal.clear();
                     info!(
                         "{}: Standstill initially detected at slot={slot} has ended at slot={}. \
                          Ending timeout extension",
@@ -536,7 +542,7 @@ impl EventHandler {
                     local_context.my_pubkey
                 );
                 // Record the highest finalized slot for dynamic timeout extension.
-                match local_context.standstill_slot {
+                match local_context.standstill_signal.get() {
                     Some(old_slot) => {
                         debug_assert_eq!(highest_finalized_slot, old_slot);
                         if highest_finalized_slot != old_slot {
@@ -548,7 +554,7 @@ impl EventHandler {
                         }
                     }
                     None => {
-                        local_context.standstill_slot = Some(highest_finalized_slot);
+                        local_context.standstill_signal.set(highest_finalized_slot);
                         info!(
                             "{}: Extending timeouts starting at slot {highest_finalized_slot}",
                             local_context.my_pubkey
@@ -701,10 +707,10 @@ impl EventHandler {
 
         // Advancing past the slot where standstill was detected is equivalent to observing the
         // later finalization that normally clears it.
-        if let Some(standstill_slot) = local_context.standstill_slot
+        if let Some(standstill_slot) = local_context.standstill_signal.get()
             && standstill_slot < effective_root
         {
-            local_context.standstill_slot = None;
+            local_context.standstill_signal.clear();
             info!(
                 "{}: Standstill initially detected at slot={standstill_slot} has ended at \
                  restored effective root {effective_root}",
@@ -814,7 +820,7 @@ impl EventHandler {
     }
 
     /// Checks the pending blocks that have completed replay to see if they
-    /// are eligble to be voted on now
+    /// are eligible to be voted on now
     fn check_pending_blocks(
         my_pubkey: &Pubkey,
         pending_blocks: &mut PendingBlocks,
@@ -1271,7 +1277,7 @@ mod tests {
             finalized_blocks: BTreeSet::new(),
             received_shred: BTreeSet::new(),
             stats: EventHandlerStats::default(),
-            standstill_slot: None,
+            standstill_signal: Arc::new(StandstillSignal::new()),
         };
 
         EventHandlerTestContext {
@@ -2235,7 +2241,7 @@ mod tests {
             },
             true,
         );
-        assert!(test_context.local_context.standstill_slot.is_none());
+        assert!(test_context.local_context.standstill_signal.get().is_none());
 
         // Send another standstill event with highest finalized at 1, we should refresh votes for 2 and 3 only
         test_context.send_standstill_event(1);
@@ -2351,7 +2357,10 @@ mod tests {
                 .pending_blocks
                 .insert(slot, vec![(Block::new_unique(slot), parent_block)]);
         }
-        test_context.local_context.standstill_slot = Some(restored_root - 1);
+        test_context
+            .local_context
+            .standstill_signal
+            .set(restored_root - 1);
 
         test_context
             .cluster_info
@@ -2371,7 +2380,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![restored_root + 1],
         );
-        assert!(test_context.local_context.standstill_slot.is_none());
+        assert!(test_context.local_context.standstill_signal.get().is_none());
 
         // Any event that rechecks pending blocks used to query the stale slot and panic.
         test_context.send_parent_ready_event(restored_root + 1, parent_block);
@@ -2382,13 +2391,16 @@ mod tests {
         test_context.send_standstill_event(restored_root);
         test_context.send_set_identity_event();
         assert_eq!(
-            test_context.local_context.standstill_slot,
+            test_context.local_context.standstill_signal.get(),
             Some(restored_root)
         );
-        test_context.local_context.standstill_slot = Some(restored_root + 1);
+        test_context
+            .local_context
+            .standstill_signal
+            .set(restored_root + 1);
         test_context.send_set_identity_event();
         assert_eq!(
-            test_context.local_context.standstill_slot,
+            test_context.local_context.standstill_signal.get(),
             Some(restored_root + 1)
         );
     }
@@ -2502,11 +2514,12 @@ mod tests {
     }
 
     #[test]
-    fn test_standstill_slot_tracking() {
+    fn test_standstill_signal_tracking() {
         let mut test_context = setup();
 
-        // Initially standstill_slot should be None
-        assert!(test_context.local_context.standstill_slot.is_none());
+        let signal = &test_context.local_context.standstill_signal;
+        // Initially the standstill signal should be clear.
+        assert!(signal.get().is_none());
 
         // Set up some state
         let root_bank = test_context
@@ -2524,20 +2537,18 @@ mod tests {
         };
         test_context.check_for_vote(&Vote::new_notarization_vote(block));
 
-        // Send standstill event - should record the standstill slot
+        // Send standstill event - should record the standstill slot.
         test_context.send_standstill_event(0);
 
-        // The standstill_slot should now be set to the highest finalized
-        assert!(test_context.local_context.standstill_slot.is_some());
-        let standstill_slot = test_context.local_context.standstill_slot.unwrap();
-        // The highest finalized should be 0 since we haven't finalized a slot after genesis
-        assert_eq!(standstill_slot, 0);
+        // The standstill signal should now hold the highest finalized slot.
+        // The highest finalized is 0 since we haven't finalized a slot after genesis.
+        assert_eq!(test_context.local_context.standstill_signal.get(), Some(0));
 
-        // Send another standstill event - should not change the existing standstill_slot
+        // Send another standstill event - should not change the existing slot.
         test_context.send_standstill_event(0);
-        assert_eq!(test_context.local_context.standstill_slot, Some(0));
+        assert_eq!(test_context.local_context.standstill_signal.get(), Some(0));
 
-        // Send a finalized event - should reset standstill_slot
+        // Send a finalized event - should clear the signal.
         test_context.send_finalized_event(
             Block {
                 slot: 1,
@@ -2545,6 +2556,6 @@ mod tests {
             },
             false,
         );
-        assert!(test_context.local_context.standstill_slot.is_none());
+        assert!(test_context.local_context.standstill_signal.get().is_none());
     }
 }
