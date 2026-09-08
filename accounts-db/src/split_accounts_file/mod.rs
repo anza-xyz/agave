@@ -255,12 +255,18 @@ impl SplitAccountsFile {
         self.remove_on_drop.store(false, Ordering::Relaxed);
     }
 
-    /// Flushes contents to disk
+    /// Flushes contents to disk.
+    ///
+    /// Returns an error if the SplitAccountsFile is set to remove-on-drop.
     pub fn flush(&self) -> Result<(), SplitAccountsFileError> {
         let was_dirty = self.is_dirty.swap(false, Ordering::Relaxed);
         if !was_dirty {
             // wasn't dirty, so nothing to do here
             return Ok(());
+        }
+
+        if self.remove_on_drop.load(Ordering::Relaxed) {
+            return Err(SplitAccountsFileError::FlushButRemoveOnDrop);
         }
 
         let (meta_file, data_file) = match &self.inner {
@@ -1298,11 +1304,11 @@ mod tests {
         assert_eq!(data_lens[2], accounts[4].1.data().len());
     }
 
-    // Ensure `is_dirty` is tracked properly.
-    //
-    // In particular:
-    // * `reopen_as_readonly()` moves `is_dirty`
-    // * `flush()` clears `is_dirty`
+    /// Ensure `is_dirty` is tracked properly.
+    ///
+    /// In particular:
+    /// * `reopen_as_readonly()` moves `is_dirty`
+    /// * `flush()` clears `is_dirty`
     #[test_case(false)]
     #[test_case(true)]
     fn test_is_dirty(begins_dirty: bool) {
@@ -1321,6 +1327,9 @@ mod tests {
         assert!(!*split1.is_dirty.get_mut());
         assert_eq!(*split2.is_dirty.get_mut(), begins_dirty);
 
+        // flush() is only valid if *not* removing on drop
+        split2.disable_remove_on_drop();
+
         // ensure we can flush the new split file
         assert!(split2.flush().is_ok());
         // and now should not be dirty
@@ -1330,5 +1339,26 @@ mod tests {
         assert!(split1.flush().is_ok());
         // and should not be dirty still
         assert!(!*split1.is_dirty.get_mut());
+    }
+
+    /// Ensure flush() works.
+    #[test]
+    fn test_flush() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().join("base");
+        let split = SplitAccountsFile::new(&base_path).unwrap();
+
+        // split file is not dirty, so flush() always succeeds
+        split.flush().unwrap();
+
+        // a new split file begins with remove_on_drop == true, which will cause flush() to error
+        // (assuming the split file is dirty)
+        split.is_dirty.store(true, Ordering::Relaxed);
+        let err = split.flush().unwrap_err();
+        assert_matches!(err, SplitAccountsFileError::FlushButRemoveOnDrop);
+
+        // flush() will succeed after disabling remove_on_drop
+        split.disable_remove_on_drop();
+        split.flush().unwrap();
     }
 }

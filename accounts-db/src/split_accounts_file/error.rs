@@ -53,6 +53,9 @@ pub enum Error {
     #[error("header uids do not match: meta uid: {meta_uid}, data uid: {data_uid}")]
     HeaderUidMismatch { meta_uid: u64, data_uid: u64 },
 
+    #[error("request to flush but set to remove-on-drop")]
+    FlushButRemoveOnDrop,
+
     // generic io::Error is last so other variants are selected first
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
