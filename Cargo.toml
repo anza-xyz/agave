@@ -429,7 +429,7 @@ solana-nohash-hasher = "0.2.1"
 solana-nonce = "3.3.0"
 solana-nonce-account = { version = "4.3.0", default-features = false }
 solana-notifier = { path = "notifier", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
-solana-offchain-message = "3.0.0"
+solana-offchain-message = "3.0.1"
 solana-packet = "4.3.0"
 solana-perf = { path = "perf", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
