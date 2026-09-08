@@ -282,6 +282,7 @@ impl ConnectionWorkersScheduler {
 
             next_leaders.clear();
             leader_updater.next_leaders(leaders_fanout.connect, &mut next_leaders);
+            let current_leader = next_leaders.first().copied();
             select_unique_leaders(&next_leaders, leaders_fanout.connect, &mut connect_leaders);
 
             // add future leaders to the cache to hide the latency of opening the connection.
@@ -307,6 +308,20 @@ impl ConnectionWorkersScheduler {
                         last_error = Some(error);
                         break;
                     }
+                }
+                // Allocate the boxed wait only when the broadcast is still pending.
+                result = async {
+                    leader_updater.wait_for_leader_change(current_leader).await
+                } => {
+                    if result.is_err() {
+                        last_error = Some(ConnectionWorkersSchedulerError::LeaderReceiverDropped);
+                        break;
+                    }
+                    debug!(
+                        target: "solana_tpu_client_next::leader_timing",
+                        "broadcast_leader_changed scheduler={scheduler_address:?} \
+                         previous_leader={current_leader:?}; retrying pending transaction"
+                    );
                 }
                 result = update_identity_receiver.changed(), if identity_updater_is_active => {
                     if result.is_err() {

@@ -80,6 +80,20 @@ impl LeaderUpdateReceiver {
         };
         lookahead_leaders.extend(tpu_info.leaders.iter().take(num_lookahead_leaders).copied());
     }
+
+    /// Waits until the first candidate address differs from `current_leader`.
+    /// Checks the current snapshot before waiting, and ignores slot/timing updates that
+    /// keep the same first address. This wait is cancellation safe.
+    pub async fn wait_for_leader_change(
+        &mut self,
+        current_leader: Option<SocketAddr>,
+    ) -> Result<(), Error> {
+        self.receiver
+            .wait_for(|info| info.leaders.first().copied() != current_leader)
+            .await
+            .map(|_| ())
+            .map_err(|_| Error::ChannelClosed)
+    }
 }
 
 /// [`NodesTpuInfo`] holds the TPU addresses of the nodes scheduled to be leaders for upcoming
