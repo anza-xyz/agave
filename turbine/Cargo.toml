@@ -62,7 +62,7 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 agave-votor-messages = { path = "../votor-messages", features = ["dev-context-only-utils"] }
 bencher = { workspace = true }
 bs58 = { workspace = true }

@@ -110,6 +110,7 @@ tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 base64 = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }

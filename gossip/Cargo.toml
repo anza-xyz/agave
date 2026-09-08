@@ -87,6 +87,7 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 anyhow = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }

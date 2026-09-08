@@ -35,7 +35,7 @@ tokio = { workspace = true, features = ["full"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-hash = { workspace = true }

@@ -43,7 +43,7 @@ tokio = { workspace = true, features = ["full"] }
 tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 async-trait = { workspace = true }
 log = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
