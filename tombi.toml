@@ -1,5 +1,3 @@
-toml-version = "v1.1.0"
-
 [format.rules]
 comment-style = "preserve"
 date-time-delimiter = "preserve"
@@ -8,6 +6,7 @@ key-quote-style = "preserve"
 string-quote-style = "preserve"
 
 [[schemas]]
+toml-version = "v1.0.0"
 path = "tombi://www.schemastore.org/cargo.json"
 include = ["Cargo.toml", "**/Cargo.toml"]
 
