@@ -3472,7 +3472,7 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            let nonce_address = message.get_durable_nonce()?;
+            let nonce_address = SVMMessage::get_durable_nonce(message)?;
             let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
             verify_nonce_account(&nonce_account, message.recent_blockhash())
                 .map(|nonce_data| nonce_data.get_lamports_per_signature())
