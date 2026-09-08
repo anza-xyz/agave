@@ -387,6 +387,7 @@ dependencies = [
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
+ "agave-votor-messages",
  "agave-votor-transport",
  "agave-xdp",
  "arc-swap",

@@ -103,6 +103,14 @@ pub fn execute(
     operation: Operation,
     config: super::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if !matches.is_present("experimental_allow_unsafe_dcou") {
+        assert_eq!(
+            agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
+            5000,
+            "agave-validator was built with `dev-context-only-utils` enabled; refusing to start, \
+             please use scripts/cargo-install-all.sh to properly build the binary"
+        );
+    }
     // Debugging panics is easier with a backtrace
     if env::var_os("RUST_BACKTRACE").is_none() {
         // Safety: env update is made before any spawned threads might access the environment

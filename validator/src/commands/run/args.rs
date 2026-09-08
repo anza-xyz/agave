@@ -1272,6 +1272,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .conflicts_with("no_xdp")
             .help("Enable XDP zero copy mode. Requires hardware and driver support"),
     )
+    .arg(
+        Arg::with_name("experimental_allow_unsafe_dcou")
+            .long("experimental-allow-unsafe-dcou")
+            .takes_value(false)
+            .hidden(hidden_unless_forced())
+            .help("Do not use, skips the DCOU check on startup"),
+    )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())

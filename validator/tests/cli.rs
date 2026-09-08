@@ -30,6 +30,7 @@ fn test_use_the_same_path_for_accounts_and_snapshots() {
         temp_dir_str,
         "--snapshots",
         temp_dir_str,
+        "--experimental-allow-unsafe-dcou",
     ]);
     cmd.assert().failure().stderr(predicates::str::contains(
         "the --accounts and --snapshots paths must be unique",
