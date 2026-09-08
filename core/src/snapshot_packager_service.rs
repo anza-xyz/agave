@@ -343,6 +343,8 @@ impl SnapshotPackagerService {
         }
         info!("Saving obsolete accounts... Done in {:?}", start.elapsed());
 
+        info!("Writing startup hints...");
+        let start = Instant::now();
         let result = snapshot_utils::write_startup_hints_to_snapshot(
             &bank_snapshot_dir,
             &startup_hints,
@@ -354,6 +356,7 @@ impl SnapshotPackagerService {
             // as loadable so return early.
             return;
         }
+        info!("Writing startup hints... Done in {:?}", start.elapsed());
 
         let result = snapshot_utils::mark_bank_snapshot_as_loadable(&bank_snapshot_dir);
         if let Err(err) = result {
