@@ -25,6 +25,7 @@ use {
     },
     crate::{
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        append_vec::AppendVec,
         storable_accounts::StorableAccounts,
         utils::create_account_shared_data,
     },
@@ -295,7 +296,12 @@ impl SplitAccountsFile {
 
     /// Writes `accounts`.
     ///
-    /// Returns a vec of the logical offsets for where each account was written.
+    /// Returns a tuple of:
+    /// - A vec of the logical offsets for where each account was written.
+    /// - The *logical* size required to store `accounts`.
+    ///   This is ultimately the bytes required to store `accounts` into an AppendVec,
+    ///   since that is the number used for shrink/squash, and also when
+    ///   writing accounts into a snapshot archive.
     pub fn write_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
@@ -309,6 +315,7 @@ impl SplitAccountsFile {
         let mut meta_file_offset = FileOffset(inner.meta_len.load(Ordering::Relaxed));
         let mut data_file_offset = FileOffset(inner.data_len.load(Ordering::Relaxed));
         let mut logical_offsets = Vec::with_capacity(accounts.len());
+        let mut logical_stored_size = 0;
 
         for i in 0..accounts.len() {
             accounts.account_default_if_zero_lamport(
@@ -348,6 +355,7 @@ impl SplitAccountsFile {
                     meta_file_offset =
                         FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
                     logical_offsets.push(logical_offset_from_file(write_info.start)?);
+                    logical_stored_size += calculate_logical_stored_size(account.data().len());
                     Ok(())
                 },
             )?;
@@ -362,7 +370,7 @@ impl SplitAccountsFile {
                 .fetch_add(1, Ordering::Relaxed);
         }
 
-        Ok((logical_offsets, meta_file_offset.0 + data_file_offset.0))
+        Ok((logical_offsets, logical_stored_size))
     }
 
     /// Reads account at `offset` and then calls `callback` with it.
@@ -580,23 +588,6 @@ impl SplitAccountsFile {
         }
         Ok(data_lens)
     }
-
-    /// Returns the number of bytes to store an account with data of size `data_len`.
-    pub fn calculate_stored_size(data_len: usize) -> usize {
-        let data_len = DataLen::try_from(data_len).unwrap();
-        let meta_size = calculate_meta_entry_stored_size(data_len);
-        let data_size = if should_store_account_data_in_meta_file(data_len) {
-            0
-        } else {
-            calculate_data_entry_stored_size(data_len.0 as usize)
-        };
-        meta_size + data_size
-    }
-
-    /// Returns the number of bytes required to store a closed account.
-    pub fn dead_bytes_due_to_zero_lamport_accounts(&self, count: usize) -> usize {
-        Self::calculate_stored_size(0) * count
-    }
 }
 
 /// Helper fn to return a StoredAccountInfo from a meta entry.
@@ -660,6 +651,13 @@ fn advance_reader_position_to<'a>(
         .ok_or(SplitAccountsFileError::ReaderPositionMovedBackwards)?;
     reader.consume_or_skip(bytes_to_skip as usize);
     Ok(())
+}
+
+/// Returns the *logical* size required to store an account with `data_len`.
+///
+/// The logical size is the number of bytes required to store in an AppendVec.
+fn calculate_logical_stored_size(data_len: usize) -> u64 {
+    AppendVec::calculate_stored_size(data_len) as u64
 }
 
 /// The inner state of a SplitAccountsFile, used to distinguish writable from read-only state.
