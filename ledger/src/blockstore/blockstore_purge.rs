@@ -15,13 +15,9 @@ pub struct PurgeStats {
 /// Work performed while removing transaction history before an UpdateParent boundary.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TransactionHistoryPurgeStats {
-    /// Number of transactions used to reconstruct transaction-history keys.
     pub transactions_processed: u64,
-    /// Number of deletion keys staged for the transaction-status column.
     pub transaction_status_deletion_keys_staged: u64,
-    /// Number of deletion keys staged for the transaction-memos column.
     pub transaction_memos_deletion_keys_staged: u64,
-    /// Number of deletion keys staged for the address-signatures column.
     pub address_signatures_deletion_keys_staged: u64,
     /// Time spent obtaining transactions and reconstructing deletion keys.
     pub prepare_deletions_us: u64,
@@ -34,6 +30,35 @@ impl TransactionHistoryPurgeStats {
         self.transaction_status_deletion_keys_staged
             .saturating_add(self.transaction_memos_deletion_keys_staged)
             .saturating_add(self.address_signatures_deletion_keys_staged)
+    }
+
+    pub fn report(&self, slot: Slot, source: &str, queue_wait_us: u128, request_elapsed_us: u128) {
+        datapoint_info!(
+            "transaction-status-service-purge-transaction-history",
+            "source" => source,
+            ("slot", slot, i64),
+            ("queue_wait_us", queue_wait_us, i64),
+            ("transactions_processed", self.transactions_processed, i64),
+            ("deletion_keys_staged", self.deletion_keys_staged(), i64),
+            (
+                "transaction_status_deletion_keys_staged",
+                self.transaction_status_deletion_keys_staged,
+                i64
+            ),
+            (
+                "transaction_memos_deletion_keys_staged",
+                self.transaction_memos_deletion_keys_staged,
+                i64
+            ),
+            (
+                "address_signatures_deletion_keys_staged",
+                self.address_signatures_deletion_keys_staged,
+                i64
+            ),
+            ("prepare_deletions_us", self.prepare_deletions_us, i64),
+            ("write_batch_us", self.write_batch_us, i64),
+            ("request_elapsed_us", request_elapsed_us, i64),
+        );
     }
 }
 

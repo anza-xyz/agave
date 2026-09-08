@@ -37,6 +37,16 @@ enum Error {
     #[error("blockstore operation failed: {0}")]
     Blockstore(#[from] BlockstoreError),
 
+    #[error(
+        "failed to purge transaction history for slot {slot} requested by {purge_source}: {source}"
+    )]
+    PurgeTransactionHistory {
+        slot: Slot,
+        purge_source: &'static str,
+        #[source]
+        source: BlockstoreError,
+    },
+
     #[error("received nonfrozen bank: {0}")]
     NonFrozenBank(Slot),
 }
@@ -281,9 +291,9 @@ impl TransactionStatusService {
                 requested_at,
                 done_sender,
             } => {
-                let queue_wait_us = requested_at.elapsed().as_micros();
-                let purge_result = if enable_rpc_transaction_history {
-                    match &purge_input {
+                if enable_rpc_transaction_history {
+                    let queue_wait_us = requested_at.elapsed().as_micros();
+                    let stats = match &purge_input {
                         TransactionHistoryPurgeInput::ReplayStage => {
                             blockstore.purge_transaction_history_for_replay_slot_exact(slot)
                         }
@@ -296,53 +306,20 @@ impl TransactionStatusService {
                                 transactions.as_slice(),
                             ),
                     }
-                    .map(Some)
-                } else {
-                    Ok(None)
-                };
-                let request_elapsed_us = requested_at.elapsed().as_micros();
-                let success = purge_result.is_ok();
-                let stats = purge_result
-                    .as_ref()
-                    .ok()
-                    .and_then(|stats| stats.as_ref())
-                    .copied()
-                    .unwrap_or_default();
+                    .map_err(|error| Error::PurgeTransactionHistory {
+                        slot,
+                        purge_source: source.as_str(),
+                        source: error,
+                    })?;
 
-                datapoint_info!(
-                    "transaction-status-service-purge-transaction-history",
-                    "source" => source.as_str(),
-                    ("slot", slot, i64),
-                    (
-                        "rpc_transaction_history_enabled",
-                        enable_rpc_transaction_history,
-                        bool
-                    ),
-                    ("queue_wait_us", queue_wait_us, i64),
-                    ("transactions_processed", stats.transactions_processed, i64),
-                    ("deletion_keys_staged", stats.deletion_keys_staged(), i64),
-                    (
-                        "transaction_status_deletion_keys_staged",
-                        stats.transaction_status_deletion_keys_staged,
-                        i64
-                    ),
-                    (
-                        "transaction_memos_deletion_keys_staged",
-                        stats.transaction_memos_deletion_keys_staged,
-                        i64
-                    ),
-                    (
-                        "address_signatures_deletion_keys_staged",
-                        stats.address_signatures_deletion_keys_staged,
-                        i64
-                    ),
-                    ("prepare_deletions_us", stats.prepare_deletions_us, i64),
-                    ("write_batch_us", stats.write_batch_us, i64),
-                    ("request_elapsed_us", request_elapsed_us, i64),
-                    ("success", success, bool),
-                );
+                    stats.report(
+                        slot,
+                        source.as_str(),
+                        queue_wait_us,
+                        requested_at.elapsed().as_micros(),
+                    );
+                }
 
-                purge_result?;
                 if let Some(done_sender) = done_sender {
                     let _ = done_sender.send(());
                 }
@@ -855,5 +832,41 @@ pub(crate) mod tests {
                 .is_none()
         );
         transaction_status_service.quiesce_and_join_for_tests(exit);
+    }
+
+    #[test]
+    fn test_purge_transaction_history_error_stops_service() {
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1);
+        let transaction_status_sender = TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let exit = Arc::new(AtomicBool::new(false));
+        let transaction_status_service = TransactionStatusService::new(
+            transaction_status_receiver,
+            Arc::new(AtomicU64::default()),
+            true,
+            None,
+            blockstore,
+            false,
+            None,
+            exit.clone(),
+        );
+
+        // With no UpdateParent marker, the purge must fail without acknowledging completion.
+        assert!(
+            transaction_status_sender
+                .send_purge_transaction_history_for_slot(
+                    42,
+                    TransactionHistoryPurgeSource::UpdateParentSignal,
+                    TransactionHistoryPurgeInput::ReplayStage,
+                )
+                .is_err()
+        );
+
+        transaction_status_service.join().unwrap();
+        assert!(exit.load(Ordering::Relaxed));
     }
 }
