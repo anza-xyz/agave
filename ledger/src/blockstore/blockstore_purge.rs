@@ -16,9 +16,7 @@ pub struct PurgeStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TransactionHistoryPurgeStats {
     pub transactions_processed: u64,
-    pub transaction_status_deletion_keys_staged: u64,
-    pub transaction_memos_deletion_keys_staged: u64,
-    pub address_signatures_deletion_keys_staged: u64,
+    pub deletion_keys_staged: u64,
     /// Time spent obtaining transactions and reconstructing deletion keys.
     pub prepare_deletions_us: u64,
     /// Time spent committing the deletions to Blockstore.
@@ -26,12 +24,6 @@ pub struct TransactionHistoryPurgeStats {
 }
 
 impl TransactionHistoryPurgeStats {
-    pub fn deletion_keys_staged(&self) -> u64 {
-        self.transaction_status_deletion_keys_staged
-            .saturating_add(self.transaction_memos_deletion_keys_staged)
-            .saturating_add(self.address_signatures_deletion_keys_staged)
-    }
-
     pub fn report(&self, slot: Slot, source: &str, queue_wait_us: u128, request_elapsed_us: u128) {
         datapoint_info!(
             "transaction-status-service-purge-transaction-history",
@@ -39,22 +31,7 @@ impl TransactionHistoryPurgeStats {
             ("slot", slot, i64),
             ("queue_wait_us", queue_wait_us, i64),
             ("transactions_processed", self.transactions_processed, i64),
-            ("deletion_keys_staged", self.deletion_keys_staged(), i64),
-            (
-                "transaction_status_deletion_keys_staged",
-                self.transaction_status_deletion_keys_staged,
-                i64
-            ),
-            (
-                "transaction_memos_deletion_keys_staged",
-                self.transaction_memos_deletion_keys_staged,
-                i64
-            ),
-            (
-                "address_signatures_deletion_keys_staged",
-                self.address_signatures_deletion_keys_staged,
-                i64
-            ),
+            ("deletion_keys_staged", self.deletion_keys_staged, i64),
             ("prepare_deletions_us", self.prepare_deletions_us, i64),
             ("write_batch_us", self.write_batch_us, i64),
             ("request_elapsed_us", request_elapsed_us, i64),
@@ -515,23 +492,17 @@ impl Blockstore {
 
         self.transaction_status_cf
             .delete_in_batch(write_batch, (signature, slot));
-        stats.transaction_status_deletion_keys_staged = stats
-            .transaction_status_deletion_keys_staged
-            .saturating_add(1);
+        stats.deletion_keys_staged = stats.deletion_keys_staged.saturating_add(1);
 
         self.transaction_memos_cf
             .delete_in_batch(write_batch, (signature, slot));
-        stats.transaction_memos_deletion_keys_staged = stats
-            .transaction_memos_deletion_keys_staged
-            .saturating_add(1);
+        stats.deletion_keys_staged = stats.deletion_keys_staged.saturating_add(1);
 
         let account_keys = AccountKeys::new(static_account_keys, loaded_addresses);
         for pubkey in account_keys.iter() {
             self.address_signatures_cf
                 .delete_in_batch(write_batch, (*pubkey, slot, transaction_index, signature));
-            stats.address_signatures_deletion_keys_staged = stats
-                .address_signatures_deletion_keys_staged
-                .saturating_add(1);
+            stats.deletion_keys_staged = stats.deletion_keys_staged.saturating_add(1);
         }
 
         Ok(())
@@ -557,34 +528,30 @@ impl Blockstore {
         completed_ranges.retain(|range| range.end <= slot_meta.replay_fec_set_index);
         let slot_components =
             self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
-        let mut transaction_index = 0usize;
+        let transactions = slot_components
+            .into_iter()
+            .filter_map(|component| match component {
+                ParsedBlockComponent::EntryBatch(entries) => Some(entries),
+                ParsedBlockComponent::BlockMarker(_) => None,
+            })
+            .flatten()
+            .flat_map(|entry| entry.transactions);
 
-        for component in slot_components {
-            match component {
-                ParsedBlockComponent::EntryBatch(entries) => {
-                    for transaction in entries.into_iter().flat_map(|entry| entry.transactions) {
-                        if let Some(&signature) = transaction.signatures().first()
-                            && let Some(meta) = self.read_transaction_status((signature, slot))?
-                        {
-                            self.stage_transaction_history_deletes(
-                                &mut write_batch,
-                                slot,
-                                transaction_index,
-                                signature,
-                                transaction.static_account_keys(),
-                                Some(&meta.loaded_addresses),
-                                &mut stats,
-                            )?;
-                        }
-                        transaction_index = transaction_index
-                            .checked_add(1)
-                            .ok_or(BlockstoreError::TransactionIndexOverflow)?;
-                        stats.transactions_processed =
-                            stats.transactions_processed.saturating_add(1);
-                    }
-                }
-                ParsedBlockComponent::BlockMarker(_) => {}
+        for (transaction_index, transaction) in transactions.enumerate() {
+            if let Some(&signature) = transaction.signatures().first()
+                && let Some(meta) = self.read_transaction_status((signature, slot))?
+            {
+                self.stage_transaction_history_deletes(
+                    &mut write_batch,
+                    slot,
+                    transaction_index,
+                    signature,
+                    transaction.static_account_keys(),
+                    Some(&meta.loaded_addresses),
+                    &mut stats,
+                )?;
             }
+            stats.transactions_processed = stats.transactions_processed.saturating_add(1);
         }
         prepare_deletions_timer.stop();
         stats.prepare_deletions_us = prepare_deletions_timer.as_us();
@@ -1338,16 +1305,8 @@ pub mod tests {
             .unwrap();
         assert_eq!(stats.transactions_processed, signatures.len() as u64);
         assert_eq!(
-            stats.transaction_status_deletion_keys_staged,
-            signatures.len() as u64
-        );
-        assert_eq!(
-            stats.transaction_memos_deletion_keys_staged,
-            signatures.len() as u64
-        );
-        assert_eq!(
-            stats.address_signatures_deletion_keys_staged,
-            expected_address_deletion_keys
+            stats.deletion_keys_staged,
+            signatures.len() as u64 * 2 + expected_address_deletion_keys
         );
         assert!(
             blockstore
