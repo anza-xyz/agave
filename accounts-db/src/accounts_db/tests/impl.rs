@@ -1163,6 +1163,97 @@ fn test_clean_reclaim_tombstones_zero_lamport_single_ref() {
     );
 }
 
+/// A zero-lamport account whose slot the latest full snapshot already covers is recorded as an
+/// obsolete account rather than as a tombstone: no snapshot still needs to observe it.
+#[test]
+fn test_clean_marks_covered_zero_lamport_account_obsolete() {
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let pubkey1 = Pubkey::new_unique();
+    let pubkey2 = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+    accounts.store_for_tests((10, [(&pubkey1, &account)].as_slice()));
+    accounts.add_root(10);
+    accounts.store_for_tests((
+        11,
+        [(&pubkey1, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
+    ));
+    accounts.add_root(11);
+    accounts.flush_rooted_accounts_cache_without_clean();
+
+    // The latest full snapshot covers slot 11, so no snapshot needs pubkey1's zero-lamport
+    // version to be observable
+    accounts.set_latest_full_snapshot_slot(11);
+    accounts.clean_accounts_for_tests();
+
+    assert!(!accounts.accounts_index.contains(&pubkey1));
+    let storage = accounts.storage.get_slot_storage_entry(11).unwrap();
+
+    // Recorded as obsolete at the full snapshot slot instead of as a tombstone
+    assert_eq!(storage.num_tombstones(), 0);
+    assert_eq!(
+        storage
+            .obsolete_accounts_read_lock()
+            .filter_obsolete_accounts(Some(11))
+            .count(),
+        1,
+    );
+
+    // Only pubkey2 still counts as alive
+    assert_eq!(storage.count(), 1);
+}
+
+/// Once a full snapshot advances past a slot, the sweep converts that slot's retained tombstones
+/// into obsolete accounts so later snapshots skip them.
+#[test]
+fn test_sweep_marks_tombstones_obsolete_after_full_snapshot() {
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let pubkey1 = Pubkey::new_unique();
+    let pubkey2 = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+    accounts.store_for_tests((10, [(&pubkey1, &account)].as_slice()));
+    accounts.add_root(10);
+    accounts.store_for_tests((
+        11,
+        [(&pubkey1, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
+    ));
+    accounts.add_root(11);
+    accounts.flush_rooted_accounts_cache_without_clean();
+
+    // The latest full snapshot predates slot 11, so pubkey1's zero-lamport version is retained
+    // as a tombstone for an incremental snapshot taken against that full snapshot
+    accounts.set_latest_full_snapshot_slot(10);
+    accounts.clean_accounts_for_tests();
+    let storage = accounts.storage.get_slot_storage_entry(11).unwrap();
+    assert_eq!(storage.num_tombstones(), 1);
+    assert_eq!(storage.get_obsolete_bytes(None), 0);
+    let alive_bytes_with_tombstone = storage.alive_bytes();
+
+    // A full snapshot at slot 11 covers the tombstone, so the sweep converts it
+    accounts.set_latest_full_snapshot_slot(11);
+    accounts.clean_accounts_for_tests();
+
+    let storage = accounts.storage.get_slot_storage_entry(11).unwrap();
+    assert_eq!(storage.num_tombstones(), 0);
+    assert_eq!(
+        storage
+            .obsolete_accounts_read_lock()
+            .filter_obsolete_accounts(Some(11))
+            .count(),
+        1,
+    );
+
+    // The tombstone bytes stopped counting as alive, leaving only pubkey2
+    assert_eq!(storage.count(), 1);
+    assert_eq!(
+        storage.alive_bytes(),
+        alive_bytes_with_tombstone - storage.accounts.dead_bytes_due_to_zero_lamport_accounts(1),
+    );
+}
+
 /// A pubkey whose account has died must stay dead when a storage holding a clean-reclaimed
 /// older version of it is later shrunk.
 #[test]

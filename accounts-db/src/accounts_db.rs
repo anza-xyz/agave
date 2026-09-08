@@ -817,6 +817,7 @@ struct CleanKeyTimings {
     collect_delta_keys_us: u64,
     zero_lamport_single_ref_slots_added_to_shrink_count: u64,
     zero_lamport_sweep_us: u64,
+    num_tombstones_marked_obsolete: u64,
 }
 
 pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<PathBuf>)> {
@@ -1429,11 +1430,13 @@ impl AccountsDb {
         {
             let last_swept_full_snapshot_slot =
                 self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
-            let (added_to_shrink_count, sweep_us) = measure_us!(self.sweep_slots_after_snapshot(
-                last_swept_full_snapshot_slot,
-                latest_full_snapshot_slot
-            ));
+            let ((added_to_shrink_count, num_tombstones_marked_obsolete), sweep_us) =
+                measure_us!(self.sweep_slots_after_snapshot(
+                    last_swept_full_snapshot_slot,
+                    latest_full_snapshot_slot
+                ));
             timings.zero_lamport_single_ref_slots_added_to_shrink_count += added_to_shrink_count;
+            timings.num_tombstones_marked_obsolete += num_tombstones_marked_obsolete;
             timings.zero_lamport_sweep_us += sweep_us;
         }
 
@@ -1442,20 +1445,23 @@ impl AccountsDb {
 
     /// Loop through slots in `[last_swept_full_snapshot_slot + 1, latest_full_snapshot_slot]` and
     /// re-examine each storage now that a full snapshot has advanced past its slot:
-    /// 1) if it holds only tombstones, purge it directly; or
-    /// 2) if its dead zero-lamport accounts made it shrinkable, add it to the shrink candidates.
+    /// 1) mark its tombstones obsolete, since no snapshot needs them any more; then
+    /// 2) if no alive accounts remain, purge it directly; or
+    /// 3) if its dead zero-lamport accounts made it shrinkable, add it to the shrink candidates.
     ///
     /// Advances `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
     ///
-    /// Returns the count of storages that were added to the shrink candidates set.
+    /// Returns the count of storages that were added to the shrink candidates set, and the
+    /// number of tombstones marked obsolete.
     fn sweep_slots_after_snapshot(
         &self,
         last_swept_full_snapshot_slot: Slot,
         latest_full_snapshot_slot: Slot,
-    ) -> u64 {
+    ) -> (u64, u64) {
         let start = last_swept_full_snapshot_slot.saturating_add(1);
 
         let mut added_to_shrink_count = 0;
+        let mut num_tombstones_marked_obsolete = 0;
         {
             // Held for the scan. Safe because the only paths that take this lock in production
             // validator code run in earlier/later phases of the same AccountsBackgroundService
@@ -1463,8 +1469,14 @@ impl AccountsDb {
             let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
             for slot in start..=latest_full_snapshot_slot {
                 if let Some(store) = self.storage.get_slot_storage_entry(slot) {
-                    if store.has_only_tombstones() {
-                        // Now just contains tombstones and no live index entries: purge
+                    // The full snapshot covers this slot, so its zero-lamport accounts no
+                    // longer need to be observable by an incremental snapshot taken against
+                    // that full snapshot.
+                    num_tombstones_marked_obsolete +=
+                        store.mark_tombstones_obsolete(latest_full_snapshot_slot) as u64;
+
+                    if !store.has_accounts() {
+                        // Every account is obsolete and no live index entries remain: purge
                         self.purge_dead_slots_from_storage(
                             iter::once(&slot),
                             &self.clean_accounts_stats.purge_stats,
@@ -1481,7 +1493,7 @@ impl AccountsDb {
 
         self.last_swept_full_snapshot_slot
             .store(latest_full_snapshot_slot, Ordering::Relaxed);
-        added_to_shrink_count
+        (added_to_shrink_count, num_tombstones_marked_obsolete)
     }
 
     /// called with cli argument to verify the index is correct for all accounts
@@ -1758,6 +1770,11 @@ impl AccountsDb {
             (
                 "zero_lamport_single_ref_slots_added_to_shrink_count",
                 key_timings.zero_lamport_single_ref_slots_added_to_shrink_count,
+                i64
+            ),
+            (
+                "num_tombstones_marked_obsolete",
+                key_timings.num_tombstones_marked_obsolete,
                 i64
             ),
             (
@@ -4483,6 +4500,13 @@ impl AccountsDb {
                 let remaining_accounts = if is_tombstone_reclaim {
                     // Tombstones stay alive in the storage; only record their offsets
                     store.batch_insert_tombstone_offsets(offsets);
+                    // Unless the latest full snapshot already covers this slot, in which case
+                    // no snapshot needs to observe these zero-lamport accounts
+                    if let Some(latest_full_snapshot_slot) = self.latest_full_snapshot_slot()
+                        && slot <= latest_full_snapshot_slot
+                    {
+                        store.mark_tombstones_obsolete(latest_full_snapshot_slot);
+                    }
                     store.count()
                 } else if offsets.len() == store.count() {
                     // all remaining alive accounts in the storage are being removed, so the entire storage/slot is dead

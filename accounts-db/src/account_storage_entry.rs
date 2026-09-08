@@ -170,9 +170,36 @@ impl AccountStorageEntry {
 
     /// True if every alive account in this storage is a tombstone. Such a storage holds no live
     /// index entries (tombstones were removed from the index when created), so it is fully dead.
+    #[cfg(feature = "dev-context-only-utils")]
     pub(crate) fn has_only_tombstones(&self) -> bool {
         let num_tombstones = self.num_tombstones();
         num_tombstones > 0 && self.count() == num_tombstones
+    }
+
+    /// Converts every tombstone in this storage into an obsolete account marked at `slot`.
+    /// The caller must have established that `slot` covers all of them, i.e. that no snapshot
+    /// still needs to observe these zero-lamport accounts. Zero-lamport accounts store no data,
+    /// so each one occupies the stored size of a data-less account, and their bytes stop
+    /// counting as alive.
+    /// Returns the number of tombstones converted.
+    pub(crate) fn mark_tombstones_obsolete(&self, slot: Slot) -> usize {
+        // Both locks are held so a tombstone is never absent from both lists.
+        let mut obsolete_accounts = self.obsolete_accounts.write().unwrap();
+        let mut tombstone_offsets = self.tombstone_offsets.write().unwrap();
+        let num_tombstones = tombstone_offsets.len();
+        if num_tombstones == 0 {
+            return 0;
+        }
+
+        obsolete_accounts
+            .mark_accounts_obsolete(tombstone_offsets.iter().map(|offset| (*offset, 0)), slot);
+        tombstone_offsets.clear();
+        self.remove_accounts(
+            self.accounts
+                .dead_bytes_due_to_zero_lamport_accounts(num_tombstones),
+            num_tombstones,
+        );
+        num_tombstones
     }
 
     /// Return the "alive_bytes" minus the bytes of this storage's tombstones
@@ -376,5 +403,70 @@ mod tests {
             .unwrap();
         assert_eq!(num_excluded, 2);
         assert_eq!(visited, expected);
+    }
+
+    /// mark_tombstones_obsolete moves every tombstone into the obsolete accounts list stamped at
+    /// the given slot, empties the tombstone list, and stops counting those bytes as alive.
+    #[test]
+    fn test_mark_tombstones_obsolete() {
+        let slot = 7;
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AccountStorageEntry::new(
+            temp_dir.path(),
+            slot,
+            0,
+            1024 * 1024,
+            AccountsFileProvider::AppendVec,
+        );
+
+        // Two funded accounts and two zero-lamport accounts.
+        let funded = AccountSharedData::new(1, 10, &Pubkey::default());
+        let zero_lamport = AccountSharedData::new(0, 0, &Pubkey::default());
+        let accounts = [
+            (Pubkey::new_unique(), funded.clone()),
+            (Pubkey::new_unique(), zero_lamport.clone()),
+            (Pubkey::new_unique(), funded),
+            (Pubkey::new_unique(), zero_lamport),
+        ];
+        let offsets = storage
+            .accounts
+            .write_accounts(&(slot, &accounts[..]))
+            .unwrap()
+            .offsets;
+        storage.add_accounts(accounts.len(), storage.written_bytes() as usize);
+
+        // The zero-lamport accounts are tombstones, and count as alive until converted.
+        storage.batch_insert_tombstone_offsets([offsets[1], offsets[3]]);
+        assert_eq!(storage.num_tombstones(), 2);
+        assert_eq!(storage.count(), 4);
+        let alive_bytes_before = storage.alive_bytes();
+
+        let marked_obsolete_slot = 99;
+        assert_eq!(storage.mark_tombstones_obsolete(marked_obsolete_slot), 2);
+
+        // The tombstone list is empty and the two accounts no longer count as alive.
+        assert_eq!(storage.num_tombstones(), 0);
+        assert_eq!(storage.count(), 2);
+        let tombstone_bytes = storage.accounts.dead_bytes_due_to_zero_lamport_accounts(2);
+        assert_eq!(storage.alive_bytes(), alive_bytes_before - tombstone_bytes);
+
+        // Both are obsolete as of `marked_obsolete_slot`, and not before it.
+        let mut obsolete_offsets: Vec<_> = storage
+            .obsolete_accounts_read_lock()
+            .filter_obsolete_accounts(Some(marked_obsolete_slot))
+            .map(|(offset, _data_len)| offset)
+            .collect();
+        obsolete_offsets.sort_unstable();
+        assert_eq!(obsolete_offsets, vec![offsets[1], offsets[3]]);
+        assert_eq!(
+            storage
+                .obsolete_accounts_read_lock()
+                .filter_obsolete_accounts(Some(marked_obsolete_slot - 1))
+                .count(),
+            0,
+        );
+
+        // Converting again is a no-op.
+        assert_eq!(storage.mark_tombstones_obsolete(marked_obsolete_slot), 0);
     }
 }
