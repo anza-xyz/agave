@@ -238,9 +238,16 @@ impl ConnectionWorkersScheduler {
         let mut connect_leaders = Vec::with_capacity(leaders_fanout.connect);
         let mut send_leaders = Vec::with_capacity(leaders_fanout.send);
 
+        let mut pending_transaction: Option<WireTransaction> = None;
         loop {
             let transaction: WireTransaction = tokio::select! {
-                recv_res = transaction_receiver.recv() => match recv_res {
+                // if pending_transaction exists, send it again instead of taking a new one.
+                recv_res = async {
+                    match pending_transaction.take() {
+                        Some(transaction) => Some(transaction),
+                        None => transaction_receiver.recv().await,
+                    }
+                } => match recv_res {
                     Some(transaction) => transaction,
                     None => {
                         debug!("End of `transaction_receiver`: shutting down.");
@@ -271,6 +278,8 @@ impl ConnectionWorkersScheduler {
                 }
             };
 
+            pending_transaction = Some(transaction.clone());
+
             next_leaders.clear();
             leader_updater.next_leaders(leaders_fanout.connect, &mut next_leaders);
             select_unique_leaders(&next_leaders, leaders_fanout.connect, &mut connect_leaders);
@@ -293,6 +302,7 @@ impl ConnectionWorkersScheduler {
 
             tokio::select! {
                 result = broadcaster.send_to_workers(&mut workers, &send_leaders, transaction) => {
+                    pending_transaction = None;
                     if let Err(error) = result {
                         last_error = Some(error);
                         break;
