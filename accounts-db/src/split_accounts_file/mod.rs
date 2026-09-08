@@ -657,7 +657,7 @@ fn advance_reader_position_to<'a>(
     let bytes_to_skip = offset
         .0
         .checked_sub(reader.get_file_offset())
-        .ok_or(SplitAccountsFileError::InvalidFileOffset(offset))?;
+        .ok_or(SplitAccountsFileError::ReaderPositionMovedBackwards)?;
     reader.consume_or_skip(bytes_to_skip as usize);
     Ok(())
 }

@@ -50,6 +50,9 @@ pub enum Error {
     #[error("file offset is invalid: {}", .0.0)]
     InvalidFileOffset(FileOffset),
 
+    #[error("reader position moved backwards")]
+    ReaderPositionMovedBackwards,
+
     #[error("header uids do not match: meta uid: {meta_uid}, data uid: {data_uid}")]
     HeaderUidMismatch { meta_uid: u64, data_uid: u64 },
 
