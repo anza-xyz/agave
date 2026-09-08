@@ -257,16 +257,12 @@ impl ConnectionWorkersScheduler {
                         identity_updater_is_active = false;
                         continue;
                     };
-
-                    let client_config = build_client_config(
-                        update_identity_receiver.borrow_and_update().as_ref(),
+                    update_identity(
+                        &mut endpoint,
+                        &mut workers,
+                        &mut update_identity_receiver,
                         initial_congestion_window,
                     );
-                    endpoint.set_default_client_config(client_config);
-                    // Flush workers since they are handling connections created
-                    // with outdated certificate.
-                    workers.flush();
-                    debug!("Updated certificate.");
                     continue;
                 },
                 () = cancel.cancelled() => {
@@ -295,12 +291,26 @@ impl ConnectionWorkersScheduler {
 
             select_unique_leaders(&next_leaders, leaders_fanout.send, &mut send_leaders);
 
-            if let Err(error) = broadcaster
-                .send_to_workers(&mut workers, &send_leaders, transaction)
-                .await
-            {
-                last_error = Some(error);
-                break;
+            tokio::select! {
+                result = broadcaster.send_to_workers(&mut workers, &send_leaders, transaction) => {
+                    if let Err(error) = result {
+                        last_error = Some(error);
+                        break;
+                    }
+                }
+                result = update_identity_receiver.changed(), if identity_updater_is_active => {
+                    if result.is_err() {
+                        identity_updater_is_active = false;
+                        continue;
+                    }
+                    update_identity(
+                        &mut endpoint,
+                        &mut workers,
+                        &mut update_identity_receiver,
+                        initial_congestion_window,
+                    );
+                }
+                () = cancel.cancelled() => break,
             }
         }
 
@@ -334,6 +344,23 @@ fn build_client_config(
         None => &QuicClientCertificate::new(None),
     };
     create_client_config(client_certificate, initial_congestion_window)
+}
+
+fn update_identity(
+    endpoint: &mut Endpoint,
+    workers: &mut WorkersCache,
+    update_identity_receiver: &mut watch::Receiver<Option<StakeIdentity>>,
+    initial_congestion_window: Option<u64>,
+) {
+    let client_config = build_client_config(
+        update_identity_receiver.borrow_and_update().as_ref(),
+        initial_congestion_window,
+    );
+    endpoint.set_default_client_config(client_config);
+    // Flush workers since they are handling connections created
+    // with outdated certificate.
+    workers.flush();
+    debug!("Updated certificate.");
 }
 
 /// [`NonblockingBroadcaster`] attempts to immediately send transactions to all the workers. If a
