@@ -17,7 +17,7 @@ pub unsafe trait AsBytesRef {}
 pub unsafe trait AsBytesMut {}
 
 /// Returns a byte-slice  of `x`.
-pub fn as_bytes_ref<T: AsBytesRef>(x: &T) -> &[u8] {
+pub const fn as_bytes_ref<T: AsBytesRef>(x: &T) -> &[u8] {
     debug_assert!(size_of::<T>() <= isize::MAX as usize);
     let ptr = ptr::from_ref(x).cast::<u8>();
     // SAFETY:
@@ -30,7 +30,7 @@ pub fn as_bytes_ref<T: AsBytesRef>(x: &T) -> &[u8] {
 }
 
 /// Returns a mutable byte-slice  of `x`.
-pub fn as_bytes_mut<T: AsBytesMut>(x: &mut T) -> &mut [u8] {
+pub const fn as_bytes_mut<T: AsBytesMut>(x: &mut T) -> &mut [u8] {
     debug_assert!(size_of::<T>() <= isize::MAX as usize);
     let ptr = ptr::from_mut(x).cast::<u8>();
     // SAFETY:

@@ -21,7 +21,7 @@ pub fn open_file(path: impl AsRef<Path>) -> Result<File, SplitAccountsFileError>
 }
 
 /// Returns file offset from `logical_offset`.
-pub fn file_offset_from_logical(logical_offset: LogicalOffset) -> FileOffset {
+pub const fn file_offset_from_logical(logical_offset: LogicalOffset) -> FileOffset {
     FileOffset((logical_offset.0 as FileSize) << meta::META_ENTRY_OFFSET_ALIGNMENT_LOG2)
 }
 
