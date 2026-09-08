@@ -63,6 +63,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-block-production-scheduler"
+version = "4.5.0-alpha.4"
+
+[[package]]
 name = "agave-bls-cert-verify"
 version = "4.5.0-alpha.4"
 dependencies = [
@@ -6437,6 +6441,7 @@ name = "solana-core"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-block-production-scheduler",
  "agave-bls-cert-verify",
  "agave-bls-sigverify",
  "agave-event-system",
