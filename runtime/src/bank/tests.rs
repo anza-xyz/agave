@@ -9661,7 +9661,13 @@ fn test_verify_transactions_tx_v1_size_gate_does_not_relax_legacy_or_v0() {
     };
     let make_v1_transaction = |size| {
         let ixs = make_instructions(size);
-        let message = v1::Message::try_compile(&pubkey, &ixs, recent_blockhash).unwrap();
+        let message = v1::Message::try_compile_with_config(
+            &pubkey,
+            &ixs,
+            recent_blockhash,
+            v1::TransactionConfig::empty(),
+        )
+        .unwrap();
         VersionedTransaction::try_new(VersionedMessage::V1(message), &[&keypair]).unwrap()
     };
     let oversized_but_tx_v1_sized = |make_transaction: &dyn Fn(usize) -> VersionedTransaction| {

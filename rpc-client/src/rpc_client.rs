@@ -5241,7 +5241,13 @@ mod tests {
         let ix = system_instruction::transfer(&key.pubkey(), &to, 50);
         let tx = VersionedTransaction::try_new(
             VersionedMessage::V1(
-                v1::Message::try_compile(&key.pubkey(), &[ix], blockhash).unwrap(),
+                v1::Message::try_compile_with_config(
+                    &key.pubkey(),
+                    &[ix],
+                    blockhash,
+                    v1::TransactionConfig::empty(),
+                )
+                .unwrap(),
             ),
             &[key],
         )

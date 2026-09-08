@@ -636,7 +636,13 @@ mod tests {
                 v0::Message::try_compile(&payer.pubkey(), &[ix], &[], recent_blockhash).unwrap(),
             ),
             TransactionVersion::Number(1) => VersionedMessage::V1(
-                v1::Message::try_compile(&payer.pubkey(), &[ix], recent_blockhash).unwrap(),
+                v1::Message::try_compile_with_config(
+                    &payer.pubkey(),
+                    &[ix],
+                    recent_blockhash,
+                    v1::TransactionConfig::empty(),
+                )
+                .unwrap(),
             ),
             TransactionVersion::Number(other) => {
                 panic!("unsupported test transaction version: {other}")
