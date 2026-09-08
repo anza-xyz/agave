@@ -18,6 +18,9 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 crate-type = ["lib"]
 name = "solana_accounts_db"
+# the lib has no #[bench] fns, but `[lib] bench` defaults to true, so cargo
+# would build a libtest bench target that rejects criterion's flags
+bench = false
 
 [features]
 agave-unstable-api = []
@@ -139,6 +142,11 @@ harness = false
 [[bench]]
 name = "read_only_accounts_cache"
 harness = false
+# Not run by default: NUM_READERS_WRITERS scales to 64, so the last configs
+# spawn 64 reader plus 64 writer threads and report 30-55% deviation - too
+# loose to catch a regression. Run it explicitly with
+# `cargo bench -p solana-accounts-db --bench read_only_accounts_cache`.
+bench = false
 
 [[bench]]
 name = "bench_serde"
