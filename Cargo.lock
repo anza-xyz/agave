@@ -8522,6 +8522,7 @@ dependencies = [
  "log",
  "num-traits",
  "num_cpus",
+ "parking_lot 0.12.3",
  "qualifier_attr",
  "rand 0.9.4",
  "rand_chacha 0.9.0",

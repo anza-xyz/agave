@@ -213,7 +213,7 @@ pub(crate) fn submit_gossip_stats(
     stakes: &HashMap<Pubkey, u64>,
 ) {
     let (crds_stats, table_size, num_nodes, num_pubkeys, purged_values_size, failed_inserts_size) = {
-        let gossip_crds = gossip.crds.read().unwrap();
+        let gossip_crds = gossip.crds.read();
         (
             gossip_crds.take_stats(),
             gossip_crds.len(),
