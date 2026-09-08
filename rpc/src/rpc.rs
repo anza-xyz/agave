@@ -1507,12 +1507,17 @@ impl JsonRpcRequestProcessor {
             }
         }
 
-        // Finalized blocks
+        // Finalized blocks.
+        //
+        // `rooted_slot_iterator` yields roots in ascending order with no upper
+        // bound, so `take_while` (not `filter`) must be used to stop as soon as a
+        // root exceeds the requested range. This mirrors `get_blocks_with_limit`,
+        // which bounds the same iterator with `take(limit)`.
         let mut blocks: Vec<_> = self
             .blockstore
             .rooted_slot_iterator(max(start_slot, lowest_blockstore_slot))
             .map_err(|_| Error::internal_error())?
-            .filter(|&slot| slot <= end_slot && slot <= highest_super_majority_root)
+            .take_while(|&slot| slot <= end_slot && slot <= highest_super_majority_root)
             .collect();
         let last_element = blocks
             .last()
@@ -7837,6 +7842,10 @@ pub mod tests {
         let request = create_test_request("getBlocks", Some(json!([0u64])));
         let result: Vec<Slot> = parse_success_result(rpc.handle_request_sync(request));
         assert_eq!(result, vec![0, 1, 3, 4, 8]);
+
+        let request = create_test_request("getBlocks", Some(json!([0u64, 0u64])));
+        let result: Vec<Slot> = parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result, vec![0]);
 
         let request = create_test_request("getBlocks", Some(json!([2u64])));
         let result: Vec<Slot> = parse_success_result(rpc.handle_request_sync(request));
