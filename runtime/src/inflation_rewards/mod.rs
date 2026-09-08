@@ -456,42 +456,55 @@ mod tests {
         }
     }
 
+    fn get_reward_epoch_delegated_stakes() -> RewardEpochDelegatedStakes {
+        RewardEpochDelegatedStakes {
+            epoch: 1,
+            delegated_stakes: [(Pubkey::default(), 1_000)].into_iter().collect(),
+        }
+    }
+
     /// Returns an instance of `AlpenglowEpochType`, total stake, and first AG epoch.
-    fn get_ag_epoch_type() -> (AlpenglowEpochType, u64, Epoch) {
-        let total_stake = 1_000;
-        let migration_epoch = 0;
-        let first_ag_epoch = migration_epoch + 1;
+    fn get_ag_epoch_type<'a>(
+        reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
+    ) -> (AlpenglowEpochType<'a>, u64, Epoch) {
+        let total_stake = reward_epoch_delegated_stakes
+            .delegated_stakes
+            .values()
+            .sum::<u64>();
         (
             AlpenglowEpochType::Alpenglow {
-                migration_epoch,
-                reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
-                    epoch: first_ag_epoch,
-                    delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
-                },
+                migration_epoch: reward_epoch_delegated_stakes.epoch - 1,
+                reward_epoch_delegated_stakes,
             },
             total_stake,
-            first_ag_epoch,
+            reward_epoch_delegated_stakes.epoch,
         )
     }
 
-    fn make_ag_epoch_type_for_test(
-        ag_enabled: bool,
+    fn make_reward_epoch_delegated_stakes_for_test(
         vote_state: &VoteStateV4,
         ag_total_stake_multiplier: u64,
-    ) -> AlpenglowEpochType {
+    ) -> RewardEpochDelegatedStakes {
+        RewardEpochDelegatedStakes {
+            epoch: vote_state
+                .epoch_credits
+                .last()
+                .map(|(epoch, _final_epoch_credits, _initial_epoch_credits)| *epoch)
+                .unwrap_or(1),
+            delegated_stakes: [(Pubkey::default(), ag_total_stake_multiplier)]
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    fn make_ag_epoch_type_for_test<'a>(
+        ag_enabled: bool,
+        reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
+    ) -> AlpenglowEpochType<'a> {
         if ag_enabled {
             AlpenglowEpochType::Alpenglow {
                 migration_epoch: 0,
-                reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
-                    epoch: vote_state
-                        .epoch_credits
-                        .last()
-                        .map(|(epoch, _final_epoch_credits, _initial_epoch_credits)| *epoch)
-                        .unwrap_or(1),
-                    delegated_stakes: [(Pubkey::default(), ag_total_stake_multiplier)]
-                        .into_iter()
-                        .collect(),
-                },
+                reward_epoch_delegated_stakes,
             }
         } else {
             AlpenglowEpochType::Tower
@@ -514,9 +527,11 @@ mod tests {
         let new_rate_activation_epoch = None;
         let commission_rate_in_basis_points = true;
 
+        let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
         // epoch credits work differently in AG, so we need a multiplier to account for that.
         let ag_total_stake_multiplier = if ag_enabled {
-            let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type();
+            let (_, ag_total_stake_multiplier, _) =
+                get_ag_epoch_type(&reward_epoch_delegated_stakes);
             ag_total_stake_multiplier
         } else {
             1
@@ -524,7 +539,7 @@ mod tests {
 
         let inc_credits = |handler: &mut VoteStateHandler, epoch: Epoch, credits: u64| {
             if ag_enabled {
-                let (_, _, first_ag_epoch) = get_ag_epoch_type();
+                let (_, _, first_ag_epoch) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
                 handler
                     .increment_credits(epoch + first_ag_epoch, credits * ag_total_stake_multiplier);
             } else {
@@ -541,6 +556,10 @@ mod tests {
         let new_minimum_balance = rent.minimum_balance(StakeStateV2::size_of());
 
         // this one can't collect now, credits_observed == vote_state.credits()
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             None,
             redeem_stake_rewards(
@@ -559,11 +578,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier,
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 stake_lamports + minimum_balance,
                 new_minimum_balance,
             )
@@ -573,6 +588,10 @@ mod tests {
         inc_credits(&mut vote_state, 0, 2);
 
         // this one should be able to collect exactly 2
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some((stake_lamports * 2, 0)),
             redeem_stake_rewards(
@@ -591,11 +610,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier,
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 stake_lamports + minimum_balance,
                 new_minimum_balance,
             )
@@ -620,9 +635,11 @@ mod tests {
         let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
 
+        let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
         // epoch credits work differently in AG, so we need a multiplier to account for that.
         let ag_total_stake_multiplier = if ag_enabled {
-            let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type();
+            let (_, ag_total_stake_multiplier, _) =
+                get_ag_epoch_type(&reward_epoch_delegated_stakes);
             ag_total_stake_multiplier
         } else {
             1
@@ -630,7 +647,7 @@ mod tests {
 
         let inc_credits = |handler: &mut VoteStateHandler, epoch: Epoch, credits: u64| {
             if ag_enabled {
-                let (_, _, first_ag_epoch) = get_ag_epoch_type();
+                let (_, _, first_ag_epoch) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
                 handler
                     .increment_credits(epoch + first_ag_epoch, credits * ag_total_stake_multiplier);
             } else {
@@ -638,6 +655,10 @@ mod tests {
             }
         };
         // this one can't collect now, credits_observed == vote_state.credits()
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             None,
             calculate_stake_rewards(
@@ -656,11 +677,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
@@ -669,6 +686,10 @@ mod tests {
         inc_credits(&mut vote_state, 0, 2);
 
         // this one should be able to collect exactly 2
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake * 2,
@@ -691,17 +712,17 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
 
         stake.credits_observed = ag_total_stake_multiplier;
         // this one should be able to collect exactly 1 (already observed one)
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake,
@@ -724,11 +745,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
@@ -738,6 +755,10 @@ mod tests {
 
         stake.credits_observed = 2 * ag_total_stake_multiplier;
         // this one should be able to collect the one just added
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake,
@@ -760,11 +781,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
@@ -778,6 +795,10 @@ mod tests {
         } else {
             stake.delegation.stake * 2
         };
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: expected_staker_rewards,
@@ -800,11 +821,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
@@ -819,6 +836,10 @@ mod tests {
                 + stake.delegation.stake // epoch 1
                 + stake.delegation.stake // epoch 2
         };
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: expected_staker_rewards,
@@ -841,11 +862,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
@@ -862,6 +879,10 @@ mod tests {
         // zero after the Tower commission split. Tower defers; AG assigns the
         // remainder to the voter and advances credits.
         vote_state.set_inflation_rewards_commission_bps(100);
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             small_redemption_result(),
             calculate_stake_rewards(
@@ -880,15 +901,15 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
         vote_state.set_inflation_rewards_commission_bps(9900);
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             small_redemption_result(),
             calculate_stake_rewards(
@@ -907,11 +928,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
@@ -919,6 +936,10 @@ mod tests {
         // now one with inflation disabled. no one gets paid, but we still need
         // to advance the stake state's credits_observed field to prevent back-
         // paying rewards when inflation is turned on.
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: 0,
@@ -941,11 +962,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
@@ -953,6 +970,10 @@ mod tests {
         // credits_observed remains at previous level when vote_state credits are
         // not advancing and inflation is disabled
         stake.credits_observed = 4 * ag_total_stake_multiplier;
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: 0,
@@ -975,15 +996,15 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
 
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             CalculatedStakePoints {
                 tower_points: 0,
@@ -997,11 +1018,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
             )
         );
 
@@ -1009,6 +1026,10 @@ mod tests {
         // recreated
         stake.credits_observed = 1000 * ag_total_stake_multiplier;
         // this is new behavior 1; return the post-recreation rewound credits from the vote account
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             CalculatedStakePoints {
                 tower_points: 0,
@@ -1022,15 +1043,15 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
         stake.credits_observed = 4 * ag_total_stake_multiplier;
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             CalculatedStakePoints {
                 tower_points: 0,
@@ -1044,11 +1065,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
             )
         );
 
@@ -1056,6 +1073,10 @@ mod tests {
         vote_state.set_inflation_rewards_commission_bps(0);
         stake.credits_observed = 3 * ag_total_stake_multiplier;
         stake.delegation.activation_epoch = 1;
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: stake.delegation.stake, // epoch 2
@@ -1078,11 +1099,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective(stake.delegation.stake),
             )
         );
@@ -1091,6 +1108,10 @@ mod tests {
         // and no rewards are perceived
         stake.delegation.activation_epoch = 2;
         stake.credits_observed = 3 * ag_total_stake_multiplier;
+        let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
+            vote_state.as_ref_v4(),
+            ag_total_stake_multiplier,
+        );
         assert_eq!(
             Some(CalculatedStakeRewards {
                 staker_rewards: 0,
@@ -1113,11 +1134,7 @@ mod tests {
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
-                &make_ag_epoch_type_for_test(
-                    ag_enabled,
-                    vote_state.as_ref_v4(),
-                    ag_total_stake_multiplier
-                ),
+                &make_ag_epoch_type_for_test(ag_enabled, &reward_epoch_delegated_stakes,),
                 StakeActivationStatus::with_effective_and_activating(0, stake.delegation.stake),
             )
         );
@@ -1172,8 +1189,9 @@ mod tests {
         let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
 
+        let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
         let ag_stake_state = if ag_enabled {
-            let (state, _, _) = get_ag_epoch_type();
+            let (state, _, _) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
             state
         } else {
             AlpenglowEpochType::Tower
@@ -1206,7 +1224,8 @@ mod tests {
 
     #[test]
     fn test_migration_epoch_dust_split_advances_credits() {
-        let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type();
+        let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
+        let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
         let mut vote_state = VoteStateV4 {
             inflation_rewards_commission_bps: 100,
             epoch_credits: vec![
@@ -1236,7 +1255,7 @@ mod tests {
             num_tower_slots: 0,
             num_ag_slots: 1,
             migration_epoch: 0,
-            reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+            reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes {
                 epoch: 0,
                 delegated_stakes: [(Pubkey::default(), ag_total_stake_multiplier)]
                     .into_iter()
@@ -1282,7 +1301,8 @@ mod tests {
 
     #[test]
     fn test_alpenglow_excludes_inactive_stake() {
-        let (ag_epoch_type, _, first_ag_epoch) = get_ag_epoch_type();
+        let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
+        let (ag_epoch_type, _, first_ag_epoch) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
         let vote_state = VoteStateV4 {
             epoch_credits: vec![(first_ag_epoch, 4, 0)],
             ..VoteStateV4::default()

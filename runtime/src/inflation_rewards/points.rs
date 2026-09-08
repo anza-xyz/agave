@@ -724,7 +724,7 @@ mod tests {
 
         let ag_epoch_type = AlpenglowEpochType::Alpenglow {
             migration_epoch: 0,
-            reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+            reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes {
                 epoch: 64,
                 delegated_stakes: [(Pubkey::default(), total_stake)].into_iter().collect(),
             },
@@ -781,7 +781,7 @@ mod tests {
 
         let ag_epoch_type = AlpenglowEpochType::Alpenglow {
             migration_epoch: 0,
-            reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+            reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes {
                 epoch: 1,
                 delegated_stakes: [(Pubkey::default(), current_delegated_total)]
                     .into_iter()

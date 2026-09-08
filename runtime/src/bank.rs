@@ -41,7 +41,7 @@ pub use {
 use {
     crate::{
         account_saver::collect_accounts_to_store,
-        alpenglow_epoch_type::AlpenglowEpochType,
+        alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
         bank::{
             entry_bytes_budget::EntryBytesBudget,
             metrics::*,
@@ -1251,6 +1251,8 @@ struct NewEpochBundle {
     unfiltered_distribution_vote_accounts: VoteAccounts,
     /// Current effective stake delegated to each vote account pubkey.
     delegated_stakes: DelegatedStakes,
+    /// Stake amounts for the end of the rewarded epoch
+    reward_epoch_delegated_stakes: RewardEpochDelegatedStakes,
     /// Vote accounts computed from the stakes cache for the current
     /// (distribution) epoch *after* applying VAT filtering.
     filtered_distribution_vote_accounts: VoteAccounts,
@@ -1852,7 +1854,7 @@ impl Bank {
                 stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
-                reward_epoch_delegated_stakes,
+                &reward_epoch_delegated_stakes,
                 reward_calc_tracer,
                 thread_pool,
                 rewards_metrics,
@@ -1861,6 +1863,7 @@ impl Bank {
             stake_history,
             unfiltered_distribution_vote_accounts,
             delegated_stakes,
+            reward_epoch_delegated_stakes,
             filtered_distribution_vote_accounts,
             rewards_calculation,
             calculate_activated_stake_time_us,
@@ -1890,6 +1893,7 @@ impl Bank {
             stake_history,
             unfiltered_distribution_vote_accounts,
             delegated_stakes,
+            reward_epoch_delegated_stakes,
             filtered_distribution_vote_accounts,
             rewards_calculation,
             calculate_activated_stake_time_us,
@@ -1923,6 +1927,7 @@ impl Bank {
                 parent_slot,
                 parent_height,
                 &rewards_calculation,
+                &reward_epoch_delegated_stakes,
                 &mut rewards_metrics,
                 thread_pool,
             ));
