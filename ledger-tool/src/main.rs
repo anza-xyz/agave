@@ -2409,7 +2409,7 @@ fn main() {
                         }
                     }
 
-                    let new_shred_verison =
+                    let new_shred_version =
                         compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
                     if child_bank_required {
                         let num_ticks_per_slot = bank.ticks_per_slot();
@@ -2490,7 +2490,7 @@ fn main() {
                             slot,
                             bank.parent_slot(),
                             /*reference_tick:*/ 0,
-                            new_shred_verison,
+                            new_shred_version,
                         )
                         .expect("Shredder creation must succeed");
                         let shreds: Vec<_> = shredder
@@ -2671,7 +2671,7 @@ fn main() {
                     if let Some(msg) = capitalization_message {
                         println!("{msg}");
                     }
-                    println!("Shred version: {new_shred_verison}",);
+                    println!("Shred version: {new_shred_version}",);
 
                     if let Some(system_monitor_service) = system_monitor_service {
                         exit_signal.store(true, Ordering::Relaxed);
