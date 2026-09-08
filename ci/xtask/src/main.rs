@@ -21,6 +21,8 @@ struct Xtask {
 enum Commands {
     #[command(about = "Hello")]
     Hello,
+    #[command(about = "Check that the toolchain and workspace Rust versions match")]
+    CheckMsrv,
     #[command(about = "Bump version")]
     BumpVersion(xtask_shared::commands::bump_version::CommandArgs),
     #[command(about = "Update crate version")]
@@ -73,6 +75,7 @@ async fn try_main(xtask: Xtask) -> Result<()> {
     // run the command
     match xtask.command {
         Commands::Hello => commands::hello::run()?,
+        Commands::CheckMsrv => commands::check_msrv::run()?,
         Commands::BumpVersion(args) => {
             xtask_shared::commands::bump_version::run(args)?;
         }
