@@ -38,7 +38,8 @@ const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
 /// 0.76 is the previous trip point of 95% of an 80% staked share (1900
 /// streams per 5 ms interval at the default 500 streams/ms), kept for now so
 /// staked throttling starts at the same load while unstaked load accounting
-/// is rolled out.
+/// is rolled out. With unstaked connections disabled there was no staked
+/// share to shrink, so the previous 0.95 still applies there.
 const STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.76;
 /// Fraction of capacity at which unstaked peers fall back to their minimum
 /// quota. Compared against total (staked + unstaked) load, so unstaked peers
@@ -97,8 +98,14 @@ impl StreamLoadEMA {
                 (0, 0)
             };
 
+        let staked_threshold_ratio = if allow_unstaked_streams {
+            STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
+        } else {
+            // No unstaked reservation existed in this configuration.
+            0.95
+        };
         let staked_throttling_on_load_threshold =
-            (STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO * (max_load_in_ema_interval as f64)) as u64;
+            (staked_threshold_ratio * max_load_in_ema_interval as f64) as u64;
         let unstaked_throttling_on_load_threshold = (UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
             * (max_load_in_ema_interval as f64))
             as u64;
