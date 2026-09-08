@@ -471,27 +471,33 @@ impl CrdsGossipPull {
         bloom_size: usize,
     ) -> Vec<CrdsFilter> {
         const PAR_MIN_LENGTH: usize = 512;
-        let failed_inserts = self.failed_inserts.read().unwrap();
-        // crds should be locked last after self.failed_inserts.
-        let crds = crds.read().unwrap();
-        let num_items = crds.len() + crds.num_purged() + failed_inserts.len();
-        let num_items = MIN_NUM_BLOOM_ITEMS.max(num_items);
+        // Snapshot hashes so that the locks are not held while building the filters.
+        let hash_values: Vec<_> = {
+            let failed_inserts = self.failed_inserts.read().unwrap();
+            // crds should be locked last after self.failed_inserts.
+            let crds = crds.read().unwrap();
+            thread_pool.install(|| {
+                crds.par_values()
+                    .with_min_len(PAR_MIN_LENGTH)
+                    .map(|v| *v.value.hash())
+                    .chain(crds.purged().with_min_len(PAR_MIN_LENGTH))
+                    .chain(
+                        failed_inserts
+                            .par_iter()
+                            .with_min_len(PAR_MIN_LENGTH)
+                            .map(|(v, _)| *v),
+                    )
+                    .collect()
+            })
+        };
+        let num_items = MIN_NUM_BLOOM_ITEMS.max(hash_values.len());
         let filters = CrdsFilterSet::new(&mut rand::rng(), num_items, bloom_size);
         thread_pool.install(|| {
-            crds.par_values()
+            hash_values
+                .into_par_iter()
                 .with_min_len(PAR_MIN_LENGTH)
-                .map(|v| *v.value.hash())
-                .chain(crds.purged().with_min_len(PAR_MIN_LENGTH))
-                .chain(
-                    failed_inserts
-                        .par_iter()
-                        .with_min_len(PAR_MIN_LENGTH)
-                        .map(|(v, _)| *v),
-                )
                 .for_each(|v| filters.add(v));
         });
-        drop(crds);
-        drop(failed_inserts);
         filters.into()
     }
 
