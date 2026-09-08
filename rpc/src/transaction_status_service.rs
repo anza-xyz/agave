@@ -818,6 +818,7 @@ pub(crate) mod tests {
                 TransactionHistoryPurgeInput::SwitchBank,
             )
             .unwrap();
+        transaction_status_service.quiesce_and_join_for_tests(exit);
 
         assert!(
             blockstore
@@ -831,7 +832,6 @@ pub(crate) mod tests {
                 .unwrap()
                 .is_none()
         );
-        transaction_status_service.quiesce_and_join_for_tests(exit);
     }
 
     #[test]
