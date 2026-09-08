@@ -31,16 +31,20 @@ const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
 // before throttling activates.
 const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
 
-/// Fraction of total load capacity at which staked connections switch to
-/// stake-proportional quotas. Compared against staked load alone, so unstaked
-/// traffic never throttles staked connections.
-const STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.95;
-/// Fraction of total load capacity at which unstaked connections fall back to
-/// their minimum quota. Compared against total (staked + unstaked) load, so
-/// unstaked connections yield capacity to staked demand and may use the whole
-/// pool otherwise. Kept at or below the staked ratio so that unstaked
-/// connections back off before staked connections are throttled.
-const UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.90;
+/// Fraction of capacity at which staked peers switch to stake-proportional
+/// quotas. Compared against staked load alone, so unstaked traffic never
+/// throttles staked peers.
+///
+/// 0.76 is the previous trip point of 95% of an 80% staked share (1900
+/// streams per 5 ms interval at the default 500 streams/ms), kept for now so
+/// staked throttling starts at the same load while unstaked load accounting
+/// is rolled out.
+const STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.76;
+/// Fraction of capacity at which unstaked peers fall back to their minimum
+/// quota. Compared against total (staked + unstaked) load, so unstaked peers
+/// yield to staked demand and may use the whole pool otherwise. Kept below
+/// the staked ratio so unstaked peers back off first.
+const UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.70;
 const _: () = assert!(
     UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO <= STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
 );
@@ -701,9 +705,10 @@ pub mod test {
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         );
-        // 500 streams/ms is 2_500 streams per 5 ms EMA interval.
-        assert_eq!(load_ema.staked_throttling_on_load_threshold, 2_375);
-        assert_eq!(load_ema.unstaked_throttling_on_load_threshold, 2_250);
+        // 500 streams/ms is 2_500 per 5 ms EMA interval; 1_900 is the previous
+        // 95% of an 80% staked share.
+        assert_eq!(load_ema.staked_throttling_on_load_threshold, 1_900);
+        assert_eq!(load_ema.unstaked_throttling_on_load_threshold, 1_750);
         assert_eq!(load_ema.max_load_in_throttling_window, 50_000);
         assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 50);
         assert_eq!(load_ema.min_unstaked_load_in_throttling_window, 20);
