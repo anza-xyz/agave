@@ -32,8 +32,10 @@
 //!  |     24 | minor_version | u64      |   8 B |
 //!  +--------+----------------+----------+-------+
 //!  |     32 | patch_version | u64      |   8 B |
+//!  +--------+----------------+----------+-------+
+//!  |     40 | uid           | u64      |   8 B |
 //!  +--------+---------------+----------+-------+
-//!  |     40 | reserved      | [u8; 24] |  24 B |
+//!  |     48 | reserved      | [u8; 16] |  16 B |
 //!  +--------+---------------+----------+-------+
 //!
 //!  - total size: 64 B
@@ -95,10 +97,11 @@ const DATA_ENTRY_OFFSET_OF_DATA: usize = 36;
 /// Creates a new data file based on `base_path`.
 pub fn create_data_file(
     base_path: impl AsRef<Path>,
+    uid: u64,
 ) -> Result<(PathBuf, File, usize), SplitAccountsFileError> {
     let data_path = data_path_from_base(&base_path);
     let mut data_file = utils::create_new_file(&data_path)?;
-    let header_size = write_data_header(&mut data_file)?;
+    let header_size = write_data_header(&mut data_file, uid)?;
     Ok((data_path, data_file, header_size))
 }
 
@@ -107,13 +110,14 @@ fn data_path_from_base(base_path: impl AsRef<Path>) -> PathBuf {
 }
 
 /// Writes the file header.
-fn write_data_header(file: &mut File) -> Result<usize, WriteDataHeaderError> {
+fn write_data_header(file: &mut File, uid: u64) -> Result<usize, WriteDataHeaderError> {
     let header = DataHeaderSerde {
         magic: *DATA_MAGIC,
         major_version: DATA_FORMAT_VERSION.major,
         minor_version: DATA_FORMAT_VERSION.minor,
         patch_version: DATA_FORMAT_VERSION.patch,
-        _unused: [0; 24],
+        uid,
+        _unused: [0; 16],
     };
     let header_bytes = as_bytes_ref(&header);
     file_io::write_buffer_to_file(file, header_bytes, /*offset*/ 0)?;
@@ -130,7 +134,8 @@ pub fn read_data_header(
         major_version: 0,
         minor_version: 0,
         patch_version: 0,
-        _unused: [0; 24],
+        uid: 0,
+        _unused: [0; 16],
     };
     let header_bytes = as_bytes_mut(&mut header);
     let num_bytes_read =
@@ -157,6 +162,7 @@ pub fn read_data_header(
     Ok(DataHeader {
         size: DATA_HEADER_SIZE,
         format_version,
+        uid: header.uid,
     })
 }
 
@@ -381,7 +387,8 @@ struct DataHeaderSerde {
     major_version: u64,
     minor_version: u64,
     patch_version: u64,
-    _unused: [u8; 24],
+    uid: u64,
+    _unused: [u8; 16],
 }
 const _: () = const {
     assert!(size_of::<DataHeaderSerde>() == DATA_HEADER_SIZE);
@@ -396,6 +403,7 @@ unsafe impl AsBytesMut for DataHeaderSerde {}
 pub struct DataHeader {
     pub size: usize,
     pub format_version: Version,
+    pub uid: u64,
 }
 
 /// On-disk representation of an entry's fixed portiion.
@@ -434,16 +442,18 @@ mod tests {
     fn test_create_data_file() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        _ = create_data_file(&base_path).unwrap();
+        _ = create_data_file(&base_path, 42).unwrap();
     }
 
     #[test]
     fn test_write_and_read_data_header() {
         let mut file = tempfile::tempfile().unwrap();
-        let size = write_data_header(&mut file).unwrap();
+        let uid = rand::random();
+        let size = write_data_header(&mut file, uid).unwrap();
         let header = read_data_header(&file, size as FileSize).unwrap();
         assert_eq!(header.size, DATA_HEADER_SIZE);
         assert_eq!(header.format_version, DATA_FORMAT_VERSION);
+        assert_eq!(header.uid, uid);
     }
 
     #[test]
@@ -465,7 +475,8 @@ mod tests {
                 major_version: DATA_FORMAT_VERSION.major,
                 minor_version: DATA_FORMAT_VERSION.minor,
                 patch_version: DATA_FORMAT_VERSION.patch,
-                _unused: [0; 24],
+                uid: 0,
+                _unused: [0; 16],
             };
             file_io::write_buffer_to_file(&file, as_bytes_ref(&header), 0).unwrap();
             let err = read_data_header(&file, DATA_HEADER_SIZE as FileSize).unwrap_err();
@@ -479,7 +490,8 @@ mod tests {
                 major_version: DATA_FORMAT_VERSION.major + 1,
                 minor_version: 0,
                 patch_version: 0,
-                _unused: [0; 24],
+                uid: 0,
+                _unused: [0; 16],
             };
             file_io::write_buffer_to_file(&file, as_bytes_ref(&header), 0).unwrap();
             let err = read_data_header(&file, DATA_HEADER_SIZE as FileSize).unwrap_err();
@@ -554,7 +566,7 @@ mod tests {
     fn test_write_and_read_data_entry() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let (_path, file, size) = create_data_file(&base_path).unwrap();
+        let (_path, file, size) = create_data_file(&base_path, 42).unwrap();
 
         let offset = FileOffset(size as FileSize);
         let address = Pubkey::new_unique();

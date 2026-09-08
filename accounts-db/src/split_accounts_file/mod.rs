@@ -126,8 +126,9 @@ impl SplitAccountsFile {
     /// `base_path` is _not_ supposed to be a directory, but rather a file name.
     /// E.g. <accounts-dir>/SLOT.ID, just like an AppendVec file name.
     pub fn new(base_path: impl AsRef<Path>) -> Result<Self, SplitAccountsFileError> {
-        let (meta_path, meta_file, meta_len) = create_meta_file(&base_path)?;
-        let (data_path, data_file, data_len) = create_data_file(&base_path)?;
+        let uid = rand::random();
+        let (meta_path, meta_file, meta_len) = create_meta_file(&base_path, uid)?;
+        let (data_path, data_file, data_len) = create_data_file(&base_path, uid)?;
         SPLIT_ACCOUNTS_FILE_STATS
             .num_open
             .fetch_add(1, Ordering::Relaxed);
@@ -156,14 +157,21 @@ impl SplitAccountsFile {
             path: meta_path,
             size: meta_len,
         } = meta;
-        _ = read_meta_header(&meta_file, meta_len)?;
+        let meta_header = read_meta_header(&meta_file, meta_len)?;
 
         let FileInfo {
             file: data_file,
             path: data_path,
             size: data_len,
         } = data;
-        _ = read_data_header(&data_file, data_len)?;
+        let data_header = read_data_header(&data_file, data_len)?;
+
+        if meta_header.uid != data_header.uid {
+            return Err(SplitAccountsFileError::HeaderUidMismatch {
+                meta_uid: meta_header.uid,
+                data_uid: data_header.uid,
+            });
+        }
 
         SPLIT_ACCOUNTS_FILE_STATS
             .num_open
@@ -701,7 +709,7 @@ mod tests {
 
     /// Ensure opening an existing SplitAccountsFile works.
     #[test]
-    fn test_open() {
+    fn test_open_ok() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
         let split = SplitAccountsFile::new(&base_path).unwrap();
@@ -709,6 +717,21 @@ mod tests {
         let meta = FileInfo::new_from_path(&split.meta_path).unwrap();
         let data = FileInfo::new_from_path(&split.data_path).unwrap();
         _ = SplitAccountsFile::open(meta, data).unwrap();
+    }
+
+    /// Ensure opening SplitAccountsFiles with mismatched uids is an error.
+    #[test]
+    fn test_open_bad_uids() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path1 = temp_dir.path().join("base1");
+        let base_path2 = temp_dir.path().join("base2");
+        let split1 = SplitAccountsFile::new(&base_path1).unwrap();
+        let split2 = SplitAccountsFile::new(&base_path2).unwrap();
+
+        let meta = FileInfo::new_from_path(&split1.meta_path).unwrap();
+        let data = FileInfo::new_from_path(&split2.data_path).unwrap();
+        let err = SplitAccountsFile::open(meta, data).unwrap_err();
+        assert_matches!(err, SplitAccountsFileError::HeaderUidMismatch { .. });
     }
 
     /// Ensure we can reopen a SplitAccountsFile as read-only.

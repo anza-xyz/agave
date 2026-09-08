@@ -32,8 +32,10 @@
 //!  |     24 | minor_version | u64      |   8 B |
 //!  +--------+----------------+----------+-------+
 //!  |     32 | patch_version | u64      |   8 B |
+//!  +--------+----------------+----------+-------+
+//!  |     40 | uid           | u64      |   8 B |
 //!  +--------+---------------+----------+-------+
-//!  |     40 | reserved      | [u8; 24] |  24 B |
+//!  |     48 | reserved      | [u8; 16] |  16 B |
 //!  +--------+---------------+----------+-------+
 //!
 //!  - total size: 64 B
@@ -140,10 +142,11 @@ const META_ENTRY_OFFSET_OF_DATA_REF: usize = 88;
 
 pub fn create_meta_file(
     base_path: impl AsRef<Path>,
+    uid: u64,
 ) -> Result<(PathBuf, File, usize), SplitAccountsFileError> {
     let meta_path = meta_path_from_base(&base_path);
     let mut meta_file = utils::create_new_file(&meta_path)?;
-    let header_size = write_meta_header(&mut meta_file)?;
+    let header_size = write_meta_header(&mut meta_file, uid)?;
     Ok((meta_path, meta_file, header_size))
 }
 
@@ -151,13 +154,14 @@ fn meta_path_from_base(base_path: impl AsRef<Path>) -> PathBuf {
     base_path.as_ref().with_added_extension("meta")
 }
 
-fn write_meta_header(file: &mut File) -> Result<usize, WriteMetaHeaderError> {
+fn write_meta_header(file: &mut File, uid: u64) -> Result<usize, WriteMetaHeaderError> {
     let header = MetaHeaderSerde {
         magic: *META_MAGIC,
         major_version: META_FORMAT_VERSION.major,
         minor_version: META_FORMAT_VERSION.minor,
         patch_version: META_FORMAT_VERSION.patch,
-        _unused: [0; 24],
+        uid,
+        _unused: [0; 16],
     };
     let header_bytes = as_bytes_ref(&header);
     file_io::write_buffer_to_file(file, header_bytes, /*offset*/ 0)?;
@@ -173,7 +177,8 @@ pub fn read_meta_header(
         major_version: 0,
         minor_version: 0,
         patch_version: 0,
-        _unused: [0; 24],
+        uid: 0,
+        _unused: [0; 16],
     };
     let header_bytes = as_bytes_mut(&mut header);
     let num_bytes_read =
@@ -200,6 +205,7 @@ pub fn read_meta_header(
     Ok(MetaHeader {
         size: META_HEADER_SIZE,
         format_version,
+        uid: header.uid,
     })
 }
 
@@ -427,7 +433,8 @@ struct MetaHeaderSerde {
     major_version: u64,
     minor_version: u64,
     patch_version: u64,
-    _unused: [u8; 24],
+    uid: u64,
+    _unused: [u8; 16],
 }
 const _: () = const {
     assert!(size_of::<MetaHeaderSerde>() == META_HEADER_SIZE);
@@ -443,6 +450,7 @@ unsafe impl AsBytesMut for MetaHeaderSerde {}
 pub struct MetaHeader {
     pub size: usize,
     pub format_version: Version,
+    pub uid: u64,
 }
 
 /// The fixed portion of a meta entry (everything except the data ref).
@@ -515,16 +523,18 @@ mod tests {
     fn test_create_meta_file() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        _ = create_meta_file(&base_path).unwrap();
+        _ = create_meta_file(&base_path, 42).unwrap();
     }
 
     #[test]
     fn test_write_and_read_meta_header() {
         let mut file = tempfile::tempfile().unwrap();
-        let size = write_meta_header(&mut file).unwrap();
+        let uid = rand::random();
+        let size = write_meta_header(&mut file, uid).unwrap();
         let header = read_meta_header(&file, size as FileSize).unwrap();
         assert_eq!(header.size, META_HEADER_SIZE);
         assert_eq!(header.format_version, META_FORMAT_VERSION);
+        assert_eq!(header.uid, uid);
     }
 
     #[test]
@@ -546,7 +556,8 @@ mod tests {
                 major_version: META_FORMAT_VERSION.major,
                 minor_version: META_FORMAT_VERSION.minor,
                 patch_version: META_FORMAT_VERSION.patch,
-                _unused: [0; 24],
+                uid: 0,
+                _unused: [0; 16],
             };
             file_io::write_buffer_to_file(&file, as_bytes_ref(&header), 0).unwrap();
             let err = read_meta_header(&file, META_HEADER_SIZE as FileSize).unwrap_err();
@@ -560,7 +571,8 @@ mod tests {
                 major_version: META_FORMAT_VERSION.major + 1,
                 minor_version: 0,
                 patch_version: 0,
-                _unused: [0; 24],
+                uid: 0,
+                _unused: [0; 16],
             };
             file_io::write_buffer_to_file(&file, as_bytes_ref(&header), 0).unwrap();
             let err = read_meta_header(&file, META_HEADER_SIZE as FileSize).unwrap_err();
@@ -657,7 +669,7 @@ mod tests {
     fn test_write_and_read_meta_entry() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let (_path, file, size) = create_meta_file(&base_path).unwrap();
+        let (_path, file, size) = create_meta_file(&base_path, 42).unwrap();
 
         let mut offset = FileOffset(size as FileSize);
 
