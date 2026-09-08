@@ -2538,7 +2538,7 @@ fn discard_different_shred_version(
         CrdsData::ContactInfo(ci) => ci.shred_version() == self_shred_version,
         // for any other CRDS types we check if we store anything already
         // for this pubkey, if we do we allow more values in
-        _ => crds.get_records(&value.pubkey()).next().is_some(),
+        _ => crds.contains_pubkey(&value.pubkey()),
     });
     let num_skipped = num_values - values.len();
     if num_skipped != 0 {
