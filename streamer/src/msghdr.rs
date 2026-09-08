@@ -1,5 +1,4 @@
-#![cfg(target_os = "linux")]
-
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use {
     libc::{iovec, msghdr, sockaddr_storage, socklen_t},
     std::{
@@ -8,6 +7,7 @@ use {
     },
 };
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn create_msghdr(
     msg_name: &mut MaybeUninit<sockaddr_storage>,
     msg_namelen: socklen_t,
