@@ -2139,7 +2139,9 @@ pub mod test {
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 
-        // unstaked connection can handle up to 100tps, so we should send in ~1s.
+        // An unstaked peer gets 50 streams per 100 ms window while the system
+        // is not saturated, so 100 streams span two windows and the excess in
+        // the first is throttled. All must still be delivered.
         let expected_num_txs = 100;
         let start_time = tokio::time::Instant::now();
         for i in 0..expected_num_txs {
