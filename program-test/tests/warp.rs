@@ -264,8 +264,8 @@ async fn stake_merge_immediately_after_activation() {
         setup_stake(&mut context, &user_keypair, &vote_address, stake_lamports).await;
     // the new stake is at the right value
     check_credits_observed(&mut context.banks_client, absorbed_stake_address, 200).await;
-    // the base stake hasn't been moved forward because no rewards were earned
-    check_credits_observed(&mut context.banks_client, base_stake_address, 100).await;
+    // Credits advance even when no rewards were earned.
+    check_credits_observed(&mut context.banks_client, base_stake_address, 200).await;
 
     context.increment_vote_account_credits(&vote_address, 100);
     current_slot += slots_per_epoch;

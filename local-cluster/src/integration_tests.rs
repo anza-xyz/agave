@@ -510,9 +510,9 @@ pub fn run_cluster_partition<C>(
     );
 
     let mut cluster = if is_alpenglow {
-        LocalCluster::new_alpenglow(&mut config, SocketAddrSpace::Unspecified)
-    } else {
         LocalCluster::new(&mut config, SocketAddrSpace::Unspecified)
+    } else {
+        LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified)
     };
 
     info!("PARTITION_TEST spend_and_verify_all_nodes(), ensure all nodes are caught up");
@@ -646,7 +646,7 @@ pub fn test_faulty_node(
         ..ClusterConfig::default()
     };
 
-    let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
+    let cluster = LocalCluster::new_tower(&mut cluster_config, SocketAddrSpace::Unspecified);
     let validator_keys: Vec<ValidatorKeys> =
         validator_keys.into_iter().map(|(keys, _)| keys).collect();
 

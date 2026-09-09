@@ -2,8 +2,13 @@
 #![cfg(feature = "dev-context-only-utils")]
 
 use {
-    crate::{bank::Bank, static_ids},
+    crate::{
+        bank::Bank,
+        block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
+        static_ids,
+    },
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
     dashmap::DashSet,
     log::info,
     rayon::{
@@ -129,6 +134,9 @@ impl<'a> SnapshotMinimizer<'a> {
         static_ids::STATIC_IDS.iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
         });
+        self.minimized_account_set
+            .insert(*GENESIS_CERTIFICATE_ACCOUNT);
+        self.minimized_account_set.insert(*VOTE_REWARD_ACCOUNT_ADDR);
     }
 
     /// Used to get reserved accounts in `minimize`
@@ -355,11 +363,13 @@ impl<'a> SnapshotMinimizer<'a> {
 mod tests {
     use {
         crate::{
-            bank::Bank, genesis_utils::create_genesis_config_with_leader,
-            runtime_config::RuntimeConfig, snapshot_bank_utils,
-            snapshot_minimizer::SnapshotMinimizer, snapshot_utils,
+            bank::Bank,
+            block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
+            genesis_utils::create_genesis_config_with_leader, runtime_config::RuntimeConfig,
+            snapshot_bank_utils, snapshot_minimizer::SnapshotMinimizer, snapshot_utils,
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -375,6 +385,24 @@ mod tests {
         tempfile::TempDir,
         test_case::test_case,
     };
+
+    #[test]
+    fn test_minimization_get_static_runtime_accounts() {
+        let genesis_config_info = create_genesis_config_with_leader(10, &Pubkey::new_unique(), 30);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
+        let minimizer = SnapshotMinimizer {
+            bank: &bank,
+            starting_slot: 0,
+            minimized_account_set: DashSet::new(),
+        };
+
+        minimizer.get_static_runtime_accounts();
+
+        for pubkey in [*GENESIS_CERTIFICATE_ACCOUNT, *VOTE_REWARD_ACCOUNT_ADDR] {
+            assert!(bank.get_account(&pubkey).is_some());
+            assert!(minimizer.minimized_account_set.contains(&pubkey));
+        }
+    }
 
     #[test]
     fn test_minimization_get_vote_accounts() {

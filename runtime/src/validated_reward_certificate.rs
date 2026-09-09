@@ -186,9 +186,7 @@ impl ValidatedRewardCert {
 mod tests {
     use {
         super::*,
-        crate::genesis_utils::{
-            ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-        },
+        crate::genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::VoteMessage,
@@ -242,11 +240,8 @@ mod tests {
     fn test_extract_slot_rejects_tower_slots() {
         let migration_slot = 1;
         let validator_keypairs = [ValidatorVoteKeypairs::new_rand()];
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            vec![100],
-        );
+        let genesis =
+            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, vec![100]);
         let (root_bank, _bank_forks) =
             Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
         let genesis_cert = GenesisCert {
@@ -310,7 +305,7 @@ mod tests {
                 )
             })
             .collect::<HashMap<_, _>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+        let genesis = create_genesis_config_with_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![100; validator_keypairs.len()],

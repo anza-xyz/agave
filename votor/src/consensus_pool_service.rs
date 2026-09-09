@@ -741,9 +741,7 @@ mod tests {
         solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_runtime::{
             bank_forks::BankForks,
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-            },
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         std::sync::Arc,
     };
@@ -772,11 +770,8 @@ mod tests {
                 .rev()
                 .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
                 .collect::<Vec<_>>();
-            let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-                1_000_000_000,
-                &validator_keypairs,
-                stake,
-            );
+            let genesis =
+                create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stake);
             let my_keypair = validator_keypairs[0].node_keypair.insecure_clone();
             let bank0 = Bank::new_for_tests(&genesis.genesis_config);
             let bank_forks = BankForks::new_rw_arc(bank0);

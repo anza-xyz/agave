@@ -132,9 +132,7 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-            },
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         solana_signer_store::{Decoded, decode},
         std::{collections::HashMap, num::NonZero},
@@ -214,12 +212,9 @@ mod tests {
                 )
             })
             .collect::<HashMap<_, _>>();
-        let mut genesis_config = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stakes,
-        )
-        .genesis_config;
+        let mut genesis_config =
+            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes)
+                .genesis_config;
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();

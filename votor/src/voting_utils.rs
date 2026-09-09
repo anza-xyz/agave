@@ -379,9 +379,7 @@ mod tests {
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             epoch_stakes::VersionedEpochStakes,
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-            },
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         std::sync::{Arc, RwLock},
     };
@@ -425,11 +423,8 @@ mod tests {
     ) -> (VotingContext, Arc<RwLock<BankForks>>, Receiver<RewardInput>) {
         // Can't have stake of 0, so start at 1 and go to 10. In descending order, so 0 has largest stake.
         let stakes: Vec<u64> = (1u64..=10).rev().map(|x| x.saturating_mul(100)).collect();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            validator_keypairs,
-            stakes,
-        );
+        let genesis =
+            create_genesis_config_with_vote_accounts(1_000_000_000, validator_keypairs, stakes);
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
 

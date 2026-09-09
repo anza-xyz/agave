@@ -5,9 +5,7 @@ use super::Bank;
 mod tests {
     use {
         super::*,
-        crate::{
-            genesis_utils::activate_all_features_alpenglow, inflation_rewards::points::PointValue,
-        },
+        crate::{genesis_utils::activate_all_features, inflation_rewards::points::PointValue},
         solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
         solana_genesis_config::create_genesis_config,
         solana_leader_schedule::SlotLeader,
@@ -172,7 +170,7 @@ mod tests {
     #[test]
     fn test_alpenglow_clock_cache_updates_before_and_after_footer() {
         let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
-        activate_all_features_alpenglow(&mut genesis_config);
+        activate_all_features(&mut genesis_config);
         let (bank0, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         assert!(bank0.get_alpenglow_genesis_certificate().is_some());
@@ -229,7 +227,7 @@ mod tests {
         let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
         genesis_config.epoch_schedule =
             EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
-        activate_all_features_alpenglow(&mut genesis_config);
+        activate_all_features(&mut genesis_config);
         let (parent, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 

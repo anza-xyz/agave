@@ -27,7 +27,8 @@ use {
         bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
         genesis_utils::{
-            GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
+            GenesisConfigInfo, ValidatorVoteKeypairs,
+            create_genesis_config_with_tower_vote_accounts,
         },
     },
     solana_signer::Signer,
@@ -413,7 +414,7 @@ pub fn initialize_state_with(
         mut genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config_with_vote_accounts(
+    } = create_genesis_config_with_tower_vote_accounts(
         1_000_000_000,
         &validator_keypairs,
         vec![stake; validator_keypairs.len()],
