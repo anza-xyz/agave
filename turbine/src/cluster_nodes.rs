@@ -10,7 +10,6 @@ use {
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo as GossipContactInfo, Protocol},
-        crds::GossipRoute,
         crds_data::CrdsData,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         crds_value::CrdsValue,
@@ -701,17 +700,12 @@ pub fn make_test_cluster<R: Rng>(
     stakes.extend(repeat_with(|| (Pubkey::new_unique(), rng.random_range(0..20))).take(100));
     let cluster_info = ClusterInfo::new(this_node, keypair, SocketAddrSpace::Unspecified);
     {
-        let now = timestamp();
         let keypair = Keypair::new();
-        let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
         // First node is pushed to crds table by ClusterInfo constructor.
         for node in nodes.iter().skip(1) {
             let node = CrdsData::from(node);
             let node = CrdsValue::new(node, &keypair);
-            assert_eq!(
-                gossip_crds.insert(node, now, GossipRoute::LocalMessage),
-                Ok(())
-            );
+            assert_eq!(cluster_info.insert_crds_value_for_tests(node), Ok(()));
         }
     }
     (nodes, stakes, cluster_info)

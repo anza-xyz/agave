@@ -123,7 +123,6 @@ mod tests {
                 .push_duplicate_shred(&shred1, shred2.payload())
                 .is_ok()
         );
-        cluster_info.flush_push_queue();
         sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
         assert_eq!(count.load(Ordering::Relaxed), 3);
         exit.store(true, Ordering::Relaxed);
