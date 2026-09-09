@@ -69,8 +69,6 @@ struct AncientSlotInfos {
     /// indexes to 'all_info' for storages that should be shrunk because alive ratio is too low.
     /// subset of all_infos
     shrink_indexes: Vec<usize>,
-    /// total alive bytes across contents of 'shrink_indexes'
-    total_alive_bytes_shrink: Saturating<u64>,
     /// total alive bytes across all slots
     total_alive_bytes: Saturating<u64>,
     /// slots that have dead accounts and thus the corresponding slot
@@ -111,9 +109,6 @@ impl AncientSlotInfos {
             // 2. # of active ancient roots, so that we don't consume too many open file handles
 
             if should_shrink {
-                // alive ratio is too low, so prioritize combining this slot with others
-                // to reduce disk space used
-                self.total_alive_bytes_shrink += alive_bytes_after_shrink;
                 self.shrink_indexes.push(self.all_infos.len());
             } else {
                 let already_ideal_size = u64::from(ideal_size) * 80 / 100;
@@ -1553,7 +1548,6 @@ mod tests {
 
                 assert!(infos.shrink_indexes.is_empty());
                 assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected as u64);
-                assert_eq!(infos.total_alive_bytes_shrink.0, 0);
             }
         }
     }
@@ -1594,7 +1588,6 @@ mod tests {
             assert!(infos.all_infos.is_empty());
             assert!(infos.shrink_indexes.is_empty());
             assert_eq!(infos.total_alive_bytes.0, 0);
-            assert_eq!(infos.total_alive_bytes_shrink.0, 0);
         }
     }
 
@@ -1632,7 +1625,6 @@ mod tests {
                         assert!(infos.all_infos.is_empty());
                         assert!(infos.shrink_indexes.is_empty());
                         assert_eq!(infos.total_alive_bytes.0, 0);
-                        assert_eq!(infos.total_alive_bytes_shrink.0, 0);
                     } else {
                         assert_eq!(infos.all_infos.len(), slots);
                         storages
@@ -1642,7 +1634,6 @@ mod tests {
                                 assert_storage_info(info, storage);
                                 assert!(infos.shrink_indexes.is_empty());
                                 assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                                assert_eq!(infos.total_alive_bytes_shrink.0, 0);
                             });
                     }
                 }
@@ -1722,7 +1713,6 @@ mod tests {
                             assert_storage_info(info, storage);
                             assert!(infos.shrink_indexes.is_empty());
                             assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                            assert_eq!(infos.total_alive_bytes_shrink.0, 0);
                         },
                     );
                 }
@@ -2161,7 +2151,6 @@ mod tests {
                     }
                 );
                 assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                assert_eq!(infos.total_alive_bytes_shrink.0, alive_bytes_expected);
             }
         }
     }
