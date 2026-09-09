@@ -55,8 +55,6 @@ struct SlotInfo {
     written_bytes: u64,
     /// # alive bytes in storage *after* shrinking
     alive_bytes: u64,
-    /// true if this should be shrunk due to ratio
-    should_shrink: bool,
     /// this slot is a high slot #
     /// It is important to include some high slot #s so that we have new slots to try each time pack runs.
     is_high_slot: bool,
@@ -129,7 +127,6 @@ impl AncientSlotInfos {
                 written_bytes,
                 storage,
                 alive_bytes: alive_bytes_after_shrink,
-                should_shrink,
                 is_high_slot,
             });
             self.total_alive_bytes += alive_bytes_after_shrink;
@@ -145,9 +142,8 @@ impl AncientSlotInfos {
         stats: &ShrinkAncientStats,
     ) {
         // figure out which slots to combine
-        // 1. should_shrink: largest bytes saved above some cutoff of ratio
         self.choose_storages_to_shrink();
-        // 2. smallest files so we get the largest number of files to remove
+        // smallest files so we get the largest number of files to remove
         self.filter_by_smallest_capacity(tuning, stats);
     }
 
@@ -184,7 +180,6 @@ impl AncientSlotInfos {
             let info = &mut self.all_infos[*info_index];
             self.best_slots_to_shrink
                 .push_back((info.slot, info.written_bytes));
-            info.should_shrink = false;
         }
     }
 
@@ -213,7 +208,6 @@ impl AncientSlotInfos {
         let total_storages = self.all_infos.len();
         let mut cumulative_bytes = Saturating(0u64);
         let low_threshold = tuning.max_ancient_slots * 50 / 100;
-        let mut bytes_from_must_shrink = 0;
         let mut bytes_from_smallest_storages = 0;
         let mut bytes_from_newest_storages = 0;
         for (i, info) in self.all_infos.iter().enumerate() {
@@ -238,17 +232,12 @@ impl AncientSlotInfos {
                 self.all_infos.truncate(i);
                 break;
             }
-            if info.should_shrink {
-                bytes_from_must_shrink += info.alive_bytes;
-            } else if info.is_high_slot {
+            if info.is_high_slot {
                 bytes_from_newest_storages += info.alive_bytes;
             } else {
                 bytes_from_smallest_storages += info.alive_bytes;
             }
         }
-        stats
-            .bytes_from_must_shrink
-            .fetch_add(bytes_from_must_shrink, Ordering::Relaxed);
         stats
             .bytes_from_smallest_storages
             .fetch_add(bytes_from_smallest_storages, Ordering::Relaxed);
@@ -280,12 +269,10 @@ impl AncientSlotInfos {
         // sort by:
         // 1. `high_slot`: we want to include new, high slots each time so that we try new slots
         //     each time alg runs and have several high target slots for packed storages.
-        // 2. 'should_shrink' so we make progress on shrinking ancient storages
-        // 3. smallest capacity to largest so that we remove the most slots possible
+        // 2. smallest capacity to largest so that we remove the most slots possible
         self.all_infos.sort_unstable_by(|l, r| {
             r.is_high_slot
                 .cmp(&l.is_high_slot)
-                .then_with(|| r.should_shrink.cmp(&l.should_shrink))
                 .then_with(|| l.written_bytes.cmp(&r.written_bytes))
         });
 
@@ -504,19 +491,10 @@ impl AccountsDb {
         }
         let mut total_dead_bytes = 0;
         let mut total_alive_bytes = 0;
-        let should_shrink_count = infos
-            .all_infos
-            .iter()
-            .filter(|info| info.should_shrink)
-            .map(|info| {
-                total_dead_bytes += info.written_bytes.saturating_sub(info.alive_bytes);
-                total_alive_bytes += info.alive_bytes;
-            })
-            .count()
-            .saturating_sub(randoms as usize);
-        self.shrink_ancient_stats
-            .slots_eligible_to_shrink
-            .fetch_add(should_shrink_count as u64, Ordering::Relaxed);
+        infos.all_infos.iter().for_each(|info| {
+            total_dead_bytes += info.written_bytes.saturating_sub(info.alive_bytes);
+            total_alive_bytes += info.alive_bytes;
+        });
         self.shrink_ancient_stats
             .total_dead_bytes
             .fetch_add(total_dead_bytes, Ordering::Relaxed);
@@ -886,7 +864,6 @@ mod tests {
                 slot: storage.slot(),
                 written_bytes: 0,
                 alive_bytes: 0,
-                should_shrink: false,
                 is_high_slot,
             })
             .collect();
@@ -1509,7 +1486,6 @@ mod tests {
                         info.slot,
                         info.written_bytes,
                         info.alive_bytes,
-                        info.should_shrink,
                     )
                 };
                 assert_eq!(
@@ -1523,12 +1499,11 @@ mod tests {
         }
     }
 
-    fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry, should_shrink: bool) {
+    fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry) {
         assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
         assert_eq!(storage.written_bytes(), info.written_bytes);
         assert_eq!(storage.alive_bytes(), info.alive_bytes as usize);
-        assert_eq!(should_shrink, info.should_shrink);
     }
 
     #[derive(EnumIter, Debug, PartialEq, Eq)]
@@ -1583,28 +1558,11 @@ mod tests {
                     }
                 }
                 assert_eq!(infos.all_infos.len(), 1, "{method:?}");
-                let should_shrink = db.is_candidate_for_shrink(&storage);
-                assert_storage_info(infos.all_infos.first().unwrap(), &storage, should_shrink);
-                if should_shrink {
-                    // data size is so small compared to min aligned file size that the storage is marked as should_shrink
-                    assert_eq!(
-                        infos.shrink_indexes,
-                        if !matches!(method, TestCollectInfo::CollectSortFilterInfo) {
-                            vec![0]
-                        } else {
-                            Vec::default()
-                        }
-                    );
-                    assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected as u64);
-                    assert_eq!(
-                        infos.total_alive_bytes_shrink.0,
-                        alive_bytes_expected as u64
-                    );
-                } else {
-                    assert!(infos.shrink_indexes.is_empty());
-                    assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected as u64);
-                    assert_eq!(infos.total_alive_bytes_shrink.0, 0);
-                }
+                assert_storage_info(infos.all_infos.first().unwrap(), &storage);
+
+                assert!(infos.shrink_indexes.is_empty());
+                assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected as u64);
+                assert_eq!(infos.total_alive_bytes_shrink.0, 0);
             }
         }
     }
@@ -1690,28 +1648,10 @@ mod tests {
                             .iter()
                             .zip(infos.all_infos.iter())
                             .for_each(|(storage, info)| {
-                                let should_shrink = db.is_candidate_for_shrink(storage);
-                                assert_storage_info(info, storage, should_shrink);
-                                if should_shrink {
-                                    // data size is so small compared to min aligned file size that the storage is marked as should_shrink
-                                    assert_eq!(
-                                        infos.shrink_indexes,
-                                        slot_vec
-                                            .iter()
-                                            .enumerate()
-                                            .map(|(i, _)| i)
-                                            .collect::<Vec<_>>()
-                                    );
-                                    assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                                    assert_eq!(
-                                        infos.total_alive_bytes_shrink.0,
-                                        alive_bytes_expected
-                                    );
-                                } else {
-                                    assert!(infos.shrink_indexes.is_empty());
-                                    assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                                    assert_eq!(infos.total_alive_bytes_shrink.0, 0);
-                                }
+                                assert_storage_info(info, storage);
+                                assert!(infos.shrink_indexes.is_empty());
+                                assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
+                                assert_eq!(infos.total_alive_bytes_shrink.0, 0);
                             });
                     }
                 }
@@ -1788,25 +1728,10 @@ mod tests {
                     assert_eq!(infos.all_infos.len(), 1, "method: {method:?}");
                     alive_storages.iter().zip(infos.all_infos.iter()).for_each(
                         |(storage, info)| {
-                            let should_shrink = db.is_candidate_for_shrink(storage);
-                            assert_storage_info(info, storage, should_shrink);
-                            if should_shrink {
-                                // data size is so small compared to min aligned file size that the storage is marked as should_shrink
-                                assert_eq!(
-                                    infos.shrink_indexes,
-                                    if !matches!(method, TestCollectInfo::CollectSortFilterInfo) {
-                                        vec![0]
-                                    } else {
-                                        Vec::default()
-                                    }
-                                );
-                                assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                                assert_eq!(infos.total_alive_bytes_shrink.0, alive_bytes_expected);
-                            } else {
-                                assert!(infos.shrink_indexes.is_empty());
-                                assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                                assert_eq!(infos.total_alive_bytes_shrink.0, 0);
-                            }
+                            assert_storage_info(info, storage);
+                            assert!(infos.shrink_indexes.is_empty());
+                            assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
+                            assert_eq!(infos.total_alive_bytes_shrink.0, 0);
                         },
                     );
                 }
@@ -1826,7 +1751,6 @@ mod tests {
                     slot: index as Slot,
                     written_bytes: 1,
                     alive_bytes: 1,
-                    should_shrink: false,
                     is_high_slot: false,
                 })
                 .collect(),
@@ -2232,7 +2156,6 @@ mod tests {
                             .any(|info| info.slot == storage.slot())
                     );
                 });
-                // data size is so small compared to min aligned file size that the storage is marked as should_shrink
                 assert_eq!(
                     infos.shrink_indexes,
                     match method {
@@ -2428,7 +2351,6 @@ mod tests {
                 slot,
                 written_bytes: info1_written_bytes,
                 alive_bytes: 0,
-                should_shrink: false,
                 is_high_slot: false,
             };
             let info2 = SlotInfo {
@@ -2436,7 +2358,6 @@ mod tests {
                 slot,
                 written_bytes: 2,
                 alive_bytes: 1,
-                should_shrink: false,
                 is_high_slot: false,
             };
             let mut infos = AncientSlotInfos {
