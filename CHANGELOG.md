@@ -48,6 +48,9 @@ still accepted for backwards compatibility but slated for full removal in the fu
 * Added `vote-update-commission-bps` to set a vote account's commission in basis points. The
   `--commission-kind` argument selects which commission to update: `inflation-rewards` or
   `block-revenue`.
+* Added `vote-update-commission-collector` to set the account that collects a vote account's
+  commission. The `COMMISSION_KIND` argument selects which collector to update:
+  `inflation-rewards` or `block-revenue`.
 ### Geyser
 #### Deprecations
 * The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
