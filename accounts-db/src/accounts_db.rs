@@ -142,15 +142,7 @@ pub(crate) struct AliveAccounts<'a> {
     pub(crate) bytes: usize,
 }
 
-pub(crate) trait ShrinkCollector<'a>: Sync + Send {
-    fn with_capacity(capacity: usize, slot: Slot) -> Self;
-    fn add(&mut self, account: &'a AccountFromStorage);
-    fn len(&self) -> usize;
-    fn alive_bytes(&self) -> usize;
-    fn alive_accounts(&self) -> &Vec<&'a AccountFromStorage>;
-}
-
-impl<'a> ShrinkCollector<'a> for AliveAccounts<'a> {
+impl<'a> AliveAccounts<'a> {
     fn with_capacity(capacity: usize, slot: Slot) -> Self {
         Self {
             accounts: Vec::with_capacity(capacity),
@@ -1945,12 +1937,12 @@ impl AccountsDb {
 
     /// shared code for shrinking normal slots and combining into ancient append vecs
     /// note 'unique_accounts' is passed by ref so we can return references to data within it, avoiding self-references
-    pub(crate) fn shrink_collect<'a: 'b, 'b, T: ShrinkCollector<'b>>(
+    pub(crate) fn shrink_collect<'a>(
         &self,
-        store: &'a AccountStorageEntry,
-        unique_accounts: &'b mut GetUniqueAccountsResult,
+        store: &AccountStorageEntry,
+        unique_accounts: &'a mut GetUniqueAccountsResult,
         stats: &ShrinkStats,
-    ) -> ShrinkCollect<T> {
+    ) -> ShrinkCollect<AliveAccounts<'a>> {
         let slot = store.slot();
 
         let GetUniqueAccountsResult {
@@ -2016,7 +2008,7 @@ impl AccountsDb {
         index_read_elapsed.stop();
 
         // every account that survived the filtering above is alive
-        let mut alive_accounts = T::with_capacity(len, slot);
+        let mut alive_accounts = AliveAccounts::with_capacity(len, slot);
         stored_accounts
             .iter()
             .for_each(|account| alive_accounts.add(account));
@@ -2102,11 +2094,7 @@ impl AccountsDb {
         let mut unique_accounts =
             self.get_unique_accounts_from_storage_for_shrink(&store, &self.shrink_stats);
         debug!("do_shrink_slot_store: slot: {slot}");
-        let shrink_collect = self.shrink_collect::<AliveAccounts<'_>>(
-            &store,
-            &mut unique_accounts,
-            &self.shrink_stats,
-        );
+        let shrink_collect = self.shrink_collect(&store, &mut unique_accounts, &self.shrink_stats);
 
         let total_rewrite_bytes =
             shrink_collect.alive_total_bytes + shrink_collect.tombstones_total_bytes;

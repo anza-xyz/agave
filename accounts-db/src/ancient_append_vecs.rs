@@ -696,7 +696,7 @@ impl AccountsDb {
         let accounts_to_combine = accounts_per_storage
             .iter_mut()
             .map(|(info, unique_accounts)| {
-                self.shrink_collect::<AliveAccounts<'_>>(
+                self.shrink_collect(
                     &info.storage,
                     unique_accounts,
                     &self.shrink_ancient_stats.shrink_stats,
