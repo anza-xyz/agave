@@ -2379,13 +2379,12 @@ impl AccountsDb {
         }
 
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
-        let can_randomly_shrink = true;
         let (sorted_slots, select_slots_us) =
             measure_us!(self.get_sorted_potential_ancient_slots(oldest_non_ancient_slot));
         self.shrink_ancient_stats
             .select_slots_us
             .fetch_add(select_slots_us, Ordering::Relaxed);
-        self.combine_ancient_slots_packed(sorted_slots, can_randomly_shrink);
+        self.combine_ancient_slots_packed(sorted_slots);
     }
 
     pub fn shrink_candidate_slots(&self, epoch_schedule: &EpochSchedule) -> usize {
