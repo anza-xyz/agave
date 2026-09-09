@@ -98,10 +98,7 @@ impl SnapshotPackagerService {
                             teardown_state = Some(TeardownState {
                                 snapshot_slot: snapshot_package.slot,
                                 snapshot_storages: snapshot_package.snapshot_storages.clone(),
-                                startup_hints: snapshot_package
-                                    .bank_snapshot_package
-                                    .startup_hints
-                                    .clone(),
+                                startup_hints: snapshot_package.startup_hints.clone(),
                                 bank_snapshot_package: Some(snapshot_package.bank_snapshot_package),
                             });
 
@@ -117,10 +114,7 @@ impl SnapshotPackagerService {
                             teardown_state = Some(TeardownState {
                                 snapshot_slot: snapshot_package.slot,
                                 snapshot_storages: snapshot_package.snapshot_storages.clone(),
-                                startup_hints: snapshot_package
-                                    .bank_snapshot_package
-                                    .startup_hints
-                                    .clone(),
+                                startup_hints: snapshot_package.startup_hints.clone(),
                                 bank_snapshot_package: None,
                             });
                         }
@@ -141,6 +135,7 @@ impl SnapshotPackagerService {
                         snapshot_package.bank_snapshot_package,
                         snapshot_package.snapshot_storages.as_slice(),
                         exit_backpressure.is_none(),
+                        &snapshot_package.startup_hints,
                         &io_setup,
                     );
 
@@ -269,6 +264,7 @@ impl SnapshotPackagerService {
                 bank_snapshot_package,
                 snapshot_storages.as_slice(),
                 false,
+                &startup_hints,
                 &io_setup,
             );
             if let Err(err) = result {

@@ -747,6 +747,7 @@ pub fn bank_to_full_snapshot_archive(
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        &snapshot_package.startup_hints,
         &io_setup,
     )?;
 
@@ -820,6 +821,7 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        &snapshot_package.startup_hints,
         &io_setup,
     )?;
 
@@ -952,7 +954,6 @@ mod tests {
             bank_fields: bank.get_fields_to_serialize(),
             bank_hash_stats: bank.get_bank_hash_stats(),
             status_cache_slot_deltas: bank.status_cache.read().unwrap().root_slot_deltas(),
-            startup_hints: serde_snapshot::StartupHints::new_from_bank(bank),
         };
 
         let snapshot_storages = bank.get_snapshot_storages(None);
@@ -963,6 +964,7 @@ mod tests {
             bank_snapshot_package,
             snapshot_storages.as_slice(),
             should_finalize,
+            &serde_snapshot::StartupHints::new_from_bank(bank),
             &IoSetupState::default(),
         )?;
 
@@ -1889,6 +1891,14 @@ mod tests {
         let startup_hints_path =
             bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STARTUP_HINTS_FILENAME);
         fs::write(&startup_hints_path, [0u8; 3]).unwrap();
+        assert!(snapshot_utils::read_startup_hints(&bank_snapshot_dir).is_err());
+
+        // An oversized file is rejected before being read
+        fs::write(
+            &startup_hints_path,
+            vec![0u8; snapshot_utils::MAX_STARTUP_HINTS_FILE_SIZE as usize + 1],
+        )
+        .unwrap();
         assert!(snapshot_utils::read_startup_hints(&bank_snapshot_dir).is_err());
 
         // Snapshots predating the hints file still load

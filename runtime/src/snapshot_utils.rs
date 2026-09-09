@@ -491,13 +491,13 @@ pub fn serialize_snapshot(
     bank_snapshot_package: BankSnapshotPackage,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     should_finalize: bool,
+    startup_hints: &StartupHints,
     io_setup: &IoSetupState,
 ) -> Result<BankSnapshotInfo> {
     let BankSnapshotPackage {
         mut bank_fields,
         bank_hash_stats,
         status_cache_slot_deltas,
-        startup_hints,
     } = bank_snapshot_package;
     let status_cache_slot_deltas = status_cache_slot_deltas.as_slice();
     let slot = bank_fields.slot;
@@ -597,7 +597,7 @@ pub fn serialize_snapshot(
                     .map_err(|err| AddBankSnapshotError::WriteStoragesList(Box::new(err)))?
                 );
 
-                write_startup_hints_to_snapshot(&bank_snapshot_dir, &startup_hints, io_setup)
+                write_startup_hints_to_snapshot(&bank_snapshot_dir, startup_hints, io_setup)
                     .map_err(|err| AddBankSnapshotError::WriteStartupHints(Box::new(err)))?;
 
                 mark_bank_snapshot_as_loadable(&bank_snapshot_dir)

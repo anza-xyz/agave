@@ -21,6 +21,7 @@ pub struct SnapshotPackage {
     pub hash: SnapshotHash,
     pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     pub bank_snapshot_package: BankSnapshotPackage,
+    pub startup_hints: StartupHints,
 
     /// The instant this snapshot package was sent to the queue.
     /// Used to track how long snapshot packages wait before handling.
@@ -52,7 +53,6 @@ impl SnapshotPackage {
             bank_fields: bank_fields_to_serialize,
             bank_hash_stats: bank.get_bank_hash_stats(),
             status_cache_slot_deltas,
-            startup_hints: StartupHints::new_from_bank(bank),
         };
 
         Self {
@@ -60,6 +60,7 @@ impl SnapshotPackage {
             slot,
             hash,
             bank_snapshot_package,
+            startup_hints: StartupHints::new_from_bank(bank),
             snapshot_storages,
             enqueued: Instant::now(),
         }
@@ -75,7 +76,6 @@ impl SnapshotPackage {
             bank_fields: BankFieldsToSerialize::default_for_tests(),
             bank_hash_stats: BankHashStats::default(),
             status_cache_slot_deltas: Vec::default(),
-            startup_hints: StartupHints::default(),
         };
 
         Self {
@@ -84,6 +84,7 @@ impl SnapshotPackage {
             hash: SnapshotHash(Hash::default()),
             snapshot_storages: Vec::default(),
             bank_snapshot_package,
+            startup_hints: StartupHints::default(),
             enqueued: Instant::now(),
         }
     }
@@ -104,5 +105,4 @@ pub struct BankSnapshotPackage {
     pub bank_fields: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
     pub status_cache_slot_deltas: Vec<BankSlotDelta>,
-    pub startup_hints: StartupHints,
 }
