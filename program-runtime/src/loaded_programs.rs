@@ -353,6 +353,12 @@ impl ProgramCacheForTxBatch {
         self.slot
     }
 
+    /// Look up `entries` directly, without the delay visibility rewrite
+    /// `find` performs, so a test can see the entry as it was stored.
+    pub fn get_entry_for_tests(&self, key: &Pubkey) -> Option<&Arc<ProgramCacheEntry>> {
+        self.entries.get(key)
+    }
+
     pub fn set_slot_for_tests(&mut self, slot: Slot) {
         self.slot = slot;
     }
