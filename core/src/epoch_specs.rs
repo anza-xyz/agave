@@ -1,7 +1,9 @@
 use {
-    solana_clock::Epoch,
+    agave_feature_set as feature_set,
+    solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::epoch_specs::EpochSpecs as EpochSpecsTrait,
+    solana_ledger::shred::filter::check_feature_activation_from_bank,
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     std::{
@@ -34,6 +36,21 @@ impl EpochSpecsTrait for EpochSpecs {
         let cache = &mut self.cache;
         Self::maybe_refresh_cache(cache, &self.sharable_banks);
         cache.slots_in_epoch
+    }
+
+    fn enforce_correct_proof_size(&mut self, slot: Slot) -> bool {
+        // Keyed on the shred slot rather than on the root, and deliberately not
+        // memoized in the epoch cache: the answer decides whether a duplicate
+        // proof is admitted, hence whether the slot is marked duplicate, so all
+        // nodes must reach the same verdict for a given shred. The root bank
+        // only supplies the activation slot and the epoch schedule, and the
+        // gate takes effect an epoch after activation, which leaves nodes
+        // rooted at different slots enough slack to agree.
+        check_feature_activation_from_bank(
+            &feature_set::enforce_correct_proof_size::id(),
+            slot,
+            &self.sharable_banks.root(),
+        )
     }
 
     fn clone_box(&self) -> Box<dyn EpochSpecsTrait> {

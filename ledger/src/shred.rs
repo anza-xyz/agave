@@ -133,6 +133,12 @@ pub const MAX_CODE_SHREDS_PER_SLOT: usize = DEFAULT_MAX_CODE_SHREDS_PER_SLOT as 
 pub const MAX_FEC_SETS_PER_SLOT: u32 =
     MAX_DATA_SHREDS_PER_SLOT as u32 / DATA_SHREDS_PER_FEC_BLOCK as u32;
 
+/// Returns true if a Merkle proof of `proof_size` entries is consistent with a
+/// fixed 32:32 erasure set, whose 64 leaves fix the proof height.
+pub fn has_correct_proof_size(proof_size: u8) -> bool {
+    proof_size == PROOF_ENTRIES_FOR_32_32_BATCH
+}
+
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch
 // 2. Merkles are chained
@@ -439,8 +445,7 @@ impl Shred {
 
     dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
-    #[cfg(test)]
-    dispatch!(pub(crate) fn proof_size(&self) -> Result<u8, Error>);
+    dispatch!(pub fn proof_size(&self) -> Result<u8, Error>);
 
     dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
@@ -635,6 +640,16 @@ impl Shred {
         match self {
             Self::ShredCode(shred) => shred.merkle_proof().map(Either::Left),
             Self::ShredData(shred) => shred.merkle_proof().map(Either::Right),
+        }
+    }
+}
+
+impl ShredVariant {
+    #[inline]
+    pub(crate) fn proof_size(self) -> u8 {
+        match self {
+            ShredVariant::MerkleCode { proof_size, .. }
+            | ShredVariant::MerkleData { proof_size, .. } => proof_size,
         }
     }
 }
@@ -874,6 +889,7 @@ mod tests {
     pub(super) const OFFSET_OF_PARENT_OFFSET: usize =
         OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
     pub(super) const OFFSET_OF_SHRED_FLAGS: usize = OFFSET_OF_PARENT_OFFSET + SIZE_OF_PARENT_OFFSET;
+    pub(super) const OFFSET_OF_DATA_SIZE: usize = OFFSET_OF_SHRED_FLAGS + 1;
 
     #[test]
     fn test_shred_constants() {
