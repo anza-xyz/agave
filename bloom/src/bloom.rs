@@ -212,8 +212,10 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
     /// Adds an item to the bloom filter and returns true if the item
     /// was not in the filter before.
     pub fn add(&self, key: &T) -> bool {
+        // Empty bitset cannot store items; treat as "not previously present"
+        // so the return value agrees with `contains` (which is always false here).
         if self.bits.is_empty() {
-            return false;
+            return true;
         }
         let mut added = false;
         for k in &self.keys {
@@ -385,6 +387,18 @@ mod test {
         let mut hash = [0u8; solana_hash::HASH_BYTES];
         rng.fill(&mut hash);
         Hash::new_from_array(hash)
+    }
+
+    #[test]
+    fn test_concurrent_bloom_empty_bits_add_agrees_with_contains() {
+        // num_bits == 0 yields an empty AtomicU64 bit vector after conversion.
+        let bloom: ConcurrentBloom<Hash> = Bloom::new(0, vec![0, 1, 2, 3]).into();
+        assert!(bloom.bits.is_empty());
+        let key = hash(b"empty-bits");
+        assert!(!bloom.contains(&key));
+        // Must report "was not present" (true), not "already present" (false).
+        assert!(bloom.add(&key));
+        assert!(!bloom.contains(&key));
     }
 
     #[test]
