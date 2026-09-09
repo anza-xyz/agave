@@ -11,9 +11,9 @@ use {
     self::{
         common::{DataLen, DataRef, ExternalDataOffset, FileOffset, LoadedData, LogicalOffset},
         data::{
-            DATA_ENTRY_FIXED_SIZE, calculate_data_entry_stored_size, create_data_file,
-            parse_data_entry, read_data_entry, read_data_header, validate_data_entry_offset,
-            write_data_entry,
+            DATA_ENTRY_FIXED_SIZE, DATA_HEADER_SIZE, calculate_data_entry_stored_size,
+            create_data_file, parse_data_entry, read_data_entry, read_data_header,
+            validate_data_entry_offset, write_data_entry,
         },
         meta::{
             META_ENTRY_FIXED_SIZE, META_ENTRY_OFFSET_ALIGNMENT, META_HEADER_SIZE, MetaEntryRef,
@@ -50,6 +50,9 @@ use {
 pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
     num_open: AtomicU64::new(0),
     num_dirty: AtomicU64::new(0),
+    num_empty: AtomicU64::new(0),
+    num_stored_bytes_meta: AtomicU64::new(0),
+    num_stored_bytes_data: AtomicU64::new(0),
 };
 
 /// Buffer size to use when scaning a meta file.
@@ -97,6 +100,22 @@ impl Drop for SplitFile {
 
         if *self.is_dirty.get_mut() {
             SPLIT_FILE_STATS.num_dirty.fetch_sub(1, Ordering::Relaxed);
+        }
+
+        // These stats are only incremented when (re) opening as read-only,
+        // so similarly only decrement them here if read-only.
+        if let InnerState::ReadOnly(_) = &self.inner {
+            let meta_len = self.meta_len();
+            let data_len = self.data_len();
+            SPLIT_FILE_STATS
+                .num_stored_bytes_meta
+                .fetch_sub(meta_len, Ordering::Relaxed);
+            SPLIT_FILE_STATS
+                .num_stored_bytes_data
+                .fetch_sub(data_len, Ordering::Relaxed);
+            if data_len <= DATA_HEADER_SIZE as FileSize {
+                SPLIT_FILE_STATS.num_empty.fetch_sub(1, Ordering::Relaxed);
+            }
         }
 
         if *self.remove_on_drop.get_mut() {
@@ -168,6 +187,16 @@ impl SplitFile {
         }
 
         SPLIT_FILE_STATS.num_open.fetch_add(1, Ordering::Relaxed);
+        SPLIT_FILE_STATS
+            .num_stored_bytes_meta
+            .fetch_add(meta_len, Ordering::Relaxed);
+        SPLIT_FILE_STATS
+            .num_stored_bytes_data
+            .fetch_add(data_len, Ordering::Relaxed);
+        if data_len <= DATA_HEADER_SIZE as FileSize {
+            SPLIT_FILE_STATS.num_empty.fetch_add(1, Ordering::Relaxed);
+        }
+
         Ok(Self {
             meta_path,
             data_path,
@@ -217,26 +246,24 @@ impl SplitFile {
     }
 
     /// Returns size, in bytes, of meta file.
-    pub fn meta_len(&self) -> usize {
-        let meta_len = match &self.inner {
+    pub fn meta_len(&self) -> FileSize {
+        match &self.inner {
             InnerState::ReadOnly(inner) => inner.meta_len,
             InnerState::Writable(inner) => inner.meta_len.load(Ordering::Relaxed),
-        };
-        meta_len as usize
+        }
     }
 
     /// Returns size, in bytes, of data file.
-    pub fn data_len(&self) -> usize {
-        let data_len = match &self.inner {
+    pub fn data_len(&self) -> FileSize {
+        match &self.inner {
             InnerState::ReadOnly(inner) => inner.data_len,
             InnerState::Writable(inner) => inner.data_len.load(Ordering::Relaxed),
-        };
-        data_len as usize
+        }
     }
 
     /// Returns total size, in bytes, of both meta and data files.
     pub fn len(&self) -> usize {
-        self.meta_len() + self.data_len()
+        (self.meta_len() + self.data_len()) as usize
     }
 
     pub fn is_empty(&self) -> bool {
@@ -698,8 +725,20 @@ struct WritableState {
 
 #[derive(Debug)]
 pub struct SplitFileStats {
+    /// Total number of open split files.
+    /// Note that a single SplitFile has two underlying file system files.
     pub num_open: AtomicU64,
+    /// Total number of dirty split files.
     pub num_dirty: AtomicU64,
+    /// Total number of empty split (data) files.
+    /// This stat is only updated when (re) opening a split file.
+    pub num_empty: AtomicU64,
+    /// Total number of bytes stored in all the meta files.
+    /// This stat is only updated when (re) opening a split file.
+    pub num_stored_bytes_meta: AtomicU64,
+    /// Total number of bytes stored in all the data files.
+    /// This stat is only updated when (re) opening a split file.
+    pub num_stored_bytes_data: AtomicU64,
 }
 
 #[cfg(test)]
@@ -884,7 +923,7 @@ mod tests {
             .write_accounts(&(slot, accounts.as_slice()))
             .unwrap();
 
-        assert!(split_writable.meta_len() > META_SCAN_BUFFER_SIZE);
+        assert!(split_writable.meta_len() > META_SCAN_BUFFER_SIZE as FileSize);
 
         // test both readonly and writable files
         let split_readonly = split_writable.reopen_as_readonly().unwrap().unwrap();
