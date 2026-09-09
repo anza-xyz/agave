@@ -38,13 +38,15 @@ impl ClientConnection for UdpClientConnection {
     fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
         let addr = self.server_addr();
         let pkts = buffers.iter().map(|bytes| (bytes, addr));
-        Ok(batch_send(&self.socket, pkts)?)
+        batch_send(&self.socket, pkts)?;
+        Ok(())
     }
 
     fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()> {
         let addr = self.server_addr();
         let pkts = buffers.iter().map(|bytes| (bytes, addr));
-        Ok(batch_send(&self.socket, pkts)?)
+        batch_send(&self.socket, pkts)?;
+        Ok(())
     }
 
     fn send_data(&self, buffer: &[u8]) -> TransportResult<()> {
