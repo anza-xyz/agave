@@ -34,12 +34,6 @@ const HIGH_SLOT_OFFSET: u64 = 100;
 /// ancient packing algorithm tuning per pass
 #[derive(Debug)]
 struct PackedAncientStorageTuning {
-    /// Shrink enough of these ancient append vecs to realize this
-    /// percentage of the total dead data that needs to be shrunk
-    /// - shrinking too much, burns too much time and disk i/o,
-    /// - shrinking too little could cause us to never catch up,
-    ///   and have old data accumulate.
-    percent_of_alive_shrunk_data: u64,
     /// number of ancient slots we should aim to have. If we have more than this, combine further.
     max_ancient_slots: usize,
     /// # of bytes in an ideal ancient storage size
@@ -152,7 +146,7 @@ impl AncientSlotInfos {
     ) {
         // figure out which slots to combine
         // 1. should_shrink: largest bytes saved above some cutoff of ratio
-        self.choose_storages_to_shrink(tuning);
+        self.choose_storages_to_shrink();
         // 2. smallest files so we get the largest number of files to remove
         self.filter_by_smallest_capacity(tuning, stats);
     }
@@ -181,20 +175,7 @@ impl AncientSlotInfos {
     }
 
     /// clear 'should_shrink' for storages after a cutoff to limit how many storages we shrink
-    fn clear_should_shrink_after_cutoff(&mut self, tuning: &PackedAncientStorageTuning) {
-        let mut bytes_to_shrink_due_to_ratio = Saturating(0);
-        // shrink enough slots to write 'percent_of_alive_shrunk_data'% of the total alive data
-        // from slots that exceeded the shrink threshold.
-        // The goal is to limit overall i/o in this pass while making progress.
-        // Simultaneously, we cannot allow the overall budget to be dominated by ancient storages that need to be shrunk.
-        // So, we have to limit how much of the total resulting budget can be allocated to re-packing/shrinking ancient storages.
-        let threshold_bytes =
-            (self.total_alive_bytes_shrink.0 * tuning.percent_of_alive_shrunk_data / 100).min(
-                u64::from(tuning.max_resulting_storages)
-                    * u64::from(tuning.ideal_storage_size)
-                    * tuning.percent_of_alive_shrunk_data
-                    / 100,
-            );
+    fn clear_should_shrink_after_cutoff(&mut self) {
         // At this point self.shrink_indexes have been sorted by the
         // largest amount of dead bytes first in the corresponding
         // storages.
@@ -203,26 +184,19 @@ impl AncientSlotInfos {
             let info = &mut self.all_infos[*info_index];
             self.best_slots_to_shrink
                 .push_back((info.slot, info.written_bytes));
-            if bytes_to_shrink_due_to_ratio.0 >= threshold_bytes {
-                // we exceeded the amount to shrink due to alive ratio, so don't shrink this one just due to 'should_shrink'
-                // It MAY be shrunk based on total capacity still.
-                // Mark it as false for 'should_shrink' so it gets evaluated solely based on # of files.
-                info.should_shrink = false;
-            } else {
-                bytes_to_shrink_due_to_ratio += info.alive_bytes;
-            }
+            info.should_shrink = false;
         }
     }
 
     /// after this function, only slots that were chosen to shrink are marked with
     /// 'should_shrink'
     /// There are likely more candidates to shrink than will be chosen.
-    fn choose_storages_to_shrink(&mut self, tuning: &PackedAncientStorageTuning) {
+    fn choose_storages_to_shrink(&mut self) {
         // sort the shrink_ratio_slots by most bytes saved to fewest
         // most bytes saved is more valuable to shrink
         self.sort_shrink_indexes_by_bytes_saved();
 
-        self.clear_should_shrink_after_cutoff(tuning);
+        self.clear_should_shrink_after_cutoff();
     }
 
     /// truncate 'all_infos' such that when the remaining entries in
@@ -345,9 +319,6 @@ impl AccountsDb {
         let tuning = PackedAncientStorageTuning {
             // Slots old enough to be ancient.
             max_ancient_slots: self.max_ancient_storages,
-            // Don't re-pack anything just to shrink.
-            // shrink_candidate_slots will handle these old storages.
-            percent_of_alive_shrunk_data: 0,
             ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
             can_randomly_shrink,
             max_resulting_storages: NonZeroU64::new(10).unwrap(),
@@ -1585,7 +1556,6 @@ mod tests {
                 let high_slot = false;
                 let is_candidate_for_shrink = db.is_candidate_for_shrink(&storage);
                 let mut tuning = PackedAncientStorageTuning {
-                    percent_of_alive_shrunk_data: 100,
                     max_ancient_slots: 0,
                     // irrelevant for what this test is trying to test, but necessary to avoid minimums
                     ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
@@ -1664,7 +1634,6 @@ mod tests {
                 );
             } else {
                 let tuning = PackedAncientStorageTuning {
-                    percent_of_alive_shrunk_data: 100,
                     max_ancient_slots: 0,
                     // irrelevant for what this test is trying to test, but necessary to avoid minimums
                     ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
@@ -1684,7 +1653,6 @@ mod tests {
     fn test_calc_ancient_slot_info_several(accounts_db_config: AccountsDbConfig) {
         let can_randomly_shrink = false;
         let tuning = PackedAncientStorageTuning {
-            percent_of_alive_shrunk_data: 100,
             max_ancient_slots: 0,
             // irrelevant for what this test is trying to test, but necessary to avoid minimums
             ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
@@ -1805,7 +1773,6 @@ mod tests {
                         }
                         TestCollectInfo::CollectSortFilterInfo => {
                             let mut tuning = PackedAncientStorageTuning {
-                                percent_of_alive_shrunk_data: 100,
                                 max_ancient_slots: 0,
                                 // irrelevant
                                 ideal_storage_size: NonZeroU64::new(
@@ -1886,8 +1853,6 @@ mod tests {
                 let tuning = PackedAncientStorageTuning {
                     max_ancient_slots: max_storages,
                     ideal_storage_size: NonZeroU64::new(ideal_storage_size_large).unwrap(),
-                    // irrelevant since we clear 'shrink_indexes'
-                    percent_of_alive_shrunk_data: 0,
                     can_randomly_shrink: false,
                     ..default_tuning()
                 };
@@ -1935,8 +1900,6 @@ mod tests {
                 let tuning = PackedAncientStorageTuning {
                     max_ancient_slots: max_storages,
                     ideal_storage_size: NonZeroU64::new(ideal_storage_size_large).unwrap(),
-                    // irrelevant since we clear 'shrink_indexes'
-                    percent_of_alive_shrunk_data: 0,
                     can_randomly_shrink: false,
                     ..default_tuning()
                 };
@@ -2195,7 +2158,6 @@ mod tests {
     fn test_calc_ancient_slot_info_one_shrink_one_not(accounts_db_config: AccountsDbConfig) {
         let can_randomly_shrink = false;
         let mut tuning = PackedAncientStorageTuning {
-            percent_of_alive_shrunk_data: 100,
             max_ancient_slots: 0,
             // irrelevant for what this test is trying to test, but necessary to avoid minimums
             ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
@@ -2292,36 +2254,11 @@ mod tests {
 
     fn default_tuning() -> PackedAncientStorageTuning {
         PackedAncientStorageTuning {
-            percent_of_alive_shrunk_data: 0,
             max_ancient_slots: 0,
             ideal_storage_size: NonZeroU64::new(1).unwrap(),
             can_randomly_shrink: false,
             max_resulting_storages: NonZeroU64::new(10).unwrap(),
         }
-    }
-
-    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
-    fn test_clear_should_shrink_after_cutoff_empty(accounts_db_config: AccountsDbConfig) {
-        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
-        let mut infos = create_test_infos(&db, 2);
-        for count in 0..2 {
-            for i in 0..count {
-                infos.all_infos[i].should_shrink = true;
-            }
-        }
-        let tuning = PackedAncientStorageTuning {
-            max_ancient_slots: 100,
-            ..default_tuning()
-        };
-        infos.clear_should_shrink_after_cutoff(&tuning);
-        assert_eq!(
-            0,
-            infos
-                .all_infos
-                .iter()
-                .filter_map(|info| info.should_shrink.then_some(()))
-                .count()
-        );
     }
 
     #[derive(EnumIter, Debug, PartialEq, Eq)]
@@ -2474,102 +2411,6 @@ mod tests {
         }
     }
 
-    #[derive(EnumIter, Debug, PartialEq, Eq)]
-    enum TestShouldShrink {
-        FilterAncientSlots,
-        ClearShouldShrink,
-        ChooseStoragesToShrink,
-    }
-
-    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
-    fn test_clear_should_shrink_after_cutoff_simple(accounts_db_config: AccountsDbConfig) {
-        for swap in [false, true] {
-            for method in TestShouldShrink::iter() {
-                for (percent_of_alive_shrunk_data, mut expected_infos) in
-                    [(0, 0), (9, 1), (10, 1), (89, 2), (90, 2), (91, 2), (100, 2)]
-                {
-                    let db = AccountsDb::new_for_tests_with_config(
-                        Vec::new(),
-                        accounts_db_config.clone(),
-                    );
-                    let mut infos = create_test_infos(&db, 2);
-                    infos
-                        .all_infos
-                        .iter_mut()
-                        .enumerate()
-                        .for_each(|(i, info)| {
-                            info.should_shrink = true;
-                            info.written_bytes = ((i + 1) * 1000) as u64;
-                        });
-                    infos.all_infos[0].alive_bytes = 100;
-                    infos.all_infos[1].alive_bytes = 900;
-                    if swap {
-                        infos.all_infos = infos.all_infos.into_iter().rev().collect();
-                    }
-                    infos.total_alive_bytes_shrink = Saturating(
-                        infos
-                            .all_infos
-                            .iter()
-                            .map(|info| info.alive_bytes)
-                            .sum::<u64>(),
-                    );
-                    let tuning = PackedAncientStorageTuning {
-                        percent_of_alive_shrunk_data,
-                        // 0 so that we combine everything with regard to the overall # of slots limit
-                        max_ancient_slots: 0,
-                        // irrelevant for what this test is trying to test, but necessary to avoid minimums
-                        ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity())
-                            .unwrap(),
-                        can_randomly_shrink: false,
-                        ..default_tuning()
-                    };
-                    match method {
-                        TestShouldShrink::FilterAncientSlots => {
-                            infos.filter_ancient_slots(&tuning, &ShrinkAncientStats::default());
-                        }
-                        TestShouldShrink::ClearShouldShrink => {
-                            infos.clear_should_shrink_after_cutoff(&tuning);
-                        }
-                        TestShouldShrink::ChooseStoragesToShrink => {
-                            infos.choose_storages_to_shrink(&tuning);
-                        }
-                    }
-
-                    if expected_infos == 2 {
-                        let modify = if method == TestShouldShrink::FilterAncientSlots {
-                            // filter_ancient_slots modifies in several ways and doesn't retain the values to compare
-                            percent_of_alive_shrunk_data == 89 || percent_of_alive_shrunk_data == 90
-                        } else {
-                            infos.all_infos[infos.shrink_indexes[0]].alive_bytes
-                                >= infos.total_alive_bytes_shrink.0 * percent_of_alive_shrunk_data
-                                    / 100
-                        };
-                        if modify {
-                            // if the sorting ends up putting the bigger alive_bytes storage first, then only 1 will be shrunk due to 'should_shrink'
-                            expected_infos = 1;
-                        }
-                    }
-                    let count = infos
-                        .all_infos
-                        .iter()
-                        .filter_map(|info| info.should_shrink.then_some(()))
-                        .count();
-                    assert_eq!(
-                        expected_infos,
-                        count,
-                        "percent_of_alive_shrunk_data: {percent_of_alive_shrunk_data}, infos: \
-                         {expected_infos}, method: {method:?}, swap: {swap}, data: {:?}",
-                        infos
-                            .all_infos
-                            .iter()
-                            .map(|info| (info.slot, info.written_bytes, info.alive_bytes))
-                            .collect::<Vec<_>>()
-                    );
-                }
-            }
-        }
-    }
-
     #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
     fn test_sort_shrink_indexes_by_bytes_saved(accounts_db_config: AccountsDbConfig) {
         let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
@@ -2632,7 +2473,6 @@ mod tests {
                 let original_results_all_accounts = vec_unique_to_accounts(&original_results, &db);
 
                 let tuning = PackedAncientStorageTuning {
-                    percent_of_alive_shrunk_data: 0,
                     max_ancient_slots,
                     can_randomly_shrink,
                     ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
@@ -2732,7 +2572,6 @@ mod tests {
         // combine normal append vec(s) into packed ancient append vec
         let tuning = PackedAncientStorageTuning {
             max_ancient_slots: 0,
-            percent_of_alive_shrunk_data: 0,
             ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
             can_randomly_shrink: false,
             ..default_tuning()
@@ -2839,7 +2678,6 @@ mod tests {
     #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
     fn test_ideal_storage_size_updated_before_used(accounts_db_config: AccountsDbConfig) {
         let mut tuning = PackedAncientStorageTuning {
-            percent_of_alive_shrunk_data: 100,
             max_ancient_slots: 100,
             ..default_tuning()
         };
