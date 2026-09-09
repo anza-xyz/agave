@@ -53,8 +53,7 @@ pub enum Error {
     Loopback { leader: Pubkey, shred: ShredId },
 }
 
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[derive(Debug, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 enum NodeId {
     // TVU node obtained through gossip (staked or not).
@@ -65,15 +64,15 @@ enum NodeId {
 
 // A lite version of gossip ContactInfo local to turbine where we only hold on
 // to a few necessary fields from gossip ContactInfo.
-#[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ContactInfo {
     pubkey: Pubkey,
     wallclock: u64,
     tvu_udp: Option<SocketAddr>,
 }
 
-#[cfg_attr(test, derive(Debug, PartialEq))]
+#[derive(PartialEq)]
+#[cfg_attr(test, derive(Debug))]
 pub struct Node {
     node: NodeId,
     stake: u64,
