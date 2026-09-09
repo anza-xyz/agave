@@ -8,11 +8,13 @@ use {
     arc_swap::ArcSwap,
     log::*,
     smallvec::SmallVec,
+    solana_account_decoder_client_types::token::UiTokenAmount,
     solana_clock::{BankId, Slot},
     solana_hash::Hash,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
+    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_status::{
         InnerInstruction, InnerInstructions, Reward, TransactionStatusMeta, TransactionTokenBalance,
     },
@@ -141,12 +143,13 @@ impl TransactionNotifier for TransactionNotifierImpl {
             post_token_balances: post_token_balances_scratch.as_deref(),
             rewards: rewards_scratch.as_deref(),
             loaded_addresses,
-            return_data: return_data
-                .as_ref()
-                .map(|data| mirror::TransactionReturnData {
-                    program_id: data.program_id,
-                    data: &data.data,
-                }),
+            return_data: return_data.as_ref().map(|data| {
+                let TransactionReturnData { program_id, data } = data;
+                mirror::TransactionReturnData {
+                    program_id: *program_id,
+                    data,
+                }
+            }),
             compute_units_consumed: *compute_units_consumed,
             cost_units: *cost_units,
         };
@@ -208,7 +211,13 @@ fn convert_token_balance(balance: &TransactionTokenBalance) -> mirror::Transacti
     let TransactionTokenBalance {
         account_index,
         mint,
-        ui_token_amount,
+        ui_token_amount:
+            UiTokenAmount {
+                ui_amount,
+                decimals,
+                amount,
+                ui_amount_string,
+            },
         owner,
         program_id,
     } = balance;
@@ -216,10 +225,10 @@ fn convert_token_balance(balance: &TransactionTokenBalance) -> mirror::Transacti
         account_index: *account_index,
         mint,
         ui_token_amount: mirror::UiTokenAmount {
-            ui_amount: ui_token_amount.ui_amount,
-            decimals: ui_token_amount.decimals,
-            amount: &ui_token_amount.amount,
-            ui_amount_string: &ui_token_amount.ui_amount_string,
+            ui_amount: *ui_amount,
+            decimals: *decimals,
+            amount,
+            ui_amount_string,
         },
         owner,
         program_id,
@@ -252,11 +261,9 @@ mod tests {
         crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
         libloading::Library,
-        solana_account_decoder_client_types::token::UiTokenAmount,
         solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
         solana_pubkey::Pubkey,
         solana_reward_info::RewardType,
-        solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_error::TransactionError,
         solana_transaction_status::InnerInstructions,
         std::sync::Mutex,
