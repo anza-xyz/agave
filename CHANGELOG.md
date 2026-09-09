@@ -35,6 +35,9 @@ Release channels have their own copy of this changelog:
 * Added `vote-update-commission-bps` to set a vote account's commission in basis points. The
   `--commission-kind` argument selects which commission to update: `inflation-rewards` or
   `block-revenue`.
+* Added `vote-update-commission-collector` to set the account that collects a vote account's
+  commission. The `COMMISSION_KIND` argument selects which collector to update:
+  `inflation-rewards` or `block-revenue`.
 
 ## 4.3.0
 ### RPC
