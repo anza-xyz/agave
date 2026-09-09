@@ -1096,6 +1096,7 @@ impl Bank {
     fn load_and_reward_commission_accounts(
         &self,
         reward_commissions: &RewardCommissions,
+        // This field will be used with SIMD-0123, do not remove
         _reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes,
         thread_pool: &ThreadPool,
     ) -> RewardCommissionAccounts {
@@ -1663,10 +1664,8 @@ mod tests {
             },
             num_filtered_vote_accounts: 1,
         };
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
-            epoch: bank.epoch().saturating_sub(1),
-            ..Default::default()
-        };
+        let reward_epoch_delegated_stakes =
+            RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
         let mut rewards_metrics = RewardsMetrics::default();
 
         let rewards = bank.begin_partitioned_rewards(
@@ -3606,10 +3605,8 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let reward_commissions = RewardCommissions::default();
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
-            epoch: bank.epoch().saturating_sub(1),
-            ..Default::default()
-        };
+        let reward_epoch_delegated_stakes =
+            RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
         let result = bank.load_and_reward_commission_accounts(
             &reward_commissions,
             &reward_epoch_delegated_stakes,
@@ -3637,10 +3634,8 @@ mod tests {
                 is_vote_account: true,
             },
         );
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
-            epoch: bank.epoch().saturating_sub(1),
-            ..Default::default()
-        };
+        let reward_epoch_delegated_stakes =
+            RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
         let result = bank.load_and_reward_commission_accounts(
             &reward_commissions,
             &reward_epoch_delegated_stakes,
@@ -3681,10 +3676,8 @@ mod tests {
         burned_account.set_lamports(post_burn_balance);
         bank.store_account_and_update_capitalization(&pubkey, &burned_account);
 
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
-            epoch: bank.epoch().saturating_sub(1),
-            ..Default::default()
-        };
+        let reward_epoch_delegated_stakes =
+            RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
 
         let result = bank.load_and_reward_commission_accounts(
             &reward_commissions,
@@ -3732,10 +3725,8 @@ mod tests {
                         is_vote_account: true,
                     },
                 );
-                let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
-                    epoch: bank.epoch().saturating_sub(1),
-                    ..Default::default()
-                };
+                let reward_epoch_delegated_stakes =
+                    RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
                 let result = bank.load_and_reward_commission_accounts(
                     &reward_commissions,
                     &reward_epoch_delegated_stakes,
@@ -4094,10 +4085,8 @@ mod tests {
                 is_vote_account: false,
             },
         );
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
-            epoch: bank.epoch().saturating_sub(1),
-            ..Default::default()
-        };
+        let reward_epoch_delegated_stakes =
+            RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
         let result = bank.load_and_reward_commission_accounts(
             &reward_commissions,
             &reward_epoch_delegated_stakes,

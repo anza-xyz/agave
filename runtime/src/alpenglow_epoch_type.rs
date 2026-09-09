@@ -13,7 +13,7 @@ use {
 /// For this prior epoch we need to know the delegated stake for each vote account.
 /// Note that this is not the same as `epoch_stakes`, which is calculated an epoch
 /// in advance.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct RewardEpochDelegatedStakes {
     pub(crate) epoch: Epoch,
     pub(crate) delegated_stakes: HashMap<Pubkey, u64>,
@@ -116,6 +116,16 @@ impl RewardEpochDelegatedStakes {
             );
             account.into()
         })
+    }
+}
+
+#[cfg(test)]
+impl RewardEpochDelegatedStakes {
+    pub(crate) fn new_for_tests(epoch: u64) -> Self {
+        Self {
+            epoch,
+            delegated_stakes: HashMap::new(),
+        }
     }
 }
 
