@@ -2495,7 +2495,7 @@ pub mod tests {
         agave_transaction_view::transaction_view::SanitizedTransactionView,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
-            consensus_message::Block,
+            consensus_message::{Block, BlockId},
         },
         assert_matches::assert_matches,
         crossbeam_channel::bounded,
@@ -2578,7 +2578,7 @@ pub mod tests {
     fn test_startup_replay_enable_waits_for_poh_service_when_started() {
         let genesis_block = Block {
             slot: 1,
-            block_id: Hash::new_from_array([7; solana_hash::HASH_BYTES]),
+            block_id: BlockId::new([7; solana_hash::HASH_BYTES]),
         };
         let migration_status = Arc::new(ready_to_enable_migration_status(genesis_block));
         let poh_service = {

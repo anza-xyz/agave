@@ -9,7 +9,7 @@ use {
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_votor_messages::{
         self,
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Block},
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Block, BlockId},
         migration::GENESIS_CERTIFICATE_ACCOUNT,
         wire::{WireBlockCertMessage, WireCertSignature},
     },
@@ -29,7 +29,6 @@ use {
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_config::GenesisConfig,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
@@ -346,7 +345,7 @@ fn configure_alpenglow_at_genesis(genesis_config: &mut GenesisConfig) {
     let cert = WireBlockCertMessage {
         block: Block {
             slot: 0,
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
         },
         signature: WireCertSignature {
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),

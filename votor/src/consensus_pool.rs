@@ -576,7 +576,7 @@ mod tests {
         super::{parent_ready_tracker::BlockProductionParent, *},
         crate::tests::get_cluster_info,
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, BlockId, VoteMessage},
             sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
             vote::Vote,
             wire::get_vote_payload_to_sign,
@@ -587,7 +587,6 @@ mod tests {
             keypair::Keypair as BLSKeypair, signature::SignatureAffine,
         },
         solana_clock::Slot,
-        solana_hash::Hash,
         solana_runtime::{
             bank::{Bank, NewBankOptions, SlotLeader},
             bank_forks::BankForks,
@@ -636,7 +635,7 @@ mod tests {
                 get_cluster_info(validator_keypairs[0].vote_keypair.insecure_clone());
             let root_block = Block {
                 slot: root_bank.slot(),
-                block_id: root_bank.block_id().unwrap_or_default(),
+                block_id: BlockId::from(root_bank.block_id().unwrap_or_default()),
             };
             let initial_parent_ready = (root_bank.slot().checked_add(1).unwrap(), root_block);
             Self {
@@ -1581,7 +1580,7 @@ mod tests {
 
         // Use slot 0 (first in leader window: 0 % 4 == 0) so SafeToNotar goes directly to events
         let slot = 0;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
 
         // Add a skip from myself.
         let vote = Vote::new_skip_vote(slot);
@@ -1611,7 +1610,7 @@ mod tests {
 
         // Use slot 4 (first in leader window: 4 % 4 == 0) for the second part
         let slot = 4;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
 
         // Add 20% notarize, but no vote from myself, should fail
         for rank in 1..3 {
@@ -1661,7 +1660,7 @@ mod tests {
         // Add 20% notarization for another block, we should notify on new block_id
         // but not on the same block_id because we already sent the event
         let mut events = vec![];
-        let duplicate_block_id = Hash::new_unique();
+        let duplicate_block_id = BlockId::new_unique();
         for rank in 7..9 {
             let vote = Vote::new_notarization_vote(Block {
                 slot,
@@ -1699,7 +1698,7 @@ mod tests {
         let mut new_events = vec![];
 
         // Add a notarize from myself.
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let vote = Vote::new_notarization_vote(Block { slot: 2, block_id });
         let ret_events = ctx.add_own_vote_msg(0, vote);
         // Should still fail because there are no other votes.
@@ -1922,13 +1921,10 @@ mod tests {
         let mut events = vec![];
 
         // Add a notarization cert on slot 1 to 3
-        let hash = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         for slot in 1..=3 {
             let cert = Certificate {
-                cert_type: CertificateType::Notarize(Block {
-                    slot,
-                    block_id: hash,
-                }),
+                cert_type: CertificateType::Notarize(Block { slot, block_id }),
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
@@ -1942,17 +1938,14 @@ mod tests {
                 .any(|event| matches!(event, VotorEvent::ParentReady {
                 slot: 4,
                 parent_block
-            } if parent_block == &Block { slot: 3, block_id: hash }))
+            } if parent_block == &Block { slot: 3, block_id }))
         );
         events.clear();
 
         // Also works if we add FinalizeFast for slot 4 to 7
         for slot in 4..=7 {
             let cert = Certificate {
-                cert_type: CertificateType::FinalizeFast(Block {
-                    slot,
-                    block_id: hash,
-                }),
+                cert_type: CertificateType::FinalizeFast(Block { slot, block_id }),
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
@@ -1966,17 +1959,14 @@ mod tests {
                 .any(|event| matches!(event, VotorEvent::ParentReady {
                 slot: 8,
                 parent_block
-            } if parent_block == &Block { slot: 7, block_id: hash }))
+            } if parent_block == &Block { slot: 7, block_id }))
         );
         events.clear();
 
         // NotarizeFallback on slot 8 to 10 and FinalizeFast on slot 11
         for slot in 8..=10 {
             let cert = Certificate {
-                cert_type: CertificateType::NotarizeFallback(Block {
-                    slot,
-                    block_id: hash,
-                }),
+                cert_type: CertificateType::NotarizeFallback(Block { slot, block_id }),
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
@@ -1984,10 +1974,7 @@ mod tests {
             events.append(&mut ret_events);
         }
         let cert = Certificate {
-            cert_type: CertificateType::FinalizeFast(Block {
-                slot: 11,
-                block_id: hash,
-            }),
+            cert_type: CertificateType::FinalizeFast(Block { slot: 11, block_id }),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
@@ -2001,7 +1988,7 @@ mod tests {
                 .any(|event| matches!(event, VotorEvent::ParentReady {
             slot: 12,
             parent_block
-        } if parent_block == &Block { slot: 11, block_id: hash }))
+        } if parent_block == &Block { slot: 11, block_id }))
         );
     }
 
@@ -2010,8 +1997,8 @@ mod tests {
         let mut ctx = TestContext::new();
         let parent_bank = ctx.bank_forks.read().unwrap().root_bank();
         let root_bank = create_bank(63, parent_bank, SlotLeader::new_unique());
-        let root_block_id = Hash::new_unique();
-        root_bank.set_block_id(Some(root_block_id));
+        let root_block_id = BlockId::new_unique();
+        root_bank.set_block_id(Some(root_block_id.into_hash()));
         root_bank.freeze();
         let root_block = Block {
             slot: root_bank.slot(),
@@ -2079,11 +2066,8 @@ mod tests {
     fn received_certs_do_not_set_generated_certs() {
         let mut ctx = TestContext::new();
         let slot = ctx.bank_forks.read().unwrap().root_bank().slot() + 1;
-        let hash = Hash::default();
-        let cert_type = CertificateType::NotarizeFallback(Block {
-            slot,
-            block_id: hash,
-        });
+        let block_id = BlockId::default();
+        let cert_type = CertificateType::NotarizeFallback(Block { slot, block_id });
         let cert = Certificate {
             cert_type,
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),

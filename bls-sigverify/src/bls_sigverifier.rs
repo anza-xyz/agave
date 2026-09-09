@@ -552,7 +552,7 @@ mod tests {
         },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
-            consensus_message::{Block, ConsensusMessage, VoteMessage},
+            consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
             sig_verified_messages::VoteAggregate,
             vote::Vote,
@@ -567,7 +567,6 @@ mod tests {
         },
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
@@ -2138,7 +2137,7 @@ mod tests {
             highest_parent_ready_slot,
             Block {
                 slot: highest_parent_ready_slot,
-                block_id: Hash::new_unique(),
+                block_id: BlockId::new_unique(),
             },
         );
         let max_vote_slot = highest_parent_ready_slot + MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY;
@@ -2148,7 +2147,7 @@ mod tests {
 
         let genesis_block = Block {
             slot: genesis_slot,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         };
         ctx.verifier
             .migration_status
@@ -2193,7 +2192,7 @@ mod tests {
             ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_genesis_vote(Block {
                 slot: genesis_slot,
-                block_id: Hash::new_unique(),
+                block_id: BlockId::new_unique(),
             }),
             different_hash_genesis_vote_rank,
         ));

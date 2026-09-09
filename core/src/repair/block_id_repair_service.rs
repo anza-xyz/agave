@@ -27,7 +27,7 @@ use {
         common::DELTA,
         event::{RepairEvent, RepairEventReceiver},
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::consensus_message::{Block, BlockId},
     crossbeam_channel::select,
     lazy_lru::LruCache,
     log::{debug, info},
@@ -612,7 +612,7 @@ impl BlockIdRepairService {
                 state.push_pending_repair_event(RepairEvent::FetchBlock {
                     block: Block {
                         slot: p_slot,
-                        block_id: p_block_id,
+                        block_id: BlockId::from(p_block_id),
                     },
                 });
 
@@ -623,7 +623,7 @@ impl BlockIdRepairService {
                         let fec_set_index = i * DATA_SHREDS_PER_FEC_BLOCK as u32;
                         OutgoingMessage::Metadata(BlockIdRepairType::FecSetRoot {
                             slot,
-                            block_id,
+                            block_id: block_id.into_hash(),
                             fec_set_index,
                             fec_set_count,
                         })
@@ -656,7 +656,7 @@ impl BlockIdRepairService {
                             slot,
                             index,
                             fec_set_merkle_root,
-                            block_id,
+                            block_id: block_id.into_hash(),
                         })
                     }));
 
@@ -737,7 +737,7 @@ impl BlockIdRepairService {
 
                 // Check if we already have the full block, if so queue fetching the parent.
                 if let Some((slot_meta, _location)) =
-                    blockstore.get_slot_meta_for_block_id(block.slot, block.block_id)?
+                    blockstore.get_slot_meta_for_block_id(block.slot, block.block_id.into_hash())?
                 {
                     return Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
                         slot_meta,
@@ -769,7 +769,7 @@ impl BlockIdRepairService {
                         );
                         Ok(PendingRepairDecision::KeepPending)
                     }
-                    Some(turbine_block_id) if turbine_block_id != block.block_id => {
+                    Some(turbine_block_id) if turbine_block_id != block.block_id.into_hash() => {
                         // Turbine has a different block
                         warn!(
                             "{my_pubkey}: FetchBlock: Turbine has different block \
@@ -787,8 +787,8 @@ impl BlockIdRepairService {
                              fetching parent",
                             block.slot
                         );
-                        if let Some((slot_meta, _location)) =
-                            blockstore.get_slot_meta_for_block_id(block.slot, block.block_id)?
+                        if let Some((slot_meta, _location)) = blockstore
+                            .get_slot_meta_for_block_id(block.slot, block.block_id.into_hash())?
                         {
                             Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
                                 slot_meta,
@@ -841,7 +841,7 @@ impl BlockIdRepairService {
                     .push(OutgoingMessage::Metadata(
                         BlockIdRepairType::ParentAndFecSetCount {
                             slot: block.slot,
-                            block_id: block.block_id,
+                            block_id: block.block_id.into_hash(),
                         },
                     ));
                 state.requested_blocks.insert(block);
@@ -863,7 +863,7 @@ impl BlockIdRepairService {
         state.push_pending_repair_event(RepairEvent::FetchBlock {
             block: Block {
                 slot: meta.parent_slot.expect("Parent must exist for full slots"),
-                block_id: meta.parent_block_id,
+                block_id: BlockId::from(meta.parent_block_id),
             },
         });
 
@@ -999,7 +999,7 @@ impl BlockIdRepairService {
                     else {
                         state.requested_blocks.remove(&Block {
                             slot: shred_request.slot(),
-                            block_id: shred_request.block_id().unwrap(),
+                            block_id: BlockId::from(shred_request.block_id().unwrap()),
                         });
                         continue;
                     };
@@ -1443,7 +1443,7 @@ mod tests {
         assert_eq!(state.pending_repair_events.len(), 1);
         let RepairEvent::FetchBlock { block } = state.pending_repair_events.first().unwrap();
         assert_eq!(block.slot, parent_slot);
-        assert_eq!(block.block_id, parent_block_id);
+        assert_eq!(block.block_id.into_hash(), parent_block_id);
 
         // Verify: FecSetRoot requests were added to pending
         assert_eq!(state.pending_repair_requests.len(), fec_set_count_usize);
@@ -1709,7 +1709,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let slot = 100u64;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
 
         // Mark the slot as dead (Turbine failed)
         blockstore.set_dead_slot(slot).unwrap();
@@ -1729,7 +1729,7 @@ mod tests {
                 block_id: b,
             }) => {
                 assert_eq!(s, slot);
-                assert_eq!(b, block_id);
+                assert_eq!(b, block_id.into_hash());
             }
             _ => panic!("Expected ParentAndFecSetCount request"),
         }
@@ -1749,7 +1749,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let slot = 100u64;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let event = RepairEvent::FetchBlock {
             block: Block { slot, block_id },
         };
@@ -1778,7 +1778,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let slot = 100u64;
-        let requested_block_id = Hash::new_unique();
+        let requested_block_id = BlockId::new_unique();
         let turbine_block_id = Hash::new_unique(); // Different block_id from Turbine
 
         // Set up blockstore to have a different block_id at Original location
@@ -1804,7 +1804,7 @@ mod tests {
                 block_id: b,
             }) => {
                 assert_eq!(s, slot);
-                assert_eq!(b, requested_block_id);
+                assert_eq!(b, requested_block_id.into_hash());
             }
             _ => panic!("Expected ParentAndFecSetCount request"),
         }
@@ -1826,7 +1826,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let slot = 100u64;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
 
         // Pre-add block to requested_blocks
         state.requested_blocks.insert(Block { slot, block_id });
@@ -1850,7 +1850,7 @@ mod tests {
 
         // Use slot 0 which is at root
         let slot = 0u64;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let event = RepairEvent::FetchBlock {
             block: Block { slot, block_id },
         };
@@ -1876,7 +1876,7 @@ mod tests {
             state.requested_blocks.insert(Block::new_unique(slot));
         }
 
-        let new_block_id = Hash::new_unique();
+        let new_block_id = BlockId::new_unique();
         let event = RepairEvent::FetchBlock {
             block: Block {
                 slot,
@@ -1907,7 +1907,7 @@ mod tests {
         blockstore.set_dead_slot(slot).unwrap();
 
         let block_ids: Vec<_> = (0..=MAX_ALTERNATE_BLOCKS_PER_SLOT)
-            .map(|_| Hash::new_unique())
+            .map(|_| BlockId::new_unique())
             .collect();
         let actions: Vec<_> = block_ids
             .iter()

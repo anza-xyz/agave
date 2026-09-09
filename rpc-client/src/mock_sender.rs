@@ -3,7 +3,7 @@
 use {
     crate::rpc_sender::*,
     agave_votor_messages::{
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         wire::{WireBlockCertMessage, WireCertSignature},
     },
     async_trait::async_trait,
@@ -16,7 +16,6 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
-    solana_hash::Hash,
     solana_instruction::{TRANSACTION_LEVEL_STACK_HEIGHT, error::InstructionError},
     solana_message::MessageHeader,
     solana_pubkey::Pubkey,
@@ -179,7 +178,7 @@ impl RpcSender for MockSender {
             })?,
             "getAgGenesisCert" => {
                 let cert = WireBlockCertMessage {
-                    block: Block { slot: 0, block_id: Hash::default() },
+                    block: Block { slot: 0, block_id: BlockId::default() },
                     signature: WireCertSignature {
                         signature:  BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                         bitmap: vec![],

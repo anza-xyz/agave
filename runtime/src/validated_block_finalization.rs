@@ -10,7 +10,7 @@ use {
         certificate::{
             CertSignature, Certificate, CertificateType, FastFinalizeCert, FinalizeCert, NotarCert,
         },
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         finalized_slot::FinalizedSlot,
         unverified_vote_message::UnverifiedCertificate,
     },
@@ -92,7 +92,7 @@ impl ValidatedBlockFinalizationCert {
     ) -> Result<Self, BlockFinalizationCertError> {
         let block = Block {
             slot: block_final_cert.slot,
-            block_id: block_final_cert.block_id,
+            block_id: BlockId::from(block_final_cert.block_id),
         };
 
         if let Some(notar_aggregate) = block_final_cert.notar_aggregate {
@@ -343,7 +343,7 @@ impl ValidatedBlockFinalizationCert {
                 let block_id = notarize_cert.block.block_id;
                 BlockFinalizationCert {
                     slot,
-                    block_id,
+                    block_id: block_id.into_hash(),
                     final_aggregate: VotesAggregate::from_cert_signature(
                         finalize_cert.signature.clone(),
                     ),
@@ -356,7 +356,7 @@ impl ValidatedBlockFinalizationCert {
                 let block = cert.block;
                 BlockFinalizationCert {
                     slot: block.slot,
-                    block_id: block.block_id,
+                    block_id: block.block_id.into_hash(),
                     final_aggregate: VotesAggregate::from_cert_signature(cert.signature.clone()),
                     notar_aggregate: None,
                 }
@@ -522,7 +522,7 @@ mod tests {
 
             let block_final_cert = BlockFinalizationCert {
                 slot: block.slot,
-                block_id: block.block_id,
+                block_id: block.block_id.into_hash(),
                 final_aggregate: VotesAggregate::from_cert_signature(fast_finalize_cert_sig),
                 notar_aggregate: None,
             };
@@ -571,7 +571,7 @@ mod tests {
 
             let block_final_cert = BlockFinalizationCert {
                 slot: block.slot,
-                block_id: block.block_id,
+                block_id: block.block_id.into_hash(),
                 final_aggregate: VotesAggregate::from_cert_signature(finalize_cert_sig),
                 notar_aggregate: Some(VotesAggregate::from_cert_signature(notarize_cert_sig)),
             };
@@ -626,7 +626,7 @@ mod tests {
 
         let block_final_cert = BlockFinalizationCert {
             slot: block.slot,
-            block_id: block.block_id,
+            block_id: block.block_id.into_hash(),
             final_aggregate: VotesAggregate::from_cert_signature(finalize_cert.signature.clone()),
             notar_aggregate: Some(VotesAggregate::from_cert_signature(
                 notarize_cert.signature.clone(),
@@ -670,7 +670,7 @@ mod tests {
 
             let block_final_cert = BlockFinalizationCert {
                 slot: block.slot,
-                block_id: block.block_id,
+                block_id: block.block_id.into_hash(),
                 final_aggregate: VotesAggregate::from_cert_signature(fast_finalize_cert_sig),
                 notar_aggregate: None,
             };
@@ -714,7 +714,7 @@ mod tests {
 
             let block_final_cert = BlockFinalizationCert {
                 slot: block.slot,
-                block_id: block.block_id,
+                block_id: block.block_id.into_hash(),
                 final_aggregate: VotesAggregate::from_cert_signature(finalize_cert_sig),
                 notar_aggregate: Some(VotesAggregate::from_cert_signature(notarize_cert_sig)),
             };
@@ -760,7 +760,7 @@ mod tests {
 
             let block_final_cert = BlockFinalizationCert {
                 slot: block.slot,
-                block_id: block.block_id,
+                block_id: block.block_id.into_hash(),
                 final_aggregate: VotesAggregate::from_cert_signature(finalize_cert_sig),
                 notar_aggregate: Some(VotesAggregate::from_cert_signature(notarize_cert_sig)),
             };

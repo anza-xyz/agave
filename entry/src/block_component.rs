@@ -133,7 +133,7 @@ use {
     crate::entry::{Entry, EntryView, MaxDataShredsLen},
     agave_votor_messages::{
         certificate::{CertSignature, CertificateType, GenesisCert},
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
         unverified_vote_message::UnverifiedCertificate,
     },
@@ -289,7 +289,7 @@ impl TryFrom<GenesisCert> for GenesisCertBlockMarker {
         }
         Ok(Self {
             slot: cert.block.slot,
-            block_id: cert.block.block_id,
+            block_id: cert.block.block_id.into_hash(),
             bls_signature: cert.signature.signature,
             bitmap: cert.signature.bitmap,
         })
@@ -672,7 +672,10 @@ pub fn genesis_certificate_from_shred(
         return None;
     }
     Some(UnverifiedCertificate {
-        cert_type: CertificateType::Genesis(Block { slot, block_id }),
+        cert_type: CertificateType::Genesis(Block {
+            slot,
+            block_id: BlockId::from(block_id),
+        }),
         signature: bls_signature,
         bitmap,
         shred_version,
@@ -693,7 +696,10 @@ pub fn finalization_certificates_from_footer(
         final_aggregate,
         notar_aggregate,
     } = block_final_cert;
-    let block = Block { slot, block_id };
+    let block = Block {
+        slot,
+        block_id: BlockId::from(block_id),
+    };
 
     let final_signature = final_aggregate.uncompress_signature().ok()?;
     let final_bitmap = final_aggregate.into_bitmap();
@@ -779,7 +785,7 @@ mod tests {
             certificate.cert_type,
             CertificateType::Genesis(Block {
                 slot: parent_slot,
-                block_id,
+                block_id: BlockId::from(block_id),
             })
         );
         assert_eq!(certificate.signature, signature);
@@ -817,7 +823,10 @@ mod tests {
         };
         assert_eq!(
             certificate.cert_type,
-            CertificateType::FinalizeFast(Block { slot, block_id })
+            CertificateType::FinalizeFast(Block {
+                slot,
+                block_id: BlockId::from(block_id)
+            })
         );
         assert_eq!(certificate.signature, final_signature);
         assert_eq!(certificate.bitmap, final_bitmap);
@@ -851,7 +860,10 @@ mod tests {
         };
         assert_eq!(
             notarize.cert_type,
-            CertificateType::Notarize(Block { slot, block_id })
+            CertificateType::Notarize(Block {
+                slot,
+                block_id: BlockId::from(block_id)
+            })
         );
         assert_eq!(notarize.signature, notar_signature);
         assert_eq!(notarize.bitmap, notar_bitmap);

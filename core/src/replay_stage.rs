@@ -43,7 +43,7 @@ use {
     },
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::{Block, VoteMessage},
+        consensus_message::{Block, BlockId, VoteMessage},
         migration::{GENESIS_VOTE_REFRESH, MigrationStatus},
         vote::Vote,
     },
@@ -1705,7 +1705,7 @@ impl ReplayStage {
         );
         assert!(genesis_bank.is_frozen());
 
-        if genesis_bank.block_id() != Some(genesis_block.block_id) {
+        if genesis_bank.block_id() != Some(genesis_block.block_id.into_hash()) {
             panic!(
                 "{my_pubkey}: Attempting to enable alpenglow but we have the wrong version of the \
                  genesis block our version: ({}, {:?}), certified version ({genesis_block:?})",
@@ -2468,7 +2468,7 @@ impl ReplayStage {
         };
         let block = event.block();
 
-        if bank_forks.read().unwrap().block_id(block.slot) == Some(block.block_id) {
+        if bank_forks.read().unwrap().block_id(block.slot) == Some(block.block_id.into_hash()) {
             // Nothing to switch
             *pending_switch = None;
             return Ok(());
@@ -2477,7 +2477,7 @@ impl ReplayStage {
         // Check if we have received the block and all of its ancestors and collect the ones we
         // need to switch out
         let mut ancestor_slot = block.slot;
-        let mut ancestor_block_id = block.block_id;
+        let mut ancestor_block_id = block.block_id.into_hash();
         let mut blocks_to_switch = vec![];
         let mut original_dead_slots_to_clear = BTreeSet::new();
         loop {
@@ -4410,7 +4410,7 @@ impl ReplayStage {
             end_slot,
             parent_block: Block {
                 slot: bank.slot(),
-                block_id,
+                block_id: BlockId::from(block_id),
             },
             block_timer: Instant::now(),
         };
@@ -4587,10 +4587,10 @@ impl ReplayStage {
 
                         let genesis_block = Block {
                             slot: genesis_slot,
-                            block_id: genesis_bank.block_id().expect(
+                            block_id: BlockId::from(genesis_bank.block_id().expect(
                                 "It is impossible for block id to not be known at this point, as \
                                  a descendant of this block has reached super oc status",
-                            ),
+                            )),
                         };
                         migration_status.set_genesis_block(genesis_block);
                     }

@@ -23,7 +23,7 @@ use {
     agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::{Block, VoteMessage},
+        consensus_message::{Block, BlockId, VoteMessage},
         migration::MigrationStatus,
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         vote::Vote,
@@ -512,7 +512,7 @@ impl ConsensusPoolService {
             // Check if we've received the full block in blockstore
             let Some((slot_meta, _location)) = ctx
                 .blockstore
-                .get_slot_meta_for_block_id(block.slot, block.block_id)
+                .get_slot_meta_for_block_id(block.slot, block.block_id.into_hash())
                 .expect("Blockstore operations must succeed")
             else {
                 // Block not yet received, keep waiting
@@ -523,7 +523,7 @@ impl ConsensusPoolService {
                 slot: slot_meta
                     .parent_slot
                     .expect("parent slot must exist for full blocks"),
-                block_id: slot_meta.parent_block_id,
+                block_id: BlockId::from(slot_meta.parent_block_id),
             };
 
             // Check if the parent has a NotarizeFallback certificate (or stronger)
@@ -712,10 +712,12 @@ impl ConsensusPoolService {
 fn root_block(root_bank: &Bank) -> Block {
     Block {
         slot: root_bank.slot(),
-        block_id: root_bank
-            .block_id()
-            // Once SIMD-0333 is active we can hard unwrap here
-            .unwrap_or_default(),
+        block_id: BlockId::from(
+            root_bank
+                .block_id()
+                // Once SIMD-0333 is active we can hard unwrap here
+                .unwrap_or_default(),
+        ),
     }
 }
 
@@ -736,7 +738,6 @@ mod tests {
             BLS_SIGNATURE_AFFINE_SIZE, keypair::Keypair as BLSKeypair,
             signature::Signature as BLSSignature,
         },
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_runtime::{
@@ -844,7 +845,7 @@ mod tests {
         let mut ctx = TestContext::default();
 
         // validator 0 to 7 send Notarize on slot 2
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let target_slot = 2;
         let notarize_vote = Vote::new_notarization_vote(Block {
             slot: target_slot,

@@ -370,10 +370,9 @@ mod tests {
     use {
         super::*,
         crate::vote_history_storage::NullVoteHistoryStorage,
-        agave_votor_messages::consensus_message::Block,
+        agave_votor_messages::consensus_message::{Block, BlockId},
         crossbeam_channel::{Receiver, bounded},
         solana_gossip::contact_info::ContactInfo,
-        solana_hash::Hash,
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -485,7 +484,7 @@ mod tests {
         .unwrap();
 
         // Generate a normal notarization vote and check it's sent out correctly.
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let vote_slot = 2;
         let block = Block {
             slot: vote_slot,

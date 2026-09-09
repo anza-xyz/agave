@@ -7,7 +7,10 @@ use {
     },
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    agave_votor_messages::{
+        consensus_message::{Block, BlockId},
+        migration::MigrationStatus,
+    },
     solana_cost_model::shred_limit::{
         DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
     },
@@ -89,7 +92,7 @@ impl StandardBroadcastRun {
             parent_block_id: Hash::default(),
             parent_for_double_merkle: Block {
                 slot: Slot::MAX,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
             chained_merkle_root: Hash::default(),
             double_merkle_leaves: vec![],
@@ -173,7 +176,7 @@ impl StandardBroadcastRun {
         self.parent_block_id = parent_block_id;
         self.parent_for_double_merkle = Block {
             slot: bank.parent_slot(),
-            block_id: parent_block_id,
+            block_id: BlockId::from(parent_block_id),
         };
         self.chained_merkle_root = chained_merkle_root;
         self.double_merkle_leaves.clear();
@@ -294,7 +297,7 @@ impl StandardBroadcastRun {
         let parent_for_double_merkle = match update_parent {
             VersionedUpdateParent::V1(update_parent) => Block {
                 slot: update_parent.new_parent_slot,
-                block_id: update_parent.new_parent_block_id,
+                block_id: BlockId::from(update_parent.new_parent_block_id),
             },
         };
         self.parent_for_double_merkle = parent_for_double_merkle;
@@ -1352,15 +1355,15 @@ mod test {
         bs.parent_block_id = original_parent_block_id;
         bs.parent_for_double_merkle = Block {
             slot: bs.parent,
-            block_id: bs.parent_block_id,
+            block_id: BlockId::from(bs.parent_block_id),
         };
 
         let new_parent_slot = 7;
-        let new_parent_block_id = Hash::new_unique();
+        let new_parent_block_id = BlockId::new_unique();
         let component = BlockComponent::new_block_marker(VersionedBlockMarker::from_update_parent(
             solana_entry::block_component::UpdateParentV1 {
                 new_parent_slot,
-                new_parent_block_id,
+                new_parent_block_id: new_parent_block_id.into_hash(),
             },
         ));
         let mut stats = ProcessShredsStats::default();

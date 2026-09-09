@@ -16,7 +16,10 @@ use {
             result::{Error, RepairVerifyError, Result},
         },
     },
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    agave_votor_messages::{
+        consensus_message::{Block, BlockId},
+        migration::MigrationStatus,
+    },
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lazy_lru::LruCache,
     rand::{
@@ -266,8 +269,14 @@ pub enum BlockIdRepairType {
 impl BlockIdRepairType {
     pub(crate) fn block(&self) -> Block {
         match *self {
-            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block { slot, block_id },
-            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block { slot, block_id },
+            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block {
+                slot,
+                block_id: BlockId::from(block_id),
+            },
+            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block {
+                slot,
+                block_id: BlockId::from(block_id),
+            },
         }
     }
 

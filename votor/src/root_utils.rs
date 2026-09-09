@@ -6,7 +6,7 @@ use {
         voting_utils::VotingContext,
         votor::SharedContext,
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::consensus_message::{Block, BlockId},
     crossbeam_channel::Sender,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -53,7 +53,7 @@ pub(crate) fn set_root(
     *pending_blocks = pending_blocks.split_off(&new_root_slot);
     *finalized_blocks = finalized_blocks.split_off(&Block {
         slot: new_root_slot,
-        block_id: Hash::default(),
+        block_id: BlockId::default(),
     });
     *received_shred = received_shred.split_off(&new_root_slot);
 
