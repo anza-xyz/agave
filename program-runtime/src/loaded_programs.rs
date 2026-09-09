@@ -1796,47 +1796,64 @@ pub(crate) mod tests {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
         let env = get_mock_program_runtime_environment();
         let program_id = Pubkey::new_unique();
-        let closed_other_slot = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Closed,
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot: 9,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
-        });
-        let closed_current_slot = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Closed,
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot: 10,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
-        });
-        let loaded_entry_current_env = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot: 10,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
-        });
-        let loaded_entry_upcoming_env = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
-                BuiltinProgram::new_mock(),
-            )),
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot: 10,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
-        });
+        let closed_other_slot = new_test_entry_with_owner(
+            9,
+            ProgramCacheEntryOwner::LoaderV2,
+            new_closed_entry(env.clone()),
+        );
+        let closed_current_slot = new_test_entry_with_owner(
+            10,
+            ProgramCacheEntryOwner::LoaderV2,
+            new_closed_entry(env.clone()),
+        );
+        let unloaded_current_env = new_test_entry_with_owner(
+            10,
+            ProgramCacheEntryOwner::LoaderV2,
+            new_unloaded_entry(get_mock_program_runtime_environment()),
+        );
+        let unloaded_upcoming_env = new_test_entry_with_owner(
+            10,
+            ProgramCacheEntryOwner::LoaderV2,
+            new_unloaded_entry(ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock())),
+        );
+
+        // Here the ordering is important.
+        // We have an older `Closed` tombstone for a different slot, so when we
+        // go to insert `Closed` for slot 10, they are allowed to coexist.
         assert!(!cache.assign_program(&env, program_id, 9, closed_other_slot.clone()));
-        assert!(!cache.assign_program(&env, program_id, 10, closed_current_slot));
-        assert!(!cache.assign_program(&env, program_id, 10, loaded_entry_upcoming_env.clone()));
-        assert!(!cache.assign_program(&env, program_id, 10, loaded_entry_current_env.clone()));
-        // Only the conflicting entry in the same slot which does not have a different environment is removed
+        assert!(!cache.assign_program(&env, program_id, 10, closed_current_slot.clone()));
+        assert_eq!(
+            cache.get_slot_versions_for_tests(&program_id),
+            &[closed_other_slot.clone(), closed_current_slot.clone()]
+        );
+
+        // However, if we then insert an `Unloaded` entry for slot 10, it will
+        // nuke the `Closed` tombstone that was there.
+        //
+        // This is because a closed tombstone has no environment, so the
+        // env-based sweep criteria unwraps to `keep=false`.
+        //
+        // Inserting an `env=None` entry here would also cause `keep=false`,
+        // but none such transitions are allowed.
+        assert!(!cache.assign_program(&env, program_id, 10, unloaded_current_env.clone()));
+        assert_eq!(
+            cache.get_slot_versions_for_tests(&program_id),
+            &[
+                closed_other_slot.clone(),
+                unloaded_current_env.clone() // <-- Closed is gone for slot 10
+            ]
+        );
+
+        // Now insert another unloaded entry for the same slot 10, but on a
+        // different environment. When both entries have `env=Some`, they are
+        // actually compared, and if they differ, we get `keep=true`.
+        assert!(!cache.assign_program(&env, program_id, 10, unloaded_upcoming_env.clone()));
         assert_eq!(
             cache.get_slot_versions_for_tests(&program_id),
             &[
                 closed_other_slot,
-                loaded_entry_current_env,
-                loaded_entry_upcoming_env
+                unloaded_current_env,
+                unloaded_upcoming_env
             ]
         );
     }
