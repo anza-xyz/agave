@@ -133,6 +133,34 @@ pub const MAX_CODE_SHREDS_PER_SLOT: usize = DEFAULT_MAX_CODE_SHREDS_PER_SLOT as 
 pub const MAX_FEC_SETS_PER_SLOT: u32 =
     MAX_DATA_SHREDS_PER_SLOT as u32 / DATA_SHREDS_PER_FEC_BLOCK as u32;
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+pub(crate) const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
+
+/// Rewrites the Merkle proof height of the serialized shred in `payload`,
+/// leaving its signature stale; the caller re-signs if the shred has to verify.
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+pub fn override_proof_size(payload: &mut [u8], proof_size: u8) {
+    let byte = &mut payload[OFFSET_OF_SHRED_VARIANT];
+    let shred_variant = ShredVariant::try_from(*byte).expect("payload holds a merkle shred");
+    *byte = u8::from(match shred_variant {
+        ShredVariant::MerkleCode { resigned, .. } => ShredVariant::MerkleCode {
+            proof_size,
+            resigned,
+        },
+        ShredVariant::MerkleData { resigned, .. } => ShredVariant::MerkleData {
+            proof_size,
+            resigned,
+        },
+    });
+    assert_eq!(
+        ShredVariant::try_from(*byte)
+            .map(ShredVariant::proof_size)
+            .ok(),
+        Some(proof_size),
+        "proof height {proof_size} does not fit the shred_variant encoding"
+    );
+}
+
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch
 // 2. Merkles are chained
@@ -439,8 +467,14 @@ impl Shred {
 
     dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
-    #[cfg(test)]
-    dispatch!(pub(crate) fn proof_size(&self) -> Result<u8, Error>);
+    dispatch!(pub fn proof_size(&self) -> Result<u8, Error>);
+
+    /// Returns true if the Merkle proof size is consistent with a fixed 32:32
+    /// erasure set, whose 64 leaves fix the proof height.
+    #[inline]
+    pub fn has_correct_proof_size(&self) -> bool {
+        self.common_header().shred_variant.has_correct_proof_size()
+    }
 
     dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
@@ -638,6 +672,23 @@ impl Shred {
             Self::ShredCode(shred) => shred.merkle_proof().map(Either::Left),
             Self::ShredData(shred) => shred.merkle_proof().map(Either::Right),
         }
+    }
+}
+
+impl ShredVariant {
+    #[inline]
+    fn proof_size(self) -> u8 {
+        match self {
+            ShredVariant::MerkleCode { proof_size, .. }
+            | ShredVariant::MerkleData { proof_size, .. } => proof_size,
+        }
+    }
+
+    /// Returns true if the Merkle proof size is consistent with a fixed 32:32
+    /// erasure set, whose 64 leaves fix the proof height.
+    #[inline]
+    fn has_correct_proof_size(self) -> bool {
+        self.proof_size() == PROOF_ENTRIES_FOR_32_32_BATCH
     }
 }
 
@@ -866,7 +917,6 @@ mod tests {
     pub(super) const SIZE_OF_FEC_SET_INDEX: usize = 4;
     pub(super) const SIZE_OF_PARENT_OFFSET: usize = 2;
 
-    pub(super) const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
     pub(super) const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
     pub(super) const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
     pub(super) const OFFSET_OF_FEC_SET_INDEX: usize =
@@ -876,6 +926,7 @@ mod tests {
     pub(super) const OFFSET_OF_PARENT_OFFSET: usize =
         OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
     pub(super) const OFFSET_OF_SHRED_FLAGS: usize = OFFSET_OF_PARENT_OFFSET + SIZE_OF_PARENT_OFFSET;
+    pub(super) const OFFSET_OF_DATA_SIZE: usize = OFFSET_OF_SHRED_FLAGS + 1;
 
     #[test]
     fn test_shred_constants() {
