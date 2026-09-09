@@ -185,10 +185,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     Some(Arc::new(loaded_program))
 }
 
-/// Find the slot in which the program was most recently re-/deployed.
-/// Returns slot 0 for programs deployed with v1/v2 loaders, since programs deployed
-/// with those loaders do not retain deployment slot information.
-/// Returns an error if the program's account state can not be found or parsed.
 fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     program: &AccountSharedData,
@@ -196,6 +192,8 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
 ) -> TransactionResult<Slot> {
     match loader {
         ProgramCacheEntryOwner::LoaderV1 | ProgramCacheEntryOwner::LoaderV2 => {
+            // V1 & V2 programs are immutable and hold no deployment metadata.
+            // As long as there is *some* kind of ELF present, return slot 0.
             if program.data().is_empty() {
                 Err(TransactionError::ProgramAccountNotFound)
             } else {
@@ -203,6 +201,8 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
             }
         }
         ProgramCacheEntryOwner::LoaderV3 => {
+            // V3 programs must have both a valid Program account as well as
+            // a valid ProgramData account.
             if let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
             }) = bincode::deserialize(program.data())
@@ -224,6 +224,10 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
             Err(TransactionError::ProgramAccountNotFound)
         }
         ProgramCacheEntryOwner::LoaderV4 => {
+            // V4 programs must have valid state and must not be retracted!
+            // Loader V4 state does not have a leading discriminator, and
+            // `LoaderV4Status::Retracted` holds variant 0, so a gifting attack
+            // can happen if we don't disallow `Retracted`.
             let slot = loader_v4_get_state(program.data())
                 .ok()
                 .and_then(|state| {
@@ -232,12 +236,25 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
                 .ok_or(TransactionError::ProgramAccountNotFound)?;
             Ok(slot)
         }
-        ProgramCacheEntryOwner::NativeLoader => unreachable!(),
+        ProgramCacheEntryOwner::NativeLoader => {
+            // `filter_executable_program_accounts` won't pass native loader.
+            unreachable!("native loader programs are not sbpf")
+        }
     }
 }
 
-/// Returns the set of program accounts for a given batch of transactions.
-pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
+// Returns the set of programs to extract from the global program cache for a
+// given transaction's account keys.
+//
+// This list should only contain valid, active programs. Closed programs MUST
+// NOT be included in the search list.
+//
+// The global program cache searches for entries based on deployment slot, and
+// a closed program has no deployment slot. If a closed program ends up in the
+// search list, `replenish_program_cache` will miss during extraction, attempt
+// to reload, and insert a closed tombstone, BUT it will not remove the program
+// from the search list, resulting in reload loop.
+pub(crate) fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
     callbacks: &CB,
     program_cache_for_tx_batch: &ProgramCacheForTxBatch,
     keys: impl Iterator<Item = &'a Pubkey>,
@@ -247,6 +264,7 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
         if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
             cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
         } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
+            // A valid program must be owned by one of the four BPF loaders.
             let loader = if loader_v4::check_id(account.owner()) {
                 ProgramCacheEntryOwner::LoaderV4
             } else if bpf_loader_upgradeable::check_id(account.owner()) {
@@ -258,6 +276,9 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
             } else {
                 continue;
             };
+            // A valid program must also have a deployment slot stored.
+            // If the deployment slot cannot be determined, this program is
+            // likely *closed*; DON'T return it!
             let Ok(deployment_slot) = get_program_deployment_slot(callbacks, &account, loader)
             else {
                 continue;
