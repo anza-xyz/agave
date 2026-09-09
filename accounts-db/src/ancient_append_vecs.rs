@@ -170,28 +170,19 @@ impl AncientSlotInfos {
         });
     }
 
-    /// clear 'should_shrink' for storages after a cutoff to limit how many storages we shrink
-    fn clear_should_shrink_after_cutoff(&mut self) {
-        // At this point self.shrink_indexes have been sorted by the
-        // largest amount of dead bytes first in the corresponding
-        // storages.
-        self.best_slots_to_shrink = VecDeque::with_capacity(self.shrink_indexes.len());
-        for info_index in &self.shrink_indexes {
-            let info = &mut self.all_infos[*info_index];
-            self.best_slots_to_shrink
-                .push_back((info.slot, info.written_bytes));
-        }
-    }
-
-    /// after this function, only slots that were chosen to shrink are marked with
-    /// 'should_shrink'
-    /// There are likely more candidates to shrink than will be chosen.
+    /// record the storages to shrink in 'best_slots_to_shrink', most bytes saved to fewest
     fn choose_storages_to_shrink(&mut self) {
-        // sort the shrink_ratio_slots by most bytes saved to fewest
         // most bytes saved is more valuable to shrink
         self.sort_shrink_indexes_by_bytes_saved();
 
-        self.clear_should_shrink_after_cutoff();
+        self.best_slots_to_shrink = self
+            .shrink_indexes
+            .iter()
+            .map(|info_index| {
+                let info = &self.all_infos[*info_index];
+                (info.slot, info.written_bytes)
+            })
+            .collect();
     }
 
     /// truncate 'all_infos' such that when the remaining entries in
