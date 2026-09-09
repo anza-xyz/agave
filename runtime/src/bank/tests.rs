@@ -6848,9 +6848,15 @@ fn test_reduce_slot_time_features() {
 
 #[test]
 fn test_vat_burn_slot_params() {
-    let voting_keypair = ValidatorVoteKeypairs::new_rand();
-    let validator_keypairs = [&voting_keypair];
-    let vote_pubkey = voting_keypair.vote_keypair.pubkey();
+    let validator_keypairs = [
+        ValidatorVoteKeypairs::new_rand(),
+        ValidatorVoteKeypairs::new_rand(),
+        ValidatorVoteKeypairs::new_rand(),
+    ];
+    let vote_pubkeys = validator_keypairs
+        .iter()
+        .map(|keypairs| keypairs.vote_keypair.pubkey())
+        .collect::<Vec<_>>();
 
     // Loop through slot reduction features one at a time.
     for (slot_time_feature_id, params) in std::iter::once((None, LEGACY_SLOT_PARAMS))
@@ -6862,7 +6868,7 @@ fn test_vat_burn_slot_params() {
         } = genesis_utils::create_genesis_config_with_vote_accounts_and_cluster_type(
             1_000 * LAMPORTS_PER_SOL,
             &validator_keypairs,
-            vec![minimum_vote_account_balance_for_vat(100)],
+            vec![minimum_vote_account_balance_for_vat(100); validator_keypairs.len()],
             ClusterType::Development,
             &FeatureSet::default(),
             false,
@@ -6883,19 +6889,54 @@ fn test_vat_burn_slot_params() {
         assert_eq!(bank.vat_to_burn_per_epoch(), params.vat_to_burn_per_epoch());
 
         // Verify correct VAT amount is burned.
-        let vote_lamports_before = bank.get_balance(&vote_pubkey);
+        let vote_lamports_before = vote_pubkeys
+            .iter()
+            .map(|vote_pubkey| bank.get_balance(vote_pubkey))
+            .collect::<Vec<_>>();
         let incinerator_lamports_before = bank.get_balance(&incinerator::id());
+        let rewards_len_before = bank.rewards.read().unwrap().len();
         let stakes = SerdeStakesToStakeFormat::from(bank.get_top_epoch_stakes());
         let epoch_stakes = VersionedEpochStakes::new(stakes, bank.epoch());
         bank.maybe_burn_vat_from_staked_accounts(&epoch_stakes);
-        assert_eq!(
-            bank.get_balance(&vote_pubkey),
-            vote_lamports_before - params.vat_to_burn_per_epoch()
-        );
+        let vat_to_burn_per_epoch = params.vat_to_burn_per_epoch();
+        let vote_lamports_after = vote_lamports_before
+            .iter()
+            .map(|lamports| lamports.checked_sub(vat_to_burn_per_epoch).unwrap())
+            .collect::<Vec<_>>();
+        for (vote_pubkey, vote_lamports_after) in vote_pubkeys.iter().zip(&vote_lamports_after) {
+            assert_eq!(bank.get_balance(vote_pubkey), *vote_lamports_after);
+        }
         assert_eq!(
             bank.get_balance(&incinerator::id()),
-            incinerator_lamports_before + params.vat_to_burn_per_epoch()
+            incinerator_lamports_before
+                .checked_add(
+                    vat_to_burn_per_epoch
+                        .checked_mul(u64::try_from(vote_pubkeys.len()).unwrap())
+                        .unwrap(),
+                )
+                .unwrap()
         );
+        let vat_reward_lamports = -i64::try_from(vat_to_burn_per_epoch).unwrap();
+        let expected_rewards = vote_pubkeys
+            .iter()
+            .zip(&vote_lamports_after)
+            .map(|(vote_pubkey, vote_lamports_after)| {
+                (
+                    *vote_pubkey,
+                    RewardInfo {
+                        reward_type: RewardType::VATDebit,
+                        lamports: vat_reward_lamports,
+                        post_balance: *vote_lamports_after,
+                        commission_bps: None,
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let rewards = bank.rewards.read().unwrap();
+        let vat_rewards = &rewards[rewards_len_before..];
+        assert_eq!(vat_rewards.len(), vote_pubkeys.len());
+        let actual_rewards = vat_rewards.iter().copied().collect::<HashMap<_, _>>();
+        assert_eq!(actual_rewards, expected_rewards);
     }
 }
 
