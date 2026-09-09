@@ -1,6 +1,6 @@
 use {super::error::DataLenError, agave_fs::FileSize, std::convert::TryFrom};
 
-/// A logical offset used to load an account in a SplitAccountsFile.
+/// A logical offset used to load an account.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LogicalOffset(pub u32);
 

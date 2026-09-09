@@ -6,7 +6,7 @@ mod error;
 mod meta;
 mod utils;
 
-pub use error::Error as SplitAccountsFileError;
+pub use error::Error as SplitFileError;
 use {
     self::{
         common::{DataLen, DataRef, ExternalDataOffset, FileOffset, LoadedData, LogicalOffset},
@@ -47,7 +47,7 @@ use {
     },
 };
 
-pub static SPLIT_ACCOUNTS_FILE_STATS: SplitAccountsFileStats = SplitAccountsFileStats {
+pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
     num_open: AtomicU64::new(0),
     num_dirty: AtomicU64::new(0),
 };
@@ -74,7 +74,7 @@ pub fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
 /// Account index offsets point into the meta file. Small account data is stored
 /// inline in the meta entry; larger data is stored in the sibling data file.
 #[derive(Debug)]
-pub struct SplitAccountsFile {
+pub struct SplitFile {
     meta_path: PathBuf,
     data_path: PathBuf,
 
@@ -91,28 +91,24 @@ pub struct SplitAccountsFile {
     inner: InnerState,
 }
 
-impl Drop for SplitAccountsFile {
+impl Drop for SplitFile {
     fn drop(&mut self) {
-        SPLIT_ACCOUNTS_FILE_STATS
-            .num_open
-            .fetch_sub(1, Ordering::Relaxed);
+        SPLIT_FILE_STATS.num_open.fetch_sub(1, Ordering::Relaxed);
 
         if *self.is_dirty.get_mut() {
-            SPLIT_ACCOUNTS_FILE_STATS
-                .num_dirty
-                .fetch_sub(1, Ordering::Relaxed);
+            SPLIT_FILE_STATS.num_dirty.fetch_sub(1, Ordering::Relaxed);
         }
 
         if *self.remove_on_drop.get_mut() {
             if let Err(err) = fs::remove_file(&self.meta_path) {
                 log::warn!(
-                    "SplitAccountsFile::drop() failed to remove '{}': {err}",
+                    "SplitFile::drop() failed to remove '{}': {err}",
                     self.meta_path.display(),
                 );
             }
             if let Err(err) = fs::remove_file(&self.data_path) {
                 log::warn!(
-                    "SplitAccountsFile::drop() failed to remove '{}': {err}",
+                    "SplitFile::drop() failed to remove '{}': {err}",
                     self.data_path.display(),
                 );
             }
@@ -120,18 +116,16 @@ impl Drop for SplitAccountsFile {
     }
 }
 
-impl SplitAccountsFile {
-    /// Instantiates a SplitAccountsFile, creating new meta and data files from `base_path`.
+impl SplitFile {
+    /// Instantiates a SplitFile, creating new meta and data files from `base_path`.
     ///
     /// `base_path` is _not_ supposed to be a directory, but rather a file name.
     /// E.g. <accounts-dir>/SLOT.ID, just like an AppendVec file name.
-    pub fn new(base_path: impl AsRef<Path>) -> Result<Self, SplitAccountsFileError> {
+    pub fn new(base_path: impl AsRef<Path>) -> Result<Self, SplitFileError> {
         let uid = rand::random();
         let (meta_path, meta_file, meta_len) = create_meta_file(&base_path, uid)?;
         let (data_path, data_file, data_len) = create_data_file(&base_path, uid)?;
-        SPLIT_ACCOUNTS_FILE_STATS
-            .num_open
-            .fetch_add(1, Ordering::Relaxed);
+        SPLIT_FILE_STATS.num_open.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
             meta_path,
             data_path,
@@ -147,8 +141,8 @@ impl SplitAccountsFile {
         })
     }
 
-    /// Instantiates a SplitAccountsFile, opening preexisting `meta` and `data.
-    pub fn open(meta: FileInfo, data: FileInfo) -> Result<Self, SplitAccountsFileError> {
+    /// Instantiates a SplitFile, opening preexisting `meta` and `data.
+    pub fn open(meta: FileInfo, data: FileInfo) -> Result<Self, SplitFileError> {
         // read meta header, ensure header len and file len match
         // read data header, ensure header len and file len match
 
@@ -167,15 +161,13 @@ impl SplitAccountsFile {
         let data_header = read_data_header(&data_file, data_len)?;
 
         if meta_header.uid != data_header.uid {
-            return Err(SplitAccountsFileError::HeaderUidMismatch {
+            return Err(SplitFileError::HeaderUidMismatch {
                 meta_uid: meta_header.uid,
                 data_uid: data_header.uid,
             });
         }
 
-        SPLIT_ACCOUNTS_FILE_STATS
-            .num_open
-            .fetch_add(1, Ordering::Relaxed);
+        SPLIT_FILE_STATS.num_open.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
             meta_path,
             data_path,
@@ -190,8 +182,8 @@ impl SplitAccountsFile {
         })
     }
 
-    /// Instantiates a new SplitAccountsFile in ready-only mode, or `None` if it already is such.
-    pub fn reopen_as_readonly(&self) -> Result<Option<Self>, SplitAccountsFileError> {
+    /// Instantiates a new SplitFile in ready-only mode, or `None` if it already is such.
+    pub fn reopen_as_readonly(&self) -> Result<Option<Self>, SplitFileError> {
         let InnerState::Writable(inner) = &self.inner else {
             // Already in read-only mode; nothing to do.
             return Ok(None);
@@ -257,8 +249,8 @@ impl SplitAccountsFile {
 
     /// Flushes contents to disk.
     ///
-    /// Returns an error if the SplitAccountsFile is set to remove-on-drop.
-    pub fn flush(&self) -> Result<(), SplitAccountsFileError> {
+    /// Returns an error if the SplitFile is set to remove-on-drop.
+    pub fn flush(&self) -> Result<(), SplitFileError> {
         let was_dirty = self.is_dirty.swap(false, Ordering::Relaxed);
         if !was_dirty {
             // wasn't dirty, so nothing to do here
@@ -266,27 +258,21 @@ impl SplitAccountsFile {
         }
 
         if self.remove_on_drop.load(Ordering::Relaxed) {
-            return Err(SplitAccountsFileError::FlushButRemoveOnDrop);
+            return Err(SplitFileError::FlushButRemoveOnDrop);
         }
 
         let (meta_file, data_file) = match &self.inner {
             InnerState::ReadOnly(inner) => (&inner.meta_file, &inner.data_file),
             InnerState::Writable(inner) => (&inner.meta_file, &inner.data_file),
         };
-        let meta_result = meta_file
-            .sync_all()
-            .map_err(SplitAccountsFileError::FlushFile);
-        let data_result = data_file
-            .sync_all()
-            .map_err(SplitAccountsFileError::FlushFile);
+        let meta_result = meta_file.sync_all().map_err(SplitFileError::FlushFile);
+        let data_result = data_file.sync_all().map_err(SplitFileError::FlushFile);
 
         // if the flushes were successful, update the stats,
         // otherwise re-set the is_dirty flag
         let result = meta_result.and(data_result);
         if result.is_ok() {
-            SPLIT_ACCOUNTS_FILE_STATS
-                .num_dirty
-                .fetch_sub(1, Ordering::Relaxed);
+            SPLIT_FILE_STATS.num_dirty.fetch_sub(1, Ordering::Relaxed);
         } else {
             self.is_dirty.store(true, Ordering::Relaxed);
         }
@@ -304,9 +290,9 @@ impl SplitAccountsFile {
     pub fn write_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
-    ) -> Result<(Vec<LogicalOffset>, u64), SplitAccountsFileError> {
+    ) -> Result<(Vec<LogicalOffset>, u64), SplitFileError> {
         let InnerState::Writable(inner) = &self.inner else {
-            return Err(SplitAccountsFileError::NotWritable);
+            return Err(SplitFileError::NotWritable);
         };
 
         let _write_guard = inner.write_lock.lock().unwrap();
@@ -319,7 +305,7 @@ impl SplitAccountsFile {
         for i in 0..accounts.len() {
             accounts.account_default_if_zero_lamport(
                 i,
-                |account| -> Result<(), SplitAccountsFileError> {
+                |account| -> Result<(), SplitFileError> {
                     let data_len = DataLen::try_from(account.data().len())?;
                     let data_ref = if data_len.0 == 0 {
                         // no data, so nothing to write
@@ -364,9 +350,7 @@ impl SplitAccountsFile {
         inner.data_len.store(data_file_offset.0, Ordering::Relaxed);
         let was_dirty = self.is_dirty.swap(true, Ordering::Relaxed);
         if !was_dirty {
-            SPLIT_ACCOUNTS_FILE_STATS
-                .num_dirty
-                .fetch_add(1, Ordering::Relaxed);
+            SPLIT_FILE_STATS.num_dirty.fetch_add(1, Ordering::Relaxed);
         }
 
         Ok((logical_offsets, logical_stored_size))
@@ -379,7 +363,7 @@ impl SplitAccountsFile {
         &self,
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
-    ) -> Result<Ret, SplitAccountsFileError> {
+    ) -> Result<Ret, SplitFileError> {
         let (meta_file, meta_file_len) = match &self.inner {
             InnerState::ReadOnly(inner) => (&inner.meta_file, inner.meta_len),
             InnerState::Writable(inner) => {
@@ -403,7 +387,7 @@ impl SplitAccountsFile {
         &self,
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
-    ) -> Result<Ret, SplitAccountsFileError> {
+    ) -> Result<Ret, SplitFileError> {
         self._get_account_with_data(offset, |meta_entry, loaded_data| {
             let data = match &loaded_data {
                 LoadedData::NoData => &[],
@@ -418,7 +402,7 @@ impl SplitAccountsFile {
     pub fn get_account_shared_data(
         &self,
         offset: LogicalOffset,
-    ) -> Result<AccountSharedData, SplitAccountsFileError> {
+    ) -> Result<AccountSharedData, SplitFileError> {
         self._get_account_with_data(offset, |meta_entry, loaded_data| {
             let data = match loaded_data {
                 LoadedData::NoData => Vec::new(),
@@ -444,7 +428,7 @@ impl SplitAccountsFile {
         &self,
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(MetaEntryRef<'local>, LoadedData<'local>) -> Ret,
-    ) -> Result<Ret, SplitAccountsFileError> {
+    ) -> Result<Ret, SplitFileError> {
         let (meta_file, meta_file_len) = match &self.inner {
             InnerState::ReadOnly(inner) => (&inner.meta_file, inner.meta_len),
             InnerState::Writable(inner) => {
@@ -456,7 +440,7 @@ impl SplitAccountsFile {
             meta_file,
             meta_file_len,
             file_offset,
-            |meta_entry, data_ref| -> Result<_, SplitAccountsFileError> {
+            |meta_entry, data_ref| -> Result<_, SplitFileError> {
                 match data_ref {
                     DataRef::NoData => Ok(callback(meta_entry, LoadedData::NoData)),
                     DataRef::Inline(data) => Ok(callback(meta_entry, LoadedData::Inline(data))),
@@ -491,7 +475,7 @@ impl SplitAccountsFile {
     pub fn scan_accounts_without_data(
         &self,
         mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfoWithoutData<'local>),
-    ) -> Result<(), SplitAccountsFileError> {
+    ) -> Result<(), SplitFileError> {
         let (meta_file, meta_file_len) = match &self.inner {
             InnerState::ReadOnly(inner) => (&inner.meta_file, inner.meta_len),
             InnerState::Writable(inner) => {
@@ -531,7 +515,7 @@ impl SplitAccountsFile {
         &'a self,
         data_reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfo<'local>),
-    ) -> Result<(), SplitAccountsFileError> {
+    ) -> Result<(), SplitFileError> {
         let (meta_file, meta_file_len, data_file, data_file_len) = match &self.inner {
             InnerState::ReadOnly(inner) => (
                 &inner.meta_file,
@@ -607,7 +591,7 @@ impl SplitAccountsFile {
     pub fn get_account_data_lens(
         &self,
         sorted_offsets: &[LogicalOffset],
-    ) -> Result<Vec<usize>, SplitAccountsFileError> {
+    ) -> Result<Vec<usize>, SplitFileError> {
         let mut data_lens = Vec::with_capacity(sorted_offsets.len());
         for offset in sorted_offsets {
             let data_len =
@@ -653,7 +637,7 @@ fn validate_meta_entry_stored_size(
     file_len: FileSize,
     offset: FileOffset,
     stored_size: usize,
-) -> Result<(), SplitAccountsFileError> {
+) -> Result<(), SplitFileError> {
     if offset
         .0
         .checked_add(stored_size as FileSize)
@@ -672,11 +656,11 @@ fn validate_meta_entry_stored_size(
 fn advance_reader_position_to<'a>(
     reader: &mut impl agave_fs::buffered_reader::FileBufRead<'a>,
     offset: FileOffset,
-) -> Result<(), SplitAccountsFileError> {
+) -> Result<(), SplitFileError> {
     let bytes_to_skip = offset
         .0
         .checked_sub(reader.get_file_offset())
-        .ok_or(SplitAccountsFileError::ReaderPositionMovedBackwards)?;
+        .ok_or(SplitFileError::ReaderPositionMovedBackwards)?;
     reader.consume_or_skip(bytes_to_skip as usize);
     Ok(())
 }
@@ -688,7 +672,7 @@ fn calculate_logical_stored_size(data_len: usize) -> u64 {
     AppendVec::calculate_stored_size(data_len) as u64
 }
 
-/// The inner state of a SplitAccountsFile, used to distinguish writable from read-only state.
+/// The inner state of a SplitFile, used to distinguish writable from read-only state.
 #[derive(Debug)]
 enum InnerState {
     ReadOnly(ReadOnlyState),
@@ -713,7 +697,7 @@ struct WritableState {
 }
 
 #[derive(Debug)]
-pub struct SplitAccountsFileStats {
+pub struct SplitFileStats {
     pub num_open: AtomicU64,
     pub num_dirty: AtomicU64,
 }
@@ -731,47 +715,47 @@ mod tests {
         test_case::test_case,
     };
 
-    /// Ensure creating a new SplitAccountsFile works.
+    /// Ensure creating a new SplitFile works.
     #[test]
     fn test_new() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        _ = SplitAccountsFile::new(&base_path).unwrap();
+        _ = SplitFile::new(&base_path).unwrap();
     }
 
-    /// Ensure opening an existing SplitAccountsFile works.
+    /// Ensure opening an existing SplitFile works.
     #[test]
     fn test_open_ok() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let split = SplitAccountsFile::new(&base_path).unwrap();
+        let split = SplitFile::new(&base_path).unwrap();
 
         let meta = FileInfo::new_from_path(&split.meta_path).unwrap();
         let data = FileInfo::new_from_path(&split.data_path).unwrap();
-        _ = SplitAccountsFile::open(meta, data).unwrap();
+        _ = SplitFile::open(meta, data).unwrap();
     }
 
-    /// Ensure opening SplitAccountsFiles with mismatched uids is an error.
+    /// Ensure opening SplitFiles with mismatched uids is an error.
     #[test]
     fn test_open_bad_uids() {
         let temp_dir = TempDir::new().unwrap();
         let base_path1 = temp_dir.path().join("base1");
         let base_path2 = temp_dir.path().join("base2");
-        let split1 = SplitAccountsFile::new(&base_path1).unwrap();
-        let split2 = SplitAccountsFile::new(&base_path2).unwrap();
+        let split1 = SplitFile::new(&base_path1).unwrap();
+        let split2 = SplitFile::new(&base_path2).unwrap();
 
         let meta = FileInfo::new_from_path(&split1.meta_path).unwrap();
         let data = FileInfo::new_from_path(&split2.data_path).unwrap();
-        let err = SplitAccountsFile::open(meta, data).unwrap_err();
-        assert_matches!(err, SplitAccountsFileError::HeaderUidMismatch { .. });
+        let err = SplitFile::open(meta, data).unwrap_err();
+        assert_matches!(err, SplitFileError::HeaderUidMismatch { .. });
     }
 
-    /// Ensure we can reopen a SplitAccountsFile as read-only.
+    /// Ensure we can reopen a SplitFile as read-only.
     #[test]
     fn test_reopen_as_readonly() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let split1 = SplitAccountsFile::new(&base_path).unwrap();
+        let split1 = SplitFile::new(&base_path).unwrap();
 
         // reopen should succeed
         let split2 = split1.reopen_as_readonly().unwrap().unwrap();
@@ -786,7 +770,7 @@ mod tests {
     fn test_write_and_read_accounts() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let split_writable = SplitAccountsFile::new(&base_path).unwrap();
+        let split_writable = SplitFile::new(&base_path).unwrap();
 
         let slot = 13;
         let owner = Pubkey::new_unique();
@@ -858,7 +842,7 @@ mod tests {
     fn test_scan_accounts() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let split_writable = SplitAccountsFile::new(&base_path).unwrap();
+        let split_writable = SplitFile::new(&base_path).unwrap();
 
         let slot = 23;
         let owner = Pubkey::new_unique();
@@ -941,7 +925,7 @@ mod tests {
     #[test]
     fn test_get_and_scan_truncated_meta_entry_no_data() {
         let temp_dir = TempDir::new().unwrap();
-        let split = SplitAccountsFile::new(temp_dir.path().join("base")).unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
         let account = AccountSharedData::new(123, 0, &Pubkey::default());
         let (offsets, _) = split
@@ -961,7 +945,7 @@ mod tests {
                 .unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
             );
         }
 
@@ -970,14 +954,14 @@ mod tests {
             let err = split.get_account_with_data(offsets[0], |_| {}).unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
             );
         }
 
         // test case: scan_accounts_without_data()
         {
             let err = split.scan_accounts_without_data(|_, _| {}).unwrap_err();
-            assert_matches!(err, SplitAccountsFileError::Io(_));
+            assert_matches!(err, SplitFileError::Io(_));
         }
 
         // test case: can_accounts_with_data()
@@ -986,7 +970,7 @@ mod tests {
             let err = split
                 .scan_accounts_with_data(&mut data_reader, |_, _| {})
                 .unwrap_err();
-            assert_matches!(err, SplitAccountsFileError::Io(_));
+            assert_matches!(err, SplitFileError::Io(_));
         }
     }
 
@@ -994,7 +978,7 @@ mod tests {
     #[test]
     fn test_get_and_scan_truncated_meta_entry_inline_data() {
         let temp_dir = TempDir::new().unwrap();
-        let split = SplitAccountsFile::new(temp_dir.path().join("base")).unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
         let account = AccountSharedData::new(123, 165, &Pubkey::default());
         let (offsets, _) = split
@@ -1014,7 +998,7 @@ mod tests {
                 .unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::ShortRead { .. })
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::ShortRead { .. })
             );
         }
 
@@ -1023,7 +1007,7 @@ mod tests {
             let err = split.get_account_with_data(offsets[0], |_| {}).unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::ShortRead { .. })
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::ShortRead { .. })
             );
         }
 
@@ -1032,7 +1016,7 @@ mod tests {
             let err = split.scan_accounts_without_data(|_, _| {}).unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
             );
         }
 
@@ -1044,7 +1028,7 @@ mod tests {
                 .unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
             );
         }
     }
@@ -1053,7 +1037,7 @@ mod tests {
     #[test]
     fn test_get_and_scan_truncated_meta_entry_external_data() {
         let temp_dir = TempDir::new().unwrap();
-        let split = SplitAccountsFile::new(temp_dir.path().join("base")).unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
@@ -1075,7 +1059,7 @@ mod tests {
                 .unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::ShortRead { .. })
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::ShortRead { .. })
             );
         }
 
@@ -1084,7 +1068,7 @@ mod tests {
             let err = split.get_account_with_data(offsets[0], |_| {}).unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::ShortRead { .. })
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::ShortRead { .. })
             );
         }
 
@@ -1093,7 +1077,7 @@ mod tests {
             let err = split.scan_accounts_without_data(|_, _| {}).unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
             );
         }
 
@@ -1105,7 +1089,7 @@ mod tests {
                 .unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
+                SplitFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
             );
         }
     }
@@ -1114,7 +1098,7 @@ mod tests {
     #[test]
     fn test_get_and_scan_truncated_data_entry() {
         let temp_dir = TempDir::new().unwrap();
-        let split = SplitAccountsFile::new(temp_dir.path().join("base")).unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
@@ -1140,7 +1124,7 @@ mod tests {
             let err = split.get_account_with_data(offsets[0], |_| {}).unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadDataEntry(ReadDataEntryError::OffsetOverrun(_))
+                SplitFileError::ReadDataEntry(ReadDataEntryError::OffsetOverrun(_))
             );
         }
 
@@ -1158,7 +1142,7 @@ mod tests {
                 .unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadDataEntry(ReadDataEntryError::OffsetOverrun(_))
+                SplitFileError::ReadDataEntry(ReadDataEntryError::OffsetOverrun(_))
             );
         }
     }
@@ -1167,7 +1151,7 @@ mod tests {
     #[test]
     fn test_get_and_scan_external_data_address_mismatch() {
         let temp_dir = TempDir::new().unwrap();
-        let split = SplitAccountsFile::new(temp_dir.path().join("base")).unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let expected_address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
@@ -1204,7 +1188,7 @@ mod tests {
             let err = split.get_account_with_data(offsets[0], |_| {}).unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadDataEntry(ReadDataEntryError::AddressMismatch { .. }),
+                SplitFileError::ReadDataEntry(ReadDataEntryError::AddressMismatch { .. }),
             );
         }
 
@@ -1222,7 +1206,7 @@ mod tests {
                 .unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadDataEntry(ReadDataEntryError::AddressMismatch { .. }),
+                SplitFileError::ReadDataEntry(ReadDataEntryError::AddressMismatch { .. }),
             );
         }
     }
@@ -1231,7 +1215,7 @@ mod tests {
     #[test]
     fn test_get_and_scan_external_data_len_mismatch() {
         let temp_dir = TempDir::new().unwrap();
-        let split = SplitAccountsFile::new(temp_dir.path().join("base")).unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let expected_data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
@@ -1268,7 +1252,7 @@ mod tests {
             let err = split.get_account_with_data(offsets[0], |_| {}).unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadDataEntry(ReadDataEntryError::DataLenMismatch { .. }),
+                SplitFileError::ReadDataEntry(ReadDataEntryError::DataLenMismatch { .. }),
             );
         }
 
@@ -1286,7 +1270,7 @@ mod tests {
                 .unwrap_err();
             assert_matches!(
                 err,
-                SplitAccountsFileError::ReadDataEntry(ReadDataEntryError::DataLenMismatch { .. }),
+                SplitFileError::ReadDataEntry(ReadDataEntryError::DataLenMismatch { .. }),
             );
         }
     }
@@ -1296,7 +1280,7 @@ mod tests {
     fn test_get_account_data_lens() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let split = SplitAccountsFile::new(&base_path).unwrap();
+        let split = SplitFile::new(&base_path).unwrap();
 
         let slot = 33;
         let owner = Pubkey::new_unique();
@@ -1340,7 +1324,7 @@ mod tests {
     fn test_is_dirty(begins_dirty: bool) {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let mut split1 = SplitAccountsFile::new(&base_path).unwrap();
+        let mut split1 = SplitFile::new(&base_path).unwrap();
 
         // ensure the split file begins not dirty
         assert!(!*split1.is_dirty.get_mut());
@@ -1372,7 +1356,7 @@ mod tests {
     fn test_flush() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let split = SplitAccountsFile::new(&base_path).unwrap();
+        let split = SplitFile::new(&base_path).unwrap();
 
         // split file is not dirty, so flush() always succeeds
         split.flush().unwrap();
@@ -1381,7 +1365,7 @@ mod tests {
         // (assuming the split file is dirty)
         split.is_dirty.store(true, Ordering::Relaxed);
         let err = split.flush().unwrap_err();
-        assert_matches!(err, SplitAccountsFileError::FlushButRemoveOnDrop);
+        assert_matches!(err, SplitFileError::FlushButRemoveOnDrop);
 
         // flush() will succeed after disabling remove_on_drop
         split.disable_remove_on_drop();

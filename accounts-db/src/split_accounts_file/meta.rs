@@ -92,7 +92,7 @@
 
 use {
     super::{
-        DataLen, DataRef, SplitAccountsFileError,
+        DataLen, DataRef, SplitFileError,
         as_bytes::{AsBytesMut, AsBytesRef, as_bytes_mut, as_bytes_ref},
         common::{ExternalDataOffset, FileOffset, WriteInfo},
         error::{
@@ -143,7 +143,7 @@ const META_ENTRY_OFFSET_OF_DATA_REF: usize = 88;
 pub fn create_meta_file(
     base_path: impl AsRef<Path>,
     uid: u64,
-) -> Result<(PathBuf, File, usize), SplitAccountsFileError> {
+) -> Result<(PathBuf, File, usize), SplitFileError> {
     let meta_path = meta_path_from_base(&base_path);
     let mut meta_file = utils::create_new_file(&meta_path)?;
     let header_size = write_meta_header(&mut meta_file, uid)?;

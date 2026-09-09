@@ -58,7 +58,7 @@
 
 use {
     super::{
-        SplitAccountsFileError,
+        SplitFileError,
         as_bytes::{AsBytesMut, AsBytesRef, as_bytes_mut, as_bytes_ref},
         common::{DataLen, FileOffset, WriteInfo},
         error::{
@@ -98,7 +98,7 @@ const DATA_ENTRY_OFFSET_OF_DATA: usize = 36;
 pub fn create_data_file(
     base_path: impl AsRef<Path>,
     uid: u64,
-) -> Result<(PathBuf, File, usize), SplitAccountsFileError> {
+) -> Result<(PathBuf, File, usize), SplitFileError> {
     let data_path = data_path_from_base(&base_path);
     let mut data_file = utils::create_new_file(&data_path)?;
     let header_size = write_data_header(&mut data_file, uid)?;
