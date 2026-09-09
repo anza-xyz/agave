@@ -52,7 +52,7 @@ pub enum DataRef<'data> {
     External(ExternalDataOffset),
 }
 
-/// Loaded acocunt data, used when reading.
+/// Loaded account data, used when reading.
 #[derive(Debug)]
 pub enum LoadedData<'buf> {
     /// Account has no data.
