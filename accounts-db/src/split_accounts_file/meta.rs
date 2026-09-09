@@ -92,7 +92,7 @@
 
 use {
     super::{
-        DataLen, DataRefBorrowed, SplitAccountsFileError,
+        DataLen, DataRef, SplitAccountsFileError,
         as_bytes::{AsBytesMut, AsBytesRef, as_bytes_mut, as_bytes_ref},
         common::{ExternalDataOffset, FileOffset, WriteInfo},
         error::{
@@ -221,16 +221,16 @@ pub fn write_meta_entry(
     rent_epoch: u64,
     is_executable: bool,
     data_len: DataLen,
-    data_ref: DataRefBorrowed,
+    data_ref: DataRef,
 ) -> Result<WriteInfo, WriteMetaEntryError> {
     match data_ref {
-        DataRefBorrowed::NoData => {
+        DataRef::NoData => {
             debug_assert_eq!(data_len.0, 0);
         }
-        DataRefBorrowed::Inline(data) => {
+        DataRef::Inline(data) => {
             debug_assert_eq!(data_len.0 as usize, data.len());
         }
-        DataRefBorrowed::External(_) => {
+        DataRef::External(_) => {
             // nothing to assert
         }
     };
@@ -259,15 +259,15 @@ pub fn write_meta_entry(
     num_bytes_written += size_of::<MetaEntrySerde>();
 
     match data_ref {
-        DataRefBorrowed::NoData => {
+        DataRef::NoData => {
             // no data, so nothing to write
         }
-        DataRefBorrowed::Inline(data) => {
+        DataRef::Inline(data) => {
             // write `data` inline here
             file_io::write_buffer_to_file(file, data, start_offset + num_bytes_written as u64)?;
             num_bytes_written += data.len();
         }
-        DataRefBorrowed::External(external_data_offset) => {
+        DataRef::External(external_data_offset) => {
             // data was written to external data file, so only write the offset here
             file_io::write_buffer_to_file(
                 file,
@@ -297,7 +297,7 @@ pub fn read_meta_entry<Ret>(
     file: &File,
     file_len: FileSize,
     offset: FileOffset,
-    callback: impl for<'local> FnOnce(MetaEntryRef<'local>, DataRefBorrowed<'local>) -> Ret,
+    callback: impl for<'local> FnOnce(MetaEntryRef<'local>, DataRef<'local>) -> Ret,
 ) -> Result<Ret, ReadMetaEntryError> {
     validate_meta_entry_offset(file_len, offset)?;
 
@@ -369,7 +369,7 @@ pub fn parse_meta_entry_fixed(bytes: &[u8]) -> Result<MetaEntryRef<'_>, ReadMeta
 pub fn parse_meta_entry_data_ref<'a>(
     bytes: &'a [u8],
     meta_entry: &MetaEntryRef<'_>,
-) -> Result<DataRefBorrowed<'a>, ReadMetaEntryError> {
+) -> Result<DataRef<'a>, ReadMetaEntryError> {
     let stored_size = calculate_meta_entry_stored_size(meta_entry.data_len);
     if bytes.len() < stored_size {
         return Err(ReadMetaEntryError::ShortRead {
@@ -379,16 +379,16 @@ pub fn parse_meta_entry_data_ref<'a>(
     }
 
     if meta_entry.data_len.0 == 0 {
-        Ok(DataRefBorrowed::NoData)
+        Ok(DataRef::NoData)
     } else if should_store_account_data_in_meta_file(meta_entry.data_len) {
-        Ok(DataRefBorrowed::Inline(
+        Ok(DataRef::Inline(
             &bytes[META_ENTRY_OFFSET_OF_DATA_REF..stored_size],
         ))
     } else {
         let external_offset_bytes = bytes[META_ENTRY_OFFSET_OF_DATA_REF..stored_size]
             .try_into()
             .expect("external data offset has a fixed size");
-        Ok(DataRefBorrowed::External(ExternalDataOffset(FileOffset(
+        Ok(DataRef::External(ExternalDataOffset(FileOffset(
             u64::from_le_bytes(external_offset_bytes),
         ))))
     }
@@ -681,7 +681,7 @@ mod tests {
             let rent_epoch = u64::MAX;
             let is_executable = false;
             let data_len = DataLen::try_from(0).unwrap();
-            let data_ref = DataRefBorrowed::NoData;
+            let data_ref = DataRef::NoData;
             let write_info = write_meta_entry(
                 &file,
                 offset,
@@ -703,7 +703,7 @@ mod tests {
                 assert_eq!(read_meta_entry.rent_epoch, rent_epoch);
                 assert_eq!(read_meta_entry.is_executable, is_executable);
                 assert_eq!(read_meta_entry.data_len, data_len);
-                assert_eq!(read_data_ref, DataRefBorrowed::NoData);
+                assert_eq!(read_data_ref, DataRef::NoData);
             })
             .unwrap();
 
@@ -719,7 +719,7 @@ mod tests {
             let is_executable = false;
             let data = [0xAB; 200];
             let data_len = DataLen::try_from(data.len()).unwrap();
-            let data_ref = DataRefBorrowed::Inline(&data);
+            let data_ref = DataRef::Inline(&data);
             let write_info = write_meta_entry(
                 &file,
                 offset,
@@ -741,7 +741,7 @@ mod tests {
                 assert_eq!(read_meta_entry.rent_epoch, rent_epoch);
                 assert_eq!(read_meta_entry.is_executable, is_executable);
                 assert_eq!(read_meta_entry.data_len, data_len);
-                assert_eq!(read_data_ref, DataRefBorrowed::Inline(&data));
+                assert_eq!(read_data_ref, DataRef::Inline(&data));
             })
             .unwrap();
 
@@ -757,7 +757,7 @@ mod tests {
             let is_executable = false;
             let data_len = DataLen::try_from(META_ENTRY_MAX_SIZE + 1).unwrap();
             let external_data_offset = ExternalDataOffset(FileOffset(234_567));
-            let data_ref = DataRefBorrowed::External(external_data_offset);
+            let data_ref = DataRef::External(external_data_offset);
             let write_info = write_meta_entry(
                 &file,
                 offset,
@@ -779,10 +779,7 @@ mod tests {
                 assert_eq!(read_meta_entry.rent_epoch, rent_epoch);
                 assert_eq!(read_meta_entry.is_executable, is_executable);
                 assert_eq!(read_meta_entry.data_len, data_len);
-                assert_eq!(
-                    read_data_ref,
-                    DataRefBorrowed::External(external_data_offset),
-                );
+                assert_eq!(read_data_ref, DataRef::External(external_data_offset),);
             })
             .unwrap();
         }
@@ -802,7 +799,7 @@ mod tests {
             0,
             false,
             DataLen(0),
-            DataRefBorrowed::NoData,
+            DataRef::NoData,
         )
         .unwrap_err();
         assert_matches!(err, WriteMetaEntryError::OffsetOverrun(_));
@@ -817,7 +814,7 @@ mod tests {
             0,
             false,
             DataLen(0),
-            DataRefBorrowed::NoData,
+            DataRef::NoData,
         )
         .unwrap_err();
         assert_matches!(err, WriteMetaEntryError::Io(_));

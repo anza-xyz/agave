@@ -41,12 +41,26 @@ impl TryFrom<usize> for DataLen {
     }
 }
 
-/// Data reference, used for writing.
+/// Data reference, used to indicate where account data is stored.
 #[derive(Debug, PartialEq)]
-pub enum DataRefBorrowed<'data> {
+pub enum DataRef<'data> {
+    /// Account has no data.
     NoData,
+    /// Account data is small and stored inline with the meta entry.
     Inline(&'data [u8]),
+    /// Account data is large and stored in an external data file.
     External(ExternalDataOffset),
+}
+
+/// Loaded acocunt data, used when reading.
+#[derive(Debug)]
+pub enum LoadedData<'buf> {
+    /// Account has no data.
+    NoData,
+    /// Account data is small and stored inline with the meta entry.
+    Inline(&'buf [u8]),
+    /// Account data is large and stored in an external data file.
+    External(Vec<u8>),
 }
 
 #[cfg(test)]

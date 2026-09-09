@@ -9,7 +9,7 @@ mod utils;
 pub use error::Error as SplitAccountsFileError;
 use {
     self::{
-        common::{DataLen, DataRefBorrowed, ExternalDataOffset, FileOffset, LogicalOffset},
+        common::{DataLen, DataRef, ExternalDataOffset, FileOffset, LoadedData, LogicalOffset},
         data::{
             DATA_ENTRY_FIXED_SIZE, calculate_data_entry_stored_size, create_data_file,
             parse_data_entry, read_data_entry, read_data_header, validate_data_entry_offset,
@@ -27,7 +27,6 @@ use {
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         append_vec::AppendVec,
         storable_accounts::StorableAccounts,
-        utils::create_account_shared_data,
     },
     agave_fs::{
         FileInfo, FileSize,
@@ -42,7 +41,7 @@ use {
         fs::{self, File},
         path::{Path, PathBuf},
         sync::{
-            Mutex,
+            Arc, Mutex,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -324,10 +323,10 @@ impl SplitAccountsFile {
                     let data_len = DataLen::try_from(account.data().len())?;
                     let data_ref = if data_len.0 == 0 {
                         // no data, so nothing to write
-                        DataRefBorrowed::NoData
+                        DataRef::NoData
                     } else if should_store_account_data_in_meta_file(data_len) {
                         // data is small, so will write inline in the meta file
-                        DataRefBorrowed::Inline(account.data())
+                        DataRef::Inline(account.data())
                     } else {
                         // data is large, so write into the data file now
                         let write_info = write_data_entry(
@@ -338,7 +337,7 @@ impl SplitAccountsFile {
                         )?;
                         data_file_offset =
                             FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
-                        DataRefBorrowed::External(ExternalDataOffset(write_info.start))
+                        DataRef::External(ExternalDataOffset(write_info.start))
                     };
 
                     let write_info = write_meta_entry(
@@ -405,6 +404,47 @@ impl SplitAccountsFile {
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> Result<Ret, SplitAccountsFileError> {
+        self._get_account_with_data(offset, |meta_entry, loaded_data| {
+            let data = match &loaded_data {
+                LoadedData::NoData => &[],
+                LoadedData::Inline(data) => *data,
+                LoadedData::External(data) => data.as_slice(),
+            };
+            callback(stored_account_from(meta_entry, data))
+        })
+    }
+
+    /// Read account at `offset` and return it as an AccountSharedData.
+    pub fn get_account_shared_data(
+        &self,
+        offset: LogicalOffset,
+    ) -> Result<AccountSharedData, SplitAccountsFileError> {
+        self._get_account_with_data(offset, |meta_entry, loaded_data| {
+            let data = match loaded_data {
+                LoadedData::NoData => Vec::new(),
+                LoadedData::Inline(data) => data.to_vec(),
+                LoadedData::External(data) => data,
+            };
+            AccountSharedData::create_from_existing_shared_data(
+                meta_entry.lamports,
+                Arc::new(data),
+                *meta_entry.owner,
+                meta_entry.is_executable,
+                meta_entry.rent_epoch,
+            )
+        })
+    }
+
+    /// Helper fn that reads account at `offset` and then calls `callback` with it.
+    ///
+    /// This fn lets the caller decide how to handle account data (if any).
+    /// e.g. if the caller wants an AccountSharedData with owned data (i.e. Vec),
+    /// or if the caller wants a StoredAccountInfo with borrowed data (i.e. &[u8]).
+    fn _get_account_with_data<Ret>(
+        &self,
+        offset: LogicalOffset,
+        mut callback: impl for<'local> FnMut(MetaEntryRef<'local>, LoadedData<'local>) -> Ret,
+    ) -> Result<Ret, SplitAccountsFileError> {
         let (meta_file, meta_file_len) = match &self.inner {
             InnerState::ReadOnly(inner) => (&inner.meta_file, inner.meta_len),
             InnerState::Writable(inner) => {
@@ -418,11 +458,9 @@ impl SplitAccountsFile {
             file_offset,
             |meta_entry, data_ref| -> Result<_, SplitAccountsFileError> {
                 match data_ref {
-                    DataRefBorrowed::NoData => Ok(callback(stored_account_from(meta_entry, &[]))),
-                    DataRefBorrowed::Inline(data) => {
-                        Ok(callback(stored_account_from(meta_entry, data)))
-                    }
-                    DataRefBorrowed::External(external_data_offset) => {
+                    DataRef::NoData => Ok(callback(meta_entry, LoadedData::NoData)),
+                    DataRef::Inline(data) => Ok(callback(meta_entry, LoadedData::Inline(data))),
+                    DataRef::External(external_data_offset) => {
                         let (data_file, data_file_len) = match &self.inner {
                             InnerState::ReadOnly(inner) => (&inner.data_file, inner.data_len),
                             InnerState::Writable(inner) => {
@@ -436,21 +474,11 @@ impl SplitAccountsFile {
                             meta_entry.address,
                             meta_entry.data_len,
                         )?;
-                        Ok(callback(stored_account_from(meta_entry, &data)))
+                        Ok(callback(meta_entry, LoadedData::External(data)))
                     }
                 }
             },
         )?
-    }
-
-    /// Read account at `offset` and return it as an AccountSharedData.
-    pub fn get_account_shared_data(
-        &self,
-        offset: LogicalOffset,
-    ) -> Result<AccountSharedData, SplitAccountsFileError> {
-        self.get_account_with_data(offset, |stored_account| {
-            create_account_shared_data(&stored_account)
-        })
     }
 
     /// Iterate over all accounts and call `callback` with each account.
@@ -541,13 +569,13 @@ impl SplitAccountsFile {
             required_meta_read_size = META_ENTRY_FIXED_SIZE;
 
             match parse_meta_entry_data_ref(buffer_bytes, &meta_entry)? {
-                DataRefBorrowed::NoData => {
+                DataRef::NoData => {
                     callback(logical_offset, stored_account_from(meta_entry, &[]));
                 }
-                DataRefBorrowed::Inline(data) => {
+                DataRef::Inline(data) => {
                     callback(logical_offset, stored_account_from(meta_entry, data));
                 }
-                DataRefBorrowed::External(external_data_offset) => {
+                DataRef::External(external_data_offset) => {
                     validate_data_entry_offset(
                         data_file_len,
                         external_data_offset.0,
