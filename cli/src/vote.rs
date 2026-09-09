@@ -1687,9 +1687,9 @@ pub async fn process_vote_update_commission_bps(
                 .unwrap_or(false)
             {
                 return Err(CliError::BadParameter(format!(
-                            "Commission rates in basis points require {simd}, which is not \
-                             enabled on                      this cluster"
-                        ))
+                    "Commission rates in basis points require {simd}, which is not enabled on \
+                     this cluster"
+                ))
                 .into());
             }
         }
