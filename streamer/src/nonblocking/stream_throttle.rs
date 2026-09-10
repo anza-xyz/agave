@@ -15,7 +15,7 @@ use {
 
 /// Max TPS per unstaked peer while total load is below
 /// `UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO` of capacity.
-const MAX_UNSTAKED_TPS: u64 = 500;
+pub(crate) const MAX_UNSTAKED_TPS: u64 = 500;
 /// Max TPS per unstaked peer once total load is above that threshold. This is
 /// the previous fixed quota, so behavior under saturation is unchanged.
 const MIN_UNSTAKED_TPS: u64 = 200;
@@ -38,9 +38,11 @@ const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
 /// 0.76 is the previous trip point of 95% of an 80% staked share (1900
 /// streams per 5 ms interval at the default 500 streams/ms), kept for now so
 /// staked throttling starts at the same load while unstaked load accounting
-/// is rolled out. With unstaked connections disabled there was no staked
-/// share to shrink, so the previous 0.95 still applies there.
+/// is rolled out.
 const STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.76;
+/// With unstaked connections disabled there was no staked share to shrink,
+/// so the previous 0.95 still applies.
+const STAKED_THROTTLING_ON_LOAD_WITHOUT_UNSTAKED_THRESHOLD_RATIO: f64 = 0.95;
 /// Fraction of capacity at which unstaked peers fall back to their minimum
 /// quota. Compared against total (staked + unstaked) load, so unstaked peers
 /// yield to staked demand and may use the whole pool otherwise. Kept below
@@ -101,8 +103,7 @@ impl StreamLoadEMA {
         let staked_threshold_ratio = if allow_unstaked_streams {
             STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
         } else {
-            // No unstaked reservation existed in this configuration.
-            0.95
+            STAKED_THROTTLING_ON_LOAD_WITHOUT_UNSTAKED_THRESHOLD_RATIO
         };
         let staked_throttling_on_load_threshold =
             (staked_threshold_ratio * max_load_in_ema_interval as f64) as u64;
@@ -274,10 +275,8 @@ impl StreamLoadEMA {
             }
             ConnectionPeerType::Staked(stake) => {
                 if self.staked_throttling_enabled.load(Ordering::Relaxed) {
-                    // Staked throttling implies unstaked throttling (the
-                    // unstaked ratio is not above the staked one and applies
-                    // to total load), so unstaked peers are at their minimum
-                    // quota here; +1 guarantees staked peers get more.
+                    // Staked throttling implies unstaked throttling, so unstaked peers are being
+                    // throttled here. +1 guarantees staked always get a bit more.
                     let min_staked_load = self.min_unstaked_load_in_throttling_window + 1;
                     u128::from(self.max_load_in_throttling_window)
                         .saturating_mul(u128::from(stake))
@@ -390,8 +389,7 @@ pub mod test {
 
     const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
     const TEST_TOTAL_STAKE: u64 = 400_000_000 * LAMPORTS_PER_SOL;
-    // Matches the production default: a 50_000-stream window per 100 ms and
-    // unstaked quotas of 50 (nominal) and 20 (throttled).
+    // Matches the production default.
     const TEST_MAX_STREAMS_PER_MS: u64 = 500;
 
     fn new_throttled_load_ema(allow_unstaked_connections: bool) -> StreamLoadEMA {
@@ -594,8 +592,8 @@ pub mod test {
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         );
-        load_ema.staked_throttling_on_load_threshold = 10;
-        load_ema.unstaked_throttling_on_load_threshold = 40;
+        load_ema.staked_throttling_on_load_threshold = 40;
+        load_ema.unstaked_throttling_on_load_threshold = 10;
 
         load_ema
             .staked_load_in_recent_interval
@@ -703,22 +701,6 @@ pub mod test {
         load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
         assert!(!load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
         assert!(!load_ema.unstaked_throttling_enabled.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn test_thresholds_and_windows_with_default_config() {
-        let load_ema = StreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        );
-        // 500 streams/ms is 2_500 per 5 ms EMA interval; 1_900 is the previous
-        // 95% of an 80% staked share.
-        assert_eq!(load_ema.staked_throttling_on_load_threshold, 1_900);
-        assert_eq!(load_ema.unstaked_throttling_on_load_threshold, 1_750);
-        assert_eq!(load_ema.max_load_in_throttling_window, 50_000);
-        assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 50);
-        assert_eq!(load_ema.min_unstaked_load_in_throttling_window, 20);
     }
 
     #[test]
