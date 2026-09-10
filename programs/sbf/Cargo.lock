@@ -251,16 +251,12 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-transaction-view",
  "ahash 0.8.12",
- "libc",
- "nix",
  "rts-alloc",
- "shaq",
  "slotmap",
  "solana-fee",
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
  "solana-transaction-error",
- "thiserror 2.0.20",
 ]
 
 [[package]]
