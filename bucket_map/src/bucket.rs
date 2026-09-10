@@ -65,13 +65,11 @@ impl<I: BucketOccupied, D: BucketOccupied> Default for Reallocated<I, D> {
 }
 
 impl<I: BucketOccupied, D: BucketOccupied> Reallocated<I, D> {
-    /// specify that a reallocation has occurred
-    pub fn add_reallocation(&self) {
-        assert_eq!(
-            0,
-            self.active_reallocations.fetch_add(1, Ordering::Relaxed),
-            "Only 1 reallocation can occur at a time"
-        );
+    /// Return true if this caller reserved the next reallocation.
+    pub fn try_reserve_reallocation(&self) -> bool {
+        self.active_reallocations
+            .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
     }
     /// Return true IFF a reallocation has occurred.
     /// Calling this takes conceptual ownership of the reallocation encoded in the struct.
@@ -675,7 +673,9 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
     }
 
     pub fn grow_index(&self, mut current_capacity: u64) {
-        if self.index.contents.capacity() == current_capacity {
+        if self.index.contents.capacity() == current_capacity
+            && self.reallocated.try_reserve_reallocation()
+        {
             // make sure to grow to at least % more than the anticipated size
             // The indexing algorithm expects to require some over-allocation.
             let anticipated_size = self.anticipated_size * 140 / 100;
@@ -718,7 +718,6 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                     self.stats.index.update_max_size(index.capacity());
                     let mut items = self.reallocated.items.lock().unwrap();
                     items.index = Some(index);
-                    self.reallocated.add_reallocation();
                     self.restartable_bucket.set_file(file_name, self.random);
                     break;
                 }
@@ -794,6 +793,14 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
     /// grow a data bucket
     /// The application of the new bucket is deferred until the next write lock.
     pub fn grow_data(&self, data_index: u64, current_capacity_pow2: u8) {
+        if self
+            .data
+            .get(data_index as usize)
+            .is_some_and(|bucket| bucket.contents.capacity_pow2() != current_capacity_pow2)
+            || !self.reallocated.try_reserve_reallocation()
+        {
+            return;
+        }
         let (new_bucket, _file_name) = BucketStorage::new_resized(
             &self.drives,
             self.index.max_search,
@@ -806,7 +813,6 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             Self::elem_size(),
             &self.stats.data,
         );
-        self.reallocated.add_reallocation();
         let mut items = self.reallocated.items.lock().unwrap();
         items.data = Some((data_index, new_bucket));
     }
