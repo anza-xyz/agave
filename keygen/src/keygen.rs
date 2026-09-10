@@ -449,6 +449,11 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
                         ),
                 )
                 .arg(
+                    Arg::new("base58")
+                        .long("base58")
+                        .help("Recover from a base58-encoded keypair via secure prompt"),
+                )
+                .arg(
                     Arg::new("outfile")
                         .short('o')
                         .long("outfile")
@@ -513,6 +518,19 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .try_get_matches()
         .unwrap_or_else(|e| e.exit());
     do_main(&matches).map_err(|err| DisplayError::new_as_boxed(err).into())
+}
+fn keypair_from_base58_string(base58_string: &str) -> Result<Keypair, Box<dyn error::Error>> {
+    let bytes = bs58::decode(base58_string.trim())
+        .into_vec()
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+    if bytes.len() == 64 {
+        solana_keypair::Keypair::try_from(bytes.as_slice())
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    } else if bytes.len() == 32 {
+        keypair_from_seed(&bytes)
+    } else {
+        Err("Base58 decoded array must be 32 or 64 bytes in length".into())
+    }
 }
 
 fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
@@ -624,14 +642,17 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             }
 
             let keypair_name = "recover";
-            let keypair =
-                if let Some(source) = matches.try_get_one::<SignerSource>("prompt_signer")? {
-                    keypair_from_source(matches, source, keypair_name, true)?
-                } else {
-                    let skip_validation =
-                        matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
-                    keypair_from_seed_phrase(keypair_name, skip_validation, true, None, true)?
-                };
+            let keypair = if matches.try_contains_id("base58")? {
+                let base58_string =
+                    rpassword::prompt_password(format!("[{keypair_name}] base58 keypair: "))?;
+                keypair_from_base58_string(&base58_string)?
+            } else if let Some(source) = matches.try_get_one::<SignerSource>("prompt_signer")? {
+                keypair_from_source(matches, source, keypair_name, true)?
+            } else {
+                let skip_validation =
+                    matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
+                keypair_from_seed_phrase(keypair_name, skip_validation, true, None, true)?
+            };
             output_keypair(&keypair, outfile, "recovered")?;
         }
         ("grind", matches) => {
@@ -1371,5 +1392,26 @@ mod tests {
 
         let result_pubkey = read_pubkey_file(&outfile_path).unwrap();
         assert_eq!(result_pubkey, pubkey);
+    }
+
+    #[test]
+    fn test_keypair_from_base58_string() {
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+
+        // 64-byte base58 string
+        let base58_64 = keypair.to_base58_string();
+        let decoded_keypair_64 = keypair_from_base58_string(&base58_64).unwrap();
+        assert_eq!(decoded_keypair_64.pubkey(), pubkey);
+
+        // 32-byte base58 string (seed only)
+        let seed = keypair.secret_bytes();
+        let base58_32 = bs58::encode(seed).into_string();
+        let decoded_keypair_32 = keypair_from_base58_string(&base58_32).unwrap();
+        assert_eq!(decoded_keypair_32.pubkey(), pubkey);
+
+        // Invalid length
+        let invalid_base58 = bs58::encode(&[0u8; 10]).into_string();
+        assert!(keypair_from_base58_string(&invalid_base58).is_err());
     }
 }
