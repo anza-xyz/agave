@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
+        device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing, TxRing},
         ecn_codepoint::EcnCodepoint,
         gre::{
             construct_gre_packet, gre_packet_size,
@@ -14,7 +14,7 @@ use {
             construct_packet, construct_vlan_packet,
         },
         route::NextHop,
-        socket::{Socket, Tx, TxRing},
+        socket::{Socket, Tx},
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
     agave_cpu_utils::set_cpu_affinity,
