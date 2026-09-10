@@ -7431,6 +7431,95 @@ fn test_purge_transaction_history_before_missing_shred_and_update_parent() {
     );
 }
 
+#[test_case(vec![1, 1, 1]; "invalid shred data")]
+#[test_case(0u64.to_le_bytes().to_vec(); "block aborted")]
+fn test_purge_transaction_history_before_malformed_component_and_update_parent(
+    malformed_component: Vec<u8>,
+) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let original_parent = 103;
+    let update_parent = 100;
+    let pre_update_entries = make_slot_entries_with_transactions(1);
+    let pre_update_address = pre_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
+    let pre_update_signature =
+        write_transaction_statuses_for_entries(&blockstore, slot, &pre_update_entries)[0];
+    blockstore
+        .write_transaction_memos(&pre_update_signature, slot, "memo".to_string())
+        .unwrap();
+
+    let fec_set_size = u32::try_from(DATA_SHREDS_PER_FEC_BLOCK).unwrap();
+    let malformed_fec_set_index = fec_set_size * 2;
+    let update_parent_fec_set_index = fec_set_size * 3;
+    let mut shreds = create_block_header_shreds(slot, original_parent, Hash::new_unique());
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        pre_update_entries,
+        fec_set_size,
+        false,
+    ));
+    shreds.extend(
+        Shredder::new(slot, original_parent, 0, 0)
+            .unwrap()
+            .make_shreds_from_data_slice(
+                &Keypair::new(),
+                &malformed_component,
+                false,
+                Hash::new_unique(),
+                malformed_fec_set_index,
+                malformed_fec_set_index,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap(),
+    );
+    shreds.extend(create_update_parent_shreds_with_shred_parent(
+        slot,
+        original_parent,
+        update_parent,
+        Hash::new_unique(),
+        update_parent_fec_set_index,
+        false,
+    ));
+    blockstore.insert_shreds(shreds, true).unwrap();
+
+    assert!(blockstore.meta(slot).unwrap().unwrap().has_update_parent());
+    assert!(
+        blockstore
+            .read_transaction_status((pre_update_signature, slot))
+            .unwrap()
+            .is_some()
+    );
+    let stats = blockstore
+        .purge_transaction_history_for_replay_slot_exact(slot)
+        .unwrap();
+    assert_eq!(stats.transactions_processed, 1);
+    assert!(
+        blockstore
+            .read_transaction_status((pre_update_signature, slot))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        blockstore
+            .read_transaction_memos(pre_update_signature, slot)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        blockstore
+            .address_signatures_cf
+            .get((pre_update_address, slot, 0, pre_update_signature))
+            .unwrap()
+            .is_none()
+    );
+}
+
 #[test]
 fn test_complete_block_skips_pre_update_parent_entries() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();

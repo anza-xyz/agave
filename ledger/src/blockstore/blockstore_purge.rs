@@ -510,7 +510,8 @@ impl Blockstore {
 
     /// Removes transaction history written before the UpdateParent boundary
     /// recorded in SlotMeta. All deletes are staged before the write batch is
-    /// committed.
+    /// committed. A malformed or aborted component ends the prefix replay could
+    /// have executed, so deletions staged from earlier components are retained.
     pub fn purge_transaction_history_for_replay_slot_exact(
         &self,
         slot: Slot,
@@ -526,32 +527,57 @@ impl Blockstore {
             return Err(BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(slot));
         }
         completed_ranges.retain(|range| range.end <= slot_meta.replay_fec_set_index);
-        let slot_components =
-            self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
-        let transactions = slot_components
-            .into_iter()
-            .filter_map(|component| match component {
-                ParsedBlockComponent::EntryBatch(entries) => Some(entries),
-                ParsedBlockComponent::BlockMarker(_) => None,
-            })
-            .flatten()
-            .flat_map(|entry| entry.transactions);
+        let mut transaction_index = 0usize;
+        // Decode each completed component separately so malformed data does not
+        // discard transactions reconstructed from earlier valid components.
+        for completed_range in completed_ranges {
+            let slot_components = match self.get_slot_component_views_in_block(
+                slot,
+                &vec![completed_range.clone()],
+                Some(&slot_meta),
+            ) {
+                Ok(slot_components) => slot_components,
+                Err(
+                    error @ (BlockstoreError::InvalidShredData(_)
+                    | BlockstoreError::BlockAborted(_)),
+                ) => {
+                    warn!(
+                        "Stopping transaction-history purge reconstruction for slot {slot} at \
+                         shred range {completed_range:?}; transaction history from earlier \
+                         components will still be purged: {error}"
+                    );
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
 
-        for (transaction_index, transaction) in transactions.enumerate() {
-            if let Some(&signature) = transaction.signatures().first()
-                && let Some(meta) = self.read_transaction_status((signature, slot))?
+            for transaction in slot_components
+                .into_iter()
+                .filter_map(|component| match component {
+                    ParsedBlockComponent::EntryBatch(entries) => Some(entries),
+                    ParsedBlockComponent::BlockMarker(_) => None,
+                })
+                .flatten()
+                .flat_map(|entry| entry.transactions)
             {
-                self.stage_transaction_history_deletes(
-                    &mut write_batch,
-                    slot,
-                    transaction_index,
-                    signature,
-                    transaction.static_account_keys(),
-                    Some(&meta.loaded_addresses),
-                    &mut stats,
-                )?;
+                if let Some(&signature) = transaction.signatures().first()
+                    && let Some(meta) = self.read_transaction_status((signature, slot))?
+                {
+                    self.stage_transaction_history_deletes(
+                        &mut write_batch,
+                        slot,
+                        transaction_index,
+                        signature,
+                        transaction.static_account_keys(),
+                        Some(&meta.loaded_addresses),
+                        &mut stats,
+                    )?;
+                }
+                transaction_index = transaction_index
+                    .checked_add(1)
+                    .ok_or(BlockstoreError::TransactionIndexOverflow)?;
+                stats.transactions_processed = stats.transactions_processed.saturating_add(1);
             }
-            stats.transactions_processed = stats.transactions_processed.saturating_add(1);
         }
         prepare_deletions_timer.stop();
         stats.prepare_deletions_us = prepare_deletions_timer.as_us();
