@@ -373,7 +373,7 @@ solana-compute-budget = { path = "compute-budget", version = "=4.4.0-alpha.3", f
 solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 solana-compute-budget-interface = "3.1.0"
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
-solana-config-interface = "2.0.0"
+solana-config-interface = "2.0.1"
 solana-connection-cache = { path = "connection-cache", version = "=4.4.0-alpha.3", default-features = false, features = ["agave-unstable-api"] }
 solana-core = { path = "core", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 solana-cost-model = { path = "cost-model", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
