@@ -6,3 +6,5 @@
 pub mod cost;
 #[cfg(feature = "ffi")]
 pub mod gossip;
+#[cfg(feature = "ffi")]
+pub mod shred;

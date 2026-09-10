@@ -1,14 +1,28 @@
-//! Differential shred-parse harness: drives Agave's Blockstore pipeline
-//! (pre-filter -> parse -> FEC/recovery -> deshred -> tick verify) and emits
-//! ShredParseEffects to diff against Firedancer. Signature and PoH checks are
-//! not run; the fuzzer re-proofs each FEC set, so Merkle roots derive normally
-//! from the shred bytes.
+//! Shred parse conformance harness.
+//!
+//! Drives Agave's Blockstore pipeline (pre-filter -> parse -> FEC/recovery ->
+//! deshred -> tick verify) and emits `ShredParseEffects` to diff against
+//! Firedancer. Signature and PoH checks are not run; the fuzzer re-proofs each
+//! FEC set, so Merkle roots derive normally from the shred bytes.
 
 use {
-    crate::{
+    agave_feature_set::FeatureSet,
+    agave_votor_messages::migration::MigrationStatus,
+    prost::Message,
+    protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
+    solana_account::AccountSharedData,
+    solana_accounts_db::{
+        account_locks::validate_account_locks,
+        accounts::Accounts,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
+        ancestors::Ancestors,
+    },
+    solana_clock::{BankId, DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Slot},
+    solana_epoch_schedule::EpochSchedule,
+    solana_ledger::{
         blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred,
-            blockstore_purge::PurgeType, handle_duplicate_shred,
+            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType,
+            handle_duplicate_shred,
         },
         blockstore_processor::verify_ticks,
         shred::{
@@ -18,96 +32,27 @@ use {
             wire,
         },
     },
-    agave_feature_set::FeatureSet,
-    agave_votor_messages::migration::MigrationStatus,
-    protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
-    solana_account::AccountSharedData,
-    solana_accounts_db::{
-        account_locks::validate_account_locks,
-        accounts::Accounts,
-        accounts_db::{AccountsDb, AccountsDbConfig},
-        accounts_hash::AccountsLtHash,
-        accounts_index::{AccountsIndexConfig, IndexLimit},
-        ancestors::Ancestors,
-        blockhash_queue::BlockhashQueue,
-    },
-    solana_clock::{BankId, DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Epoch, Slot},
-    solana_epoch_schedule::EpochSchedule,
-    solana_fee_calculator::FeeRateGovernor,
-    solana_hard_forks::HardForks,
-    solana_hash::Hash,
-    solana_inflation::Inflation,
-    solana_lattice_hash::lt_hash::LtHash,
     solana_message::AccountKeys,
     solana_packet::PACKET_DATA_SIZE,
-    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        bank::{Bank, BankFieldsToDeserialize, BankHashStats, BankRc},
+        bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
-        stake_history::StakeHistory,
-        stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
     },
     solana_runtime_transaction::sanitize_config::sanitize_config,
     solana_sdk_ids::sysvar,
-    solana_stake_interface::state::Stake,
     solana_streamer::evicting_sender::EvictingSender,
     solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
-    solana_vote::vote_account::VoteAccounts,
     std::{
         borrow::Cow,
         cell::{Cell, RefCell},
         collections::{BTreeMap, HashMap},
+        ffi::c_int,
         num::NonZeroUsize,
         path::{Path, PathBuf},
-        sync::{Arc, atomic::AtomicBool},
+        sync::Arc,
     },
 };
-#[cfg(not(test))]
-use {prost::Message, std::ffi::c_int};
-
-/// # Safety
-///
-/// `in_ptr` must point to `in_sz` initialized bytes. `out_ptr` must point
-/// to writable memory of at least `*out_psz` bytes, which need not be
-/// initialized. `out_psz` must be a valid, aligned pointer to a `u64`.
-/// On success, `*out_psz` is updated to the number of initialized output bytes.
-#[cfg(not(test))]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn sol_compat_shred_parse_v1(
-    out_ptr: *mut u8,
-    out_psz: *mut u64,
-    in_ptr: *const u8,
-    in_sz: u64,
-) -> c_int {
-    if out_ptr.is_null() || out_psz.is_null() || in_ptr.is_null() || in_sz == 0 {
-        return 0;
-    }
-    let Ok(in_len) = usize::try_from(in_sz) else {
-        return 0;
-    };
-    let in_slice = unsafe { std::slice::from_raw_parts(in_ptr, in_len) };
-    let Ok(context) = ShredParseContext::decode(in_slice) else {
-        return 0;
-    };
-
-    let effects = execute_shred_parse(&context);
-    let out_vec = effects.encode_to_vec();
-    let Ok(out_cap) = usize::try_from(unsafe { *out_psz }) else {
-        return 0;
-    };
-    if out_vec.len() > out_cap {
-        return 0;
-    }
-    let Ok(out_len) = u64::try_from(out_vec.len()) else {
-        return 0;
-    };
-    unsafe {
-        std::ptr::copy_nonoverlapping(out_vec.as_ptr(), out_ptr, out_vec.len());
-        *out_psz = out_len;
-    }
-    1
-}
 
 thread_local! {
     // Reused across inputs; opening RocksDB per input was ~20% of harness runtime.
@@ -133,8 +78,7 @@ impl Drop for LedgerGuard {
 
 // Open a reused blockstore in a PID-named dir, first sweeping dirs left by dead (aborted) processes.
 fn open_ledger() -> (Blockstore, LedgerGuard) {
-    let root = std::env::temp_dir().join("solfuzz_shred_bs");
-    let _ = std::fs::create_dir_all(&root);
+    let root = std::env::temp_dir().join("agave_conformance_shred");
     let proc_root = Path::new("/proc");
     if proc_root.is_dir()
         && let Ok(entries) = std::fs::read_dir(&root)
@@ -218,10 +162,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         }
         stale => {
             // Dropping closes the old DB and deletes its directory, which must finish before reopening the same path.
-            if let Some((blockstore, ledger)) = stale {
-                drop(blockstore);
-                drop(ledger);
-            }
+            drop(stale);
             open_ledger()
         }
     };
@@ -346,7 +287,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             }
 
             prev_merkle_root = Some(merkle_root.clone());
-            expected_index += DATA_SHREDS_PER_FEC_BLOCK as u32;
+            expected_index = expected_index.saturating_add(DATA_SHREDS_PER_FEC_BLOCK as u32);
 
             effects.fec_set_results.push(FecSetParseResult {
                 completed: true,
@@ -388,7 +329,7 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
 
     let accounts = create_accounts_db();
     let rent_account = AccountSharedData::new_data(1, &Rent::default(), &sysvar::id()).unwrap();
-    accounts.store_accounts_seq(
+    accounts.store_accounts(
         (parent_slot, &[(sysvar::rent::id(), rent_account)][..]),
         BankId::default(),
         None,
@@ -397,53 +338,26 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
     accounts.accounts_db.add_root(parent_slot);
     let bank_rc = BankRc::new(accounts);
 
-    let stakes = DeserializableDelegationStakes {
-        vote_accounts: VoteAccounts::default(),
-        stake_delegations: vec![],
-        unused: 0,
-        epoch,
-        stake_history: StakeHistory::default(),
-    };
-    let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();
-    for key in [epoch, epoch.saturating_add(1)] {
-        epoch_stakes.insert(
-            key,
-            VersionedEpochStakes::new(
-                SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
+    let epoch_stakes = [epoch, epoch.saturating_add(1)]
+        .into_iter()
+        .map(|key| {
+            (
                 key,
-            ),
-        );
-    }
+                VersionedEpochStakes::new_for_tests(HashMap::default(), key),
+            )
+        })
+        .collect();
 
     let fields = BankFieldsToDeserialize {
-        blockhash_queue: BlockhashQueue::default(),
-        hash: Hash::default(),
-        parent_hash: Hash::default(),
         parent_slot,
-        hard_forks: HardForks::default(),
-        transaction_count: 0,
         tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(root_slot),
-        signature_count: 0,
-        capitalization: 0,
         max_tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(root_slot.saturating_add(1)),
         hashes_per_tick: Some(DEFAULT_HASHES_PER_TICK),
         ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
-        ns_per_slot: 0,
-        genesis_creation_time: 0,
-        slots_per_year: 0.0,
         slot: root_slot,
         block_height: root_slot,
-        leader_id: Pubkey::default(),
-        fee_rate_governor: FeeRateGovernor::default(),
         epoch_schedule,
-        inflation: Inflation::default(),
-        stakes,
-        versioned_epoch_stakes: vec![],
-        is_delta: false,
-        accounts_data_len: 0,
-        accounts_lt_hash: AccountsLtHash(LtHash::identity()),
-        bank_hash_stats: BankHashStats::default(),
-        block_id: None,
+        ..BankFieldsToDeserialize::default()
     };
 
     Arc::new(Bank::new_for_txn_tests(
@@ -455,26 +369,69 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
 }
 
 fn create_accounts_db() -> Accounts {
-    let index = Some(AccountsIndexConfig {
-        bins: Some(2),
-        num_flush_threads: Some(NonZeroUsize::new(1).unwrap()),
-        index_limit: IndexLimit::InMemOnly,
-        ..AccountsIndexConfig::default()
-    });
+    let single_thread = NonZeroUsize::new(1).unwrap();
     let accounts_db_config = AccountsDbConfig {
-        index,
-        skip_initial_hash_calc: true,
-        num_background_threads: Some(NonZeroUsize::new(1).unwrap()),
-        num_foreground_threads: Some(NonZeroUsize::new(1).unwrap()),
-        verify_index: false,
+        num_background_threads: Some(single_thread),
+        num_foreground_threads: Some(single_thread),
         read_cache_num_shards: Some(2),
-        ..AccountsDbConfig::default()
+        skip_initial_hash_calc: true,
+        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
     };
-    let accounts_db = AccountsDb::new_with_config(
+    Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
         vec![],
         accounts_db_config,
-        None,
-        Arc::new(AtomicBool::new(false)),
-    );
-    Accounts::new(Arc::new(accounts_db))
+    )))
+}
+
+/// Conformance harness entry point for shred parsing.
+///
+/// Decodes a protobuf-encoded `ShredParseContext` from the input buffer, runs
+/// the shred pipeline, and writes the protobuf-encoded `ShredParseEffects` into
+/// the output buffer. A zero-length input decodes to the default context.
+///
+/// Returns `1` on success and `0` on failure (null `out_ptr`/`out_psz`, null
+/// `in_ptr` with non-zero `in_sz`, undecodable input, or an output buffer that
+/// is too small).
+///
+/// # Safety
+///
+/// `out_ptr` must point to writable memory of at least `*out_psz` bytes, which
+/// need not be initialized, and `out_psz` must be a valid, aligned pointer to a
+/// `u64`. `in_ptr` must point to `in_sz` readable bytes, or may be null when
+/// `in_sz` is 0. On success, `*out_psz` is updated to the number of bytes
+/// written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sol_compat_shred_parse_v1(
+    out_ptr: *mut u8,
+    out_psz: *mut u64,
+    in_ptr: *const u8,
+    in_sz: u64,
+) -> c_int {
+    if out_ptr.is_null() || out_psz.is_null() {
+        return 0;
+    }
+    let in_slice = if in_sz == 0 {
+        &[]
+    } else if in_ptr.is_null() {
+        return 0;
+    } else {
+        let Ok(in_len) = usize::try_from(in_sz) else {
+            return 0;
+        };
+        unsafe { std::slice::from_raw_parts(in_ptr, in_len) }
+    };
+    let Ok(context) = ShredParseContext::decode(in_slice) else {
+        return 0;
+    };
+
+    let effects = execute_shred_parse(&context);
+    let out_vec = effects.encode_to_vec();
+    if out_vec.len() as u64 > unsafe { *out_psz } {
+        return 0;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(out_vec.as_ptr(), out_ptr, out_vec.len());
+        *out_psz = out_vec.len() as u64;
+    }
+    1
 }
