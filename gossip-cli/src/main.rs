@@ -1,6 +1,9 @@
 //! A command-line executable for monitoring a cluster's gossip plane.
 #[allow(deprecated)]
-use solana_gossip::{contact_info::ContactInfo, gossip_service::discover_peers};
+use solana_gossip::{
+    contact_info::ContactInfo,
+    gossip_service::{discover_peers, discover_peers_and_inspect},
+};
 use {
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name, value_t,
@@ -17,6 +20,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     std::{
+        collections::HashMap,
         error,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         process::exit,
@@ -162,8 +166,8 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                         .value_name("PATH")
                         .takes_value(true)
                         .help(
-                            "Dump every discovered ContactInfo to PATH as JSON lines (- for \
-                             stdout)",
+                            "Dump every discovered ContactInfo, plus the slots each node voted \
+                             on, to PATH as JSON lines (- for stdout)",
                         ),
                 ),
         )
@@ -259,7 +263,14 @@ fn process_spy_results(
     }
 }
 
-fn dump_contact_infos(path: &str, nodes: &[ContactInfo]) -> std::io::Result<()> {
+/// Dumps one JSON object per line: every discovered ContactInfo together with
+/// the slots of the votes that node gossiped, followed by vote-only records for
+/// nodes which have votes in CRDS but no (longer a) contact info.
+fn dump_gossip_state(
+    path: &str,
+    nodes: &[ContactInfo],
+    mut vote_slots: HashMap<Pubkey, Vec<u64>>,
+) -> std::io::Result<()> {
     let mut out = String::new();
     for node in nodes {
         let sockets: Map<String, Value> = node
@@ -277,6 +288,15 @@ fn dump_contact_infos(path: &str, nodes: &[ContactInfo]) -> std::io::Result<()> 
             "shred_version": node.shred_version(),
             "version": node.version().to_string(),
             "sockets": sockets,
+            "vote_slots": vote_slots.remove(node.pubkey()).unwrap_or_default(),
+        });
+        out.push_str(&entry.to_string());
+        out.push('\n');
+    }
+    for (pubkey, slots) in vote_slots {
+        let entry = json!({
+            "pubkey": pubkey.to_string(),
+            "vote_slots": slots,
         });
         out.push_str(&entry.to_string());
         out.push('\n');
@@ -332,8 +352,9 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     }
 
     let discover_timeout = Duration::from_secs(timeout.unwrap_or(u64::MAX));
+    let dump_path = matches.value_of("dump");
     #[allow(deprecated)]
-    let (all_peers, validators) = discover_peers(
+    let (all_peers, validators, vote_slots) = discover_peers_and_inspect(
         identity_keypair,
         &entrypoint_addrs,
         num_nodes,
@@ -343,10 +364,15 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         Some(&gossip_addr),
         shred_version,
         socket_addr_space,
+        |cluster_info| {
+            dump_path
+                .map(|_| cluster_info.get_all_vote_slots())
+                .unwrap_or_default()
+        },
     )?;
 
-    if let Some(path) = matches.value_of("dump") {
-        dump_contact_infos(path, &all_peers)?;
+    if let Some(path) = dump_path {
+        dump_gossip_state(path, &all_peers, vote_slots)?;
     }
 
     process_spy_results(
