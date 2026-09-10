@@ -182,6 +182,7 @@ agave-precompiles = { path = "precompiles", version = "=4.4.0-alpha.3", features
 agave-random = { path = "random", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 agave-scheduler-bindings = "6.0.0"
+agave-scheduler-handshake = "6.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.4.0-alpha.3", features = ["agave-unstable-api"] }
 agave-transaction-view = "6.1.0"
