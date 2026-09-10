@@ -37,7 +37,11 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::BLSPubkeyToRankMap},
-    std::{collections::HashMap, num::NonZero, sync::Arc},
+    std::{
+        collections::HashMap,
+        num::{NonZero, Saturating},
+        sync::Arc,
+    },
 };
 
 #[derive(Default)]
@@ -98,8 +102,7 @@ fn verify_vote_batch(
     rank_map: &BLSPubkeyToRankMap,
     vote_payload_to_sign: VotePayloadToSign,
     unverified_votes: Vec<UnverifiedVotePayload>,
-) -> (u64, VoteVerificationStats, ProcessedVotes) {
-    let unverified_votes_len = unverified_votes.len() as u64;
+) -> (VoteVerificationStats, ProcessedVotes) {
     let max_validators = rank_map.len();
     let (verified_votes, vote_verification_stats) = verify_votes(
         max_validators,
@@ -111,11 +114,7 @@ fn verify_vote_batch(
 
     let processed_votes =
         process_verified_votes(verified_votes, root_bank, my_pubkey, leader_schedule);
-    (
-        unverified_votes_len,
-        vote_verification_stats,
-        processed_votes,
-    )
+    (vote_verification_stats, processed_votes)
 }
 
 /// Verifies votes and sends the verified votes to the consensus pool; and sends the desired subset
@@ -143,43 +142,41 @@ pub(super) fn verify_and_send_votes(
         .distinct_votes_stats
         .add_sample(unverified_votes.len() as u64);
 
-    let (total_votes, verification_stats, processed_votes) = thread_pool.install(|| {
+    let par_result = thread_pool.install(|| {
         unverified_votes
             .into_par_iter()
             .fold(
-                || (0u64, VoteVerificationStats::default(), vec![]),
-                |(mut acc_total_votes, mut acc_verification_stats, mut acc_processed_votes),
-                 (vote_payload_to_sign, (unverified_votes, rank_map))| {
-                    let (unverified_votes_len, vote_verification_stats, processed_votes) =
-                        verify_vote_batch(
-                            root_bank,
-                            my_pubkey,
-                            leader_schedule,
-                            ban_sender,
-                            thread_pool,
-                            &rank_map,
-                            vote_payload_to_sign,
-                            unverified_votes,
-                        );
-                    acc_total_votes = acc_total_votes.saturating_add(unverified_votes_len);
-                    acc_verification_stats.merge(vote_verification_stats);
-                    acc_processed_votes.push(processed_votes);
-                    (acc_total_votes, acc_verification_stats, acc_processed_votes)
+                ParResult::default,
+                |mut par_result, (vote_payload_to_sign, (unverified_votes, rank_map))| {
+                    let num_votes_to_sigverify = unverified_votes.len();
+                    let (vote_verification_stats, processed_votes) = verify_vote_batch(
+                        root_bank,
+                        my_pubkey,
+                        leader_schedule,
+                        ban_sender,
+                        thread_pool,
+                        &rank_map,
+                        vote_payload_to_sign,
+                        unverified_votes,
+                    );
+                    par_result.add(
+                        processed_votes,
+                        vote_verification_stats,
+                        num_votes_to_sigverify,
+                    );
+                    par_result
                 },
             )
-            .reduce(
-                || (0, VoteVerificationStats::default(), vec![]),
-                |mut left, mut right| {
-                    left.0 = left.0.saturating_add(right.0);
-                    left.1.merge(right.1);
-                    left.2.append(&mut right.2);
-                    left
-                },
-            )
+            .reduce(ParResult::default, |mut left, right| {
+                left.merge(right);
+                left
+            })
     });
-    let sender_stats = send_msgs(my_pubkey, channels, processed_votes)?;
-    stats.votes_to_sig_verify += total_votes;
-    stats.vote_verification_stats.merge(verification_stats);
+    let sender_stats = send_msgs(my_pubkey, channels, par_result.processed_votes)?;
+    stats.votes_to_sig_verify += par_result.num_votes_to_sigverify;
+    stats
+        .vote_verification_stats
+        .merge(par_result.verification_stats);
     stats.senders.merge(sender_stats);
 
     measure.stop();
@@ -511,4 +508,35 @@ fn verify_individual_votes(
                 }
             })
     })
+}
+
+#[derive(Default)]
+struct ParResult {
+    processed_votes: Vec<ProcessedVotes>,
+    verification_stats: VoteVerificationStats,
+    num_votes_to_sigverify: Saturating<usize>,
+}
+
+impl ParResult {
+    fn add(
+        &mut self,
+        processed_votes: ProcessedVotes,
+        verification_stats: VoteVerificationStats,
+        num_votes_to_sigverify: usize,
+    ) {
+        self.processed_votes.push(processed_votes);
+        self.verification_stats.merge(verification_stats);
+        self.num_votes_to_sigverify += num_votes_to_sigverify;
+    }
+
+    fn merge(&mut self, other: Self) {
+        let Self {
+            mut processed_votes,
+            verification_stats,
+            num_votes_to_sigverify,
+        } = other;
+        self.processed_votes.append(&mut processed_votes);
+        self.verification_stats.merge(verification_stats);
+        self.num_votes_to_sigverify += num_votes_to_sigverify;
+    }
 }
