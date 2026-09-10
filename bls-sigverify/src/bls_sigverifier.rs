@@ -612,7 +612,7 @@ mod tests {
         _metrics_receiver: ConsensusMetricsEventReceiver,
         generated_cert_types: Arc<GeneratedCertTypes>,
         _certificate_sender: Sender<(Slot, UnverifiedCertificate)>,
-        _bank_forks: Arc<RwLock<BankForks>>,
+        bank_forks: Arc<RwLock<BankForks>>,
     }
 
     impl TestContext {
@@ -703,7 +703,7 @@ mod tests {
                 _metrics_receiver: metrics_receiver,
                 generated_cert_types,
                 _certificate_sender: certificate_sender,
-                _bank_forks: bank_forks,
+                bank_forks,
             }
         }
 
@@ -1631,66 +1631,20 @@ mod tests {
 
     #[test]
     fn test_verify_old_vote_and_cert() {
-        let (channel_to_pool, pool_receiver) = bounded(1024);
-        let (channel_to_repair, _repair_receiver) = EvictingSender::new_bounded(1024);
-        let (channel_to_metrics, _metrics_receiver) = bounded(1024);
-        let (channel_to_reward, _reward_receiver) = bounded(1024);
-        let validator_keypairs = (0..10)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-        let stakes_vec = (0..validator_keypairs.len())
-            .map(|i| 1_000 - i as u64)
-            .collect::<Vec<_>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stakes_vec,
-        );
-        let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-        let (bank0, _temp_bank_forks) = bank0.wrap_with_bank_forks_for_tests();
-        let bank5 = Bank::new_from_parent(bank0, SlotLeader::default(), 5);
-        let bank_forks = BankForks::new_rw_arc(bank5);
-
-        bank_forks.write().unwrap().set_root(5, None, None);
-
-        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let keypair = Keypair::new();
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = Arc::new(ClusterInfo::new(
-            contact_info,
-            Arc::new(keypair),
-            SocketAddrSpace::Unspecified,
-        ));
-        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
-        let (_packet_sender, packet_receiver) = bounded(1024);
-        let (_certificate_sender, certificate_receiver) = bounded(1024);
-        let (ban_sender, _ban_receiver) = stub_ban_channel_for_tests(1024);
-        let mut sig_verifier = SigVerifier::new(
-            SigVerifierContext {
-                migration_status: Arc::new(MigrationStatus::default()),
-                ban_sender,
-                sharable_banks,
-                highest_parent_ready: Arc::new(RwLock::default()),
-                cluster_info,
-                leader_schedule,
-                num_threads: 4,
-                generated_cert_types: Arc::new(GeneratedCertTypes::default()),
-            },
-            SigVerifierChannels::new(
-                packet_receiver,
-                certificate_receiver,
-                channel_to_repair,
-                channel_to_reward,
-                channel_to_pool,
-                channel_to_metrics,
-            ),
-        );
+        let mut ctx = TestContext::new();
+        let bank5 =
+            Bank::new_from_parent(ctx.verifier.sharable_banks.root(), SlotLeader::default(), 5);
+        {
+            let mut bank_forks = ctx.bank_forks.write().unwrap();
+            bank_forks.insert(bank5);
+            bank_forks.set_root(5, None, None);
+        }
 
         let rank = 0;
         let vote = Vote::new_skip_vote(2);
         let vote_payload =
-            get_vote_payload_to_sign(vote, sig_verifier.cluster_info.my_shred_version());
-        let bls_keypair = &validator_keypairs[rank].bls_keypair;
+            get_vote_payload_to_sign(vote, ctx.verifier.cluster_info.my_shred_version());
+        let bls_keypair = &ctx.validator_keypairs[rank].bls_keypair;
         let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
         let consensus_message_vote = ConsensusMessage::Vote(VoteMessage {
             vote,
@@ -1701,38 +1655,35 @@ mod tests {
         let datagrams_vote = messages_to_datagrams(
             &[(
                 consensus_message_vote,
-                validator_keypairs[rank].node_keypair.pubkey(),
+                ctx.validator_keypairs[rank].node_keypair.pubkey(),
             )],
-            sig_verifier.cluster_info.my_shred_version(),
+            ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        sig_verifier
+        ctx.verifier
             .verify_and_send_datagrams(datagrams_vote)
             .unwrap();
-        expect_no_receive(&pool_receiver);
-        assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
+        expect_no_receive(&ctx.pool_receiver);
+        assert_eq!(ctx.verifier.stats.num_old_votes_received.0, 1);
 
         let cert = test_create_base2_certificate(
-            &validator_keypairs
-                .iter()
-                .map(|k| k.bls_keypair.clone())
-                .collect::<Vec<_>>(),
-            sig_verifier.cluster_info.my_shred_version(),
+            &ctx.bls_keypairs(),
+            ctx.verifier.cluster_info.my_shred_version(),
             CertificateType::Finalize(3),
             &[0], // Signer rank 0
         );
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
         let datagrams_cert = messages_to_datagrams(
             &[(consensus_message_cert, Pubkey::new_unique())],
-            sig_verifier.cluster_info.my_shred_version(),
+            ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        sig_verifier
+        ctx.verifier
             .verify_and_send_datagrams(datagrams_cert)
             .unwrap();
-        expect_no_receive(&pool_receiver);
-        assert_eq!(sig_verifier.stats.num_old_certs_received.0, 1);
-        assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
+        expect_no_receive(&ctx.pool_receiver);
+        assert_eq!(ctx.verifier.stats.num_old_certs_received.0, 1);
+        assert_eq!(ctx.verifier.stats.num_old_votes_received.0, 1);
     }
 
     #[test]
