@@ -34,7 +34,8 @@ impl<'a> IoUringFileWriter<'a> {
         mode: u32,
         dir_handle: Arc<File>,
     ) -> Result<Self> {
-        let file_key = file_creator.open(path, mode, dir_handle)?;
+        // Streaming writer: the final size isn't known up-front, so it's discovered on flush.
+        let file_key = file_creator.open(path, mode, dir_handle, None)?;
         Ok(Self {
             inner: file_creator,
             current_buffer: None,
