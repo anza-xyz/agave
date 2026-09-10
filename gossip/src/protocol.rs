@@ -40,7 +40,7 @@ pub(crate) const MAX_PRUNE_DATA_NODES: usize = 32;
 /// Prune data prefix for PruneMessage
 const PRUNE_DATA_PREFIX: &[u8] = b"\xffSOLANA_PRUNE_DATA";
 /// Number of bytes in the randomly generated token sent with ping messages.
-const GOSSIP_PING_TOKEN_SIZE: usize = 32;
+pub(crate) const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 /// Minimum serialized size of a Protocol::PullResponse packet.
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 const MIN_CRDS_VALUE_SERIALIZED_SIZE: usize =
