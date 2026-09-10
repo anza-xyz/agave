@@ -100,8 +100,8 @@ fn verify_vote_batch(
     ban_sender: &BanSender,
     thread_pool: &ThreadPool,
     rank_map: &BLSPubkeyToRankMap,
-    vote_payload_to_sign: VotePayloadToSign,
-    unverified_votes: Vec<UnverifiedVotePayload>,
+    vote_payload_to_sign: &VotePayloadToSign,
+    unverified_votes: &[UnverifiedVotePayload],
 ) -> (VoteVerificationStats, ProcessedVotes) {
     let max_validators = rank_map.len();
     let (verified_votes, vote_verification_stats) = verify_votes(
@@ -122,7 +122,7 @@ fn verify_vote_batch(
 ///
 /// Any vote that fails fallback individual signature verification will have its sender banlisted.
 pub(super) fn verify_and_send_votes(
-    unverified_votes: HashMap<
+    unverified_votes: &HashMap<
         VotePayloadToSign,
         (Vec<UnverifiedVotePayload>, Arc<BLSPubkeyToRankMap>),
     >,
@@ -144,7 +144,7 @@ pub(super) fn verify_and_send_votes(
 
     let par_result = thread_pool.install(|| {
         unverified_votes
-            .into_par_iter()
+            .par_iter()
             .fold(
                 ParResult::default,
                 |mut par_result, (vote_payload_to_sign, (unverified_votes, rank_map))| {
@@ -155,7 +155,7 @@ pub(super) fn verify_and_send_votes(
                         leader_schedule,
                         ban_sender,
                         thread_pool,
-                        &rank_map,
+                        rank_map,
                         vote_payload_to_sign,
                         unverified_votes,
                     );
@@ -289,15 +289,15 @@ fn send_msgs(
 /// Sig verifies `unverified_votes` and returns a `Vec` of votes that passed verification.
 fn verify_votes(
     max_validators: usize,
-    vote_payload_to_sign: VotePayloadToSign,
-    unverified_votes: Vec<UnverifiedVotePayload>,
+    vote_payload_to_sign: &VotePayloadToSign,
+    unverified_votes: &[UnverifiedVotePayload],
     ban_sender: &BanSender,
     thread_pool: &ThreadPool,
 ) -> (Vec<VerifiedVotePayload>, VoteVerificationStats) {
     let mut stats = VoteVerificationStats::default();
 
     // no need to do optimistic verification when batch size == 1.
-    if let [unverified_vote] = unverified_votes.as_slice() {
+    if let [unverified_vote] = unverified_votes {
         let ((verification_result, sender_identity_pubkey), time_us) = measure_us!({
             let serialized_vote = wincode::serialize(&vote_payload_to_sign).unwrap();
             let prepared_hash_msg = PreparedHashedMessage::new(&serialized_vote);
@@ -323,7 +323,7 @@ fn verify_votes(
     // Try optimistic verification - fast to verify, but cannot identify invalid votes
     let res = verify_votes_optimistic(
         vote_payload_to_sign,
-        &unverified_votes,
+        unverified_votes,
         &mut stats,
         thread_pool,
     );
@@ -336,12 +336,12 @@ fn verify_votes(
                 .add_sample(unverified_votes.len() as u64);
             let vote_aggregate = VoteAggregate::new_from_verified_votes(
                 max_validators,
-                vote_payload_to_sign,
+                *vote_payload_to_sign,
                 unverified_votes.iter().map(|v| (v.rank, v.stake)),
                 signature,
             );
             let sender_vote_account_pubkeys = unverified_votes
-                .into_iter()
+                .iter()
                 .map(|v| v.sender_vote_account_pubkey)
                 .collect();
             (
@@ -400,7 +400,7 @@ fn ban_invalid_vote_sender(
 /// path.
 #[must_use]
 fn verify_votes_optimistic(
-    vote_payload_to_sign: VotePayloadToSign,
+    vote_payload_to_sign: &VotePayloadToSign,
     unverified_votes: &[UnverifiedVotePayload],
     stats: &mut VoteVerificationStats,
     thread_pool: &ThreadPool,
@@ -468,14 +468,14 @@ fn aggregate_signatures(votes: &[UnverifiedVotePayload]) -> Result<SignatureProj
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn aggregate_pubkeys_by_payload(
-    vote_payload_to_sign: VotePayloadToSign,
+    vote_payload_to_sign: &VotePayloadToSign,
     votes: &[UnverifiedVotePayload],
 ) -> (
     PreparedHashedMessage,
     Result<PopVerified<PubkeyProjective>, BlsError>,
 ) {
     debug_assert!(current_thread_index().is_some());
-    let serialized_vote = wincode::serialize(&vote_payload_to_sign).unwrap();
+    let serialized_vote = wincode::serialize(vote_payload_to_sign).unwrap();
     let prepared_hash_msg = PreparedHashedMessage::new(&serialized_vote);
     // converting aggregate pubkey to `PopVerified` is safe here
     // since the pubkeys are all PoP verified in the vote account
@@ -493,7 +493,7 @@ fn aggregate_pubkeys_by_payload(
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_individual_votes(
     max_validators: usize,
-    unverified_votes: Vec<UnverifiedVotePayload>,
+    unverified_votes: &[UnverifiedVotePayload],
     prepared_hash_msg: PreparedHashedMessage,
     thread_pool: &ThreadPool,
 ) -> (Vec<VerifiedVotePayload>, Vec<(Pubkey, BlsError)>) {

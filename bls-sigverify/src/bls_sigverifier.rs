@@ -122,11 +122,6 @@ pub fn spawn_service(
         .unwrap()
 }
 
-struct ExtractedMsgs {
-    certs: HashMap<CertificateType, Vec<CertPayload>>,
-    votes: HashMap<VotePayloadToSign, (Vec<UnverifiedVotePayload>, Arc<BLSPubkeyToRankMap>)>,
-}
-
 struct SigVerifier {
     migration_status: Arc<MigrationStatus>,
     ban_sender: BanSender,
@@ -188,9 +183,11 @@ impl SigVerifier {
 
     fn run(mut self, exit: Arc<AtomicBool>) {
         let mut datagrams_buffer = Vec::new();
+        let mut votes_buffer = HashMap::new();
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
             datagrams_buffer.clear();
+            votes_buffer.clear();
             let Ok(certificates) = recv_inputs(
                 &self.channels.packet_receiver,
                 &self.channels.certificate_receiver,
@@ -210,6 +207,7 @@ impl SigVerifier {
             let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_inputs(
                 &self.cluster_info.id(),
                 &datagrams_buffer,
+                &mut votes_buffer,
                 certificates
             ));
             self.stats
@@ -231,21 +229,31 @@ impl SigVerifier {
         &mut self,
         datagrams: Vec<Datagram>,
     ) -> Result<(), SigVerifyError> {
-        self.verify_and_send_inputs(&self.cluster_info.id(), &datagrams, vec![])
+        self.verify_and_send_inputs(
+            &self.cluster_info.id(),
+            &datagrams,
+            &mut HashMap::new(),
+            vec![],
+        )
     }
 
     fn verify_and_send_inputs(
         &mut self,
         my_pubkey: &Pubkey,
         datagrams: &[Datagram],
+        votes_buffer: &mut HashMap<
+            VotePayloadToSign,
+            (Vec<UnverifiedVotePayload>, Arc<BLSPubkeyToRankMap>),
+        >,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
     ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(&root_bank);
 
-        let (extracted_msgs, extract_msgs_us) = measure_us!(self.extract_and_filter_msgs(
+        let (certs, extract_msgs_us) = measure_us!(self.extract_and_filter_msgs(
             my_pubkey,
             datagrams,
+            votes_buffer,
             certificates,
             &root_bank
         ));
@@ -256,7 +264,7 @@ impl SigVerifier {
         let (votes_result, certs_result) = self.thread_pool.join(
             || {
                 verify_and_send_votes(
-                    extracted_msgs.votes,
+                    votes_buffer,
                     &root_bank,
                     my_pubkey,
                     &self.leader_schedule,
@@ -269,7 +277,7 @@ impl SigVerifier {
                 verify_and_send_certificates(
                     my_pubkey,
                     &mut self.verified_certs,
-                    extracted_msgs.certs,
+                    certs,
                     &root_bank,
                     &self.channels.channel_to_pool,
                     &self.ban_sender,
@@ -329,15 +337,18 @@ impl SigVerifier {
         &mut self,
         my_pubkey: &Pubkey,
         datagrams: &[Datagram],
+        votes_buffer: &mut HashMap<
+            VotePayloadToSign,
+            (Vec<UnverifiedVotePayload>, Arc<BLSPubkeyToRankMap>),
+        >,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
-    ) -> ExtractedMsgs {
+    ) -> HashMap<CertificateType, Vec<CertPayload>> {
         let root_slot = root_bank.slot();
         let highest_parent_ready_slot = self.highest_parent_ready.read().unwrap().0;
         let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
         let migration_slot = self.migration_status.migration_slot();
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
-        let mut votes = HashMap::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
         for Datagram {
@@ -365,7 +376,7 @@ impl SigVerifier {
                         migration_slot,
                         max_vote_slot,
                         root_bank,
-                        &mut votes,
+                        votes_buffer,
                         unverified_vote,
                     );
                 }
@@ -417,10 +428,7 @@ impl SigVerifier {
             self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
         }
         self.stats.num_pkts += num_pkts;
-        ExtractedMsgs {
-            certs: cert_groups,
-            votes,
-        }
+        cert_groups
     }
 
     fn extract_and_filter_vote(
@@ -834,6 +842,7 @@ mod tests {
             .verify_and_send_inputs(
                 &ctx.verifier.cluster_info.id(),
                 &[],
+                &mut HashMap::new(),
                 vec![(slot, certificate.clone())],
             )
             .unwrap();
@@ -844,6 +853,7 @@ mod tests {
             .verify_and_send_inputs(
                 &ctx.verifier.cluster_info.id(),
                 &[],
+                &mut HashMap::new(),
                 vec![(slot, certificate)],
             )
             .unwrap();
@@ -870,14 +880,16 @@ mod tests {
             Bank::new_from_parent(ctx.verifier.sharable_banks.root(), SlotLeader::default(), 5);
         ctx.verifier.migration_status.enable_alpenglow_for_tests();
 
-        let extracted_msgs = ctx.verifier.extract_and_filter_msgs(
+        let mut votes_buffer = HashMap::new();
+        let certs = ctx.verifier.extract_and_filter_msgs(
             &ctx.verifier.cluster_info.id(),
             &[],
+            &mut votes_buffer,
             vec![(slot, certificate)],
             &root_bank,
         );
-        assert!(extracted_msgs.certs.is_empty());
-        assert!(extracted_msgs.votes.is_empty());
+        assert!(certs.is_empty());
+        assert!(votes_buffer.is_empty());
         assert_eq!(ctx.verifier.stats.num_old_certs_received.0, 1);
     }
 
