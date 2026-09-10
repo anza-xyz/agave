@@ -230,6 +230,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dadd1abed9cc620c70f5ff2f517317426a57f77c405e9de8bf09a2b29e629ad6"
 
 [[package]]
+name = "agave-scheduler-handshake"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f5cac538e297ec27635aef03805d635e141115520c5444b84695e8de559119b"
+dependencies = [
+ "agave-scheduler-bindings",
+ "libc",
+ "nix",
+ "rts-alloc",
+ "shaq",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "agave-scheduling-utils"
 version = "4.4.0-alpha.3"
 dependencies = [
@@ -1028,7 +1042,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -5028,7 +5042,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -5086,7 +5100,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -5538,7 +5552,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -6299,6 +6313,7 @@ dependencies = [
  "agave-logger",
  "agave-math-utils",
  "agave-scheduler-bindings",
+ "agave-scheduler-handshake",
  "agave-scheduling-utils",
  "agave-snapshots",
  "agave-transaction-view",
@@ -10486,7 +10501,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]

@@ -690,10 +690,8 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::{committer::Committer, tests::create_slow_genesis_config},
             agave_scheduler_bindings::{SharableTransactionBatchRegion, processed_codes},
-            agave_scheduling_utils::{
-                handshake::{ClientLogon, client, server::Server},
-                responses_region::ExecutionResponsesPtr,
-            },
+            agave_scheduler_handshake::{ClientLogon, client, server::Server},
+            agave_scheduling_utils::responses_region::ExecutionResponsesPtr,
             crossbeam_channel::bounded,
             solana_genesis_config::GenesisConfig,
             solana_keypair::Keypair,

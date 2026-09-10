@@ -302,6 +302,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dadd1abed9cc620c70f5ff2f517317426a57f77c405e9de8bf09a2b29e629ad6"
 
 [[package]]
+name = "agave-scheduler-handshake"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f5cac538e297ec27635aef03805d635e141115520c5444b84695e8de559119b"
+dependencies = [
+ "agave-scheduler-bindings",
+ "libc",
+ "nix",
+ "rts-alloc",
+ "shaq",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "agave-scheduling-utils"
 version = "4.4.0-alpha.3"
 dependencies = [
@@ -7802,6 +7816,7 @@ dependencies = [
  "agave-math-utils",
  "agave-reserved-account-keys",
  "agave-scheduler-bindings",
+ "agave-scheduler-handshake",
  "agave-scheduling-utils",
  "agave-snapshots",
  "agave-transaction-view",

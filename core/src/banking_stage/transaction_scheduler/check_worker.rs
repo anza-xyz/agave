@@ -828,10 +828,8 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::tests::create_slow_genesis_config,
             agave_scheduler_bindings::{SharableTransactionBatchRegion, SharableTransactionRegion},
-            agave_scheduling_utils::{
-                handshake::{ClientLogon, client, server::Server},
-                responses_region::CheckResponsesPtr,
-            },
+            agave_scheduler_handshake::{ClientLogon, client, server::Server},
+            agave_scheduling_utils::responses_region::CheckResponsesPtr,
             solana_account::AccountSharedData,
             solana_compute_budget_interface::ComputeBudgetInstruction,
             solana_keypair::Keypair,
