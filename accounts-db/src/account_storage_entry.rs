@@ -241,24 +241,29 @@ impl AccountStorageEntry {
     }
 
     /// Collect the offsets that should be excluded from scans
-    fn excluded_offsets(&self) -> IntSet<Offset> {
+    fn excluded_offsets(&self, obsolete_slot: Option<Slot>) -> IntSet<Offset> {
         let mut offsets: IntSet<_> = self
             .obsolete_accounts_read_lock()
-            .filter_obsolete_accounts(None)
+            .filter_obsolete_accounts(obsolete_slot)
             .map(|(offset, _)| offset)
             .collect();
         offsets.extend(self.tombstone_offsets_read_lock().iter().copied());
         offsets
     }
 
-    /// Iterate over the alive accounts in this storage, excluding obsolete accounts and tombstones.
-    /// The return value is the number of values excluded from the scan.
+    /// Iterate over the alive accounts in this storage, excluding tombstones
+    /// and obsolete accounts marked as of `obsolete_slot`.
+    ///
+    /// Pass in None for `obsolete_slot` to exclude all accounts marked obsolete.
+    ///
+    /// Returns the number of accounts excluded from the scan.
     pub(crate) fn scan_accounts<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
+        obsolete_slot: Option<Slot>,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<u64, AccountsFileError> {
-        let excluded_offsets = self.excluded_offsets();
+        let excluded_offsets = self.excluded_offsets(obsolete_slot);
         let mut num_excluded = 0;
         self.accounts.scan_accounts(reader, |offset, account| {
             if excluded_offsets.contains(&offset) {
@@ -276,7 +281,7 @@ impl AccountStorageEntry {
         &self,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
     ) -> Result<u64, AccountsFileError> {
-        let excluded_offsets = self.excluded_offsets();
+        let excluded_offsets = self.excluded_offsets(None);
         let mut num_excluded = 0;
         self.accounts
             .scan_accounts_without_data(|offset, account| {
@@ -354,7 +359,7 @@ mod tests {
         let mut reader = new_scan_accounts_reader();
         let mut visited = Vec::new();
         let num_excluded = storage
-            .scan_accounts(&mut reader, |offset, account| {
+            .scan_accounts(&mut reader, None, |offset, account| {
                 visited.push((offset, *account.pubkey()));
             })
             .unwrap();

@@ -958,7 +958,7 @@ mod tests {
             if let Some(storage) = db.storage.get_slot_storage_entry(slot) {
                 let mut reader = crate::append_vec::new_scan_accounts_reader();
                 storage
-                    .scan_accounts(&mut reader, |offset, account| {
+                    .scan_accounts(&mut reader, None, |offset, account| {
                         let info = AccountInfo::new(
                             StorageLocation::AccountsFile(storage.id(), offset),
                             account.is_zero_lamport(),

@@ -1441,7 +1441,7 @@ impl AccountsDb {
             |reader, storage| {
                 let slot = storage.slot();
                 storage
-                    .scan_accounts(reader.as_mut(), |_offset, account| {
+                    .scan_accounts(reader.as_mut(), None, |_offset, account| {
                         let pk = account.pubkey();
                         match pubkey_slot_lists.entry(*pk) {
                             dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
@@ -2758,7 +2758,7 @@ impl AccountsDb {
                 }
                 ScanAccountStorageData::DataRefForStorage => {
                     let mut reader = append_vec::new_scan_accounts_reader();
-                    storage.scan_accounts(&mut reader, |_offset, account| {
+                    storage.scan_accounts(&mut reader, None, |_offset, account| {
                         let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
                         storage_scan_func(retval, &account_without_data, Some(account.data));
                     })
@@ -5017,7 +5017,7 @@ impl AccountsDb {
         // counter per account and use that for the write version.
         let mut write_version_for_geyser = 0;
         let num_obsolete_accounts_skipped = storage
-            .scan_accounts(reader, |offset, account| {
+            .scan_accounts(reader, None, |offset, account| {
                 let data_len = account.data.len();
                 stored_size_alive += storage.accounts.calculate_stored_size(data_len);
                 let is_account_zero_lamport = account.is_zero_lamport();
