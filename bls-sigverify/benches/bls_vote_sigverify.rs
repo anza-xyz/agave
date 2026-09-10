@@ -4,7 +4,7 @@
 */
 
 use {
-    agave_bls_sigverify::bls_vote_sigverify::{UnverifiedVotePayload, verify_individual_votes},
+    agave_bls_sigverify::votes_verifier::{UnverifiedVote, verify_individual_votes},
     agave_votor_messages::{
         unverified_vote_message::UnverifiedVoteMessage,
         vote::Vote,
@@ -33,7 +33,7 @@ fn get_thread_pool() -> ThreadPool {
 fn generate_test_data(
     shred_version: u16,
     batch_size: usize,
-) -> (VotePayloadToSign, Vec<UnverifiedVotePayload>) {
+) -> (VotePayloadToSign, Vec<UnverifiedVote>) {
     // Pre-calculate the payloads to ensure exact distinctness
     let slot = 100;
     let vote = Vote::new_unique_notar(slot);
@@ -49,7 +49,7 @@ fn generate_test_data(
                     signature: signature.into(),
                     shred_version,
                 };
-                UnverifiedVotePayload {
+                UnverifiedVote {
                     vote_message,
                     sender_bls_pubkey: bls_keypair.public,
                     sender_vote_account_pubkey: Keypair::new().pubkey(),
