@@ -96,6 +96,7 @@ mod payload;
 mod shred_code;
 pub(crate) mod shred_data;
 mod stats;
+pub mod tracer;
 mod traits;
 pub mod wire;
 
