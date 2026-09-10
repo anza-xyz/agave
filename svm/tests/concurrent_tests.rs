@@ -13,13 +13,14 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments, ProgramToLoad},
-        program_cache_entry::{ProgramCacheEntryOwner, ProgramCacheEntryType},
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        program_cache_entry::ProgramCacheEntryType,
         program_metrics::ProgramStatistics,
     },
     solana_pubkey::Pubkey,
     solana_svm::{
         account_loader::{AccountLoader, CheckedTransactionDetails, TransactionCheckResult},
+        program_loader::filter_executable_program_accounts,
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
@@ -57,14 +58,6 @@ fn program_cache_execution(threads: usize) {
                 batch_processor.epoch,
             );
             thread::spawn(move || {
-                let missing_programs: Vec<ProgramToLoad> = programs
-                    .iter()
-                    .map(|program_id| ProgramToLoad {
-                        program_id,
-                        loader: ProgramCacheEntryOwner::LoaderV3,
-                        deployment_slot: 0,
-                    })
-                    .collect();
                 let feature_set = SVMFeatureSet::all_enabled();
                 let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
                     None,
@@ -73,6 +66,8 @@ fn program_cache_execution(threads: usize) {
                     0,
                 );
                 let mut result = ProgramCacheForTxBatch::new(processor.slot);
+                let missing_programs =
+                    filter_executable_program_accounts(&account_loader, &result, programs.iter());
                 let program_runtime_environment_for_execution =
                     processor.program_runtime_environment_for_epoch(processor.epoch);
                 processor.replenish_program_cache(

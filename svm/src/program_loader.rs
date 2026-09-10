@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 #[cfg(feature = "metrics")]
 use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
@@ -254,6 +256,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
 // search list, `replenish_program_cache` will miss during extraction, attempt
 // to reload, and insert a closed tombstone, BUT it will not remove the program
 // from the search list, resulting in reload loop.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
     callbacks: &CB,
     program_cache_for_tx_batch: &ProgramCacheForTxBatch,

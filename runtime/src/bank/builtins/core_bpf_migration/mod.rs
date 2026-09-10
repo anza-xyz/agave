@@ -529,7 +529,6 @@ pub(crate) mod tests {
         solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
-            loaded_programs::ProgramToLoad,
             program_cache_entry::{
                 ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             },
@@ -538,7 +537,9 @@ pub(crate) mod tests {
         solana_pubkey::Pubkey,
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader, system_program},
         solana_signer::Signer,
-        solana_svm::account_loader::AccountLoader,
+        solana_svm::{
+            account_loader::AccountLoader, program_loader::filter_executable_program_accounts,
+        },
         solana_svm_timings::ExecuteTimings,
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
@@ -769,14 +770,15 @@ pub(crate) mod tests {
                 1,
             );
             let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(bank.slot());
+            let missing_programs = filter_executable_program_accounts(
+                &account_loader,
+                &program_cache_for_tx_batch,
+                std::iter::once(&self.target_program_address),
+            );
             let mut execute_timings = ExecuteTimings::default();
             bank.transaction_processor.replenish_program_cache(
                 &account_loader,
-                vec![ProgramToLoad {
-                    program_id: &self.target_program_address,
-                    loader: ProgramCacheEntryOwner::LoaderV3,
-                    deployment_slot: migration_or_upgrade_slot,
-                }],
+                missing_programs,
                 &bank.transaction_processor.program_runtime_environment,
                 &mut program_cache_for_tx_batch,
                 &mut execute_timings,
