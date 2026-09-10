@@ -1625,7 +1625,8 @@ mod tests {
                 .consensus_metrics_receiver
                 .try_recv()
                 .expect("Should receive metrics event");
-            assert!(event.1.contains(&expected));
+            assert_eq!(event.1.len(), 1);
+            assert_eq!(event.1[0], expected);
         }
 
         fn crate_vote_history_storage_and_switch_identity(

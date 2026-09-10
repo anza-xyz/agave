@@ -227,12 +227,10 @@ fn process_verified_votes(
     for payload in verified_votes {
         inspect_for_repair(&payload, &mut msgs_for_repair);
 
-        for pubkey in &payload.sender_vote_account_pubkeys {
-            votes_for_metrics.push(ConsensusMetricsEvent::Vote {
-                id: *pubkey,
-                vote: *payload.vote_aggregate.vote(),
-            });
-        }
+        votes_for_metrics.push(ConsensusMetricsEvent::Vote {
+            ids: payload.sender_vote_account_pubkeys,
+            vote: *payload.vote_aggregate.vote(),
+        });
         if rewards_wants_vote(
             cluster_info,
             leader_schedule,

@@ -126,8 +126,8 @@ impl ConsensusMetrics {
                 Ok((received, events)) => {
                     for event in events {
                         match event {
-                            ConsensusMetricsEvent::Vote { id, vote } => {
-                                self.record_vote(id, &vote, received);
+                            ConsensusMetricsEvent::Vote { ids, vote } => {
+                                self.record_vote(ids, &vote, received);
                             }
                             ConsensusMetricsEvent::BlockHashSeen { leader, slot } => {
                                 self.record_block_hash_seen(leader, slot, received);
@@ -158,18 +158,21 @@ impl ConsensusMetrics {
     }
 
     /// Records a `vote` from the node with `id`.
-    fn record_vote(&mut self, id: Pubkey, vote: &Vote, received: Instant) {
+    fn record_vote(&mut self, ids: Vec<Pubkey>, vote: &Vote, received: Instant) {
         let slot = vote.slot();
         let epoch_metrics = self.epoch_metrics_for_slot(slot);
 
         let Some(start) = epoch_metrics.start_of_slot.get(&slot) else {
-            epoch_metrics.metrics_recording_failed =
-                epoch_metrics.metrics_recording_failed.saturating_add(1);
+            epoch_metrics.metrics_recording_failed = epoch_metrics
+                .metrics_recording_failed
+                .saturating_add(ids.len());
             return;
         };
-        let node = epoch_metrics.node_metrics.entry(id).or_default();
         let elapsed = received.duration_since(*start);
-        node.record_vote(vote, elapsed);
+        for id in ids {
+            let node = epoch_metrics.node_metrics.entry(id).or_default();
+            node.record_vote(vote, elapsed);
+        }
     }
 
     /// Records when a block for `slot` was seen and the `leader` is responsible for producing it.
@@ -322,7 +325,7 @@ mod tests {
         let mut metrics = new_metrics();
 
         metrics.record_vote(
-            Keypair::new().pubkey(),
+            vec![Keypair::new().pubkey()],
             &Vote::Skip(SkipVote { slot: 42 }),
             Instant::now(),
         );
@@ -337,7 +340,11 @@ mod tests {
 
         metrics.record_start_of_slot(42, Instant::now());
         sleep(Duration::from_millis(1));
-        metrics.record_vote(pubkey, &Vote::Skip(SkipVote { slot: 42 }), Instant::now());
+        metrics.record_vote(
+            vec![pubkey],
+            &Vote::Skip(SkipVote { slot: 42 }),
+            Instant::now(),
+        );
 
         let node = &metrics.epoch_metrics[&0].node_metrics[&pubkey];
         assert_eq!(node.skip.count(), 1);
