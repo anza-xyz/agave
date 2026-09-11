@@ -1,8 +1,13 @@
 use {
+    solana_entry::entry::next_versioned_entry,
+    solana_hash::Hash,
+    solana_instruction::Instruction,
     solana_ledger::{
         blockstore, blockstore::Blockstore, create_new_tmp_ledger_auto_delete,
         genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete,
     },
+    solana_pubkey::Pubkey,
+    solana_transaction::Transaction,
     std::{
         path::Path,
         process::{Command, Output},
@@ -12,6 +17,7 @@ use {
 fn run_ledger_tool(args: &[&str]) -> Output {
     Command::new(assert_cmd::cargo::cargo_bin!(env!("CARGO_PKG_NAME")))
         .args(args)
+        .env("RUST_LOG", "error")
         .output()
         .unwrap()
 }
@@ -86,4 +92,40 @@ fn ledger_tool_copy_test() {
         assert!(dst_slot_output.status.success());
         assert!(!src_slot_output.stdout.is_empty());
     }
+}
+
+#[test]
+fn latest_optimistic_slots_reports_sanitization_errors() {
+    let instruction = Instruction::new_with_bytes(solana_vote_program::id(), &[], vec![]);
+    let vote_transaction = Transaction::new_with_payer(&[instruction], Some(&Pubkey::new_unique()));
+    let mut malformed_transaction = vote_transaction.clone();
+    malformed_transaction.message.instructions[0].program_id_index = u8::MAX;
+
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let entry = next_versioned_entry(
+        &Hash::default(),
+        1,
+        vec![vote_transaction.into(), malformed_transaction.into()],
+    );
+    let shreds = blockstore::entries_to_test_shreds(&[entry], 1, 0, true, 0);
+    blockstore.insert_shreds(shreds, false).unwrap();
+    blockstore
+        .insert_optimistic_slot(1, &Hash::default(), 0)
+        .unwrap();
+
+    let output = run_ledger_tool(&[
+        "-l",
+        ledger_path.path().to_str().unwrap(),
+        "latest-optimistic-slots",
+        "--exclude-vote-only-slots",
+    ]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Failed to sanitize transaction 1 in slot 1: IndexOutOfBounds"),
+        "{stderr}"
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Vote Only: false"), "{stdout}");
 }
