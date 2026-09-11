@@ -8913,6 +8913,7 @@ dependencies = [
  "log",
  "qualifier_attr",
  "rand 0.9.4",
+ "rayon",
  "serde",
  "solana-account",
  "solana-bincode",
