@@ -5394,6 +5394,10 @@ impl ReplayStage {
                     ChildBankReplayStart::Defer => continue,
                 };
 
+                if parent_bank.has_cached_accounts_for_slot(child_slot) {
+                    continue;
+                }
+
                 info!("new fork:{child_slot} parent:{parent_slot} root:{root}",);
                 // Migration period banks are VoM
                 let options = NewBankOptions {
