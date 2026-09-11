@@ -29,7 +29,7 @@ pub(in crate::parse_token) fn parse_interest_bearing_mint_instruction(
             Ok(ParsedInstructionEnum {
                 instruction_type: "initializeInterestBearingConfig".to_string(),
                 info: json!({
-                    "mint": account_keys[account_indexes[0] as usize].to_string(),
+                    "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                     "rateAuthority": rate_authority.map(|pubkey| pubkey.to_string()),
                     "rate": i16::from(rate),
                 }),
@@ -42,7 +42,7 @@ pub(in crate::parse_token) fn parse_interest_bearing_mint_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "newRate": i16::from(new_rate),
             });
             let map = value.as_object_mut().unwrap();

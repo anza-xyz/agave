@@ -9,7 +9,7 @@ pub(in crate::parse_token) fn parse_initialize_permanent_delegate_instruction(
     Ok(ParsedInstructionEnum {
         instruction_type: "initializePermanentDelegate".to_string(),
         info: json!({
-            "mint": account_keys[account_indexes[0] as usize].to_string(),
+            "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
             "delegate": delegate.to_string(),
         }),
     })

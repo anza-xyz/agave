@@ -22,7 +22,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "withdrawWithheldAuthorityElGamalPubkey": Option::<PodElGamalPubkey>::from(transfer_fee_config.withdraw_withheld_authority_elgamal_pubkey).map(|k| k.to_string()),
             });
             let map = value.as_object_mut().unwrap();
@@ -42,8 +42,8 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                 })?;
             let proof_instruction_offset: i8 = withdraw_withheld_data.proof_instruction_offset;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
-                "feeRecipient": account_keys[account_indexes[1] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "feeRecipient": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "proofInstructionOffset": proof_instruction_offset,
                 "newDecryptableAvailableBalance": format!("{}", withdraw_withheld_data.new_decryptable_available_balance),
             });
@@ -53,12 +53,12 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                 if proof_instruction_offset == 0 {
                     map.insert(
                         "proofContextStateAccount".to_string(),
-                        json!(account_keys[account_indexes[offset] as usize].to_string()),
+                        json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                     );
                 } else {
                     map.insert(
                         "instructionsSysvar".to_string(),
-                        json!(account_keys[account_indexes[offset] as usize].to_string()),
+                        json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                     );
                 }
                 offset += 1;
@@ -86,8 +86,8 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             check_num_token_accounts(account_indexes, 4 + num_token_accounts as usize)?;
             let proof_instruction_offset: i8 = withdraw_withheld_data.proof_instruction_offset;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
-                "feeRecipient": account_keys[account_indexes[1] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "feeRecipient": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "proofInstructionOffset": proof_instruction_offset,
                 "newDecryptableAvailableBalance": format!("{}", withdraw_withheld_data.new_decryptable_available_balance),
             });
@@ -98,18 +98,19 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[2] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string()),
                 );
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[2] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string()),
                 );
             }
-            let mut source_accounts: Vec<String> = vec![];
-            for i in account_indexes[first_source_account_index..].iter() {
-                source_accounts.push(account_keys[*i as usize].to_string());
-            }
+            let source_accounts: Vec<String> = account_indexes
+                .iter()
+                .skip(first_source_account_index)
+                .filter_map(|i| account_keys.get(*i as usize).map(ToString::to_string))
+                .collect();
             map.insert("sourceAccounts".to_string(), json!(source_accounts));
             parse_signers(
                 map,
@@ -128,14 +129,15 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
         ConfidentialTransferFeeInstruction::HarvestWithheldTokensToMint => {
             check_num_token_accounts(account_indexes, 1)?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
 
             });
             let map = value.as_object_mut().unwrap();
-            let mut source_accounts: Vec<String> = vec![];
-            for i in account_indexes.iter().skip(1) {
-                source_accounts.push(account_keys[*i as usize].to_string());
-            }
+            let source_accounts: Vec<String> = account_indexes
+                .iter()
+                .skip(1)
+                .filter_map(|i| account_keys.get(*i as usize).map(ToString::to_string))
+                .collect();
             map.insert("sourceAccounts".to_string(), json!(source_accounts));
             Ok(ParsedInstructionEnum {
                 instruction_type: "harvestWithheldConfidentialTransferTokensToMint".to_string(),
@@ -145,7 +147,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
         ConfidentialTransferFeeInstruction::EnableHarvestToMint => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
 
             });
             let map = value.as_object_mut().unwrap();
@@ -165,7 +167,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
         ConfidentialTransferFeeInstruction::DisableHarvestToMint => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
 
             });
             let map = value.as_object_mut().unwrap();

@@ -29,7 +29,7 @@ pub(in crate::parse_token) fn parse_scaled_ui_amount_instruction(
             Ok(ParsedInstructionEnum {
                 instruction_type: "initializeScaledUiAmountConfig".to_string(),
                 info: json!({
-                    "mint": account_keys[account_indexes[0] as usize].to_string(),
+                    "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                     "authority": authority.map(|pubkey| pubkey.to_string()),
                     "multiplier": f64::from(multiplier).to_string(),
                 }),
@@ -44,7 +44,7 @@ pub(in crate::parse_token) fn parse_scaled_ui_amount_instruction(
                 ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
             })?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "newMultiplier": f64::from(multiplier).to_string(),
                 "newMultiplierTimestamp": i64::from(effective_timestamp),
             });
