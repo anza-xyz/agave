@@ -534,8 +534,19 @@ pub fn set_panic_hook(program: &'static str, version: Option<String>) {
     SET_HOOK.call_once(|| {
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |ono| {
-            default_hook(ono);
+            // Route the panic through the log pipeline instead of straight to stderr, so it
+            // lands after the records that led up to it rather than racing them. Falls back to
+            // the default hook when no logger is installed, which would swallow it entirely.
+            if log_enabled!(Level::Error) {
+                error!("{ono}\n{}", std::backtrace::Backtrace::capture());
+            } else {
+                default_hook(ono);
+            }
             submit_panic_datapoint(program, &version, ono);
+            // Never remove this. Log records are written by a background thread and the `exit`
+            // below runs no destructors, so this is what keeps the records explaining the panic
+            // from being discarded with the queue. It is not covered by any test.
+            log::logger().flush();
 
             // Exit cleanly so the process don't limp along in a half-dead state
             std::process::exit(1);
