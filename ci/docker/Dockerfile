@@ -85,6 +85,7 @@ RUN \
   cargo install cargo-audit && \
   cargo install cargo-hack && \
   cargo install rustfilt && \
+  cargo install rumdl@0.2.71 --locked && \
   cargo install cargo-build-sbf@4.1.0 --locked && \
   cargo install cargo-deny@0.20.2 --locked && \
   # tombi v1.5.0
