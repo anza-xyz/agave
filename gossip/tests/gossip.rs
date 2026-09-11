@@ -318,6 +318,7 @@ pub fn cluster_info_scale() {
     let epoch_specs: Box<dyn EpochSpecs> = Box::new(TestEpochSpecs {
         slots_in_epoch,
         staked_nodes: root_bank.current_epoch_staked_nodes(),
+        enforce_correct_proof_size: true,
     });
 
     let nodes: Vec<_> = vote_keypairs

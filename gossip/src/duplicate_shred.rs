@@ -319,6 +319,7 @@ pub(crate) fn into_shreds(
     slot_leader: &Pubkey,
     chunks: impl IntoIterator<Item = DuplicateShred>,
     shred_version: u16,
+    enforce_correct_proof_size: bool,
 ) -> Result<(Shred, Shred), Error> {
     let mut chunks = chunks.into_iter();
     let DuplicateShred {
@@ -356,16 +357,31 @@ pub(crate) fn into_shreds(
     let shred2 = Shred::new_from_serialized_shred(proof.shred2)?;
 
     if shred1.slot() != slot || shred2.slot() != slot {
-        Err(Error::SlotMismatch)
-    } else {
-        check_shreds(
-            Some(|_| Some(slot_leader).copied()),
-            &shred1,
-            &shred2,
-            shred_version,
-        )?;
-        Ok((shred1, shred2))
+        return Err(Error::SlotMismatch);
     }
+    // Admitting a proof marks the slot duplicate, so the proof size has to be
+    // held to the same rule as on the turbine and repair paths, or nodes
+    // disagree on whether the slot is dead. This covers the proof size only:
+    // unlike shred ingest, nothing here checks fec_set_index alignment, the
+    // erasure config, or the last data shred index.
+    if enforce_correct_proof_size {
+        for shred in [&shred1, &shred2] {
+            let proof_size = shred.proof_size().unwrap_or(0);
+            if !shred::has_correct_proof_size(proof_size) {
+                return Err(Error::InvalidShred(shred::Error::InvalidProofSize(
+                    proof_size,
+                )));
+            }
+        }
+    }
+
+    check_shreds(
+        Some(|_| Some(slot_leader).copied()),
+        &shred1,
+        &shred2,
+        shred_version,
+    )?;
+    Ok((shred1, shred2))
 }
 
 impl Sanitize for DuplicateShred {
@@ -564,9 +580,69 @@ pub(crate) mod tests {
         .unwrap()
         .collect();
         assert!(chunks.len() > 4);
-        let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version).unwrap();
+        let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version, true).unwrap();
         assert_eq!(shred1, shred3);
         assert_eq!(shred2, shred4);
+    }
+
+    #[test]
+    fn test_into_shreds_rejects_bad_proof_size() {
+        // Offset of ShredCommonHeader.shred_variant, whose low nibble is the
+        // Merkle proof height.
+        const OFFSET_OF_SHRED_VARIANT: usize = std::mem::size_of::<Signature>();
+        let mut rng = rand::rng();
+        let leader = Arc::new(Keypair::new());
+        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
+        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
+        let next_shred_index = rng.random_range(0..32_000);
+        let shred1 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
+        let shred2 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
+        // Rewrite the proof height so that the shred cannot belong to a 32:32
+        // erasure set. This invalidates the signature as well, but the proof
+        // size check runs ahead of signature verification so that such a shred
+        // is rejected on its shape alone.
+        let shred2 = {
+            let mut payload = shred2.payload().to_vec();
+            let shred_variant = payload[OFFSET_OF_SHRED_VARIANT];
+            assert_eq!(
+                shred_variant & 0x0F,
+                shred2.proof_size().unwrap(),
+                "low nibble of shred_variant holds the proof height"
+            );
+            payload[OFFSET_OF_SHRED_VARIANT] = (shred_variant & 0xF0) | 5;
+            Shred::new_from_serialized_shred(payload).unwrap()
+        };
+        assert_eq!(shred2.proof_size().unwrap(), 5);
+        let chunks: Vec<_> = from_shred_bypass_checks(
+            shred1,
+            Pubkey::new_unique(), // self_pubkey
+            shred2,
+            rng.random(), // wallclock
+            512,          // max_size
+        )
+        .unwrap()
+        .collect();
+        assert_matches!(
+            into_shreds(
+                &leader.pubkey(),
+                chunks.clone(),
+                version,
+                /*enforce_correct_proof_size:*/ true
+            ),
+            Err(Error::InvalidShred(shred::Error::InvalidProofSize(5)))
+        );
+        // Before the feature takes effect for this slot the proof is only
+        // rejected further down, by signature verification. Nodes which have
+        // not yet activated the feature must not diverge on the proof size.
+        assert_matches!(
+            into_shreds(
+                &leader.pubkey(),
+                chunks,
+                version,
+                /*enforce_correct_proof_size:*/ false
+            ),
+            Err(Error::InvalidSignature)
+        );
     }
 
     #[test]
@@ -620,9 +696,14 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks, version)
-                    .err()
-                    .unwrap(),
+                into_shreds(
+                    &leader.pubkey(),
+                    chunks,
+                    version,
+                    /*enforce_correct_proof_size:*/ true
+                )
+                .err()
+                .unwrap(),
                 Error::InvalidDuplicateSlotProof
             );
         }
@@ -673,7 +754,13 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version).unwrap();
+            let (shred3, shred4) = into_shreds(
+                &leader.pubkey(),
+                chunks,
+                version,
+                /*enforce_correct_proof_size:*/ true,
+            )
+            .unwrap();
             assert_eq!(shred1, &shred3);
             assert_eq!(shred2, &shred4);
         }
@@ -739,9 +826,14 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks, version)
-                    .err()
-                    .unwrap(),
+                into_shreds(
+                    &leader.pubkey(),
+                    chunks,
+                    version,
+                    /*enforce_correct_proof_size:*/ true
+                )
+                .err()
+                .unwrap(),
                 Error::InvalidLastIndexConflict
             );
         }
@@ -786,7 +878,13 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version).unwrap();
+            let (shred3, shred4) = into_shreds(
+                &leader.pubkey(),
+                chunks,
+                version,
+                /*enforce_correct_proof_size:*/ true,
+            )
+            .unwrap();
             assert_eq!(shred1, shred3);
             assert_eq!(shred2, shred4);
         }
@@ -863,9 +961,14 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks, version)
-                    .err()
-                    .unwrap(),
+                into_shreds(
+                    &leader.pubkey(),
+                    chunks,
+                    version,
+                    /*enforce_correct_proof_size:*/ true
+                )
+                .err()
+                .unwrap(),
                 Error::InvalidErasureMetaConflict
             );
         }
@@ -925,7 +1028,13 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version).unwrap();
+            let (shred3, shred4) = into_shreds(
+                &leader.pubkey(),
+                chunks,
+                version,
+                /*enforce_correct_proof_size:*/ true,
+            )
+            .unwrap();
             assert_eq!(shred1, shred3);
             assert_eq!(shred2, shred4);
         }
@@ -1004,9 +1113,14 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks, version)
-                    .err()
-                    .unwrap(),
+                into_shreds(
+                    &leader.pubkey(),
+                    chunks,
+                    version,
+                    /*enforce_correct_proof_size:*/ true
+                )
+                .err()
+                .unwrap(),
                 Error::ShredTypeMismatch
             );
         }
@@ -1114,9 +1228,14 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks, version)
-                    .err()
-                    .unwrap(),
+                into_shreds(
+                    &leader.pubkey(),
+                    chunks,
+                    version,
+                    /*enforce_correct_proof_size:*/ true
+                )
+                .err()
+                .unwrap(),
                 Error::InvalidShredVersion(_)
             );
         }
@@ -1189,9 +1308,14 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks, version)
-                    .err()
-                    .unwrap(),
+                into_shreds(
+                    &leader.pubkey(),
+                    chunks,
+                    version,
+                    /*enforce_correct_proof_size:*/ true
+                )
+                .err()
+                .unwrap(),
                 Error::InvalidDuplicateShreds
             );
         }
