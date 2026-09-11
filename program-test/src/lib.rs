@@ -865,8 +865,12 @@ impl ProgramTest {
             panic!("Program file data not available for {program_name} ({program_id})")
         });
         let elf = read_file(program_file);
-        let program_accounts =
-            programs::bpf_loader_upgradeable_program_accounts(program_id, &elf, &Rent::default());
+        let program_accounts = programs::bpf_loader_upgradeable_program_accounts(
+            program_id,
+            &elf,
+            &Rent::default(),
+            Some(Pubkey::default()),
+        );
         for (address, account) in program_accounts {
             self.add_genesis_account(address, account);
         }
