@@ -1242,6 +1242,22 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
+        Arg::with_name("config_file")
+            .long("config-file")
+            .takes_value(true)
+            .value_name("PATH")
+            .help(
+                "Path to a versioned TOML configuration file. Currently configures XDP transmit \
+                 behavior (Linux only)",
+            ),
+    )
+    .arg(
+        Arg::with_name("print_default_config")
+            .long("print-default-config")
+            .takes_value(false)
+            .help("Print the built-in default configuration file and exit"),
+    )
+    .arg(
         Arg::with_name("no_xdp")
             .long("no-xdp")
             .takes_value(false)
@@ -1254,8 +1270,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("INTERFACE")
             .conflicts_with("no_xdp")
             .help(
-                "Network interface to use for XDP transmit. Auto-detected from default route if \
-                 not specified",
+                "Override the configured network interface for XDP transmit. The built-in policy \
+                 selects the device carrying the default route",
             ),
     )
     .arg(
@@ -1266,8 +1282,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .conflicts_with("no_xdp")
             .validator(|value| validate_cpu_ranges(value, "--xdp-cpu-cores"))
             .help(
-                "CPU cores to reserve for XDP transmit (e.g. \"2-4,7\"). Defaults to 1 \
-                 auto-selected core",
+                "Override the configured XDP workers with CPU cores to reserve (e.g. \"2-4,7\"). \
+                 The built-in policy auto-selects one core",
             ),
     )
     .arg(
@@ -1276,6 +1292,14 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(false)
             .conflicts_with("no_xdp")
             .help("Enable XDP zero copy mode. Requires hardware and driver support"),
+    )
+    .arg(
+        Arg::with_name("no_xdp_zero_copy")
+            .long("no-xdp-zero-copy")
+            .takes_value(false)
+            .conflicts_with("xdp_zero_copy")
+            .conflicts_with("no_xdp")
+            .help("Request XDP copy mode, overriding a zero_copy = true file setting"),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
