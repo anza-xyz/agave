@@ -127,7 +127,6 @@ impl SwQos {
             config: config.clone(),
             staked_stream_load_ema: Arc::new(StakedStreamLoadEMA::new(
                 stats.clone(),
-                config.max_unstaked_connections,
                 config.max_streams_per_ms,
             )),
             stats,
@@ -447,8 +446,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     fn on_stream_accepted(&self, conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema
-            .increment_load(conn_context.peer_type);
+        self.staked_stream_load_ema.increment_load();
         conn_context
             .stream_counter
             .as_ref()
