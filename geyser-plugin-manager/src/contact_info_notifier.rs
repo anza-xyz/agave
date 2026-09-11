@@ -23,6 +23,8 @@
 //! version components, and outset — *not* wallclock, since wallclock
 //! advances on every routine republish) and skips any notification
 //! whose fingerprint matches the last one delivered for that identity.
+//! Plugins can opt out via `contact_info_dedup_enabled()` (default
+//! true); an opted-out plugin receives every accepted republish.
 //! Outset is included because a change there indicates a node restart
 //! or identity transfer, which is meaningful signal even if no other
 //! field happens to differ.
@@ -200,7 +202,12 @@ fn run_dispatch_loop(
     for snapshot in initial_state {
         let fp = semantic_fingerprint(&snapshot);
         fingerprints.put(snapshot.pubkey, fp);
-        dispatch_updated(&plugin_manager, &snapshot, /* is_startup */ true);
+        dispatch_updated(
+            &plugin_manager,
+            &snapshot,
+            /* is_startup */ true,
+            /* unchanged */ false,
+        );
     }
 
     // Phase 2: drain the live channel until disconnect.
@@ -209,11 +216,17 @@ fn run_dispatch_loop(
             ContactInfoEvent::Updated(snapshot) => {
                 let fp = semantic_fingerprint(&snapshot);
                 let unchanged = fingerprints.get(&snapshot.pubkey).copied() == Some(fp);
-                if unchanged {
-                    continue;
-                }
+                // Unconditional put: lazy_lru's `get` does not refresh
+                // recency, so without this a stable node republishing
+                // unchanged data could age out of a full cache and cause a
+                // spurious "changed" delivery to dedup'd plugins.
                 fingerprints.put(snapshot.pubkey, fp);
-                dispatch_updated(&plugin_manager, &snapshot, /* is_startup */ false);
+                dispatch_updated(
+                    &plugin_manager,
+                    &snapshot,
+                    /* is_startup */ false,
+                    unchanged,
+                );
             }
             ContactInfoEvent::Removed(pubkey) => {
                 // Drop the fingerprint so that if this identity later
@@ -233,9 +246,21 @@ fn dispatch_updated(
     plugin_manager: &Arc<ArcSwap<GeyserPluginManager>>,
     snapshot: &ContactInfoSnapshot,
     is_startup: bool,
+    unchanged: bool,
 ) {
     let plugin_manager = plugin_manager.load();
     if plugin_manager.plugins.is_empty() {
+        return;
+    }
+
+    // Semantically unchanged republish: only worth building the view when
+    // some opted-in plugin has dedup disabled.
+    if unchanged
+        && !plugin_manager
+            .plugins
+            .iter()
+            .any(|p| p.contact_info_notifications_enabled() && !p.contact_info_dedup_enabled())
+    {
         return;
     }
 
@@ -271,6 +296,9 @@ fn dispatch_updated(
 
     for plugin in plugin_manager.plugins.iter() {
         if !plugin.contact_info_notifications_enabled() {
+            continue;
+        }
+        if unchanged && plugin.contact_info_dedup_enabled() {
             continue;
         }
         let result =
@@ -391,6 +419,7 @@ mod tests {
     struct RecordingPlugin {
         name: &'static str,
         enabled: bool,
+        dedup_enabled: bool,
         live_count: Arc<AtomicUsize>,
         startup_count: Arc<AtomicUsize>,
         removed_count: Arc<AtomicUsize>,
@@ -405,6 +434,10 @@ mod tests {
 
         fn contact_info_notifications_enabled(&self) -> bool {
             self.enabled
+        }
+
+        fn contact_info_dedup_enabled(&self) -> bool {
+            self.dedup_enabled
         }
 
         fn notify_contact_info(
@@ -445,6 +478,7 @@ mod tests {
         RecordingPlugin {
             name,
             enabled,
+            dedup_enabled: true,
             live_count,
             startup_count,
             removed_count,
@@ -454,6 +488,44 @@ mod tests {
     }
 
     fn loaded(plugin: RecordingPlugin) -> Arc<LoadedGeyserPlugin> {
+        #[cfg(unix)]
+        let library = libloading::os::unix::Library::this();
+        #[cfg(windows)]
+        let library = libloading::os::windows::Library::this().unwrap();
+        Arc::new(LoadedGeyserPlugin::new(
+            Library::from(library),
+            Box::new(plugin),
+            None,
+        ))
+    }
+
+    /// Relies on the trait's default `contact_info_dedup_enabled()` (true),
+    /// so the default impl itself is exercised end-to-end.
+    #[derive(Debug)]
+    struct DefaultDedupPlugin {
+        live_count: Arc<AtomicUsize>,
+    }
+
+    impl GeyserPlugin for DefaultDedupPlugin {
+        fn name(&self) -> &'static str {
+            "default-dedup-plugin"
+        }
+
+        fn contact_info_notifications_enabled(&self) -> bool {
+            true
+        }
+
+        fn notify_contact_info(
+            &self,
+            _info: ReplicaContactInfoVersions,
+            _is_startup: bool,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            self.live_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    fn loaded_default_dedup(plugin: DefaultDedupPlugin) -> Arc<LoadedGeyserPlugin> {
         #[cfg(unix)]
         let library = libloading::os::unix::Library::this();
         #[cfg(windows)]
@@ -558,6 +630,59 @@ mod tests {
         notifier.join().unwrap();
         assert_eq!(startup.load(Ordering::Relaxed), 0);
         assert_eq!(live.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn dedup_opt_out_receives_identical_republish() {
+        let live_deduped = Arc::new(AtomicUsize::new(0));
+        let live_raw = Arc::new(AtomicUsize::new(0));
+        let startup_deduped = Arc::new(AtomicUsize::new(0));
+        let startup_raw = Arc::new(AtomicUsize::new(0));
+        let removed = Arc::new(AtomicUsize::new(0));
+        let mut raw_plugin = recording_plugin(
+            "raw",
+            true,
+            live_raw.clone(),
+            startup_raw.clone(),
+            removed.clone(),
+        );
+        raw_plugin.dedup_enabled = false;
+        let live_default = Arc::new(AtomicUsize::new(0));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
+            plugins: vec![
+                loaded(recording_plugin(
+                    "deduped",
+                    true,
+                    live_deduped.clone(),
+                    startup_deduped.clone(),
+                    removed.clone(),
+                )),
+                loaded(raw_plugin),
+                loaded_default_dedup(DefaultDedupPlugin {
+                    live_count: live_default.clone(),
+                }),
+            ],
+        })));
+
+        let pk = Pubkey::new_unique();
+        let (sender, receiver) = channel(64);
+        let notifier = ContactInfoNotifier::spawn(plugin_manager, vec![], receiver);
+
+        // Same semantic content, just wallclock advances. The dedup'd
+        // plugin sees one delivery, the opted-out plugin sees all three.
+        let mut snap = make_snapshot(pk, 8000);
+        sender.send(ContactInfoEvent::Updated(snap)).unwrap();
+        snap.wallclock = 100;
+        sender.send(ContactInfoEvent::Updated(snap)).unwrap();
+        snap.wallclock = 200;
+        sender.send(ContactInfoEvent::Updated(snap)).unwrap();
+        drop(sender);
+
+        notifier.join().unwrap();
+        assert_eq!(live_deduped.load(Ordering::Relaxed), 1);
+        assert_eq!(live_raw.load(Ordering::Relaxed), 3);
+        // The plugin using the trait default behaves like dedup on.
+        assert_eq!(live_default.load(Ordering::Relaxed), 1);
     }
 
     #[test]
