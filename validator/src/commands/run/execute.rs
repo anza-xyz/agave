@@ -113,7 +113,6 @@ pub fn execute(
 
     let cli::thread_args::NumThreadConfig {
         accounts_db_background_threads,
-        accounts_db_foreground_threads,
         accounts_index_flush_threads,
         block_production_num_workers,
         ip_echo_server_threads,
@@ -723,7 +722,6 @@ pub fn execute(
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
-        num_foreground_threads: Some(accounts_db_foreground_threads),
         accounts_file_provider: AccountsFileProvider::AppendVec,
     };
 

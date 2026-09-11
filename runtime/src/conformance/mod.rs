@@ -76,7 +76,6 @@ pub(crate) fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbCo
     let single_thread = NonZeroUsize::new(1).unwrap();
     AccountsDbConfig {
         num_background_threads: Some(single_thread),
-        num_foreground_threads: Some(single_thread),
         read_cache_num_shards: Some(2),
         skip_initial_hash_calc: true,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING
@@ -92,7 +91,6 @@ mod tests {
         let accounts = new_accounts_for_tests_single_threaded();
         let accounts_db = &accounts.accounts_db;
         assert!(accounts_db.skip_initial_hash_calc);
-        assert_eq!(accounts_db.thread_pool_foreground.current_num_threads(), 1);
         assert_eq!(accounts_db.thread_pool_background.current_num_threads(), 1);
     }
 
@@ -108,6 +106,5 @@ mod tests {
         assert!(!config.verify_index);
         assert_eq!(config.read_cache_num_shards, Some(2));
         assert_eq!(config.num_background_threads, Some(one));
-        assert_eq!(config.num_foreground_threads, Some(one));
     }
 }

@@ -164,6 +164,15 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "accounts-db-write-cache-limit",
     );
     add_arg!(
+        // deprecated in v4.4.0
+        Arg::with_name("accounts_db_foreground_threads")
+            .long("accounts-db-foreground-threads")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .help("No-op; AccountsDb no longer uses a foreground thread pool"),
+    );
+    add_arg!(
         // deprecated in v4.3.0
         Arg::with_name("disable_banking_trace")
             .long("disable-banking-trace")

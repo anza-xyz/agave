@@ -40,8 +40,6 @@ pub struct AccountsDbConfig {
     pub scan_filter_for_shrinking: ScanFilter,
     /// Number of threads for background operations (`thread_pool_background')
     pub num_background_threads: Option<NonZeroUsize>,
-    /// Number of threads for foreground operations (`thread_pool_foreground`)
-    pub num_foreground_threads: Option<NonZeroUsize>,
     pub accounts_file_provider: AccountsFileProvider,
 }
 
@@ -62,7 +60,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
     num_background_threads: None,
-    num_foreground_threads: None,
     accounts_file_provider: AccountsFileProvider::AppendVec,
 };
 
@@ -83,6 +80,5 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     num_background_threads: None,
-    num_foreground_threads: None,
     accounts_file_provider: AccountsFileProvider::AppendVec,
 };
