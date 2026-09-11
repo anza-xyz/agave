@@ -5,7 +5,7 @@ use {
     crate::{
         crds_data::MAX_WALLCLOCK,
         define_tlv_enum,
-        tlv::{self, TlvDecodeError, TlvRecord},
+        tlv::{TlvDecodeError, TlvRecord},
     },
     assert_matches::{assert_matches, debug_assert_matches},
     solana_net_utils::SocketAddrSpace,
@@ -107,8 +107,10 @@ pub struct ContactInfo {
     // All sockets have a unique key and a valid IP address index.
     #[wincode(with = "wincode::containers::Vec<SocketEntry, short_vec::ShortU16>")]
     sockets: Vec<SocketEntry>,
-    #[wincode(with = "wincode::containers::Vec<Extension, short_vec::ShortU16>")]
-    extensions: Vec<Extension>,
+    // Kept verbatim: signature and hash are taken over a re-serialization of
+    // this struct, so dropping unrecognized records would invalidate both.
+    #[wincode(with = "wincode::containers::Vec<TlvRecord, short_vec::ShortU16>")]
+    extensions: Vec<TlvRecord>,
     // Only sanitized socket-addrs can be cached!
     #[wincode(skip(default_val = EMPTY_SOCKET_ADDR_CACHE))]
     cache: [SocketAddr; SOCKET_CACHE_SIZE],
@@ -132,9 +134,10 @@ define_tlv_enum!(
     /// TLV encoded Extensions in ContactInfo messages
     ///
     /// On the wire each record is: [type: u8][len: varint][bytes]
-    /// Extensions with unknown types are skipped by tlv::parse,
-    /// so new types can be added without breaking legacy code,
-    /// and support by all clients is not required.
+    /// Unknown types are skipped by tlv::parse but kept verbatim in
+    /// ContactInfo::extensions, so new types can be added without breaking
+    /// legacy code. Never make decoding lossy: a dropped record makes the
+    /// value fail sigverify.
     ///
     /// Always add new TLV records to the end of this enum.
     /// Never reorder or reuse a type.
@@ -157,7 +160,6 @@ struct ContactInfoLite {
     addrs: Vec<IpAddr>,
     #[wincode(with = "wincode::containers::Vec<SocketEntry, short_vec::ShortU16>")]
     sockets: Vec<SocketEntry>,
-    #[allow(dead_code)]
     #[wincode(with = "wincode::containers::Vec<TlvRecord, short_vec::ShortU16>")]
     extensions: Vec<TlvRecord>,
 }
@@ -602,7 +604,7 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             version,
             addrs,
             sockets,
-            extensions: tlv::parse(&extensions),
+            extensions,
             cache: EMPTY_SOCKET_ADDR_CACHE,
         };
         // Populate node.cache.
@@ -1205,5 +1207,41 @@ mod tests {
             assert_eq!(node.overrides(&other), Some(false));
             assert_eq!(other.overrides(&node), Some(true));
         }
+    }
+
+    // Extensions are the last field, a short-vec, so an empty list is one
+    // trailing zero byte.
+    fn with_unknown_extension(node: &ContactInfo) -> Vec<u8> {
+        let mut bytes = wincode::serialize(node).unwrap();
+        assert_eq!(
+            bytes.pop(),
+            Some(0u8),
+            "expected empty extensions short-vec"
+        );
+        bytes.extend_from_slice(&[1u8, 200u8, 4u8, 1u8, 2u8, 3u8, 4u8]);
+        bytes
+    }
+
+    #[test]
+    fn test_unknown_extension_round_trip() {
+        let node = ContactInfo::new_localhost(&Pubkey::new_unique(), 1234);
+        let bytes = with_unknown_extension(&node);
+        let other: ContactInfo = wincode::deserialize(&bytes).unwrap();
+        assert_eq!(wincode::serialize(&other).unwrap(), bytes);
+    }
+
+    #[test]
+    fn test_unknown_extension_preserves_signature() {
+        use crate::{crds_data::CrdsData, crds_value::CrdsValue, sigverify_cache::SigVerifyCache};
+        let keypair = Keypair::new();
+        let node = ContactInfo::new_localhost(&keypair.pubkey(), 1234);
+        // Sign the payload carrying the extension, as its originator would.
+        let mut data = wincode::serialize(&CrdsData::ContactInfo(node)).unwrap();
+        assert_eq!(data.pop(), Some(0u8), "expected empty extensions short-vec");
+        data.extend_from_slice(&[1u8, 200u8, 4u8, 1u8, 2u8, 3u8, 4u8]);
+        let mut bytes = keypair.sign_message(&data).as_ref().to_vec();
+        bytes.extend_from_slice(&data);
+        let value: CrdsValue = wincode::deserialize(&bytes).unwrap();
+        assert!(value.verify_with_cache(&SigVerifyCache::new()));
     }
 }
