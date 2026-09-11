@@ -178,6 +178,7 @@ impl PullRequestPipelineFlags {
                 || rust_changed
                 || changed_files.iter().any(|file| {
                     file.ends_with("ci/test-checks.sh")
+                        || file == "CHANGELOG.md"
                         || file.ends_with("scripts/cargo-for-all-lock-files.sh")
                         || file.ends_with("scripts/check-dev-context-only-utils.sh")
                         || file.ends_with("scripts/agave-build-lists.sh")

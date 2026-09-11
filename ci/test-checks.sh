@@ -20,6 +20,9 @@ export RUSTFLAGS="-D warnings -A incomplete_features"
 # format and sort TOML files
 tombi format --check --diff
 
+# lint the changelog
+_ rumdl check CHANGELOG.md
+
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree
 
