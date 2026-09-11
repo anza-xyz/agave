@@ -85,6 +85,10 @@ impl<T: BloomHashIndex> Bloom<T> {
     }
 
     pub fn new(num_bits: usize, keys: Vec<u64>) -> Self {
+        assert!(
+            num_bits >= 8,
+            "Bloom filter num_bits must be at least 8, got {num_bits}"
+        );
         let bits = BitVec::new_fill(false, num_bits as u64);
         Bloom {
             keys,
@@ -101,7 +105,7 @@ impl<T: BloomHashIndex> Bloom<T> {
     /// See <https://hur.st/bloomfilter/>.
     pub fn random(num_items: usize, false_rate: f64, max_bits: usize) -> Self {
         let m = Self::num_bits(num_items as f64, false_rate);
-        let num_bits = cmp::max(1, cmp::min(m as usize, max_bits));
+        let num_bits = cmp::max(8, cmp::min(m as usize, max_bits));
         let num_keys = Self::num_keys(num_bits as f64, num_items as f64) as usize;
         let keys: Vec<u64> = (0..num_keys).map(|_| rand::rng().random()).collect();
         Self::new(num_bits, keys)
@@ -131,7 +135,7 @@ impl<T: BloomHashIndex> Bloom<T> {
         self.num_bits_set = 0;
     }
     pub fn add(&mut self, key: &T) {
-        if self.bits.is_empty() {
+        if self.keys.is_empty() || self.bits.is_empty() {
             return;
         }
         for k in &self.keys {
@@ -212,8 +216,10 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
     /// Adds an item to the bloom filter and returns true if the item
     /// was not in the filter before.
     pub fn add(&self, key: &T) -> bool {
-        if self.bits.is_empty() {
-            return false;
+        // Empty keys / empty bitset cannot store items; treat as "not previously
+        // present" so the return value agrees with `contains` (always false here).
+        if self.keys.is_empty() || self.bits.is_empty() {
+            return true;
         }
         let mut added = false;
         for k in &self.keys {
@@ -304,7 +310,7 @@ mod test {
         //empty
         let bloom: Bloom<Hash> = Bloom::random(0, 0.1, 100);
         assert_eq!(bloom.keys.len(), 0);
-        assert_eq!(bloom.bits.len(), 1);
+        assert_eq!(bloom.bits.len(), 8);
 
         //normal
         let bloom: Bloom<Hash> = Bloom::random(10, 0.1, 100);
@@ -364,11 +370,11 @@ mod test {
 
     #[test]
     fn test_debug() {
-        let mut b: Bloom<Hash> = Bloom::new(3, vec![100]);
+        let mut b: Bloom<Hash> = Bloom::new(8, vec![100]);
         b.add(&Hash::default());
         assert_eq!(
             format!("{b:?}"),
-            "Bloom { keys.len: 1 bits.len: 3 num_set: 1 bits: 001 }"
+            "Bloom { keys.len: 1 bits.len: 8 num_set: 1 bits: 00001000 }"
         );
 
         let mut b: Bloom<Hash> = Bloom::new(1000, vec![100]);
@@ -385,6 +391,31 @@ mod test {
         let mut hash = [0u8; solana_hash::HASH_BYTES];
         rng.fill(&mut hash);
         Hash::new_from_array(hash)
+    }
+
+    #[test]
+    fn test_bloom_new_rejects_too_few_bits() {
+        for num_bits in [0usize, 1, 7] {
+            let result = std::panic::catch_unwind(|| {
+                let _bloom: Bloom<Hash> = Bloom::new(num_bits, vec![0]);
+            });
+            assert!(
+                result.is_err(),
+                "expected Bloom::new to panic for num_bits={num_bits}"
+            );
+        }
+        // Boundary: 8 bits is accepted.
+        let _bloom: Bloom<Hash> = Bloom::new(8, vec![0]);
+    }
+
+    #[test]
+    fn test_concurrent_bloom_empty_keys_add_agrees_with_contains() {
+        // Empty keys: contains is always false; add must report "was not present".
+        let bloom: ConcurrentBloom<Hash> = Bloom::new(64, vec![]).into();
+        let key = hash(b"empty-keys");
+        assert!(!bloom.contains(&key));
+        assert!(bloom.add(&key));
+        assert!(!bloom.contains(&key));
     }
 
     #[test]
