@@ -10,47 +10,8 @@ use {
     },
 };
 
-/// Max number of root slots to wait before triggering reporting of stats.
-const SLOTS_INTERVAL: Slot = 10;
 /// Max amount of seconds to wait before triggering reporting of stats.
-const DURATION_INTERVAL: Duration = Duration::from_secs(5);
-
-fn per_second(count: u64, elapsed: Duration) -> u64 {
-    let elapsed_nanos = elapsed.as_nanos();
-    if elapsed_nanos == 0 {
-        return 0;
-    }
-
-    let rate = u128::from(count)
-        .saturating_mul(1_000_000_000)
-        .div_euclid(elapsed_nanos);
-    u64::try_from(rate).unwrap_or(u64::MAX)
-}
-
-/// A struct to control when stats should be reported depending on how many slots or time has passed.
-#[derive(Debug)]
-pub(super) struct Reporting {
-    /// The last time when reporting was done.
-    time: Instant,
-    /// The last slot when reporting was done.
-    slot: Slot,
-}
-
-impl Reporting {
-    fn new(root_slot: Slot) -> Self {
-        Self {
-            time: Instant::now(),
-            slot: root_slot,
-        }
-    }
-
-    /// Returns `Some(duration since last report)` if reporting should be done else `None`.
-    fn should_report(&self, root_slot: Slot) -> Option<Duration> {
-        let elapsed = self.time.elapsed();
-        (root_slot >= self.slot.saturating_add(SLOTS_INTERVAL) || elapsed > DURATION_INTERVAL)
-            .then_some(elapsed)
-    }
-}
+const DURATION_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Stats for the sigverifier.
 #[derive(Debug)]
@@ -86,11 +47,11 @@ pub(super) struct SigVerifierStats {
     pub(super) vote_pool_duplicate: Saturating<u64>,
     pub(super) invalid_vote_banning_validator: Saturating<u64>,
     /// Last time the stats were reported.
-    last_report: Reporting,
+    last_report: Instant,
 }
 
-impl SigVerifierStats {
-    pub(super) fn new(root_slot: Slot) -> Self {
+impl Default for SigVerifierStats {
+    fn default() -> Self {
         Self {
             vote_stats: SigVerifyVoteStats::default(),
             cert_stats: SigVerifyCertStats::default(),
@@ -109,30 +70,21 @@ impl SigVerifierStats {
             invalid_vote_banning_validator: Saturating(0),
             num_keep_vote_failed: Saturating(0),
             vote_pool_duplicate: Saturating(0),
-            last_report: Reporting::new(root_slot),
+            last_report: Instant::now(),
         }
     }
+}
 
-    pub(super) fn elapsed_since_last_report(&self) -> Duration {
-        self.last_report.time.elapsed()
-    }
-
+impl SigVerifierStats {
     /// Reports stats if they have not been reported in some time.
     ///
     /// Also resets all stats.
     pub(super) fn maybe_report(&mut self, root_slot: Slot) {
-        if let Some(elapsed) = self.last_report.should_report(root_slot) {
-            let mut stats = SigVerifierStats::new(root_slot);
-            std::mem::swap(self, &mut stats);
-            stats.do_report(root_slot, elapsed);
+        if self.last_report.elapsed() < DURATION_INTERVAL {
+            return;
         }
-    }
-
-    /// Reports stats regardless of when they were last reported.
-    ///
-    /// `root_slot` should be the current root slot and is reported.
-    /// `elapsed` should be the time since last report and is reported.
-    pub(super) fn do_report(self, root_slot: Slot, elapsed: Duration) {
+        let mut stats = Self::default();
+        std::mem::swap(&mut stats, self);
         let Self {
             vote_stats,
             cert_stats,
@@ -152,14 +104,12 @@ impl SigVerifierStats {
             num_keep_vote_failed,
             vote_pool_duplicate,
             last_report: _,
-        } = self;
-
-        vote_stats.report(elapsed);
+        } = stats;
+        vote_stats.report();
         cert_stats.report();
         datapoint_info!(
             "bls_sig_verifier_stats",
             ("root_slot", root_slot, i64),
-            ("elapsed_ms", elapsed.as_millis(), i64),
             (
                 "extract_and_verify_us_count",
                 extract_filter_msgs_us.count(),
@@ -459,7 +409,7 @@ impl SigVerifyVoteStats {
         self.vote_verification_stats.merge(vote_verification_stats);
     }
 
-    pub(super) fn report(self, elapsed: Duration) {
+    pub(super) fn report(self) {
         let Self {
             votes_to_sig_verify,
             fn_verify_and_send_votes_stats,
@@ -469,11 +419,9 @@ impl SigVerifyVoteStats {
         } = self;
         senders.report();
         vote_verification_stats.report();
-        let votes_per_sec = per_second(votes_to_sig_verify.0 as u64, elapsed);
         datapoint_info!(
             "bls_vote_sigverify_stats",
             ("votes_to_sig_verify", votes_to_sig_verify.0, i64),
-            ("votes_to_sig_verify_per_sec", votes_per_sec, i64),
             (
                 "fn_verify_and_send_votes_count",
                 fn_verify_and_send_votes_stats.count(),
