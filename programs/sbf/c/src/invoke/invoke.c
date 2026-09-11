@@ -903,7 +903,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
 
     uint64_t used = remaining - sol_remaining_compute_units();
 
-    sol_assert(used == 1061);
+    sol_assert(used == 1060 || used == 1061);
     break;
   }
   case TEST_CU_USAGE_BASELINE:
@@ -939,7 +939,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
                           signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
     uint64_t used = before - sol_remaining_compute_units();
 
-    sol_assert(used == 1115);
+    sol_assert(used == 1114 || used == 1115);
     break;
   }
     case TEST_CU_USAGE_MAX:
@@ -977,7 +977,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
                           account_infos, account_infos_len,
                           signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
     uint64_t used = before - sol_remaining_compute_units();
-    sol_assert(used == 1176);
+    sol_assert(used == 1175 || used == 1176);
     break;
   }
   default:

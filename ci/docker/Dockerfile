@@ -85,7 +85,7 @@ RUN \
   cargo install cargo-audit && \
   cargo install cargo-hack && \
   cargo install rustfilt && \
-  cargo install cargo-build-sbf@4.1.0 --locked && \
+  cargo install cargo-build-sbf@4.3.0 --locked && \
   cargo install cargo-deny@0.20.2 --locked && \
   # tombi v1.5.0
   cargo install --git https://github.com/tombi-toml/tombi.git --rev e735f817881f328daee6f9f0f458ba1ac4328a44 --locked tombi-cli && \

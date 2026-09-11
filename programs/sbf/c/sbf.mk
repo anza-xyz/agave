@@ -8,7 +8,7 @@ ifneq ($(V),1)
 _@ :=@
 endif
 
-TOOLS_VERSION=v1.54
+TOOLS_VERSION=v1.57
 INC_DIRS ?=
 SRC_DIR ?= ./src
 TEST_PREFIX ?= test_
@@ -18,7 +18,7 @@ OS := $(shell uname)
 
 PLATFORM_TOOLS_FOLDER=$(HOME)/.cache/solana/$(TOOLS_VERSION)/platform-tools
 LLVM_DIR = $(PLATFORM_TOOLS_FOLDER)/llvm
-LLVM_SYSTEM_INC_DIRS := $(LLVM_DIR)/lib/clang/20/include
+LLVM_SYSTEM_INC_DIRS := $(LLVM_DIR)/lib/clang/22/include
 
 ifeq "$(SBPF_CPU)" "v1"
 TARGET_NAME := sbpfv1
