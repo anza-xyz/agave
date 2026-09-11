@@ -3101,8 +3101,20 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
     // Nodes that are only online thanks to the extended timeout.
     let mut grace_nodes = vec![];
 
+    // Stake whose crds entry was inserted locally within the old timeout. Unlike
+    // the wallclock ages, this is stamped with our own clock, so it is immune to
+    // clock skew between us and the peer.
+    let mut online_stake_local_ts = 0;
+
     let mut total_activated_stake = 0;
     let now = timestamp();
+    // When the contact info of each peer was last inserted into our crds, by our
+    // own clock.
+    let local_timestamps: HashMap<_, _> = cluster_info
+        .all_peers()
+        .into_iter()
+        .map(|(node, local_timestamp)| (*node.pubkey(), local_timestamp))
+        .collect();
     // Nodes contact infos are saved to disk and restored on validator startup.
     // Staked nodes entries will not expire until an epoch after. So it
     // is necessary here to filter for recent entries to establish liveness.
@@ -3111,7 +3123,10 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         .into_iter()
         .filter_map(|node| {
             let age = now.saturating_sub(node.wallclock());
-            (age < NODE_LIVENESS_TIMEOUT_MS).then(|| (*node.pubkey(), (age, node)))
+            let local_age = local_timestamps
+                .get(node.pubkey())
+                .map(|local_timestamp| now.saturating_sub(*local_timestamp));
+            (age < NODE_LIVENESS_TIMEOUT_MS).then(|| (*node.pubkey(), (age, local_age, node)))
         })
         .collect();
     let my_id = cluster_info.id();
@@ -3125,20 +3140,30 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         }
         let vote_state_node_pubkey = *vote_account.node_pubkey();
 
-        if let Some((age, node)) = peers.get(&vote_state_node_pubkey) {
+        if let Some((age, local_age, node)) = peers.get(&vote_state_node_pubkey) {
             trace!(
                 "observed {vote_state_node_pubkey} in gossip, (activated_stake={activated_stake})"
             );
             online_stake += activated_stake;
+            if local_age.is_some_and(|local_age| local_age < CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS) {
+                online_stake_local_ts += activated_stake;
+            }
             if *age < CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS {
                 online_stake_old_timeout += activated_stake;
             } else {
-                grace_nodes.push((activated_stake, vote_state_node_pubkey, node.gossip(), *age));
+                grace_nodes.push((
+                    activated_stake,
+                    vote_state_node_pubkey,
+                    node.gossip(),
+                    *age,
+                    *local_age,
+                ));
             }
         } else if vote_state_node_pubkey == my_id {
             // This node is online, under either timeout
             online_stake += activated_stake;
             online_stake_old_timeout += activated_stake;
+            online_stake_local_ts += activated_stake;
         } else {
             offline_stake += activated_stake;
             offline_nodes.push((activated_stake, vote_state_node_pubkey));
@@ -3148,19 +3173,23 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
     let online_stake_percentage = (online_stake as f64 / total_activated_stake as f64) * 100.;
     let online_stake_percentage_old_timeout =
         (online_stake_old_timeout as f64 / total_activated_stake as f64) * 100.;
+    let online_stake_percentage_local_ts =
+        (online_stake_local_ts as f64 / total_activated_stake as f64) * 100.;
     if log {
         info!("{online_stake_percentage:.3}% of active stake visible in gossip");
         info!(
             "RRRRRRRRRR {online_stake_percentage:.3}% of active stake visible in gossip with \
              {NODE_LIVENESS_TIMEOUT_MS}ms timeout, {online_stake_percentage_old_timeout:.3}% with \
-             {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms timeout"
+             {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms timeout, {online_stake_percentage_local_ts:.3}% \
+             with {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms local-insert timeout"
         );
         grace_nodes.sort_by_key(|node| cmp::Reverse(node.0)); // sort by reverse stake weight
-        for (stake, identity, gossip_addr, age) in grace_nodes {
+        for (stake, identity, gossip_addr, age, local_age) in grace_nodes {
             info!(
-                "RRRRRRRRRR    {:.3}% - {identity} - gossip {} - age {age}ms",
+                "RRRRRRRRRR    {:.3}% - {identity} - gossip {} - age {age}ms - local_age {}ms",
                 (stake as f64 / total_activated_stake as f64) * 100.,
                 gossip_addr.map_or_else(|| "none".to_string(), |addr| addr.to_string()),
+                local_age.map_or_else(|| "none".to_string(), |local_age| local_age.to_string()),
             );
         }
 
@@ -3182,6 +3211,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
             "wfsm_gossip",
             ("online_stake", online_stake, i64),
             ("online_stake_old_timeout", online_stake_old_timeout, i64),
+            ("online_stake_local_ts", online_stake_local_ts, i64),
             ("offline_stake", offline_stake, i64),
             ("total_activated_stake", total_activated_stake, i64),
         );
