@@ -21,7 +21,8 @@ export RUSTFLAGS="-D warnings -A incomplete_features"
 tombi format --check --diff
 
 # lint the changelog
-_ rumdl check CHANGELOG.md
+# Disable MD013 (line length exceeds 80 characters).
+_ rumdl check --disable MD013 CHANGELOG.md
 
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree
