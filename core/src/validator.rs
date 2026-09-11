@@ -3047,17 +3047,13 @@ fn wait_for_supermajority(
             }
 
             for i in 1.. {
-                let logging = i % 10 == 1;
-                if logging {
-                    info!(
-                        "Waiting for {}% of activated stake at slot {} to be in gossip...",
-                        WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT,
-                        bank.slot()
-                    );
-                }
+                info!(
+                    "Waiting for {}% of activated stake at slot {} to be in gossip...",
+                    WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT,
+                    bank.slot()
+                );
 
-                let gossip_stake_percent =
-                    get_stake_percent_in_gossip(&bank, cluster_info, logging);
+                let gossip_stake_percent = get_stake_percent_in_gossip(&bank, cluster_info);
 
                 *start_progress.write().unwrap() =
                     ValidatorStartProgress::WaitingForSupermajority {
@@ -3091,7 +3087,7 @@ fn wait_for_supermajority(
 const NODE_LIVENESS_TIMEOUT_MS: u64 = 3 * CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
 
 // Get the activated stake percentage (based on the provided bank) that is visible in gossip
-fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: bool) -> u64 {
+fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo) -> u64 {
     let mut online_stake = 0;
     // Stake that would have been considered online under the old, un-tripled
     // timeout. Reported alongside online_stake for comparison only.
@@ -3175,47 +3171,45 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         (online_stake_old_timeout as f64 / total_activated_stake as f64) * 100.;
     let online_stake_percentage_local_ts =
         (online_stake_local_ts as f64 / total_activated_stake as f64) * 100.;
-    if log {
-        info!("{online_stake_percentage:.3}% of active stake visible in gossip");
+    info!("{online_stake_percentage:.3}% of active stake visible in gossip");
+    info!(
+        "RRRRRRRRRR {online_stake_percentage:.3}% of active stake visible in gossip with \
+         {NODE_LIVENESS_TIMEOUT_MS}ms timeout, {online_stake_percentage_old_timeout:.3}% with \
+         {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms timeout, {online_stake_percentage_local_ts:.3}% \
+         with {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms local-insert timeout"
+    );
+    grace_nodes.sort_by_key(|node| cmp::Reverse(node.0)); // sort by reverse stake weight
+    for (stake, identity, gossip_addr, age, local_age) in grace_nodes {
         info!(
-            "RRRRRRRRRR {online_stake_percentage:.3}% of active stake visible in gossip with \
-             {NODE_LIVENESS_TIMEOUT_MS}ms timeout, {online_stake_percentage_old_timeout:.3}% with \
-             {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms timeout, {online_stake_percentage_local_ts:.3}% \
-             with {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms local-insert timeout"
-        );
-        grace_nodes.sort_by_key(|node| cmp::Reverse(node.0)); // sort by reverse stake weight
-        for (stake, identity, gossip_addr, age, local_age) in grace_nodes {
-            info!(
-                "RRRRRRRRRR    {:.3}% - {identity} - gossip {} - age {age}ms - local_age {}ms",
-                (stake as f64 / total_activated_stake as f64) * 100.,
-                gossip_addr.map_or_else(|| "none".to_string(), |addr| addr.to_string()),
-                local_age.map_or_else(|| "none".to_string(), |local_age| local_age.to_string()),
-            );
-        }
-
-        if !offline_nodes.is_empty() {
-            info!(
-                "{:.3}% of active stake is not visible in gossip",
-                (offline_stake as f64 / total_activated_stake as f64) * 100.
-            );
-            offline_nodes.sort_by_key(|a| cmp::Reverse(a.0)); // sort by reverse stake weight
-            for (stake, identity) in offline_nodes {
-                info!(
-                    "    {:.3}% - {}",
-                    (stake as f64 / total_activated_stake as f64) * 100.,
-                    identity
-                );
-            }
-        }
-        datapoint_info!(
-            "wfsm_gossip",
-            ("online_stake", online_stake, i64),
-            ("online_stake_old_timeout", online_stake_old_timeout, i64),
-            ("online_stake_local_ts", online_stake_local_ts, i64),
-            ("offline_stake", offline_stake, i64),
-            ("total_activated_stake", total_activated_stake, i64),
+            "RRRRRRRRRR    {:.3}% - {identity} - gossip {} - age {age}ms - local_age {}ms",
+            (stake as f64 / total_activated_stake as f64) * 100.,
+            gossip_addr.map_or_else(|| "none".to_string(), |addr| addr.to_string()),
+            local_age.map_or_else(|| "none".to_string(), |local_age| local_age.to_string()),
         );
     }
+
+    if !offline_nodes.is_empty() {
+        info!(
+            "{:.3}% of active stake is not visible in gossip",
+            (offline_stake as f64 / total_activated_stake as f64) * 100.
+        );
+        offline_nodes.sort_by_key(|a| cmp::Reverse(a.0)); // sort by reverse stake weight
+        for (stake, identity) in offline_nodes {
+            info!(
+                "    {:.3}% - {}",
+                (stake as f64 / total_activated_stake as f64) * 100.,
+                identity
+            );
+        }
+    }
+    datapoint_info!(
+        "wfsm_gossip",
+        ("online_stake", online_stake, i64),
+        ("online_stake_old_timeout", online_stake_old_timeout, i64),
+        ("online_stake_local_ts", online_stake_local_ts, i64),
+        ("offline_stake", offline_stake, i64),
+        ("total_activated_stake", total_activated_stake, i64),
+    );
 
     online_stake_percentage as u64
 }

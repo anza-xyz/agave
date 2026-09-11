@@ -243,7 +243,7 @@ impl CrdsGossipPush {
         self_keypair: &Keypair,
         self_shred_version: u16,
         ping_cache: &Mutex<PingCache>,
-        pings: &mut Vec<(SocketAddr, Ping)>,
+        pings: &mut Vec<(Pubkey, SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
     ) {
         let mut rng = rand::rng();
