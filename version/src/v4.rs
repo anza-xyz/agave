@@ -13,7 +13,6 @@ use {
     },
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Prerelease {
     Stable,
@@ -85,7 +84,6 @@ impl FromStr for Prerelease {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 #[serde(transparent)]
 struct PackedMinor(
@@ -350,7 +348,6 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Version {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct SerializedVersion {
     #[serde(with = "serde_varint")]
