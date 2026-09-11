@@ -9,11 +9,9 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 
 Release channels have their own copy of this changelog:
 
-* [edge - v4.4](#edge-channel)
+* [edge - v4.4](#440-unreleased)
 * [beta - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
 * [stable - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
-
-<a name="edge-channel"></a>
 
 ## 4.4.0-Unreleased
 
