@@ -223,7 +223,7 @@ solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = "4.3.0"
+solana-sysvar = "5.0.0"
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction = "4.1.0"
 solana-transaction-error = "3.3.0"
