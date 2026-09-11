@@ -225,7 +225,6 @@ pub struct DeviceQueue {
     if_index: u32,
     queue_id: QueueId,
     ring_sizes: Option<RingSizes>,
-    completion: Option<TxCompletionRing>,
 }
 
 impl DeviceQueue {
@@ -234,7 +233,6 @@ impl DeviceQueue {
             if_index,
             queue_id,
             ring_sizes,
-            completion: None,
         }
     }
 
@@ -244,10 +242,6 @@ impl DeviceQueue {
 
     pub fn id(&self) -> QueueId {
         self.queue_id
-    }
-
-    pub fn tx_completion(&mut self) -> Option<&TxCompletionRing> {
-        self.completion.as_ref()
     }
 
     pub fn ring_sizes(&self) -> Option<RingSizes> {
