@@ -1,33 +1,28 @@
 //! Solana runtime conformance harnesses.
 
-#[cfg(feature = "conformance")]
 pub mod block;
 pub mod txn;
 
-#[cfg(feature = "conformance")]
 use {
     protosol::protos::{
         AcctState, BlockhashQueueEntry as ProtoBlockhashQueueEntry,
         FeeRateGovernor as ProtoFeeRateGovernor,
     },
     solana_account::AccountSharedData,
-    solana_accounts_db::blockhash_queue::BlockhashQueue,
+    solana_accounts_db::{
+        accounts::Accounts,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
+        blockhash_queue::BlockhashQueue,
+    },
     solana_fee_calculator::FeeRateGovernor,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_svm::conformance::account_state::account_from_proto,
-};
-use {
-    solana_accounts_db::{
-        accounts::Accounts,
-        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
-    },
     std::{num::NonZeroUsize, sync::Arc},
 };
 
 /// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
 /// accounts (treated as nonexistent).
-#[cfg(feature = "conformance")]
 pub(crate) fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
     accounts
         .iter()
@@ -39,7 +34,6 @@ pub(crate) fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, Accou
         .collect()
 }
 
-#[cfg(feature = "conformance")]
 pub(crate) fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> BlockhashQueue {
     let mut blockhash_queue = BlockhashQueue::default();
     for entry in entries {
@@ -50,7 +44,6 @@ pub(crate) fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> B
     blockhash_queue
 }
 
-#[cfg(feature = "conformance")]
 pub(crate) fn fee_rate_governor_from_proto(
     value: &ProtoFeeRateGovernor,
     lamports_per_signature: u64,
