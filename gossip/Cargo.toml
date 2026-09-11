@@ -57,6 +57,7 @@ itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
+parking_lot = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }

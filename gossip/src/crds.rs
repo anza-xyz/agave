@@ -267,7 +267,8 @@ impl Crds {
         let label = value.label();
         let pubkey = value.pubkey();
         let value = VersionedCrdsValue::new(value, self.cursor, now, route);
-        let mut stats = self.stats.lock().unwrap();
+        // insert() has exclusive access to Crds, so this mutex cannot contend.
+        let stats = self.stats.get_mut().unwrap();
         match self.table.entry(label) {
             Entry::Vacant(entry) => {
                 stats.record_insert(&value, route);
@@ -454,6 +455,12 @@ impl Crds {
             .into_iter()
             .flat_map(|records| records.into_iter())
             .map(move |i| self.table.index(*i))
+    }
+
+    /// Returns whether CRDS contains any record for the given pubkey.
+    #[inline]
+    pub(crate) fn contains_pubkey(&self, pubkey: &Pubkey) -> bool {
+        self.records.contains_key(pubkey)
     }
 
     /// Returns number of known contact-infos (network size).
