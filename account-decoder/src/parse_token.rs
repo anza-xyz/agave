@@ -174,14 +174,30 @@ mod test {
     use {
         super::*,
         crate::parse_token_extension::{
-            UiMemoTransfer, UiMintCloseAuthority, UiPermissionedBurnConfig,
+            UiConfidentialTransferFeeConfig, UiConfidentialTransferMint, UiGroupMemberPointer,
+            UiGroupPointer, UiInterestBearingConfig, UiMemoTransfer, UiMetadataPointer,
+            UiMintCloseAuthority, UiPausableConfig, UiPermanentDelegate, UiPermissionedBurnConfig,
+            UiScaledUiAmountConfig, UiTokenGroup, UiTokenMetadata, UiTransferFee,
+            UiTransferFeeConfig, UiTransferHook,
         },
         solana_account_decoder_client_types::token::UiExtension,
+        solana_zk_sdk_pod::encryption::elgamal::{PodElGamalCiphertext, PodElGamalPubkey},
         spl_token_2022_interface::extension::{
-            BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
+            AccountType, BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
+            confidential_transfer::ConfidentialTransferMint,
+            confidential_transfer_fee::ConfidentialTransferFeeConfig,
+            group_member_pointer::GroupMemberPointer, group_pointer::GroupPointer,
             immutable_owner::ImmutableOwner, interest_bearing_mint::InterestBearingConfig,
-            memo_transfer::MemoTransfer, mint_close_authority::MintCloseAuthority,
-            permissioned_burn::PermissionedBurnConfig, scaled_ui_amount::ScaledUiAmountConfig,
+            memo_transfer::MemoTransfer, metadata_pointer::MetadataPointer,
+            mint_close_authority::MintCloseAuthority, pausable::PausableConfig,
+            permanent_delegate::PermanentDelegate, permissioned_burn::PermissionedBurnConfig,
+            scaled_ui_amount::ScaledUiAmountConfig,
+            transfer_fee::{TransferFee, TransferFeeConfig},
+            transfer_hook::TransferHook,
+        },
+        spl_token_group_interface::state::TokenGroup,
+        spl_token_metadata_interface::{
+            solana_borsh::v1::get_instance_packed_len, state::TokenMetadata,
         },
     };
 
@@ -644,6 +660,34 @@ mod test {
                 })],
             }),
         );
+
+        // Negative case: a close authority left at its default should parse to
+        // `close_authority: None` rather than the default pubkey.
+        let mut mint_data = vec![0; mint_size];
+        let mut mint_state =
+            StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut mint_data).unwrap();
+
+        mint_state
+            .init_extension::<MintCloseAuthority>(true)
+            .unwrap();
+
+        mint_state.base = mint_base;
+        mint_state.pack_base();
+        mint_state.init_account_type().unwrap();
+
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            TokenAccountType::Mint(UiMint {
+                mint_authority: Some(owner_pubkey.to_string()),
+                supply: 42.to_string(),
+                decimals: 3,
+                is_initialized: true,
+                freeze_authority: Some(owner_pubkey.to_string()),
+                extensions: vec![UiExtension::MintCloseAuthority(UiMintCloseAuthority {
+                    close_authority: None,
+                })],
+            }),
+        );
     }
 
     #[test]
@@ -688,5 +732,634 @@ mod test {
                 )],
             }),
         );
+
+        // Negative case: a permissioned burn config with no authority set should
+        // parse to `authority: None` rather than the default pubkey.
+        let mut mint_data = vec![0; mint_size];
+        let mut mint_state =
+            StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut mint_data).unwrap();
+
+        mint_state
+            .init_extension::<PermissionedBurnConfig>(true)
+            .unwrap();
+
+        mint_state.base = mint_base;
+        mint_state.pack_base();
+        mint_state.init_account_type().unwrap();
+
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            TokenAccountType::Mint(UiMint {
+                mint_authority: Some(owner_pubkey.to_string()),
+                supply: 42.to_string(),
+                decimals: 3,
+                is_initialized: true,
+                freeze_authority: Some(owner_pubkey.to_string()),
+                extensions: vec![UiExtension::PermissionedBurnConfig(
+                    UiPermissionedBurnConfig { authority: None }
+                )],
+            }),
+        );
+    }
+
+    // Shared mint base used by the per-extension decoder tests below. Its
+    // authorities are distinct from the extension authorities so a mix-up would
+    // surface in the assertions.
+    fn extension_mint_base() -> Mint {
+        let owner = Pubkey::new_from_array([3; 32]);
+        Mint {
+            mint_authority: COption::Some(owner),
+            supply: 42,
+            decimals: 3,
+            is_initialized: true,
+            freeze_authority: COption::Some(owner),
+        }
+    }
+
+    fn expected_mint(extensions: Vec<UiExtension>) -> TokenAccountType {
+        let owner = Pubkey::new_from_array([3; 32]);
+        TokenAccountType::Mint(UiMint {
+            mint_authority: Some(owner.to_string()),
+            supply: 42.to_string(),
+            decimals: 3,
+            is_initialized: true,
+            freeze_authority: Some(owner.to_string()),
+            extensions,
+        })
+    }
+
+    // Packs a mint of the given total account length, running `init` to write
+    // the extension(s) before the base and account type are finalized.
+    fn build_mint_data<F>(account_size: usize, init: F) -> Vec<u8>
+    where
+        F: FnOnce(&mut StateWithExtensionsMut<Mint>),
+    {
+        let mut mint_data = vec![0; account_size];
+        {
+            let mut mint_state =
+                StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut mint_data).unwrap();
+            init(&mut mint_state);
+            mint_state.base = extension_mint_base();
+            mint_state.pack_base();
+            mint_state.init_account_type().unwrap();
+        }
+        mint_data
+    }
+
+    #[test]
+    fn test_parse_mint_transfer_fee_config() {
+        let config_authority = Pubkey::new_from_array([4; 32]);
+        let withdraw_authority = Pubkey::new_from_array([5; 32]);
+        let size =
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::TransferFeeConfig])
+                .unwrap();
+
+        // Authorities set.
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<TransferFeeConfig>(true).unwrap();
+            ext.transfer_fee_config_authority = config_authority.into();
+            ext.withdraw_withheld_authority = withdraw_authority.into();
+            ext.withheld_amount = 0u64.into();
+            ext.older_transfer_fee = TransferFee {
+                epoch: 1u64.into(),
+                maximum_fee: 100u64.into(),
+                transfer_fee_basis_points: 10u16.into(),
+            };
+            ext.newer_transfer_fee = TransferFee {
+                epoch: 2u64.into(),
+                maximum_fee: 200u64.into(),
+                transfer_fee_basis_points: 20u16.into(),
+            };
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::TransferFeeConfig(UiTransferFeeConfig {
+                transfer_fee_config_authority: Some(config_authority.to_string()),
+                withdraw_withheld_authority: Some(withdraw_authority.to_string()),
+                withheld_amount: 0,
+                older_transfer_fee: UiTransferFee {
+                    epoch: 1,
+                    maximum_fee: 100,
+                    transfer_fee_basis_points: 10,
+                },
+                newer_transfer_fee: UiTransferFee {
+                    epoch: 2,
+                    maximum_fee: 200,
+                    transfer_fee_basis_points: 20,
+                },
+            })]),
+        );
+
+        // Both authorities left at their null defaults.
+        let mint_data = build_mint_data(size, |state| {
+            state.init_extension::<TransferFeeConfig>(true).unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::TransferFeeConfig(UiTransferFeeConfig {
+                transfer_fee_config_authority: None,
+                withdraw_withheld_authority: None,
+                withheld_amount: 0,
+                older_transfer_fee: UiTransferFee {
+                    epoch: 0,
+                    maximum_fee: 0,
+                    transfer_fee_basis_points: 0,
+                },
+                newer_transfer_fee: UiTransferFee {
+                    epoch: 0,
+                    maximum_fee: 0,
+                    transfer_fee_basis_points: 0,
+                },
+            })]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_interest_bearing_config() {
+        let rate_authority = Pubkey::new_from_array([4; 32]);
+        let size = ExtensionType::try_calculate_account_len::<Mint>(&[
+            ExtensionType::InterestBearingConfig,
+        ])
+        .unwrap();
+
+        // Rate authority set.
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state
+                .init_extension::<InterestBearingConfig>(true)
+                .unwrap();
+            ext.rate_authority = rate_authority.into();
+            ext.initialization_timestamp = 100i64.into();
+            ext.pre_update_average_rate = 200i16.into();
+            ext.last_update_timestamp = 300i64.into();
+            ext.current_rate = 400i16.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::InterestBearingConfig(
+                UiInterestBearingConfig {
+                    rate_authority: Some(rate_authority.to_string()),
+                    initialization_timestamp: 100,
+                    pre_update_average_rate: 200,
+                    last_update_timestamp: 300,
+                    current_rate: 400,
+                }
+            )]),
+        );
+
+        // Rate authority left at its null default.
+        let mint_data = build_mint_data(size, |state| {
+            state
+                .init_extension::<InterestBearingConfig>(true)
+                .unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::InterestBearingConfig(
+                UiInterestBearingConfig {
+                    rate_authority: None,
+                    initialization_timestamp: 0,
+                    pre_update_average_rate: 0,
+                    last_update_timestamp: 0,
+                    current_rate: 0,
+                }
+            )]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_permanent_delegate() {
+        let delegate = Pubkey::new_from_array([4; 32]);
+        let size =
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::PermanentDelegate])
+                .unwrap();
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<PermanentDelegate>(true).unwrap();
+            ext.delegate = delegate.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::PermanentDelegate(UiPermanentDelegate {
+                delegate: Some(delegate.to_string()),
+            })]),
+        );
+
+        let mint_data = build_mint_data(size, |state| {
+            state.init_extension::<PermanentDelegate>(true).unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::PermanentDelegate(UiPermanentDelegate {
+                delegate: None,
+            })]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_confidential_transfer_mint() {
+        let authority = Pubkey::new_from_array([4; 32]);
+        let auditor = PodElGamalPubkey([9u8; 32]);
+        let size = ExtensionType::try_calculate_account_len::<Mint>(&[
+            ExtensionType::ConfidentialTransferMint,
+        ])
+        .unwrap();
+
+        // Authority and auditor ElGamal pubkey set.
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state
+                .init_extension::<ConfidentialTransferMint>(true)
+                .unwrap();
+            ext.authority = authority.into();
+            ext.auto_approve_new_accounts = true.into();
+            ext.auditor_elgamal_pubkey = auditor.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::ConfidentialTransferMint(
+                UiConfidentialTransferMint {
+                    authority: Some(authority.to_string()),
+                    auto_approve_new_accounts: true,
+                    auditor_elgamal_pubkey: Some(auditor.to_string()),
+                }
+            )]),
+        );
+
+        // Authority and auditor left at their null defaults.
+        let mint_data = build_mint_data(size, |state| {
+            state
+                .init_extension::<ConfidentialTransferMint>(true)
+                .unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::ConfidentialTransferMint(
+                UiConfidentialTransferMint {
+                    authority: None,
+                    auto_approve_new_accounts: false,
+                    auditor_elgamal_pubkey: None,
+                }
+            )]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_confidential_transfer_fee_config() {
+        let authority = Pubkey::new_from_array([4; 32]);
+        let withdraw_elgamal = PodElGamalPubkey([9u8; 32]);
+        let empty_withheld = PodElGamalCiphertext([0u8; 64]).to_string();
+        let size = ExtensionType::try_calculate_account_len::<Mint>(&[
+            ExtensionType::ConfidentialTransferFeeConfig,
+        ])
+        .unwrap();
+
+        // Authority and withdraw-withheld ElGamal pubkey set.
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state
+                .init_extension::<ConfidentialTransferFeeConfig>(true)
+                .unwrap();
+            ext.authority = authority.into();
+            ext.withdraw_withheld_authority_elgamal_pubkey = withdraw_elgamal;
+            ext.harvest_to_mint_enabled = true.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::ConfidentialTransferFeeConfig(
+                UiConfidentialTransferFeeConfig {
+                    authority: Some(authority.to_string()),
+                    withdraw_withheld_authority_elgamal_pubkey: Some(withdraw_elgamal.to_string()),
+                    harvest_to_mint_enabled: true,
+                    withheld_amount: empty_withheld.clone(),
+                }
+            )]),
+        );
+
+        // Authority left at its null default. The withdraw-withheld ElGamal
+        // pubkey is a plain (non-nullable) field, so the decoder always wraps it
+        // in `Some`; a zeroed value therefore decodes to the all-zero base64
+        // string rather than `None`.
+        let mint_data = build_mint_data(size, |state| {
+            state
+                .init_extension::<ConfidentialTransferFeeConfig>(true)
+                .unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::ConfidentialTransferFeeConfig(
+                UiConfidentialTransferFeeConfig {
+                    authority: None,
+                    withdraw_withheld_authority_elgamal_pubkey: Some(
+                        PodElGamalPubkey([0u8; 32]).to_string()
+                    ),
+                    harvest_to_mint_enabled: false,
+                    withheld_amount: empty_withheld,
+                }
+            )]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_metadata_pointer() {
+        let authority = Pubkey::new_from_array([4; 32]);
+        let metadata_address = Pubkey::new_from_array([5; 32]);
+        let size =
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MetadataPointer])
+                .unwrap();
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<MetadataPointer>(true).unwrap();
+            ext.authority = authority.into();
+            ext.metadata_address = metadata_address.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::MetadataPointer(UiMetadataPointer {
+                authority: Some(authority.to_string()),
+                metadata_address: Some(metadata_address.to_string()),
+            })]),
+        );
+
+        let mint_data = build_mint_data(size, |state| {
+            state.init_extension::<MetadataPointer>(true).unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::MetadataPointer(UiMetadataPointer {
+                authority: None,
+                metadata_address: None,
+            })]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_token_metadata() {
+        let update_authority = Pubkey::new_from_array([4; 32]);
+        let metadata_mint = Pubkey::new_from_array([5; 32]);
+
+        let build = |update_authority: MintMetadataAuthority| {
+            let token_metadata = TokenMetadata {
+                update_authority: match update_authority {
+                    MintMetadataAuthority::Set(pubkey) => pubkey.into(),
+                    MintMetadataAuthority::Null => Pubkey::default().into(),
+                },
+                mint: metadata_mint,
+                name: "name".to_string(),
+                symbol: "sym".to_string(),
+                uri: "uri".to_string(),
+                additional_metadata: vec![],
+            };
+            let variable_len = get_instance_packed_len(&token_metadata).unwrap();
+            let account_size = Account::LEN
+                + std::mem::size_of::<AccountType>()
+                + std::mem::size_of::<ExtensionType>()
+                + std::mem::size_of::<u16>()
+                + variable_len;
+            build_mint_data(account_size, |state| {
+                state
+                    .init_variable_len_extension(&token_metadata, false)
+                    .unwrap();
+            })
+        };
+
+        let mint_data = build(MintMetadataAuthority::Set(update_authority));
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::TokenMetadata(UiTokenMetadata {
+                update_authority: Some(update_authority.to_string()),
+                mint: metadata_mint.to_string(),
+                name: "name".to_string(),
+                symbol: "sym".to_string(),
+                uri: "uri".to_string(),
+                additional_metadata: vec![],
+            })]),
+        );
+
+        let mint_data = build(MintMetadataAuthority::Null);
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::TokenMetadata(UiTokenMetadata {
+                update_authority: None,
+                mint: metadata_mint.to_string(),
+                name: "name".to_string(),
+                symbol: "sym".to_string(),
+                uri: "uri".to_string(),
+                additional_metadata: vec![],
+            })]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_transfer_hook() {
+        let authority = Pubkey::new_from_array([4; 32]);
+        let program_id = Pubkey::new_from_array([5; 32]);
+        let size = ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::TransferHook])
+            .unwrap();
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<TransferHook>(true).unwrap();
+            ext.authority = authority.into();
+            ext.program_id = program_id.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::TransferHook(UiTransferHook {
+                authority: Some(authority.to_string()),
+                program_id: Some(program_id.to_string()),
+            })]),
+        );
+
+        let mint_data = build_mint_data(size, |state| {
+            state.init_extension::<TransferHook>(true).unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::TransferHook(UiTransferHook {
+                authority: None,
+                program_id: None,
+            })]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_group_pointer() {
+        let authority = Pubkey::new_from_array([4; 32]);
+        let group_address = Pubkey::new_from_array([5; 32]);
+        let size = ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::GroupPointer])
+            .unwrap();
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<GroupPointer>(true).unwrap();
+            ext.authority = authority.into();
+            ext.group_address = group_address.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::GroupPointer(UiGroupPointer {
+                authority: Some(authority.to_string()),
+                group_address: Some(group_address.to_string()),
+            })]),
+        );
+
+        let mint_data = build_mint_data(size, |state| {
+            state.init_extension::<GroupPointer>(true).unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::GroupPointer(UiGroupPointer {
+                authority: None,
+                group_address: None,
+            })]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_group_member_pointer() {
+        let authority = Pubkey::new_from_array([4; 32]);
+        let member_address = Pubkey::new_from_array([5; 32]);
+        let size = ExtensionType::try_calculate_account_len::<Mint>(&[
+            ExtensionType::GroupMemberPointer,
+        ])
+        .unwrap();
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<GroupMemberPointer>(true).unwrap();
+            ext.authority = authority.into();
+            ext.member_address = member_address.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::GroupMemberPointer(UiGroupMemberPointer {
+                authority: Some(authority.to_string()),
+                member_address: Some(member_address.to_string()),
+            })]),
+        );
+
+        let mint_data = build_mint_data(size, |state| {
+            state.init_extension::<GroupMemberPointer>(true).unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::GroupMemberPointer(UiGroupMemberPointer {
+                authority: None,
+                member_address: None,
+            })]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_token_group() {
+        let update_authority = Pubkey::new_from_array([4; 32]);
+        let group_mint = Pubkey::new_from_array([5; 32]);
+        let size =
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::TokenGroup]).unwrap();
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<TokenGroup>(true).unwrap();
+            ext.update_authority = update_authority.into();
+            ext.mint = group_mint;
+            ext.size = 1u64.into();
+            ext.max_size = 10u64.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::TokenGroup(UiTokenGroup {
+                update_authority: Some(update_authority.to_string()),
+                mint: group_mint.to_string(),
+                size: 1,
+                max_size: 10,
+            })]),
+        );
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<TokenGroup>(true).unwrap();
+            ext.mint = group_mint;
+            ext.max_size = 10u64.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::TokenGroup(UiTokenGroup {
+                update_authority: None,
+                mint: group_mint.to_string(),
+                size: 0,
+                max_size: 10,
+            })]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_scaled_ui_amount_config() {
+        let authority = Pubkey::new_from_array([4; 32]);
+        let size =
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::ScaledUiAmount])
+                .unwrap();
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<ScaledUiAmountConfig>(true).unwrap();
+            ext.authority = authority.into();
+            ext.multiplier = 2f64.into();
+            ext.new_multiplier_effective_timestamp = 50i64.into();
+            ext.new_multiplier = 3f64.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::ScaledUiAmountConfig(
+                UiScaledUiAmountConfig {
+                    authority: Some(authority.to_string()),
+                    multiplier: "2".to_string(),
+                    new_multiplier_effective_timestamp: 50,
+                    new_multiplier: "3".to_string(),
+                }
+            )]),
+        );
+
+        let mint_data = build_mint_data(size, |state| {
+            state.init_extension::<ScaledUiAmountConfig>(true).unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::ScaledUiAmountConfig(
+                UiScaledUiAmountConfig {
+                    authority: None,
+                    multiplier: "0".to_string(),
+                    new_multiplier_effective_timestamp: 0,
+                    new_multiplier: "0".to_string(),
+                }
+            )]),
+        );
+    }
+
+    #[test]
+    fn test_parse_mint_pausable_config() {
+        let authority = Pubkey::new_from_array([4; 32]);
+        let size =
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::Pausable]).unwrap();
+
+        let mint_data = build_mint_data(size, |state| {
+            let ext = state.init_extension::<PausableConfig>(true).unwrap();
+            ext.authority = authority.into();
+            ext.paused = true.into();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::PausableConfig(UiPausableConfig {
+                authority: Some(authority.to_string()),
+                paused: true,
+            })]),
+        );
+
+        let mint_data = build_mint_data(size, |state| {
+            state.init_extension::<PausableConfig>(true).unwrap();
+        });
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            expected_mint(vec![UiExtension::PausableConfig(UiPausableConfig {
+                authority: None,
+                paused: false,
+            })]),
+        );
+    }
+
+    enum MintMetadataAuthority {
+        Set(Pubkey),
+        Null,
     }
 }
