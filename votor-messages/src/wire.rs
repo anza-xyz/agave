@@ -69,10 +69,7 @@ pod_wrapper! {
     unsafe struct PodBLSSignature(BLSSignature);
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireVoteSignature {
     #[cfg_attr(
@@ -90,27 +87,21 @@ impl From<VoteMessage> for WireVoteSignature {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireBlockVoteMessage {
     pub(crate) block: Block,
     pub(crate) signature: WireVoteSignature,
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotVoteMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireVoteSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Signature on a wire cert message
@@ -135,17 +126,14 @@ impl From<Certificate> for WireCertSignature {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotCertMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireCertSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// A wire cert message that holds a block.
@@ -156,10 +144,7 @@ pub struct WireBlockCertMessage {
     pub signature: WireCertSignature,
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, AbiEnumVisitor, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 pub(crate) enum WireConsensusMessageKind {
@@ -270,10 +255,7 @@ impl WireConsensusMessageKind {
 /// Context wrapper for the expected shred version during deserialization.
 pub struct ExpectedShredVersion(pub u16);
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize, SchemaRead)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, SchemaRead))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite)]
 /// First version of a wire consensus message
 pub struct WireConsensusMessageV1 {
@@ -338,16 +320,8 @@ impl WireConsensusMessageV1 {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(
-        AbiExample,
-        AbiEnumVisitor,
-        StableAbi,
-        StableAbiSample,
-        Serialize,
-        SchemaRead
-    ),
+    derive(StableAbi, StableAbiSample, SchemaRead),
     frozen_abi(
-        digest = "BuNdLfQfseGa7sL29neSwUYqrWo1AVRyTYxMGxLATzia",
         abi_digest = "ErGjoTr18hn3dvPVA7jFgK5WLwb4jgx7a39Yn8dSzB2K",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
@@ -434,9 +408,8 @@ impl VersionedWireConsensusMessage {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        digest = "FaLMAAzQUX8FfCZhUqETKB1xdBwQuC3pwz2mEaC6t3Gb",
         abi_digest = "2aBMTuPyDgGSYeYX1aBbXURgA4qqr92Eh9yiTeHX6qZq",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",

@@ -23,8 +23,6 @@ dev-context-only-utils = [
     "solana-runtime/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dep:serde",
-    "dep:serde_bytes",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-ledger/frozen-abi",
@@ -46,8 +44,6 @@ crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
-serde = { workspace = true, optional = true }
-serde_bytes = { workspace = true, optional = true }
 smallvec = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-clock = { workspace = true }

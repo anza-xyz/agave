@@ -1,5 +1,3 @@
-#[cfg(feature = "frozen-abi")]
-use serde::{Deserialize, Serialize};
 use {
     super::vote_history::*,
     log::trace,
@@ -31,10 +29,10 @@ fn vote_history_wincode_config() -> VoteHistoryWincodeConfig {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize, Deserialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "4VVxd5brhUZgopYJ7zwAYC8J62zU2nUZSAV4kETb3m9q",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -87,24 +85,18 @@ impl From<SavedVoteHistory> for SavedVoteHistoryVersions {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize, Deserialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        digest = "J6vB6FWFT8CFEvxndXWes461hroo8Q5L9Wq9cv4FEzaQ",
         abi_digest = "Mhh4tHGaVTfWbkJ78sY1dDbYZHtQjXiVFBtC3BfQH5C",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
     )
 )]
 #[derive(Default, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct SavedVoteHistory {
     signature: Signature,
-    #[cfg_attr(feature = "frozen-abi", serde(with = "serde_bytes"))]
     data: Vec<u8>,
     #[wincode(skip)]
-    #[cfg_attr(
-        feature = "frozen-abi",
-        serde(skip),
-        stable_abi_sample(with = "Default::default()")
-    )]
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     node_pubkey: Pubkey,
 }
 
