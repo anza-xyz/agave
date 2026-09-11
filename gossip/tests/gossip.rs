@@ -139,16 +139,12 @@ fn retransmit_to(
             .filter(|addr| socket_addr_space.check(addr))
             .collect()
     };
-    match multi_target_send(socket, data, &dests) {
-        Ok(()) => (),
-        Err(SendPktsError::IoError(ioerr, num_failed)) => {
-            error!(
-                "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
-                ioerr,
-                num_failed,
-                dests.len(),
-            );
-        }
+    if let Err(SendPktsError::IoError(ioerr)) = multi_target_send(socket, data, &dests) {
+        error!(
+            "retransmit_to multi_target_send error: {:?}, {} destinations",
+            ioerr,
+            dests.len(),
+        );
     }
 }
 
