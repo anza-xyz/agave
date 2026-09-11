@@ -18,6 +18,9 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 crate-type = ["lib"]
 name = "solana_runtime"
+# no #[bench] fns in the lib; the empty libtest target it would otherwise
+# create rejects criterion's flags on a package-wide `cargo bench`
+bench = false
 
 [features]
 agave-unstable-api = []
@@ -219,7 +222,16 @@ test-case = { workspace = true }
 jemallocator = { workspace = true }
 
 [[bench]]
+name = "accounts"
+harness = false
+
+[[bench]]
 name = "prioritization_fee_cache"
+harness = false
+
+[[bench]]
+name = "status_cache"
+harness = false
 
 [[bench]]
 name = "epoch_turnover"

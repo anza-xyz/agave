@@ -31,7 +31,10 @@ jobs:
         test:
           - {
               name: "solana-runtime",
-              commands: ["cargo +$rust_nightly bench -p solana-runtime"],
+              commands:
+                [
+                  "cargo bench -p solana-runtime -- --output-format bencher --noplot",
+                ],
             }
           - {
               name: "solana-gossip",

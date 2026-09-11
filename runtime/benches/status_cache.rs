@@ -1,20 +1,20 @@
-#![feature(test)]
-extern crate test;
+// The arithmetic here is all fixed-size bookkeeping over `max_root_entries`.
+#![allow(clippy::arithmetic_side_effects)]
 
 #[cfg(not(feature = "shuttle-test"))]
 use {bincode::serialize, solana_hash::HASH_BYTES, solana_sha256_hasher::hash};
 use {
+    criterion::{Criterion, criterion_group, criterion_main},
     rand::{Rng, SeedableRng, rngs::SmallRng},
     solana_accounts_db::ancestors::Ancestors,
     solana_hash::Hash,
     solana_runtime::bank::BankStatusCache,
     solana_signature::{SIGNATURE_BYTES, Signature},
-    test::Bencher,
+    std::time::Duration,
 };
 
 #[cfg(not(feature = "shuttle-test"))]
-#[bench]
-fn bench_status_cache_serialize(bencher: &mut Bencher) {
+fn bench_status_cache_serialize(c: &mut Criterion) {
     let mut status_cache = BankStatusCache::default();
     status_cache.add_root(0);
     status_cache.clear();
@@ -31,28 +31,25 @@ fn bench_status_cache_serialize(bencher: &mut Bencher) {
         }
     }
     assert!(status_cache.roots().contains(&0));
-    bencher.iter(|| {
-        let _ = serialize(&status_cache.root_slot_deltas()).unwrap();
+    c.bench_function("bench_status_cache_serialize", |b| {
+        b.iter(|| serialize(&status_cache.root_slot_deltas()).unwrap())
     });
 }
 
 #[cfg(not(feature = "shuttle-test"))]
-#[bench]
-fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
-    // Fill up the status cache to better match what intense runtime usage would
-    // look like.
+fn bench_status_cache_serialize_max(c: &mut Criterion) {
+    // `root_slot_deltas()` only walks rooted slots, and slot 0 is the only
+    // root on a fresh cache, so that is the only slot worth filling.
     let mut status_cache = BankStatusCache::default();
-    let max_root_entries = status_cache.max_root_entries() as u64;
-    fill_status_cache(&mut status_cache, max_root_entries, 100_000);
+    fill_status_cache_slot(&mut status_cache, &Hash::new_unique(), 0, 100_000);
 
     assert!(status_cache.roots().contains(&0));
-    bencher.iter(|| {
-        let _ = serialize(&status_cache.root_slot_deltas()).unwrap();
+    c.bench_function("bench_status_cache_serialize_max", |b| {
+        b.iter(|| serialize(&status_cache.root_slot_deltas()).unwrap())
     });
 }
 
-#[bench]
-fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
+fn bench_status_cache_root_slot_deltas(c: &mut Criterion) {
     let mut status_cache = BankStatusCache::default();
 
     // fill the status cache
@@ -64,7 +61,9 @@ fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
         status_cache.add_root(*slot);
     }
 
-    bencher.iter(|| test::black_box(status_cache.root_slot_deltas()));
+    c.bench_function("bench_status_cache_root_slot_deltas", |b| {
+        b.iter(|| status_cache.root_slot_deltas())
+    });
 }
 
 fn fill_status_cache(status_cache: &mut BankStatusCache, max_root_entries: u64, num_txs: usize) {
@@ -86,8 +85,7 @@ fn fill_status_cache_slot(
     }
 }
 
-#[bench]
-fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
+fn bench_status_cache_check_and_insert(c: &mut Criterion) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let mut status_cache = BankStatusCache::default();
@@ -113,29 +111,59 @@ fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
         tx_hashes.push(Signature::from(sigbytes));
     }
 
-    bencher.iter(|| {
-        for tx_hash in &tx_hashes {
-            if status_cache
-                .get_status(*tx_hash, &blockhash, &ancestors)
-                .is_none()
-            {
-                status_cache.insert(&blockhash, *tx_hash, slot, Ok(()));
+    // Only the first pass inserts; later passes find the batch already
+    // present, so this measures the steady state of check-then-insert.
+    c.bench_function("bench_status_cache_check_and_insert", |b| {
+        b.iter(|| {
+            for tx_hash in &tx_hashes {
+                if status_cache
+                    .get_status(*tx_hash, &blockhash, &ancestors)
+                    .is_none()
+                {
+                    status_cache.insert(&blockhash, *tx_hash, slot, Ok(()));
+                }
             }
-        }
+        })
     });
 }
 
-#[bench]
-fn bench_status_cache_add_roots(bencher: &mut Bencher) {
-    // Fill up the status cache to better match what intense runtime usage would
-    // look like.
+fn bench_status_cache_add_roots(c: &mut Criterion) {
+    // Only the first iteration purges; afterwards every root in the range is
+    // already present and `add_root` is a no-op, which is what the reported
+    // median reflects. So only the one rooted slot that the first iteration
+    // purges is worth building.
     let mut status_cache = BankStatusCache::default();
     let max_root_entries = status_cache.max_root_entries() as u64;
-    fill_status_cache(&mut status_cache, max_root_entries, 100_000);
+    fill_status_cache_slot(&mut status_cache, &Hash::new_unique(), 0, 100_000);
     let start_slot = max_root_entries + 1;
-    bencher.iter(|| {
-        for root in start_slot..start_slot + max_root_entries {
-            status_cache.add_root(root);
-        }
+    c.bench_function("bench_status_cache_add_roots", |b| {
+        b.iter(|| {
+            for root in start_slot..start_slot + max_root_entries {
+                status_cache.add_root(root);
+            }
+        })
     });
 }
+
+fn bench_status_cache(c: &mut Criterion) {
+    #[cfg(not(feature = "shuttle-test"))]
+    bench_status_cache_serialize(c);
+    #[cfg(not(feature = "shuttle-test"))]
+    bench_status_cache_serialize_max(c);
+    bench_status_cache_root_slot_deltas(c);
+    bench_status_cache_check_and_insert(c);
+    bench_status_cache_add_roots(c);
+}
+
+criterion_group! {
+    name = benches;
+    // Each of these builds a large status cache once and then measures a single
+    // cheap-to-repeat operation, so keep the sampling windows short.
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(250))
+        .measurement_time(Duration::from_millis(750))
+        .sample_size(10)
+        .without_plots();
+    targets = bench_status_cache
+}
+criterion_main!(benches);
