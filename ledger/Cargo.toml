@@ -151,9 +151,6 @@ spl-generic-token = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]
-name = "blockstore"
-
-[[bench]]
 name = "make_shreds_from_entries"
 harness = false
 
