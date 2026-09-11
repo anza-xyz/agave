@@ -17,6 +17,9 @@ pub struct ConnectionCacheStats {
     pub get_connection_lock_ms: AtomicU64,
     pub get_connection_hit_ms: AtomicU64,
     pub get_connection_miss_ms: AtomicU64,
+    /// Packets dropped because a peer's send queue was full or the global
+    /// async-send task limit was reached.
+    pub send_backpressure_drops: AtomicU64,
 
     // Need to track these separately per-connection
     // because we need to track the base stat value from quinn
@@ -221,6 +224,11 @@ impl ConnectionCacheStats {
                 self.total_client_stats
                     .send_timeout
                     .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "send_backpressure_drops",
+                self.send_backpressure_drops.swap(0, Ordering::Relaxed),
                 i64
             ),
             ("average_send_packet_us", average_send_packet_us, i64),
