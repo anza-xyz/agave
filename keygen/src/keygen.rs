@@ -214,6 +214,39 @@ fn grind_parse_args(
     grind_matches
 }
 
+// The vast majority of base58 encoded public keys have length 44, but
+// these only encapsulate prefixes 1-9 and A-H.  If the user is searching
+// for a keypair that starts with a prefix of J-Z or a-z, then there is no
+// reason to waste time searching for a keypair that will never match
+fn should_skip_len_44_pubkeys(grind_matches: &[GrindMatch], ignore_case: bool) -> bool {
+    static BS58_ALPHABET: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    grind_matches.iter().all(|g| {
+        // Without a prefix to constrain the first characters of the pubkey, as is
+        // the case for `--ends-with`, length 44 pubkeys can always match
+        if g.starts.is_empty() {
+            return false;
+        }
+        // If we are ignoring the case, upper-case the search string.
+        // Uppercase letters are always earlier in the alphabet, thus smaller.
+        let target_key: String = if ignore_case {
+            g.starts
+                .chars()
+                .map(|c| {
+                    let up = c.to_ascii_uppercase();
+                    if BS58_ALPHABET.contains(up) { up } else { c }
+                })
+                .collect()
+        } else {
+            g.starts.clone()
+        };
+        let target_key = target_key + &(0..44 - g.starts.len()).map(|_| "1").collect::<String>();
+        match bs58::decode(target_key).into_vec() {
+            Ok(out) => out.len() > 32,
+            Err(_) => false,
+        }
+    })
+}
+
 fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
     Command::new(crate_name!())
         .about(crate_description!())
@@ -718,33 +751,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             };
             let no_outfile = matches.try_contains_id(NO_OUTFILE_ARG.name)?;
 
-            // The vast majority of base58 encoded public keys have length 44, but
-            // these only encapsulate prefixes 1-9 and A-H.  If the user is searching
-            // for a keypair that starts with a prefix of J-Z or a-z, then there is no
-            // reason to waste time searching for a keypair that will never match
-            static BS58_ALPHABET: &str =
-                "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-            let skip_len_44_pubkeys = grind_matches.iter().all(|g| {
-                // If we are ignoring the case, upper-case the search string.
-                // Uppercase letters are always earlier in the alphabet, thus smaller.
-                let target_key = if ignore_case {
-                    g.starts
-                        .chars()
-                        .map(|c| {
-                            let up = c.to_ascii_uppercase();
-                            if BS58_ALPHABET.contains(up) { up } else { c }
-                        })
-                        .collect()
-                } else {
-                    g.starts.clone()
-                };
-                let target_key =
-                    target_key + &(0..44 - g.starts.len()).map(|_| "1").collect::<String>();
-                match bs58::decode(target_key).into_vec() {
-                    Ok(out) => out.len() > 32,
-                    Err(_) => false,
-                }
-            });
+            let skip_len_44_pubkeys = should_skip_len_44_pubkeys(&grind_matches, ignore_case);
             let grind_matches_thread_safe = Arc::new(grind_matches);
             let attempts = Arc::new(AtomicU64::new(1));
             let found = Arc::new(AtomicU64::new(0));
@@ -1274,6 +1281,53 @@ mod tests {
             "b:1",
         ])
         .unwrap();
+    }
+
+    #[test]
+    fn test_should_skip_len_44_pubkeys() {
+        fn grind_match(starts: &str, ends: &str) -> GrindMatch {
+            GrindMatch {
+                starts: starts.to_string(),
+                ends: ends.to_string(),
+                count: AtomicU64::new(1),
+            }
+        }
+
+        // A prefix that no length 44 pubkey can start with, so they may be skipped
+        assert!(should_skip_len_44_pubkeys(&[grind_match("zz", "")], false));
+        assert!(should_skip_len_44_pubkeys(
+            &[grind_match("zz", ""), grind_match("K", "lady")],
+            false
+        ));
+
+        // A prefix that length 44 pubkeys can start with
+        assert!(!should_skip_len_44_pubkeys(&[grind_match("A", "")], false));
+
+        // A suffix-only search does not constrain the leading characters of the
+        // pubkey, so length 44 pubkeys must still be searched
+        assert!(!should_skip_len_44_pubkeys(
+            &[grind_match("", "lady")],
+            false
+        ));
+        assert!(!should_skip_len_44_pubkeys(
+            &[grind_match("", "lady")],
+            true
+        ));
+        assert!(!should_skip_len_44_pubkeys(
+            &[grind_match("zz", ""), grind_match("", "lady")],
+            false
+        ));
+
+        // ...including when the search criteria come from `--ends-with`
+        let grind_matches = grind_parse_args(
+            false,
+            HashSet::new(),
+            HashSet::from(["LADY:1".to_string()]),
+            HashSet::new(),
+            1,
+        );
+        assert_eq!(grind_matches[0].starts, "");
+        assert!(!should_skip_len_44_pubkeys(&grind_matches, false));
     }
 
     #[test]
