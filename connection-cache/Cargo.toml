@@ -33,7 +33,7 @@ solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 rand_chacha = { workspace = true }
 
 [lints]

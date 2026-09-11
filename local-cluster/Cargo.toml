@@ -96,6 +96,7 @@ tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true, features = ["auto-color"] }
 assert_matches = { workspace = true }
 fs_extra = { workspace = true }
 gag = { workspace = true }

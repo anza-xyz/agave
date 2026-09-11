@@ -95,6 +95,7 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true, features = ["auto-color"] }
 anyhow = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }

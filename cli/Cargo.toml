@@ -109,6 +109,7 @@ tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true, features = ["auto-color"] }
 assert_matches = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
