@@ -9146,8 +9146,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-fee-calculator",
- "solana-frozen-abi",
- "solana-frozen-abi-macro",
  "solana-hash",
  "solana-pubkey 4.3.0",
  "solana-sha256-hasher",
