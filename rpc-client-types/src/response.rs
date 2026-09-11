@@ -376,6 +376,28 @@ pub struct RpcIdentity {
     pub identity: String,
 }
 
+/// A transaction accepted on the RPC `sendTransaction` path, reported at the moment it is
+/// admitted for forwarding and before any leader has seen it.
+///
+/// No execution has occurred, so there is no status, log, or balance information. The
+/// payload is unverified intent: when `preflight_skipped` is true the transaction's
+/// signatures have not been checked, so consumers must not treat it as valid, and a
+/// transaction reported here may never land.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcReceivedTransaction {
+    /// The first signature of the transaction, as base-58 encoded string
+    pub signature: String,
+    /// The serialized wire transaction exactly as received, as a base-64 encoded string
+    pub transaction: String,
+    /// Node wall-clock time at admission, in nanoseconds since the UNIX epoch
+    pub received_ns: u64,
+    /// The node's view of the current slot at admission (best-effort)
+    pub slot_hint: Slot,
+    /// Whether the transaction's signatures were left unverified before admission
+    pub preflight_skipped: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcVote {

@@ -121,6 +121,7 @@ struct SentNotificationStats {
     num_slots_updates: AtomicUsize,
     num_root: AtomicUsize,
     num_vote: AtomicUsize,
+    num_transaction_received: AtomicUsize,
     num_block: AtomicUsize,
     total_creation_to_queue_time_us: AtomicU64,
     last_report: AtomicInterval,
@@ -169,6 +170,11 @@ impl SentNotificationStats {
                 (
                     "num_vote",
                     self.num_vote.swap(0, Ordering::Relaxed) as i64,
+                    i64
+                ),
+                (
+                    "num_transaction_received",
+                    self.num_transaction_received.swap(0, Ordering::Relaxed) as i64,
                     i64
                 ),
                 (
@@ -221,6 +227,11 @@ fn increment_sent_notification_stats(
         }
         SubscriptionParams::Vote => {
             stats.num_vote.fetch_add(1, Ordering::Relaxed);
+        }
+        SubscriptionParams::TransactionReceived => {
+            stats
+                .num_transaction_received
+                .fetch_add(1, Ordering::Relaxed);
         }
         SubscriptionParams::Block(_) => {
             stats.num_block.fetch_add(1, Ordering::Relaxed);
