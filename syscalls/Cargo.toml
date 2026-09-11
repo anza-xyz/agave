@@ -64,19 +64,83 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+ark-bn254 = "0.5.0"
+ark-ec = "0.5.0"
+ark-ff = "0.5.0"
 assert_matches = { workspace = true }
+criterion = { workspace = true }
+hex-literal = "1.1.0"
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
 solana-program = { workspace = true }
-solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-program-runtime = { path = "../program-runtime", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-slot-hashes = { workspace = true }
-solana-svm-callback = { path = "../svm-callback", features = ["agave-unstable-api"] }
+solana-svm-callback = { path = "../svm-callback", features = [
+    "agave-unstable-api",
+] }
 solana-sysvar = { workspace = true, features = ["wincode"] }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = { path = "../transaction-context", features = [
+    "agave-unstable-api",
+    "bincode",
+    "dev-context-only-utils",
+] }
 test-case = { workspace = true }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "syscall_secp256k1_recover"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_hash"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_alt_bn128"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_alt_bn128_pairing"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_alt_bn128_compression"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_curve25519"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_poseidon"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_big_mod_exp"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_bls12_381"
+harness = false
+required-features = ["agave-unstable-api"]
+
+[[bench]]
+name = "syscall_bls12_381_pairing"
+harness = false
+required-features = ["agave-unstable-api"]

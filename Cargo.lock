@@ -3319,6 +3319,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-literal"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
+
+[[package]]
 name = "hidapi"
 version = "2.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10785,8 +10791,13 @@ dependencies = [
 name = "solana-syscalls"
 version = "4.4.0-alpha.4"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
  "assert_matches",
  "bincode",
+ "criterion",
+ "hex-literal",
  "libsecp256k1",
  "num-traits",
  "solana-account",
