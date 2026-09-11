@@ -3,16 +3,20 @@ use {
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
-        append_vec::{AppendVec, AppendVecError},
+        append_vec::{AppendVec, AppendVecError, AppendVecReaderForArchiving},
         storable_accounts::StorableAccounts,
     },
-    agave_fs::{FileInfo, buffered_reader::RequiredLenBufFileRead, file_io::open_for_reading},
+    agave_fs::{
+        FileInfo,
+        buffered_reader::{FileBufRead, RequiredLenBufFileRead},
+        file_io::open_for_reading,
+    },
     solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
         fs::File,
-        io,
+        io::{self, Read},
         iter::ExactSizeIterator,
         mem,
         path::{Path, PathBuf},
@@ -255,6 +259,41 @@ impl AccountsFile {
             Ok(match self {
                 Self::AppendVec(av) => av.open_file_for_archive(),
             })
+        }
+    }
+
+    pub(crate) fn reader_for_archiving<'a, 'r, R: FileBufRead<'a>>(
+        &self,
+        excluded_accounts: Vec<(Offset, /*data len*/ usize)>,
+        reader: &'r mut R,
+    ) -> AccountsFileReaderForArchiving<'r, R> {
+        match self {
+            Self::AppendVec(av) => AccountsFileReaderForArchiving::AppendVec(
+                av.reader_for_archiving(excluded_accounts, reader),
+            ),
+        }
+    }
+}
+
+/// A reader for archiving an AccountsFile.
+pub(crate) enum AccountsFileReaderForArchiving<'r, R> {
+    AppendVec(AppendVecReaderForArchiving<'r, R>),
+}
+
+impl<R> AccountsFileReaderForArchiving<'_, R> {
+    /// Returns the number of bytes to archive.
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::AppendVec(reader) => reader.len(),
+        }
+    }
+}
+
+impl<'a, R: FileBufRead<'a>> Read for AccountsFileReaderForArchiving<'_, R> {
+    /// Reads from this AccountsFile for archiving.
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::AppendVec(reader) => reader.read(buf),
         }
     }
 }

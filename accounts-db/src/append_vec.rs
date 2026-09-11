@@ -21,7 +21,7 @@ use {
     agave_fs::{
         FileInfo, FileSize,
         buffered_reader::{
-            BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
+            BufReaderWithOverflow, BufferedReader, FileBufRead, RequiredLenBufFileRead,
             RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
@@ -32,10 +32,10 @@ use {
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
-        self,
+        self, cmp,
         convert::TryFrom,
         fs::{File, OpenOptions, remove_file},
-        io,
+        io::{self, Read},
         iter::ExactSizeIterator,
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
@@ -1055,6 +1055,104 @@ impl AppendVec {
     pub(crate) fn open_file_for_archive(&self) -> OpenFileForArchive<'_> {
         OpenFileForArchive::Borrowed(&self.file)
     }
+
+    /// Creates a new reader for archiving this AppendVec.
+    pub(crate) fn reader_for_archiving<'a, 'r, R: FileBufRead<'a>>(
+        &self,
+        mut excluded_accounts: Vec<(FileOffset, /*data len*/ usize)>,
+        reader: &'r mut R,
+    ) -> AppendVecReaderForArchiving<'r, R> {
+        let num_total_bytes = self.len();
+        let mut num_alive_bytes = num_total_bytes;
+        excluded_accounts.sort_unstable_by(|(a_offset, _), (b_offset, _)| b_offset.cmp(a_offset));
+        let sorted_excluded_accounts = excluded_accounts
+            .into_iter()
+            .map(|(offset, data_len)| {
+                let stored_size = cmp::min(
+                    Self::calculate_stored_size(data_len),
+                    num_total_bytes - offset as usize,
+                );
+                num_alive_bytes -= stored_size;
+                ExcludedAccount {
+                    offset,
+                    stored_size,
+                }
+            })
+            .collect();
+
+        AppendVecReaderForArchiving {
+            sorted_excluded_accounts,
+            reader,
+            num_alive_bytes,
+            num_total_bytes,
+        }
+    }
+}
+
+/// A reader for archiving an AppendVec.
+pub(crate) struct AppendVecReaderForArchiving<'r, R> {
+    sorted_excluded_accounts: Vec<ExcludedAccount>,
+    reader: &'r mut R,
+    num_alive_bytes: usize,
+    num_total_bytes: usize,
+}
+
+impl<R> AppendVecReaderForArchiving<'_, R> {
+    /// Returns the number of bytes to archive.
+    pub(crate) fn len(&self) -> usize {
+        self.num_alive_bytes
+    }
+}
+
+impl<'a, R: FileBufRead<'a>> Read for AppendVecReaderForArchiving<'_, R> {
+    /// Reads from this AppendVec for archiving.
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut total_read = 0;
+        let buf_len = buf.len();
+
+        while total_read < buf_len {
+            let next_excluded_account = self.sorted_excluded_accounts.last();
+            let file_offset = self.reader.get_file_offset();
+            if let Some(excluded_account) = next_excluded_account
+                && file_offset == excluded_account.offset
+            {
+                let skip_len = excluded_account
+                    .stored_size
+                    .min(self.num_total_bytes - excluded_account.offset as usize);
+                self.reader.consume_or_skip(skip_len);
+                self.sorted_excluded_accounts.pop();
+                continue;
+            }
+
+            // Cannot read beyond the end of the buffer
+            let bytes_left_in_buffer = buf_len.saturating_sub(total_read);
+
+            // Cannot read beyond the next excluded account or the end of the file
+            let bytes_to_read_from_file = if let Some(excluded_account) = next_excluded_account {
+                excluded_account.offset.saturating_sub(file_offset) as usize
+            } else {
+                self.num_total_bytes.saturating_sub(file_offset as usize)
+            };
+            let bytes_to_read = bytes_left_in_buffer.min(bytes_to_read_from_file);
+            let read_size = self.reader.read(&mut buf[total_read..][..bytes_to_read])?;
+
+            if read_size == 0 {
+                break; // EOF
+            }
+            total_read += read_size;
+        }
+
+        Ok(total_read)
+    }
+}
+
+/// An account to exclude from archiving.
+#[derive(Debug)]
+struct ExcludedAccount {
+    /// file offset of the account to exclude.
+    offset: FileOffset,
+    /// stored size of the account to exclude.
+    stored_size: usize,
 }
 
 /// Create a reusable buffered reader tuned for scanning storages with account data.
