@@ -4,6 +4,7 @@
 //! updates, hiding the details of how leaders are retrieved and which
 //! structures are used.
 use {
+    futures::future::BoxFuture,
     std::{fmt, net::SocketAddr},
     thiserror::Error,
 };
@@ -23,6 +24,19 @@ pub trait LeaderUpdater: Send {
     /// only one estimated leader, there is a risk of losing all the transactions,
     /// depending on the forwarding policy.
     fn next_leaders(&mut self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>);
+
+    /// Waits until the first candidate address differs from `current_leader`.
+    ///
+    /// Implementations with notifications must check the current value before waiting and
+    /// support cancellation of this wait. Slot/timing updates with the same first address
+    /// must keep waiting.
+    /// The default never wakes, preserving support for fixed or polling-only providers.
+    fn wait_for_leader_change(
+        &mut self,
+        _current_leader: Option<SocketAddr>,
+    ) -> BoxFuture<'_, Result<(), LeaderUpdaterError>> {
+        Box::pin(std::future::pending())
+    }
 }
 
 /// Error type for [`LeaderUpdater`].
