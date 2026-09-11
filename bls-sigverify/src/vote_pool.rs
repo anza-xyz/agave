@@ -1,12 +1,11 @@
 use {
     agave_votor_messages::{
-        reward_certificate::NUM_SLOTS_FOR_REWARD, unverified_vote_message::UnverifiedVoteMessage,
-        vote::Vote,
+        consensus_message::BlockId, reward_certificate::NUM_SLOTS_FOR_REWARD,
+        unverified_vote_message::UnverifiedVoteMessage, vote::Vote,
     },
     bitvec::vec::BitVec,
     smallvec::SmallVec,
     solana_clock::Slot,
-    solana_hash::Hash,
     std::collections::HashMap,
 };
 
@@ -25,9 +24,9 @@ struct SlotEntry {
     skip: BitVec<u8>,
     skip_fallback: BitVec<u8>,
     finalize: BitVec<u8>,
-    genesis: Vec<Option<Hash>>,
-    notar: Vec<Option<Hash>>,
-    notar_fallback: Vec<SmallVec<[Hash; MAX_NOTAR_FALLBACK_ENTRIES]>>,
+    genesis: Vec<Option<BlockId>>,
+    notar: Vec<Option<BlockId>>,
+    notar_fallback: Vec<SmallVec<[BlockId; MAX_NOTAR_FALLBACK_ENTRIES]>>,
 }
 
 impl SlotEntry {

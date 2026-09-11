@@ -109,8 +109,8 @@ fn test_far_future_optimistic_parent_requires_parent_window_ready() {
         .unwrap();
     let parent_bank =
         Bank::new_from_parent_with_bank_forks(&bank_forks, root_bank, parent_leader, parent_slot);
-    let parent_block_id = Hash::new_unique();
-    parent_bank.set_block_id(Some(parent_block_id));
+    let parent_block_id = BlockId::new_unique();
+    parent_bank.set_block_id(Some(parent_block_id.into_hash()));
     parent_bank.freeze();
 
     let (sender, receiver) = bounded(1);
@@ -689,9 +689,9 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     assert_eq!(bank_forks.read().unwrap().root(), 0);
     assert!(!blockstore.is_root(1));
 
-    let unfrozen_block_id = Hash::new_unique();
+    let unfrozen_block_id = BlockId::new_unique();
     let unfrozen_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 2);
-    unfrozen_bank.set_block_id(Some(unfrozen_block_id));
+    unfrozen_bank.set_block_id(Some(unfrozen_block_id.into_hash()));
     bank_forks.write().unwrap().insert(unfrozen_bank);
     let unfrozen_command = SetRootCommand {
         new_root: Block {
@@ -710,7 +710,10 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
 
     let block_id = bank_forks.read().unwrap().block_id(1).unwrap();
     let matching_command = SetRootCommand {
-        new_root: Block { slot: 1, block_id },
+        new_root: Block {
+            slot: 1,
+            block_id: BlockId::from(block_id),
+        },
     };
     ReplayStage::process_set_root_command(
         matching_command,

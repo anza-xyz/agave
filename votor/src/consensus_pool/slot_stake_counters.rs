@@ -7,9 +7,12 @@ use {
         consensus_pool::stats::ConsensusPoolStats,
         event::VotorEvent,
     },
-    agave_votor_messages::{consensus_message::Block, fraction::Fraction, vote::Vote},
+    agave_votor_messages::{
+        consensus_message::{Block, BlockId},
+        fraction::Fraction,
+        vote::Vote,
+    },
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     std::{collections::BTreeMap, num::NonZero},
 };
@@ -20,9 +23,9 @@ pub(crate) struct SlotStakeCounters {
     total_stake: NonZero<Stake>,
     skip_total: Stake,
     notarize_total: Stake,
-    notarize_entry_total: BTreeMap<Hash, Stake>,
+    notarize_entry_total: BTreeMap<BlockId, Stake>,
     top_notarized_stake: Stake,
-    safe_to_notar_sent: Vec<Hash>,
+    safe_to_notar_sent: Vec<BlockId>,
     safe_to_skip_sent: bool,
 }
 
@@ -111,7 +114,7 @@ impl SlotStakeCounters {
         }
     }
 
-    fn is_safe_to_notar(&self, block_id: &Hash, stake: &Stake) -> bool {
+    fn is_safe_to_notar(&self, block_id: &BlockId, stake: &Stake) -> bool {
         // White paper v1.1 page 22: The event is only issued if the node voted in slot s already,
         // but not to notarize b. Moreover:
         // notar(b) >= 40% or (skip(s) + notar(b) >= 60% and notar(b) >= 20%)
@@ -232,11 +235,11 @@ mod tests {
         let slot = 4;
 
         // I voted for notarize b
-        let hash_1 = Hash::new_unique();
+        let block_id_1 = BlockId::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(Block {
                 slot,
-                block_id: hash_1,
+                block_id: block_id_1,
             }),
             1,
             true,
@@ -249,11 +252,11 @@ mod tests {
         assert_eq!(stats.event_safe_to_notarize, 0);
 
         // 25% of stake holders voted notarize b'
-        let hash_2 = Hash::new_unique();
+        let block_id_2 = BlockId::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(Block {
                 slot,
-                block_id: hash_2,
+                block_id: block_id_2,
             }),
             25,
             false,
@@ -278,7 +281,7 @@ mod tests {
         match &events[0] {
             VotorEvent::SafeToNotar(block) => {
                 assert_eq!(block.slot, slot);
-                assert_eq!(block.block_id, hash_2);
+                assert_eq!(block.block_id, block_id_2);
             }
             rest => panic!("unexpected: {rest:?}"),
         }
@@ -308,7 +311,7 @@ mod tests {
         assert!(pending_safe_to_notar.is_empty());
 
         // 40% of stake holders voted notarize
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(Block { slot, block_id }),
             40,
@@ -378,11 +381,11 @@ mod tests {
         stats = ConsensusPoolStats::default();
 
         // I voted for notarize b, 10% of stake holders voted with me
-        let hash_1 = Hash::new_unique();
+        let block_id_1 = BlockId::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(Block {
                 slot,
-                block_id: hash_1,
+                block_id: block_id_1,
             }),
             10,
             true,
@@ -391,11 +394,11 @@ mod tests {
             &mut stats,
         );
         // 20% of stake holders voted a different notarization b'
-        let hash_2 = Hash::new_unique();
+        let block_id_2 = BlockId::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(Block {
                 slot,
-                block_id: hash_2,
+                block_id: block_id_2,
             }),
             20,
             false,
@@ -421,7 +424,7 @@ mod tests {
         counters.add_vote(
             &Vote::new_notarization_vote(Block {
                 slot,
-                block_id: hash_1,
+                block_id: block_id_1,
             }),
             10,
             false,

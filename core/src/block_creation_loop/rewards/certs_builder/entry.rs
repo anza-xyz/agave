@@ -119,7 +119,7 @@ mod tests {
     use {
         super::*,
         agave_votor_messages::{
-            consensus_message::Block,
+            consensus_message::{Block, BlockId},
             vote::Vote,
             wire::{VotePayloadToSign, get_vote_payload_to_sign},
         },
@@ -128,7 +128,6 @@ mod tests {
             Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed, SignatureProjective,
         },
         solana_epoch_schedule::EpochSchedule,
-        solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -277,8 +276,8 @@ mod tests {
         assert_eq!(resp.skip, None);
         assert_eq!(resp.notar, None);
 
-        let blockid0 = Hash::new_unique();
-        let blockid1 = Hash::new_unique();
+        let blockid0 = BlockId::new_unique();
+        let blockid1 = BlockId::new_unique();
 
         for rank in 0..2 {
             let notar = Vote::new_notarization_vote(Block {
@@ -306,7 +305,7 @@ mod tests {
         assert_eq!(resp.skip, None);
         let notar = resp.notar.unwrap();
         assert_eq!(notar.slot, slot);
-        assert_eq!(notar.block_id, blockid1);
+        assert_eq!(notar.block_id, blockid1.into_hash());
         validate_bitmap(notar.bitmap(), 3, 5);
     }
 
@@ -329,7 +328,7 @@ mod tests {
         );
         entry.add_aggregate(aggregate, skip_validators).unwrap();
 
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let notar = Vote::new_notarization_vote(Block { slot, block_id });
         let (aggregate, notar_validators) =
             new_reward_vote_aggregate(notar, 2, &keypairs, None, shred_version);
@@ -339,7 +338,7 @@ mod tests {
 
         let resp = entry.build_certs(slot).unwrap();
         assert!(resp.skip.is_none());
-        assert_eq!(resp.notar.unwrap().block_id, block_id);
+        assert_eq!(resp.notar.unwrap().block_id, block_id.into_hash());
         assert_eq!(resp.validators, notar_validators);
     }
 
@@ -353,7 +352,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut entry = Entry::new(max_validators);
 
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let notar = Vote::new_notarization_vote(Block { slot, block_id });
         let (aggregate, notar_validators) = new_identity_reward_vote_aggregate(
             notar,
