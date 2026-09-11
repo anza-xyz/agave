@@ -182,7 +182,6 @@ pub fn get_mock_transaction_processing_environment() -> TransactionProcessingEnv
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(slot(pub), epoch(pub), sysvar_cache(pub))

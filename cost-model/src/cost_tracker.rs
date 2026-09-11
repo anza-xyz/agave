@@ -71,7 +71,6 @@ pub struct CostTrackerStats {
     pub number_of_contended_accounts: usize,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CostTrackerLimits {
     pub account_cost: u64,
@@ -103,7 +102,6 @@ impl Default for CostTrackerLimits {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
 pub struct CostTracker {
     limits: CostTrackerLimits,

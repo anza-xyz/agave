@@ -25,7 +25,6 @@ dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-program-runtime/frozen-abi",
     "solana-vote-interface/frozen-abi",
 ]
 

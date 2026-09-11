@@ -952,22 +952,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 }
 
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::AbiExample for ProgramCacheEntry {
-    fn example() -> Self {
-        // ProgramCacheEntry isn't serializable by definition.
-        Self::default()
-    }
-}
-
-#[cfg(feature = "frozen-abi")]
-impl<FG: ForkGraph> solana_frozen_abi::abi_example::AbiExample for ProgramCache<FG> {
-    fn example() -> Self {
-        // ProgramCache isn't serializable by definition.
-        Self::new(Slot::default())
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use {

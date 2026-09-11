@@ -2,7 +2,6 @@
 //! Collection of reserved account keys that cannot be write-locked by transactions.
 //! New reserved account keys may be added as long as they specify a feature
 //! gate that transitions the key into read-only at an epoch boundary.
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 use {
     agave_feature_set::FeatureSet,
@@ -15,16 +14,6 @@ use {
     },
     std::collections::{HashMap, HashSet},
 };
-
-// ReservedAccountKeys is not serialized into or deserialized from bank
-// snapshots but the bank requires this trait to be implemented anyways.
-#[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample for ReservedAccountKeys {
-    fn example() -> Self {
-        // ReservedAccountKeys is not Serialize so just rely on Default.
-        ReservedAccountKeys::default()
-    }
-}
 
 /// `ReservedAccountKeys` holds the set of currently active/inactive
 /// account keys that are reserved by the protocol and may not be write-locked
