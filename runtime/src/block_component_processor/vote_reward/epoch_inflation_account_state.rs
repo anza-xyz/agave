@@ -259,6 +259,56 @@ mod tests {
     }
 
     #[test]
+    fn new_epoch_update_account_uses_epoch_specific_capitalization() {
+        let genesis_config = GenesisConfig {
+            epoch_schedule: EpochSchedule::without_warmup(),
+            inflation: Inflation::full(),
+            ..GenesisConfig::default()
+        };
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank_epoch_0 = bank_forks.read().unwrap().root_bank();
+        let epoch_0_capitalization = 1_000_000_000;
+        EpochInflationAccountState::new_epoch_update_account(
+            &bank_epoch_0,
+            epoch_0_capitalization,
+            0,
+        );
+
+        let first_slot_in_epoch_1 = bank_epoch_0.epoch_schedule().get_first_slot_in_epoch(1);
+        let bank_epoch_1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank_epoch_0.clone(),
+            SlotLeader::new_unique(),
+            first_slot_in_epoch_1,
+        );
+        let epoch_1_capitalization = epoch_0_capitalization * 1_000;
+        EpochInflationAccountState::new_epoch_update_account(
+            &bank_epoch_1,
+            epoch_1_capitalization,
+            0,
+        );
+
+        let epoch_0_rewards = bank_epoch_0
+            .calculate_epoch_inflation_rewards(epoch_0_capitalization, bank_epoch_0.epoch());
+        let epoch_1_rewards = bank_epoch_1
+            .calculate_epoch_inflation_rewards(epoch_1_capitalization, bank_epoch_1.epoch());
+        let rewards_using_wrong_epoch_0_capitalization = bank_epoch_0
+            .calculate_epoch_inflation_rewards(epoch_1_capitalization, bank_epoch_0.epoch());
+        let rewards_using_wrong_epoch_1_capitalization = bank_epoch_1
+            .calculate_epoch_inflation_rewards(epoch_0_capitalization, bank_epoch_1.epoch());
+        assert_ne!(epoch_0_rewards, rewards_using_wrong_epoch_0_capitalization);
+        assert_ne!(epoch_1_rewards, rewards_using_wrong_epoch_1_capitalization);
+
+        let EpochInflationAccountState { current, prev } =
+            EpochInflationAccountState::new_from_bank(&bank_epoch_1).unwrap();
+        let prev = prev.unwrap();
+        assert_eq!(prev.epoch, bank_epoch_0.epoch());
+        assert_eq!(prev.max_possible_validator_reward, epoch_0_rewards);
+        assert_eq!(current.epoch, bank_epoch_1.epoch());
+        assert_eq!(current.max_possible_validator_reward, epoch_1_rewards);
+    }
+
+    #[test]
     fn new_epoch_update_account_uses_current_epoch_rewards() {
         let GenesisConfigInfo {
             mut genesis_config, ..
