@@ -24,6 +24,7 @@ use {
     solana_svm::conformance::{
         callback::ConformanceCallback,
         err::{UnpackedResult, unpack_stable_result},
+        fd_hash::fd_hash_or_zero,
         instr::context::InstrContext,
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         serialization::{SerializedParameters, push_and_serialize_parameters},
@@ -200,11 +201,11 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         error_kind,
         r0,
         cu_avail,
-        heap: heap.as_slice().to_vec(),
-        stack: stack.as_slice().to_vec(),
+        heap_hash: fd_hash_or_zero(heap.as_slice()),
+        stack_hash: fd_hash_or_zero(stack.as_slice()),
         input_data_regions,
         frame_count: call_depth,
-        rodata: rodata.as_slice().to_vec(),
+        rodata_hash: fd_hash_or_zero(rodata.as_slice()),
         pc: 0,
         ..Default::default()
     }
@@ -325,7 +326,7 @@ fn extract_input_data_regions(
 fn mem_region_to_input_data_region(region: &MemoryRegion) -> ProtoInputDataRegion {
     let host_buffer = region.host_buffer();
     ProtoInputDataRegion {
-        content: unsafe { host_buffer.ptr().as_ref_unchecked().to_vec() },
+        content_hash: fd_hash_or_zero(unsafe { host_buffer.ptr().as_ref_unchecked() }),
         offset: region.vm_addr_range().start.saturating_sub(MM_INPUT_START),
         is_writable: host_buffer.is_mutable(),
     }
@@ -367,6 +368,7 @@ mod tests {
         protosol::protos::{
             AcctState as ProtoAcctState, InstrContext as ProtoInstrContext,
             SyscallInvocation as ProtoSyscallInvocation, VmContext as ProtoVmContext,
+            acct_state::DataRepr,
         },
         solana_rent::Rent,
         solana_sdk_ids::sysvar,
@@ -385,14 +387,16 @@ mod tests {
         let program_account = ProtoAcctState {
             address: PROGRAM_ID.to_vec(),
             lamports: 0,
-            data: vec![],
+            data_repr: Some(DataRepr::Data(vec![])),
             executable: true,
             owner: Pubkey::default().to_bytes().to_vec(),
         };
         let rent_sysvar = ProtoAcctState {
             address: sysvar::rent::id().to_bytes().to_vec(),
             lamports: 1,
-            data: bincode::serialize(&Rent::default()).unwrap(),
+            data_repr: Some(DataRepr::Data(
+                bincode::serialize(&Rent::default()).unwrap(),
+            )),
             executable: false,
             owner: sysvar::id().to_bytes().to_vec(),
         };
@@ -451,12 +455,11 @@ mod tests {
         ));
 
         assert_eq!(effects.error, 0);
-        assert_eq!(&effects.heap[..8], &[0x42; 8]);
-        assert_eq!(
-            &effects.heap[8..16],
-            &[0u8; 8],
-            "must not write past length"
-        );
+        // Effects carry only a hash, so rebuild the heap image the syscall
+        // should have produced: 0x42 for the requested 8 bytes, zero after.
+        let mut expected_heap = vec![0u8; 1024];
+        expected_heap[..8].fill(0x42);
+        assert_eq!(effects.heap_hash, fd_hash_or_zero(&expected_heap));
     }
 
     #[test]

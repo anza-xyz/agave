@@ -60,17 +60,18 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     // supports it, the harness should skip the account comparison on error
     // entirely, which would also make the CU-exhaustion workaround below
     // unnecessary.
+    let cu_avail = effects.cu_avail;
+    let has_err = effects.result.is_some();
+    let mut result: ProtoInstrEffects = effects.into();
+
     direct_mapping_handle_cu_exhaustion(
         instr_context.feature_set.virtual_address_space_adjustments,
-        effects.cu_avail,
-        effects.result.is_some(),
-        effects
-            .resulting_accounts
-            .iter_mut()
-            .map(|(_, account)| &mut account.data),
+        cu_avail,
+        has_err,
+        result.modified_accounts.iter_mut(),
     );
 
-    effects.into()
+    result
 }
 
 /// # Safety
@@ -105,8 +106,8 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_account::Account, solana_pubkey::Pubkey,
-        solana_svm::conformance::programs::keyed_account_for_system_program,
+        super::*, protosol::protos::acct_state::DataRepr, solana_account::Account,
+        solana_pubkey::Pubkey, solana_svm::conformance::programs::keyed_account_for_system_program,
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_TRANSFER_CUS,
     };
 
@@ -128,7 +129,7 @@ mod tests {
             address: pubkey.to_bytes().to_vec(),
             owner: account.owner.to_bytes().to_vec(),
             lamports: account.lamports,
-            data: account.data,
+            data_repr: Some(DataRepr::Data(account.data)),
             executable: account.executable,
         }
     }
@@ -141,7 +142,7 @@ mod tests {
             address: pubkey.to_bytes().to_vec(),
             owner: solana_sdk_ids::sysvar::id().to_bytes().to_vec(),
             lamports: 1,
-            data: bincode::serialize(sysvar).unwrap(),
+            data_repr: Some(DataRepr::Data(bincode::serialize(sysvar).unwrap())),
             executable: false,
         }
     }
