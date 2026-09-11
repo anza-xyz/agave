@@ -70,10 +70,10 @@ pub(crate) fn new_server_config(
     let quic = QuicServerConfig::try_from(tls)
         .expect("TLS 1.3-only config yields an initial cipher suite");
     let mut cfg = ServerConfig::with_crypto(Arc::new(quic));
-    cfg.incoming_buffer_size((DATAGRAM_MTU * 2) as u64);
-    let max_incoming = compute_max_incoming(num_endpoints);
-    cfg.incoming_buffer_size_total(max_incoming as u64 * DATAGRAM_MTU as u64);
-    cfg.max_incoming(max_incoming);
+    // Do not buffer anything for a connection attempt that has not been accepted yet.
+    cfg.incoming_buffer_size(0);
+    cfg.incoming_buffer_size_total(0);
+    cfg.max_incoming(compute_max_incoming(num_endpoints));
     cfg.retry_token_lifetime(MAX_IDLE_TIMEOUT);
     cfg.transport_config(Arc::new(new_transport_config(
         max_datagrams_per_second_per_peer,
