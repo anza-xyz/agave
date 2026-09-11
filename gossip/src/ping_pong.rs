@@ -131,6 +131,11 @@ impl Pong {
         &self.from
     }
 
+    /// Hash of the token of the ping which this pong answers.
+    pub(crate) fn hash(&self) -> &Hash {
+        &self.hash
+    }
+
     pub(crate) fn signature(&self) -> &Signature {
         &self.signature
     }
@@ -324,7 +329,7 @@ impl<const N: usize> PingCache<N> {
     }
 }
 
-fn hash_ping_token<const N: usize>(token: &[u8; N]) -> Hash {
+pub(crate) fn hash_ping_token<const N: usize>(token: &[u8; N]) -> Hash {
     solana_sha256_hasher::hashv(&[PING_PONG_HASH_PREFIX, token])
 }
 
