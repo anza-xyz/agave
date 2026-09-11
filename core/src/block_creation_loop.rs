@@ -507,14 +507,17 @@ fn select_freshest_window(
     latest_parent_ready: Option<LeaderWindowInfo>,
     latest_optimistic_parent: Option<LeaderWindowInfo>,
 ) -> (Option<LeaderWindowInfo>, bool) {
-    if latest_parent_ready.as_ref().map(|info| info.start_slot)
-        >= latest_optimistic_parent
-            .as_ref()
-            .map(|info| info.start_slot)
-    {
-        (latest_parent_ready, false)
-    } else {
-        (latest_optimistic_parent, true)
+    match (latest_parent_ready, latest_optimistic_parent) {
+        (None, None) => (None, false),
+        (Some(parent_ready), None) => (Some(parent_ready), false),
+        (None, Some(opt_parent)) => (Some(opt_parent), true),
+        (Some(parent_ready), Some(opt_parent)) => {
+            if parent_ready.start_slot >= opt_parent.start_slot {
+                (Some(parent_ready), false)
+            } else {
+                (Some(opt_parent), true)
+            }
+        }
     }
 }
 

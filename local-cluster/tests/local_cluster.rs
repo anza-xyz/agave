@@ -5016,7 +5016,7 @@ fn test_boot_from_local_state() {
     // so use it as the comparison for others.
     // - wait for validator1 to take new snapshots
     // - wait for the other validators to have high enough snapshots
-    // - ensure the other validators' snapshots match validator1's
+    // - ensure the other validators' full snapshots match validator1's
     //
     // NOTE: There's a chance validator 2 or 3 has crossed the next full snapshot past what
     // validator 1 has.  If that happens, validator 2 or 3 may have purged the snapshots needed
@@ -5042,9 +5042,6 @@ fn test_boot_from_local_state() {
     #[allow(dead_code)]
     #[derive(Debug)]
     struct SnapshotSlot(Slot);
-    #[allow(dead_code)]
-    #[derive(Debug)]
-    struct BaseSlot(Slot);
 
     for (i, other_validator_config) in [(2, &validator2_config), (3, &validator3_config)] {
         info!("Checking if validator{i} has the same snapshots as validator1...");
@@ -5098,46 +5095,6 @@ fn test_boot_from_local_state() {
                 .collect::<Vec<_>>(),
         );
 
-        let other_incremental_snapshot_archives =
-            snapshot_paths::incremental_snapshot_archives_iter(
-                other_validator_config
-                    .incremental_snapshot_archives_dir
-                    .path(),
-            )
-            .collect::<Vec<_>>();
-        debug!(
-            "validator{i} incremental snapshot archives: {other_incremental_snapshot_archives:?}"
-        );
-        assert!(
-            other_incremental_snapshot_archives
-                .iter()
-                .any(
-                    |other_incremental_snapshot_archive| other_incremental_snapshot_archive
-                        .base_slot()
-                        == incremental_snapshot_archive.base_slot()
-                        && other_incremental_snapshot_archive.slot()
-                            == incremental_snapshot_archive.slot()
-                        && other_incremental_snapshot_archive.hash()
-                            == incremental_snapshot_archive.hash()
-                ),
-            "incremental snapshot archive does not match!\n  validator1: {:?}\n  validator{i}: \
-             {:?}",
-            (
-                BaseSlot(incremental_snapshot_archive.base_slot()),
-                SnapshotSlot(incremental_snapshot_archive.slot()),
-                incremental_snapshot_archive.hash(),
-            ),
-            other_incremental_snapshot_archives
-                .iter()
-                .sorted_unstable()
-                .rev()
-                .map(|snap| (
-                    BaseSlot(snap.base_slot()),
-                    SnapshotSlot(snap.slot()),
-                    snap.hash(),
-                ))
-                .collect::<Vec<_>>(),
-        );
         info!("Checking if validator{i} has the same snapshots as validator1... DONE");
     }
 }

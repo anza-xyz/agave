@@ -12,7 +12,7 @@ use {
     solana_clock::{BankId, Slot},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_measure::measure::Measure,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::transaction_with_meta::{TransactionWithMeta, writable_accounts},
     solana_signature::Signature,
     solana_svm::{
         transaction_commit_result::{
@@ -89,7 +89,8 @@ pub fn execute_batch<'a>(
     let mut check_block_costs_elapsed = Measure::start("check_block_costs");
 
     let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions());
-    let checked_tx_costs_result = check_block_cost_limits(bank, &tx_costs);
+    let checked_tx_costs_result =
+        check_block_cost_limits(bank, batch.sanitized_transactions(), &tx_costs);
 
     check_block_costs_elapsed.stop();
     timings.saturating_add_in_place(
@@ -156,24 +157,28 @@ pub fn execute_batch<'a>(
 
 fn check_block_cost_limits<Tx: TransactionWithMeta>(
     bank: &Bank,
-    tx_costs: &[Option<TransactionCost<'_, Tx>>],
+    transactions: &[Tx],
+    tx_costs: &[Option<TransactionCost>],
 ) -> TransactionResult<()> {
+    assert_eq!(transactions.len(), tx_costs.len());
     let mut cost_tracker = bank.write_cost_tracker().unwrap();
-    for tx_cost in tx_costs.iter().flatten() {
-        cost_tracker
-            .try_add(tx_cost)
-            .map_err(TransactionError::from)?;
+    for (transaction, tx_cost) in transactions.iter().zip(tx_costs) {
+        if let Some(tx_cost) = tx_cost {
+            cost_tracker
+                .try_add(tx_cost, writable_accounts(transaction))
+                .map_err(TransactionError::from)?;
+        }
     }
 
     Ok(())
 }
 
 // Get actual transaction execution costs from transaction commit results
-fn get_transaction_costs<'a, Tx: TransactionWithMeta>(
+fn get_transaction_costs<Tx: TransactionWithMeta>(
     bank: &Bank,
     commit_results: &[TransactionCommitResult],
-    sanitized_transactions: &'a [Tx],
-) -> Vec<Option<TransactionCost<'a, Tx>>> {
+    sanitized_transactions: &[Tx],
+) -> Vec<Option<TransactionCost>> {
     assert_eq!(sanitized_transactions.len(), commit_results.len());
 
     commit_results
@@ -339,16 +344,17 @@ mod tests {
             .unwrap()
             .set_limits(CostTrackerLimits::new(u64::MAX, block_limit, u64::MAX));
 
-        let tx_costs = vec![None, Some(tx_cost), None];
+        let transactions = std::slice::from_ref(&tx);
+        let tx_costs = [Some(tx_cost)];
         // The transaction will fit when added the first time
-        assert!(check_block_cost_limits(&bank, &tx_costs).is_ok());
+        assert!(check_block_cost_limits(&bank, transactions, &tx_costs).is_ok());
         // But adding a second time will exceed the block limit
         assert_eq!(
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
-            check_block_cost_limits(&bank, &tx_costs)
+            check_block_cost_limits(&bank, transactions, &tx_costs)
         );
         // Adding another None will noop (even though the block is already full)
-        assert!(check_block_cost_limits(&bank, &tx_costs[0..1]).is_ok());
+        assert!(check_block_cost_limits(&bank, transactions, &[None]).is_ok());
     }
 
     #[test]
@@ -546,7 +552,7 @@ mod tests {
         let noop_cost = tx_costs[0].as_ref().unwrap().sum();
         assert_eq!(noop_cost, sig + locks + data + compute + size);
 
-        check_block_cost_limits(&bank, &tx_costs).unwrap();
+        check_block_cost_limits(&bank, batch.sanitized_transactions(), &tx_costs).unwrap();
         assert_eq!(bank.read_cost_tracker().unwrap().block_cost(), noop_cost);
 
         drop(batch);

@@ -242,8 +242,8 @@ where
 mod tests {
     use {
         crate::{
-            packet::Packet,
-            recvmmsg::recv_mmsg,
+            packet::{BytesPacketBatch, Packet},
+            recvmmsg::{PacketBufferPool, recv_mmsg},
             sendmmsg::{SendPktsError, batch_send, multi_target_send},
         },
         assert_matches::assert_matches,
@@ -267,8 +267,8 @@ mod tests {
         let sent = batch_send(&sender, packet_refs).ok();
         assert_eq!(sent, Some(()));
 
-        let mut packets = vec![Packet::default(); 32];
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(32);
+        let recv = recv_mmsg(&reader, &mut packets, &mut PacketBufferPool::new()).unwrap();
         assert_eq!(32, recv);
     }
 
@@ -298,12 +298,12 @@ mod tests {
         let sent = batch_send(&sender, packet_refs).ok();
         assert_eq!(sent, Some(()));
 
-        let mut packets = vec![Packet::default(); 32];
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(32);
+        let recv = recv_mmsg(&reader, &mut packets, &mut PacketBufferPool::new()).unwrap();
         assert_eq!(16, recv);
 
-        let mut packets = vec![Packet::default(); 32];
-        let recv = recv_mmsg(&reader2, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(32);
+        let recv = recv_mmsg(&reader2, &mut packets, &mut PacketBufferPool::new()).unwrap();
         assert_eq!(16, recv);
     }
 
@@ -333,20 +333,20 @@ mod tests {
         .ok();
         assert_eq!(sent, Some(()));
 
-        let mut packets = vec![Packet::default(); 32];
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(32);
+        let recv = recv_mmsg(&reader, &mut packets, &mut PacketBufferPool::new()).unwrap();
         assert_eq!(1, recv);
 
-        let mut packets = vec![Packet::default(); 32];
-        let recv = recv_mmsg(&reader2, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(32);
+        let recv = recv_mmsg(&reader2, &mut packets, &mut PacketBufferPool::new()).unwrap();
         assert_eq!(1, recv);
 
-        let mut packets = vec![Packet::default(); 32];
-        let recv = recv_mmsg(&reader3, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(32);
+        let recv = recv_mmsg(&reader3, &mut packets, &mut PacketBufferPool::new()).unwrap();
         assert_eq!(1, recv);
 
-        let mut packets = vec![Packet::default(); 32];
-        let recv = recv_mmsg(&reader4, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(32);
+        let recv = recv_mmsg(&reader4, &mut packets, &mut PacketBufferPool::new()).unwrap();
         assert_eq!(1, recv);
     }
 

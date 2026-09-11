@@ -3,7 +3,10 @@
 use crate::{rpc_pubsub_service, rpc_subscriptions::RpcSubscriptions};
 use {
     crate::{
-        rpc::{check_is_at_least_confirmed, optimize_filters, verify_filters},
+        rpc::{
+            check_is_at_least_confirmed, optimize_filters,
+            validate_max_supported_transaction_version_for_encoding, verify_filters,
+        },
         rpc_pubsub_service::PubSubConfig,
         rpc_subscription_tracker::{
             AccountSubscriptionParams, BlockSubscriptionKind, BlockSubscriptionParams,
@@ -551,11 +554,16 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
             return Err(Error::new(jsonrpc_core::ErrorCode::MethodNotFound));
         }
         let config = config.unwrap_or_default();
+        let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Base64);
+        validate_max_supported_transaction_version_for_encoding(
+            encoding,
+            config.max_supported_transaction_version,
+        )?;
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
         let params = BlockSubscriptionParams {
             commitment: config.commitment.unwrap_or_default(),
-            encoding: config.encoding.unwrap_or(UiTransactionEncoding::Base64),
+            encoding,
             kind: match filter {
                 RpcBlockSubscribeFilter::All => BlockSubscriptionKind::All,
                 RpcBlockSubscribeFilter::MentionsAccountOrProgram(key) => {
@@ -683,6 +691,39 @@ mod tests {
         };
         subscriptions.notify_subscribers(commitment_slots);
         Ok(())
+    }
+
+    #[test]
+    fn test_block_subscribe_rejects_base58_transaction_version_1_or_higher() {
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let subscriptions = Arc::new(RpcSubscriptions::default_with_bank_forks(
+            Arc::new(AtomicU64::default()),
+            bank_forks,
+        ));
+        let (rpc, _receiver) = rpc_pubsub_service::test_connection(&subscriptions);
+
+        for max_supported_transaction_version in [1, u8::MAX] {
+            for encoding in [UiTransactionEncoding::Base58, UiTransactionEncoding::Binary] {
+                let error = rpc
+                    .block_subscribe(
+                        RpcBlockSubscribeFilter::All,
+                        Some(RpcBlockSubscribeConfig {
+                            encoding: Some(encoding),
+                            max_supported_transaction_version: Some(
+                                max_supported_transaction_version,
+                            ),
+                            ..RpcBlockSubscribeConfig::default()
+                        }),
+                    )
+                    .unwrap_err();
+                assert_eq!(error.code, ErrorCode::InvalidParams);
+                assert_eq!(
+                    error.message,
+                    "base58 encoding is not supported with maxSupportedTransactionVersion >= 1"
+                );
+            }
+        }
     }
 
     #[test]

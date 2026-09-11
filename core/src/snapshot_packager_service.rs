@@ -13,6 +13,7 @@ use {
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
         accounts_background_service::PendingSnapshotPackages,
+        serde_snapshot::StartupHints,
         snapshot_controller::SnapshotController,
         snapshot_package::{BankSnapshotPackage, SnapshotPackage},
         snapshot_utils,
@@ -97,6 +98,7 @@ impl SnapshotPackagerService {
                             teardown_state = Some(TeardownState {
                                 snapshot_slot: snapshot_package.slot,
                                 snapshot_storages: snapshot_package.snapshot_storages.clone(),
+                                startup_hints: snapshot_package.startup_hints.clone(),
                                 bank_snapshot_package: Some(snapshot_package.bank_snapshot_package),
                             });
 
@@ -112,6 +114,7 @@ impl SnapshotPackagerService {
                             teardown_state = Some(TeardownState {
                                 snapshot_slot: snapshot_package.slot,
                                 snapshot_storages: snapshot_package.snapshot_storages.clone(),
+                                startup_hints: snapshot_package.startup_hints.clone(),
                                 bank_snapshot_package: None,
                             });
                         }
@@ -132,6 +135,7 @@ impl SnapshotPackagerService {
                         snapshot_package.bank_snapshot_package,
                         snapshot_package.snapshot_storages.as_slice(),
                         exit_backpressure.is_none(),
+                        &snapshot_package.startup_hints,
                         &io_setup,
                     );
 
@@ -237,6 +241,7 @@ impl SnapshotPackagerService {
             snapshot_slot,
             snapshot_storages,
             bank_snapshot_package,
+            startup_hints,
         } = state;
 
         // Teardown, expedite IO using sqpoll thread, but fallback in case of error.
@@ -259,6 +264,7 @@ impl SnapshotPackagerService {
                 bank_snapshot_package,
                 snapshot_storages.as_slice(),
                 false,
+                &startup_hints,
                 &io_setup,
             );
             if let Err(err) = result {
@@ -333,6 +339,21 @@ impl SnapshotPackagerService {
         }
         info!("Saving obsolete accounts... Done in {:?}", start.elapsed());
 
+        info!("Writing startup hints...");
+        let start = Instant::now();
+        let result = snapshot_utils::write_startup_hints_to_snapshot(
+            &bank_snapshot_dir,
+            &startup_hints,
+            &io_setup,
+        );
+        if let Err(err) = result {
+            warn!("Failed to write startup hints: {err}");
+            // If writing the startup hints failed, we do *NOT* want to mark the bank snapshot
+            // as loadable so return early.
+            return;
+        }
+        info!("Writing startup hints... Done in {:?}", start.elapsed());
+
         let result = snapshot_utils::mark_bank_snapshot_as_loadable(&bank_snapshot_dir);
         if let Err(err) = result {
             warn!("Failed to mark bank snapshot as loadable: {err}");
@@ -353,4 +374,6 @@ struct TeardownState {
     /// `bank_snapshot_package` will be `None` because the serialization would have already occurred
     /// when the snapshot archive was written.
     bank_snapshot_package: Option<BankSnapshotPackage>,
+    /// The startup hints of the latest snapshot
+    startup_hints: StartupHints,
 }

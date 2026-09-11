@@ -335,7 +335,7 @@ pub(crate) fn create_and_send_own_vote_message(
 
     let root_slot = context.sharable_banks.root().slot();
     if rewards_wants_vote(
-        &context.cluster_info,
+        my_pubkey,
         &context.leader_schedule,
         root_slot,
         &vote_msg.vote,

@@ -200,10 +200,11 @@ mod tests {
         let payer = Keypair::new();
         let recipient = Pubkey::new_unique();
         let instruction = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
-        let message = solana_message::v1::Message::try_compile(
+        let message = solana_message::v1::Message::try_compile_with_config(
             &payer.pubkey(),
             &[instruction],
             Hash::new_unique(),
+            solana_message::v1::TransactionConfig::empty(),
         )
         .unwrap();
 

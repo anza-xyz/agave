@@ -1,6 +1,5 @@
 //! The `recvmmsg` module provides recvmmsg() API implementation
 
-pub use solana_perf::packet::PACKETS_PER_BATCH;
 #[cfg(target_os = "linux")]
 use {
     crate::msghdr::create_msghdr,
@@ -13,30 +12,75 @@ use {
     },
 };
 use {
-    crate::packet::{Meta, Packet},
-    std::{cmp, io, net::UdpSocket},
+    crate::packet::{BytesPacketBatch, Meta, PACKET_DATA_SIZE},
+    bytes::BytesMut,
+    solana_perf::packet::{BytesPacket, PACKETS_PER_BATCH},
+    std::{io, net::UdpSocket},
 };
 
+/// Pool of receive buffers for [`recv_mmsg`].
+///
+/// `recvmmsg(2)` has to be handed a buffer for every packet it is allowed to return, but it
+/// may return fewer if socket buffer is drained. The buffers it did not fill are kept here
+/// instead of being dropped.
+///
+/// Buffers that got used for a packet leave the pool, so it must be replenished periodically.
+pub(crate) struct PacketBufferPool(Vec<BytesMut>);
+
+impl PacketBufferPool {
+    /// Allocates the buffers for one full [`recv_mmsg`] call.
+    pub(crate) fn new() -> Self {
+        let mut pool = Self(Vec::with_capacity(PACKETS_PER_BATCH));
+        pool.replenish();
+        pool
+    }
+
+    /// Replaces the buffers consumed by the packets received since the last call. The call
+    /// will allocate only as many buffers as were consumed since last call, so it is idempotent.
+    fn replenish(&mut self) {
+        // we never need to worry about pool being > PACKETS_PER_BATCH since this is
+        // the only place where we add elements to it.
+        self.0.resize_with(PACKETS_PER_BATCH, || {
+            BytesMut::with_capacity(PACKET_DATA_SIZE)
+        });
+    }
+}
+
+/// Fallback for platforms without `recvmmsg(2)`, see the linux implementation for the
+/// contract. One `recvfrom(2)` per packet, so this one only ever takes a buffer out of
+/// `pool` when it has a packet to put in it.
 #[cfg(not(target_os = "linux"))]
-pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
-    debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
+pub(crate) fn recv_mmsg(
+    socket: &UdpSocket,
+    packets: &mut BytesPacketBatch,
+    pool: &mut PacketBufferPool,
+) -> io::Result</*num packets:*/ usize> {
+    pool.replenish();
     let mut i = 0;
-    let count = cmp::min(PACKETS_PER_BATCH, packets.len());
-    for p in packets.iter_mut().take(count) {
-        p.meta_mut().size = 0;
-        match socket.recv_from(p.buffer_mut()) {
-            Err(_) if i > 0 => {
-                break;
-            }
-            Err(e) => {
-                return Err(e);
-            }
+    let count = PACKETS_PER_BATCH.saturating_sub(packets.len());
+    packets.reserve(count);
+    for _ in 0..count {
+        // Receive into a buffer that is still owned by the pool and only take it out once it
+        // holds a packet, so that no error path can forget to put it back.
+        let buffer = pool
+            .0
+            .last_mut()
+            .expect("count is bounded by the pool size");
+        // Within the capacity every pooled buffer is built with, so this does not allocate.
+        buffer.resize(PACKET_DATA_SIZE, 0);
+        match socket.recv_from(buffer) {
+            Err(_) if i > 0 => break,
+            Err(e) => return Err(e),
             Ok((nrecv, from)) => {
-                p.meta_mut().size = nrecv;
-                p.meta_mut().set_socket_addr(&from);
                 if i == 0 {
                     socket.set_nonblocking(true)?;
                 }
+                let mut buffer = pool.0.pop().expect("the receive buffer is still pooled");
+                buffer.truncate(nrecv);
+                let mut meta = Meta::default();
+                meta.size = nrecv;
+                meta.set_socket_addr(&from);
+                packets.push(BytesPacket::new(buffer.freeze(), meta));
             }
         }
         i += 1;
@@ -78,12 +122,15 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
     None
 }
 
-/** Receive multiple messages from `sock` into buffer provided in `packets`.
+/** Receive multiple messages from `sock`, appending them to `packets`.
 This is a wrapper around recvmmsg(7) call.
 
-The buffer provided in packets should have all `meta()` fields cleared before calling
-this function
+Packets are appended until `packets` holds `PACKETS_PER_BATCH` packets. The batch is
+never cleared and is grown as needed, so the caller can fill up partial batches.
+Returns the number of packets appended.
 
+Receive buffers are taken from `pool` if available there, pool is replenished
+automatically as buffers are consumed.
 
  This function is *supposed to* timeout in 1 second and *may* block forever
  due to a bug in the linux kernel.
@@ -91,14 +138,18 @@ this function
  prior to calling this function if you require this to actually time out after 1 second.
 */
 #[cfg(target_os = "linux")]
-pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
-    // Should never hit this, but bail if the caller didn't provide any Packets
-    // to receive into
-    if packets.is_empty() {
+pub(crate) fn recv_mmsg(
+    sock: &UdpSocket,
+    packets: &mut BytesPacketBatch,
+    pool: &mut PacketBufferPool,
+) -> io::Result</*num packets:*/ usize> {
+    pool.replenish();
+    let count = PACKETS_PER_BATCH.saturating_sub(packets.len());
+    // Should never hit this, but bail if the batch handed to us is already full
+    if count == 0 {
         return Ok(0);
     }
-    // Assert that there are no leftovers in packets.
-    debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
+    packets.reserve(count);
     const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
     let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
@@ -106,15 +157,13 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
 
     let sock_fd = sock.as_raw_fd();
-    let count = cmp::min(iovs.len(), packets.len());
 
-    for (packet, hdr, iov, addr) in
-        izip!(packets.iter_mut(), &mut hdrs, &mut iovs, &mut addrs).take(count)
+    for (hdr, iov, addr, buffer) in
+        izip!(&mut hdrs, &mut iovs, &mut addrs, pool.0.iter_mut()).take(count)
     {
-        let buffer = packet.buffer_mut();
         iov.write(iovec {
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
-            iov_len: buffer.len(),
+            iov_len: PACKET_DATA_SIZE,
         });
 
         let msg_hdr = create_msghdr(addr, SOCKADDR_STORAGE_SIZE, iov);
@@ -145,7 +194,8 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     } else {
         usize::try_from(nrecv).unwrap()
     };
-    for (addr, hdr, pkt) in izip!(addrs, hdrs, packets.iter_mut()).take(nrecv) {
+    // Consume the buffers from the pool matching number of received packets.
+    for (addr, hdr, mut buffer) in izip!(addrs, hdrs, pool.0.drain(..nrecv)) {
         // SAFETY: We initialized `count` elements of `hdrs` above. `count` is
         // passed to recvmmsg() as the limit of messages that can be read. So,
         // `nrevc <= count` which means we initialized this `hdr` and
@@ -154,10 +204,15 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         // SAFETY: Similar to above, we initialized this `addr` and recvmmsg()
         // will have populated it
         let addr_ref = unsafe { addr.assume_init_ref() };
-        pkt.meta_mut().size = hdr_ref.msg_len as usize;
+        let msg_len = hdr_ref.msg_len as usize;
+        // SAFETY: `recvmmsg` wrote `msg_len` initialized bytes into the buffer.
+        unsafe { buffer.set_len(msg_len) };
+        let mut meta = Meta::default();
+        meta.size = msg_len;
         if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
-            pkt.meta_mut().set_socket_addr(&addr);
+            meta.set_socket_addr(&addr);
         }
+        packets.push(BytesPacket::new(buffer.freeze(), meta));
     }
 
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
@@ -181,7 +236,10 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
 #[cfg(test)]
 mod tests {
     use {
-        crate::{packet::PACKET_DATA_SIZE, recvmmsg::*},
+        crate::{
+            packet::{BytesPacketBatch, PACKET_DATA_SIZE},
+            recvmmsg::*,
+        },
         solana_net_utils::sockets::{
             SocketConfiguration as SocketConfig, bind_in_range_with_config,
             localhost_port_range_for_tests, unique_port_range_for_tests,
@@ -223,10 +281,10 @@ mod tests {
                 sender.send_to(&data[..], addr).unwrap();
             }
 
-            let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-            let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+            let mut packets = BytesPacketBatch::with_capacity(TEST_NUM_MSGS);
+            let recv = recv_mmsg(&reader, &mut packets, &mut PacketBufferPool::new()).unwrap();
             assert_eq!(sent, recv);
-            for packet in packets.iter().take(recv) {
+            for packet in packets.iter() {
                 assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
                 assert_eq!(packet.meta().socket_addr(), saddr);
             }
@@ -243,26 +301,27 @@ mod tests {
     #[test]
     pub fn test_recv_mmsg_multi_iter() {
         let test_multi_iter = |(reader, addr, sender, saddr): TestConfig| {
-            let sent = TEST_NUM_MSGS + 10;
+            // Send more than a single call can return, so that the leftovers stay
+            // queued for the second call.
+            let sent = PACKETS_PER_BATCH + 10;
             for _ in 0..sent {
                 let data = [0; PACKET_DATA_SIZE];
                 sender.send_to(&data[..], addr).unwrap();
             }
 
-            let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-            let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
-            assert_eq!(TEST_NUM_MSGS, recv);
-            for packet in packets.iter().take(recv) {
+            let mut pool = PacketBufferPool::new();
+            let mut packets = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
+            let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
+            assert_eq!(PACKETS_PER_BATCH, recv);
+            for packet in packets.iter() {
                 assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
                 assert_eq!(packet.meta().socket_addr(), saddr);
             }
 
-            packets
-                .iter_mut()
-                .for_each(|pkt| *pkt.meta_mut() = Meta::default());
-            let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
-            assert_eq!(sent - TEST_NUM_MSGS, recv);
-            for packet in packets.iter().take(recv) {
+            packets.clear();
+            let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
+            assert_eq!(sent - PACKETS_PER_BATCH, recv);
+            for packet in packets.iter() {
                 assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
                 assert_eq!(packet.meta().socket_addr(), saddr);
             }
@@ -289,19 +348,18 @@ mod tests {
         }
 
         let start = Instant::now();
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let mut pool = PacketBufferPool::new();
+        let mut packets = BytesPacketBatch::with_capacity(TEST_NUM_MSGS);
+        let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);
-        for packet in packets.iter().take(recv) {
+        for packet in packets.iter() {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
             assert_eq!(packet.meta().socket_addr(), sender_addr);
         }
         reader.set_nonblocking(true).unwrap();
 
-        packets
-            .iter_mut()
-            .for_each(|pkt| *pkt.meta_mut() = Meta::default());
-        let _recv = recv_mmsg(&reader, &mut packets[..]);
+        packets.clear();
+        let _recv = recv_mmsg(&reader, &mut packets, &mut pool);
         assert!(start.elapsed().as_secs() < 5);
     }
 
@@ -317,13 +375,15 @@ mod tests {
             .unwrap()
             .1;
         let sender1_addr = sender1.local_addr().unwrap();
-        let sent1 = TEST_NUM_MSGS - 1;
+        let sent1 = PACKETS_PER_BATCH - 1;
 
         let sender2 = bind_in_range_with_config(ip, port_range, SocketConfig::default())
             .unwrap()
             .1;
         let sender_addr = sender2.local_addr().unwrap();
-        let sent2 = TEST_NUM_MSGS + 1;
+        // sent1 + sent2 is one over PACKETS_PER_BATCH, so one packet of the second
+        // sender's traffic is left queued for the second call.
+        let sent2 = 2;
 
         for _ in 0..sent1 {
             let data = [0; PACKET_DATA_SIZE];
@@ -334,28 +394,61 @@ mod tests {
             let data = [0; PACKET_DATA_SIZE];
             sender2.send_to(&data[..], reader_addr).unwrap();
         }
+        let mut pool = PacketBufferPool::new();
+        let mut packets = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
 
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
-        assert_eq!(TEST_NUM_MSGS, recv);
+        let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
+        assert_eq!(PACKETS_PER_BATCH, recv);
         for packet in packets.iter().take(sent1) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
             assert_eq!(packet.meta().socket_addr(), sender1_addr);
         }
-        for packet in packets.iter().skip(sent1).take(recv - sent1) {
+        for packet in packets.iter().skip(sent1) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
             assert_eq!(packet.meta().socket_addr(), sender_addr);
         }
 
-        packets
-            .iter_mut()
-            .for_each(|pkt| *pkt.meta_mut() = Meta::default());
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
-        assert_eq!(sent1 + sent2 - TEST_NUM_MSGS, recv);
-        for packet in packets.iter().take(recv) {
+        packets.clear();
+        let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
+        assert_eq!(sent1 + sent2 - PACKETS_PER_BATCH, recv);
+        for packet in packets.iter() {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
             assert_eq!(packet.meta().socket_addr(), sender_addr);
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    pub fn test_recv_mmsg_reuses_pool_buffers() {
+        let (reader, reader_addr, sender, _sender_addr) =
+            test_setup_reader_sender(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap();
+        let sent = 2;
+        for _ in 0..sent {
+            let data = [0; PACKET_DATA_SIZE];
+            sender.send_to(&data[..], reader_addr).unwrap();
+        }
+
+        let mut pool = PacketBufferPool::new();
+        let mut packets = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
+        let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
+        assert_eq!(sent, recv);
+        assert_eq!(
+            pool.0.len(),
+            PACKETS_PER_BATCH - sent,
+            "buffers that did not receive a packet must be left in the pool"
+        );
+
+        // A second call tops the pool back up by exactly the buffers the first one consumed.
+        for _ in 0..sent {
+            let data = [0; PACKET_DATA_SIZE];
+            sender.send_to(&data[..], reader_addr).unwrap();
+        }
+        let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
+        assert_eq!(sent, recv);
+        assert_eq!(
+            pool.0.len(),
+            PACKETS_PER_BATCH - sent,
+            "the pool must not grow past the buffers needed for one call"
+        );
     }
 }

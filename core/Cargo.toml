@@ -56,6 +56,7 @@ agave-fs = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
+agave-scheduler-handshake = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
@@ -112,12 +113,8 @@ solana-epoch-schedule = { workspace = true }
 solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
@@ -226,6 +223,10 @@ test-case = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
+
+[[bench]]
+name = "consensus"
+harness = false
 
 [[bench]]
 name = "sigverify_stage"

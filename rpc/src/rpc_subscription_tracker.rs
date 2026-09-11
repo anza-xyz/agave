@@ -602,7 +602,7 @@ impl SubscriberCountGuard {
         let max = control.max_active_subscriptions;
         control
             .subscriber_count
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 (current < max).then_some(current + 1)
             })
             .ok()?;

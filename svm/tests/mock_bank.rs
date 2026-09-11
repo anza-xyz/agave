@@ -69,12 +69,12 @@ pub struct MockBankCallback {
 impl InvokeContextCallback for MockBankCallback {}
 
 impl TransactionProcessingCallback for MockBankCallback {
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.account_shared_data
             .read()
             .unwrap()
             .get(pubkey)
-            .map(|account| (account.clone(), 0))
+            .cloned()
     }
 
     fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {

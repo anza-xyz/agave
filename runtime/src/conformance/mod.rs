@@ -2,8 +2,6 @@
 
 #[cfg(feature = "conformance")]
 pub mod block;
-#[cfg(feature = "conformance")]
-pub mod cost;
 pub mod txn;
 
 #[cfg(feature = "conformance")]

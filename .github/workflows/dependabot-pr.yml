@@ -49,7 +49,7 @@ jobs:
 
       - name: install anza-xtask
         run: |
-          cargo install anza-xtask@0.2.1 --locked
+          cargo install anza-xtask@0.2.3 --locked
 
       - name: update code
         env:

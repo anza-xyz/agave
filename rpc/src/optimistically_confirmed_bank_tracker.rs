@@ -207,6 +207,10 @@ impl OptimisticallyConfirmedBankTracker {
                 );
                 subscriptions.notify_gossip_subscribers(bank.slot());
                 *last_notified_confirmed_slot = bank.slot();
+                // This bank may have parked while unfrozen. Now that the walk
+                // has delivered it, unpark it so its later Frozen notification
+                // does not deliver the confirmation a second time.
+                pending_optimistically_confirmed_banks.remove(&(bank.slot(), bank.hash()));
                 Self::notify_slot_status(
                     slot_notification_subscribers,
                     SlotNotification::OptimisticallyConfirmed(bank.slot(), bank.bank_id()),
@@ -1007,6 +1011,119 @@ mod tests {
                 .iter()
                 .any(|n| matches!(n, SlotNotification::OptimisticallyConfirmed(1, _))),
             "parked confirmed notification for the overtaken slot must still be delivered; got \
+             {notifications:?}"
+        );
+    }
+
+    #[test]
+    fn test_walk_delivery_unparks_deferred_confirmation() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        bank_forks.write().unwrap().insert(bank1);
+        let bank1_pending_hash = Hash::new_unique();
+
+        let optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>> =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
+        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
+            exit,
+            max_complete_transaction_status_slot,
+            bank_forks.clone(),
+            block_commitment_cache,
+            optimistically_confirmed_bank.clone(),
+        ));
+
+        let (sender, receiver) = bounded(16);
+        let slot_notification_subscribers = Some(Arc::new(RwLock::new(vec![sender])));
+        let mut pending_optimistically_confirmed_banks = PendingOptimisticallyConfirmedBanks::new();
+        let mut last_notified_confirmed_slot: Slot = 0;
+        let mut highest_confirmed_slot: Slot = 0;
+        let mut newest_root_slot: Slot = 0;
+
+        // Confirmation for slot 1 while bank1 is unfrozen: it parks.
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::OptimisticallyConfirmed(1, bank1_pending_hash),
+                None,
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending_optimistically_confirmed_banks,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &slot_notification_subscribers,
+            None,
+            &None,
+        );
+        assert!(pending_optimistically_confirmed_banks.contains(&(1, bank1_pending_hash)));
+
+        // bank1 freezes (the parked key now matches its real hash) and bank2
+        // is built on top of it and freezes too.
+        let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+        bank1.freeze();
+        assert!(pending_optimistically_confirmed_banks.remove(&(1, bank1_pending_hash)));
+        pending_optimistically_confirmed_banks.insert((1, bank1.hash()));
+        let bank2 = Bank::new_from_parent(bank1.clone(), SlotLeader::default(), 2);
+        bank_forks.write().unwrap().insert(bank2);
+        let bank2 = bank_forks.read().unwrap().get(2).unwrap();
+        bank2.freeze();
+
+        // Confirmation for slot 2: the ancestor walk delivers slot 1 (and 2)
+        // and must unpark slot 1 while doing so.
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::OptimisticallyConfirmed(2, bank2.hash()),
+                None,
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending_optimistically_confirmed_banks,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &slot_notification_subscribers,
+            None,
+            &None,
+        );
+        assert_eq!(last_notified_confirmed_slot, 2);
+        assert!(
+            !pending_optimistically_confirmed_banks.contains(&(1, bank1.hash())),
+            "the walk delivered slot 1, so it must no longer be parked"
+        );
+
+        // Drain everything emitted so far, then process Frozen(bank1): it must
+        // not deliver slot 1's confirmation a second time.
+        while receiver.try_recv().is_ok() {}
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (BankNotification::Frozen(bank1), None),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending_optimistically_confirmed_banks,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &slot_notification_subscribers,
+            None,
+            &None,
+        );
+        let mut notifications = Vec::new();
+        while let Ok(n) = receiver.recv_timeout(Duration::from_millis(100)) {
+            notifications.push(n);
+        }
+        assert!(
+            !notifications
+                .iter()
+                .any(|n| matches!(n, SlotNotification::OptimisticallyConfirmed(1, _))),
+            "slot 1 was already delivered by the walk and must not be delivered again; got \
              {notifications:?}"
         );
     }

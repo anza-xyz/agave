@@ -37,10 +37,23 @@ solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-precompiles = { path = ".", features = ["agave-unstable-api"] }
 bytemuck = { workspace = true }
+criterion = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 solana-instruction = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
+
+[[bench]]
+name = "ed25519_instructions"
+harness = false
+
+[[bench]]
+name = "secp256k1_instructions"
+harness = false
+
+[[bench]]
+name = "secp256r1_instructions"
+harness = false
 
 [lints]
 workspace = true

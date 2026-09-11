@@ -2130,13 +2130,13 @@ impl fmt::Display for CliAgGenesisInfo {
                 let CliAgGenesisInfoPayload {
                     epoch,
                     slot,
-                    block_id: block_hash,
+                    block_id,
                     bitvec,
                     signature,
                 } = payload;
                 writeln!(f, "Alpenglow genesis information:")?;
                 writeln!(f, "  Feature flag activation: Epoch {epoch}")?;
-                writeln!(f, "  Genesis Block - Slot {slot}, Block ID {block_hash}")?;
+                writeln!(f, "  Genesis Block - Slot {slot}, Block ID {block_id}")?;
                 writeln!(
                     f,
                     "  Genesis Vote - {} validators participated, Signature {signature}",

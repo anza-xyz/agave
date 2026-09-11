@@ -26,7 +26,6 @@ use {
         },
         snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
         snapshot_utils::create_tmp_accounts_dir_for_tests,
-        stake_delegation::effective_stake,
         stake_history::StakeHistory,
         stake_utils,
         stakes::{
@@ -1908,7 +1907,7 @@ fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_sema
         for key in &transaction.message.account_keys {
             if let Some(n) = bank
                 .get_account_shared_data(key)
-                .map(|(account, _)| account.data().len())
+                .map(|account| account.data().len())
             {
                 loaded_accounts_data_size += (n + TRANSACTION_ACCOUNT_BASE_SIZE) as u32
             }
@@ -3093,13 +3092,7 @@ fn test_bank_epoch_vote_accounts() {
 
         // epoch_stakes are a snapshot at the leader_schedule_slot_offset boundary
         //   in the prior epoch (0 in this case)
-        let expected_stake = effective_stake(
-            &leader_stake,
-            0,
-            &StakeHistory::default(),
-            None,
-            parent.use_fixed_point_stake_math(),
-        );
+        let expected_stake = leader_stake.stake_v2(0, &StakeHistory::default(), None);
         assert_eq!(
             expected_stake,
             vote_accounts.unwrap().get(&leader_vote_account).unwrap().0
@@ -3116,13 +3109,7 @@ fn test_bank_epoch_vote_accounts() {
     );
 
     assert!(child.epoch_vote_accounts(epoch).is_some());
-    let expected_stake = effective_stake(
-        &leader_stake,
-        child.epoch(),
-        &StakeHistory::default(),
-        None,
-        child.use_fixed_point_stake_math(),
-    );
+    let expected_stake = leader_stake.stake_v2(child.epoch(), &StakeHistory::default(), None);
     assert_eq!(
         expected_stake,
         child
@@ -3141,13 +3128,7 @@ fn test_bank_epoch_vote_accounts() {
         SLOTS_PER_EPOCH - (LEADER_SCHEDULE_SLOT_OFFSET % SLOTS_PER_EPOCH) + 1,
     );
     assert!(child.epoch_vote_accounts(epoch).is_some());
-    let expected_stake = effective_stake(
-        &leader_stake,
-        child.epoch(),
-        &StakeHistory::default(),
-        None,
-        child.use_fixed_point_stake_math(),
-    );
+    let expected_stake = leader_stake.stake_v2(child.epoch(), &StakeHistory::default(), None);
     assert_eq!(
         expected_stake,
         child
@@ -4766,15 +4747,6 @@ fn test_check_ro_durable_nonce_fails() {
         bank.process_transaction(&tx),
         Err(TransactionError::BlockhashNotFound)
     );
-    assert_eq!(
-        bank.check_nonce_transaction_validity(
-            &new_sanitized_message(tx.message().clone()),
-            &bank.next_durable_nonce(),
-            false,
-            false,
-        ),
-        None
-    );
 }
 
 #[test]
@@ -5658,10 +5630,9 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         .unwrap()
     };
     bank0.stakes_cache = StakesCache::new(restored_stakes);
-    bank0.stakes_cache.refresh_delegated_stakes(
-        bank0.new_warmup_cooldown_rate_epoch(),
-        bank0.use_fixed_point_stake_math(),
-    );
+    bank0
+        .stakes_cache
+        .refresh_delegated_stakes(bank0.new_warmup_cooldown_rate_epoch());
 
     for (validator_index, validator_keypairs) in validator_keypairs.iter().enumerate() {
         let vote_pubkey = validator_keypairs.vote_keypair.pubkey();
@@ -5854,7 +5825,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "9agm2yVmnQmfwLy1jBV4kgf26Fk6q2gtJ2q9nWRTFs37",
+        "5p7xBUhUKy4oNr9JXCVjM8UMnkyAdkbdoFfSgQQEQRNb",
     );
 }
 
@@ -6938,9 +6909,15 @@ fn test_reduce_slot_time_features() {
 
 #[test]
 fn test_vat_burn_slot_params() {
-    let voting_keypair = ValidatorVoteKeypairs::new_rand();
-    let validator_keypairs = [&voting_keypair];
-    let vote_pubkey = voting_keypair.vote_keypair.pubkey();
+    let validator_keypairs = [
+        ValidatorVoteKeypairs::new_rand(),
+        ValidatorVoteKeypairs::new_rand(),
+        ValidatorVoteKeypairs::new_rand(),
+    ];
+    let vote_pubkeys = validator_keypairs
+        .iter()
+        .map(|keypairs| keypairs.vote_keypair.pubkey())
+        .collect::<Vec<_>>();
 
     // Loop through slot reduction features one at a time.
     for (slot_time_feature_id, params) in std::iter::once((None, LEGACY_SLOT_PARAMS))
@@ -6952,7 +6929,7 @@ fn test_vat_burn_slot_params() {
         } = genesis_utils::create_genesis_config_with_vote_accounts_and_cluster_type(
             1_000 * LAMPORTS_PER_SOL,
             &validator_keypairs,
-            vec![minimum_vote_account_balance_for_vat(100)],
+            vec![minimum_vote_account_balance_for_vat(100); validator_keypairs.len()],
             ClusterType::Development,
             &FeatureSet::default(),
             false,
@@ -6973,19 +6950,54 @@ fn test_vat_burn_slot_params() {
         assert_eq!(bank.vat_to_burn_per_epoch(), params.vat_to_burn_per_epoch());
 
         // Verify correct VAT amount is burned.
-        let vote_lamports_before = bank.get_balance(&vote_pubkey);
+        let vote_lamports_before = vote_pubkeys
+            .iter()
+            .map(|vote_pubkey| bank.get_balance(vote_pubkey))
+            .collect::<Vec<_>>();
         let incinerator_lamports_before = bank.get_balance(&incinerator::id());
+        let rewards_len_before = bank.rewards.read().unwrap().len();
         let stakes = SerdeStakesToStakeFormat::from(bank.get_top_epoch_stakes());
         let epoch_stakes = VersionedEpochStakes::new(stakes, bank.epoch());
         bank.maybe_burn_vat_from_staked_accounts(&epoch_stakes);
-        assert_eq!(
-            bank.get_balance(&vote_pubkey),
-            vote_lamports_before - params.vat_to_burn_per_epoch()
-        );
+        let vat_to_burn_per_epoch = params.vat_to_burn_per_epoch();
+        let vote_lamports_after = vote_lamports_before
+            .iter()
+            .map(|lamports| lamports.checked_sub(vat_to_burn_per_epoch).unwrap())
+            .collect::<Vec<_>>();
+        for (vote_pubkey, vote_lamports_after) in vote_pubkeys.iter().zip(&vote_lamports_after) {
+            assert_eq!(bank.get_balance(vote_pubkey), *vote_lamports_after);
+        }
         assert_eq!(
             bank.get_balance(&incinerator::id()),
-            incinerator_lamports_before + params.vat_to_burn_per_epoch()
+            incinerator_lamports_before
+                .checked_add(
+                    vat_to_burn_per_epoch
+                        .checked_mul(u64::try_from(vote_pubkeys.len()).unwrap())
+                        .unwrap(),
+                )
+                .unwrap()
         );
+        let vat_reward_lamports = -i64::try_from(vat_to_burn_per_epoch).unwrap();
+        let expected_rewards = vote_pubkeys
+            .iter()
+            .zip(&vote_lamports_after)
+            .map(|(vote_pubkey, vote_lamports_after)| {
+                (
+                    *vote_pubkey,
+                    RewardInfo {
+                        reward_type: RewardType::VATDebit,
+                        lamports: vat_reward_lamports,
+                        post_balance: *vote_lamports_after,
+                        commission_bps: None,
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let rewards = bank.rewards.read().unwrap();
+        let vat_rewards = &rewards[rewards_len_before..];
+        assert_eq!(vat_rewards.len(), vote_pubkeys.len());
+        let actual_rewards = vat_rewards.iter().copied().collect::<HashMap<_, _>>();
+        assert_eq!(actual_rewards, expected_rewards);
     }
 }
 
@@ -9670,7 +9682,13 @@ fn test_verify_transactions_tx_v1_size_gate_does_not_relax_legacy_or_v0() {
     };
     let make_v1_transaction = |size| {
         let ixs = make_instructions(size);
-        let message = v1::Message::try_compile(&pubkey, &ixs, recent_blockhash).unwrap();
+        let message = v1::Message::try_compile_with_config(
+            &pubkey,
+            &ixs,
+            recent_blockhash,
+            v1::TransactionConfig::empty(),
+        )
+        .unwrap();
         VersionedTransaction::try_new(VersionedMessage::V1(message), &[&keypair]).unwrap()
     };
     let oversized_but_tx_v1_sized = |make_transaction: &dyn Fn(usize) -> VersionedTransaction| {
@@ -12925,12 +12943,10 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
     bank.set_block_id(Some(Hash::default()));
 
     // Serialize bank to snapshot
-    let snapshot_storages = bank.get_snapshot_storages(None);
     let mut buf = vec![];
     crate::serde_snapshot::bank_to_stream(
         &mut std::io::BufWriter::new(Cursor::new(&mut buf)),
         &bank,
-        &snapshot_storages,
     )
     .unwrap();
 
@@ -12976,12 +12992,10 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
     bank.set_hashes_per_tick(Some(LEGACY_HASHES_PER_TICK));
     bank.set_block_id(Some(Hash::default()));
 
-    let snapshot_storages = bank.get_snapshot_storages(None);
     let mut buf = vec![];
     crate::serde_snapshot::bank_to_stream(
         &mut std::io::BufWriter::new(Cursor::new(&mut buf)),
         &bank,
-        &snapshot_storages,
     )
     .unwrap();
 
@@ -13154,7 +13168,7 @@ fn test_new_for_txn_tests_system_transfer() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts_seq((parent_slot, refs.as_slice()), 0, None, &ancestors);
+    accounts.store_accounts((parent_slot, refs.as_slice()), 0, None, &ancestors);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
@@ -13333,7 +13347,7 @@ fn test_new_for_block_tests_with_vote_account() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts_seq((parent_slot, refs.as_slice()), 0, None, &ancestors);
+    accounts.store_accounts((parent_slot, refs.as_slice()), 0, None, &ancestors);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);

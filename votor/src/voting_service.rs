@@ -412,11 +412,11 @@ mod tests {
     fn test_vote_message(
         vote: Vote,
         rank: u16,
-        shred_verion: u16,
+        shred_version: u16,
     ) -> VersionedWireConsensusMessage {
         VersionedWireConsensusMessage::new_from_vote(
-            test_vote(vote, rank, shred_verion),
-            shred_verion,
+            test_vote(vote, rank, shred_version),
+            shred_version,
         )
     }
 

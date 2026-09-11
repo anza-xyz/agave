@@ -680,9 +680,7 @@ mod external {
             consume_worker::external::ExternalWorker,
             transaction_scheduler::check_worker::external::ExternalCheckWorker,
         },
-        agave_scheduling_utils::handshake::{
-            AgaveCheckWorkerSession, AgaveSession, AgaveWorkerSession,
-        },
+        agave_scheduler_handshake::{AgaveCheckWorkerSession, AgaveSession, AgaveWorkerSession},
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -700,8 +698,7 @@ mod external {
             info!("Spawning external scheduler");
 
             static_assertions::const_assert!(
-                agave_scheduling_utils::handshake::MAX_WORKERS
-                    == BankingStage::max_num_workers().get()
+                agave_scheduler_handshake::MAX_WORKERS == BankingStage::max_num_workers().get()
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
@@ -830,7 +827,7 @@ pub enum BankingControlMsg {
     },
     #[cfg(unix)]
     External {
-        session: agave_scheduling_utils::handshake::AgaveSession,
+        session: agave_scheduler_handshake::AgaveSession,
     },
 }
 

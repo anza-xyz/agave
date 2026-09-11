@@ -21,7 +21,7 @@ use {
         migration::MigrationStatus, reward_certificate::BuildRewardCertsRespError,
     },
     arc_swap::ArcSwap,
-    crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded, unbounded},
+    crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded},
     log::*,
     solana_clock::{BankId, Slot},
     solana_entry::{
@@ -55,6 +55,32 @@ use {
 
 pub const GRACE_TICKS_FACTOR: u64 = 2;
 pub const MAX_GRACE_SLOTS: u64 = 2;
+
+/// Maximum number of entries waiting to be consumed by the broadcast pipeline.
+///
+/// Sending is intentionally blocking: once a record has been mixed into PoH, its
+/// entry must not be dropped. This capacity absorbs transient downstream stalls;
+/// a sustained stall applies backpressure instead of growing memory without bound.
+pub const WORKING_BANK_CHANNEL_CAPACITY: usize = 2048;
+
+/// Try the nonblocking fast path first so saturation is observable, then block
+/// rather than dropping an entry that has already been mixed into PoH.
+fn send_working_bank_entry(
+    sender: &Sender<WorkingBankEntryOrMarker>,
+    entry: WorkingBankEntryOrMarker,
+) -> std::result::Result<(), Box<SendError<WorkingBankEntryOrMarker>>> {
+    match sender.try_send(entry) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(entry)) => {
+            error!(
+                "PohRecorder output channel is full (capacity {WORKING_BANK_CHANNEL_CAPACITY}); \
+                 blocking to preserve the entry"
+            );
+            sender.send(entry).map_err(Box::new)
+        }
+        Err(TrySendError::Disconnected(entry)) => Err(Box::new(SendError(entry))),
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum PohRecorderError {
@@ -265,7 +291,7 @@ impl PohRecorder {
             tick_number,
         )));
 
-        let (working_bank_sender, working_bank_receiver) = unbounded();
+        let (working_bank_sender, working_bank_receiver) = bounded(WORKING_BANK_CHANNEL_CAPACITY);
         let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
         (
@@ -327,12 +353,13 @@ impl PohRecorder {
             .as_mut()
             .ok_or(PohRecorderError::MaxHeightReached)?;
 
-        self.working_bank_sender
-            .send((
+        send_working_bank_entry(
+            &self.working_bank_sender,
+            (
                 working_bank.bank.clone(),
                 (EntryOrMarker::Marker(marker), tick_height),
-            ))
-            .map_err(Box::new)?;
+            ),
+        )?;
 
         Ok(())
     }
@@ -379,8 +406,9 @@ impl PohRecorder {
             drop(poh_lock);
 
             if let Some(entry) = entry {
-                let (send_entry_res, send_entry_us) = measure_us!(
-                    self.working_bank_sender.send((
+                let (send_entry_res, send_entry_us) = measure_us!(send_working_bank_entry(
+                    &self.working_bank_sender,
+                    (
                         working_bank.bank.clone(),
                         (
                             Entry {
@@ -391,10 +419,10 @@ impl PohRecorder {
                             .into(),
                             tick_height,
                         ),
-                    ))
-                );
+                    ),
+                ));
                 self.metrics.send_entry_us += send_entry_us;
-                send_entry_res.map_err(Box::new)?;
+                send_entry_res?;
 
                 return Ok(RecordSummary {
                     remaining_hashes_in_slot,
@@ -614,15 +642,17 @@ impl PohRecorder {
             working_bank.max_tick_height - 1,
         );
 
-        self.working_bank_sender
-            .send((working_bank.bank.clone(), footer_entry_marker))
-            .map_err(|err| {
-                error!(
-                    "slot = {} block production failure. failed to broadcast footer",
-                    working_bank.bank.slot()
-                );
-                PohRecorderError::SendError(Box::new(err))
-            })
+        send_working_bank_entry(
+            &self.working_bank_sender,
+            (working_bank.bank.clone(), footer_entry_marker),
+        )
+        .map_err(|err| {
+            error!(
+                "slot = {} block production failure. failed to broadcast footer",
+                working_bank.bank.slot()
+            );
+            PohRecorderError::SendError(err)
+        })
     }
 
     // Flush cache will delay flushing the cache for a bank until it past the WorkingBank::min_tick_height
@@ -672,10 +702,11 @@ impl PohRecorder {
 
                 let tick = (EntryOrMarker::from(entry.clone()), *tick_height);
 
-                send_result = self
-                    .working_bank_sender
-                    .send((working_bank.bank.clone(), tick))
-                    .map_err(|err| PohRecorderError::SendError(Box::new(err)));
+                send_result = send_working_bank_entry(
+                    &self.working_bank_sender,
+                    (working_bank.bank.clone(), tick),
+                )
+                .map_err(PohRecorderError::SendError);
                 if send_result.is_err() {
                     break;
                 }

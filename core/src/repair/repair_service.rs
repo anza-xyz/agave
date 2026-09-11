@@ -17,7 +17,7 @@ use {
             },
         },
     },
-    agave_votor_messages::{VerifiedVoterSlotsReceiver, migration::MigrationStatus},
+    agave_votor_messages::{VerifiedVotorSlotsMessage, migration::MigrationStatus},
     ahash::AHashMap,
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
@@ -558,7 +558,7 @@ impl Default for RepairSlotRange {
 }
 
 struct RepairChannels {
-    verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
+    verified_voter_slots_receiver: CrossbeamReceiver<VerifiedVotorSlotsMessage>,
     dumped_slots_receiver: DumpedSlotsReceiver,
     popular_pruned_forks_sender: PopularPrunedForksSender,
 }
@@ -570,7 +570,7 @@ pub struct RepairServiceChannels {
 
 impl RepairServiceChannels {
     pub fn new(
-        verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
+        verified_voter_slots_receiver: CrossbeamReceiver<VerifiedVotorSlotsMessage>,
         dumped_slots_receiver: DumpedSlotsReceiver,
         popular_pruned_forks_sender: PopularPrunedForksSender,
         ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
@@ -656,7 +656,7 @@ impl RepairService {
         repair_weight: &mut RepairWeight,
         popular_pruned_forks_requests: &mut HashSet<Slot>,
         dumped_slots_receiver: &DumpedSlotsReceiver,
-        verified_voter_slots_receiver: &VerifiedVoterSlotsReceiver,
+        verified_voter_slots_receiver: &CrossbeamReceiver<VerifiedVotorSlotsMessage>,
         migration_status: &MigrationStatus,
         repair_metrics: &mut RepairMetrics,
     ) {
@@ -704,17 +704,19 @@ impl RepairService {
 
         // Add new votes to the weighting heuristic
         let mut get_votes_us = Measure::start("get_votes_us");
-        let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
-        verified_voter_slots_receiver
-            .try_iter()
-            .for_each(|(vote_pubkey, vote_slots)| {
-                for slot in vote_slots {
-                    slot_to_vote_pubkeys
-                        .entry(slot)
-                        .or_default()
-                        .push(vote_pubkey);
+        let mut slot_to_vote_pubkeys = HashMap::new();
+        verified_voter_slots_receiver.try_iter().for_each(|map| {
+            for (slot, mut pubkeys) in map {
+                match slot_to_vote_pubkeys.entry(slot) {
+                    Entry::Vacant(e) => {
+                        e.insert(pubkeys);
+                    }
+                    Entry::Occupied(e) => {
+                        e.into_mut().append(&mut pubkeys);
+                    }
                 }
-            });
+            }
+        });
         get_votes_us.stop();
 
         let mut add_voters_us = Measure::start("add_voters_us");
@@ -1082,7 +1084,9 @@ impl RepairService {
             .filter_map(|(pubkey, stake)| {
                 let peer_repair_addr = cluster_info
                     .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
-                if let Some(Some(peer_repair_addr)) = peer_repair_addr {
+                if let Some(Some(peer_repair_addr)) = peer_repair_addr
+                    && cluster_info.socket_addr_space().check(&peer_repair_addr)
+                {
                     trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
                     Some((
                         *pubkey,
@@ -1128,7 +1132,9 @@ impl RepairService {
         if let Some(pubkey) = pubkey {
             let peer_repair_addr =
                 cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
-            if let Some(Some(peer_repair_addr)) = peer_repair_addr {
+            if let Some(Some(peer_repair_addr)) = peer_repair_addr
+                && cluster_info.socket_addr_space().check(&peer_repair_addr)
+            {
                 trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
                 repair_peers.push((pubkey, peer_repair_addr));
             }
@@ -1429,7 +1435,7 @@ mod test {
             shred::max_ticks_per_n_shreds,
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_perf::packet::PacketRef,
+        solana_perf::packet::{BytesPacket, PACKET_DATA_SIZE},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -1466,11 +1472,12 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_packet::Packet::default(); 1];
-        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
-        let packet = &packets[0];
-
-        let remote_request = PacketRef::from(packet).to_bytes_packet();
+        let mut buffer = vec![0u8; PACKET_DATA_SIZE];
+        let (nrecv, from) = reader
+            .recv_from(&mut buffer)
+            .expect("should receive the request");
+        buffer.truncate(nrecv);
+        let remote_request = BytesPacket::from_bytes(Some(&from), buffer);
         // Deserialize and check the request
         let deserialized =
             serve_repair::deserialize_request::<RepairProtocol>(&remote_request).unwrap();

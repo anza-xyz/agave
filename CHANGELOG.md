@@ -20,6 +20,11 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* `getTransaction` now accepts `minContextSlot`, and `getSignatureStatuses` now accepts `commitment`
+  and `minContextSlot`, in their config objects. Both return `MinContextSlotNotReached` (-32016) when
+  the node's context slot at the requested commitment is below the minimum. `getSignatureStatuses`
+  still defaults to `processed` when no commitment is given.
+* Added `RpcClient::get_signature_statuses_with_config`.
 ### Validator
 #### Breaking
 * scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
@@ -27,6 +32,15 @@ Release channels have their own copy of this changelog:
   and `--experimental-retransmit-xdp-zero-copy` have been removed. Use `--xdp-interface`, `--xdp-cpu-cores`
   and `--xdp-zero-copy` instead.
 #### Changes
+### CLI
+#### Breaking
+#### Changes
+* Added `vote-update-commission-bps` to set a vote account's commission in basis points. The
+  `--commission-kind` argument selects which commission to update: `inflation-rewards` or
+  `block-revenue`.
+* Added `vote-update-commission-collector` to set the account that collects a vote account's
+  commission. The `COMMISSION_KIND` argument selects which collector to update:
+  `inflation-rewards` or `block-revenue`.
 
 ## 4.3.0
 ### RPC

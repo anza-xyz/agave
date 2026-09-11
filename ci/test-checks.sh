@@ -17,13 +17,8 @@ CHANNEL="$(jq -r '.CHANNEL' <<<"$channel_info")"
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
 
-# sort
-if [[ -n $CI ]]; then
-  # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check > /dev/null
-else
-  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check
-fi
+# format and sort TOML files
+tombi format --check --diff
 
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree

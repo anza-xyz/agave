@@ -9,7 +9,7 @@ if [[ -z $CI_BRANCH ]]; then
   CHANNEL=unknown
 fi
 
-eval "$(ci/channel-info.sh)"
+CHANNEL="${CHANNEL:-$(cargo xtask channel-info --json | jq -r '.CHANNEL')}"
 
 TAG=
 if [[ -n "$CI_TAG" ]]; then

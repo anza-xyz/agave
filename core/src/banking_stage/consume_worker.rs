@@ -690,10 +690,8 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::{committer::Committer, tests::create_slow_genesis_config},
             agave_scheduler_bindings::{SharableTransactionBatchRegion, processed_codes},
-            agave_scheduling_utils::{
-                handshake::{ClientLogon, client, server::Server},
-                responses_region::ExecutionResponsesPtr,
-            },
+            agave_scheduler_handshake::{ClientLogon, client, server::Server},
+            agave_scheduling_utils::responses_region::ExecutionResponsesPtr,
             crossbeam_channel::bounded,
             solana_genesis_config::GenesisConfig,
             solana_keypair::Keypair,
@@ -2667,20 +2665,19 @@ mod tests {
         // all but one succeed. 6 for initial funding
         assert_eq!(bank.transaction_count(), 6 + 5);
 
-        let already_processed_results = bank
-            .check_transactions(
-                &sanitized_txs,
-                &vec![Ok(()); sanitized_txs.len()],
-                bank.max_processing_age(),
-                true,
-                &mut TransactionErrorMetrics::default(),
-            )
-            .into_iter()
-            .map(|r| match r {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            })
-            .collect::<Vec<_>>();
+        let already_processed_results = Consumer::check_transactions_for_scheduling(
+            bank,
+            &sanitized_txs,
+            &vec![Ok(()); sanitized_txs.len()],
+            bank.max_processing_age(),
+            &mut TransactionErrorMetrics::default(),
+        )
+        .into_iter()
+        .map(|r| match r {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err),
+        })
+        .collect::<Vec<_>>();
         assert_eq!(
             already_processed_results,
             vec![

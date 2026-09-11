@@ -250,10 +250,7 @@ mod tests {
         let (root_bank, _bank_forks) =
             Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
         let genesis_cert = GenesisCert {
-            block: Block {
-                slot: migration_slot,
-                block_id: Hash::default(),
-            },
+            block: Block::new_unique(migration_slot),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],

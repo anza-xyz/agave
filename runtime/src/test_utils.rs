@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
     rand::Rng,
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_bls_signatures::{
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
@@ -17,13 +17,17 @@ use {
 /// Creates a vote account
 /// `set_bls_pubkey`: controls whether the bls pubkey is None or Some
 #[cfg(feature = "dev-context-only-utils")]
-pub fn new_rand_vote_account<R: Rng>(
-    rng: &mut R,
+pub fn new_rand_vote_account<F>(
+    lamports: u64,
     node_pubkey: Option<Pubkey>,
     set_bls_pubkey: bool,
-) -> AccountSharedData {
+    pending_delegator_rewards_from_account_lamports: F,
+) -> AccountSharedData
+where
+    F: Fn(u64) -> u64,
+{
     let owner = solana_sdk_ids::vote::id();
-    let mut account = AccountSharedData::new(rng.random(), VoteStateV4::size_of(), &owner);
+    let mut account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &owner);
 
     let bls_pubkey_compressed = set_bls_pubkey.then(|| {
         let bls_pubkey: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
@@ -35,6 +39,9 @@ pub fn new_rand_vote_account<R: Rng>(
         authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
         authorized_withdrawer: Pubkey::new_unique(),
         bls_pubkey_compressed,
+        pending_delegator_rewards: pending_delegator_rewards_from_account_lamports(
+            account.lamports(),
+        ),
         ..VoteStateV4::default()
     };
 
@@ -55,7 +62,7 @@ pub fn new_rand_vote_accounts<R: Rng>(
     let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(num_nodes).collect();
     repeat_with(move || {
         let node = nodes[rng.random_range(0..nodes.len())];
-        let account = new_rand_vote_account(rng, Some(node), true);
+        let account = new_rand_vote_account(rng.random(), Some(node), true, |_| 0);
         let stake = rng.random_range(0..max_stake_for_staked_account);
         let vote_account = VoteAccount::try_from(account).unwrap();
         (Pubkey::new_unique(), (stake, vote_account))
@@ -67,7 +74,7 @@ pub fn new_rand_vote_accounts<R: Rng>(
 /// If `stake_per_node` is specified, then each node will have that stake, otherwise a random amount
 /// between `min_stake_for_staked_account` and `max_stake_for_staked_account` is chosen.
 #[cfg(feature = "dev-context-only-utils")]
-pub fn new_staked_vote_accounts<R: Rng, F>(
+pub fn new_staked_vote_accounts<R: Rng, F, G, H>(
     rng: &mut R,
     num_nodes: usize,
     num_nodes_with_bls_pubkeys: usize,
@@ -75,9 +82,12 @@ pub fn new_staked_vote_accounts<R: Rng, F>(
     min_stake_for_staked_account: u64,
     max_stake_for_staked_account: u64,
     lamports_per_node: F,
+    pending_delegator_rewards_from_account_lamports_generator: G,
 ) -> VoteAccounts
 where
     F: Fn(usize) -> u64,
+    G: Fn(usize) -> H, // generator to create a function based on index
+    H: Fn(u64) -> u64, // function returned by generator to set pending rewards
 {
     let mut vote_accounts = VoteAccounts::default();
     for index in 0..num_nodes {
@@ -87,8 +97,14 @@ where
         });
         let node_pubkey = Pubkey::new_unique();
         let set_bls_pubkey = index < num_nodes_with_bls_pubkeys;
-        let mut account = new_rand_vote_account(rng, Some(node_pubkey), set_bls_pubkey);
-        account.set_lamports(lamports_per_node(index));
+        let pending_delegator_rewards_fn =
+            pending_delegator_rewards_from_account_lamports_generator(index);
+        let account = new_rand_vote_account(
+            lamports_per_node(index),
+            Some(node_pubkey),
+            set_bls_pubkey,
+            pending_delegator_rewards_fn,
+        );
         vote_accounts.insert(pubkey, VoteAccount::try_from(account).unwrap(), || stake);
     }
     vote_accounts

@@ -134,7 +134,7 @@ fn create_store_for_shrink_tests(
     ));
     accounts_db.storage.insert(Arc::clone(&store));
     store.add_accounts(num_tombstones.max(1), alive_bytes);
-    store.batch_insert_tombstone_offsets(0..num_tombstones);
+    store.batch_insert_tombstone_offsets(0..num_tombstones as u64);
     (temp_dir, store)
 }
 
@@ -1476,11 +1476,8 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
     // not mis-routed into the alive set.
     let mut unique_accounts =
         accounts_db.get_unique_accounts_from_storage_for_shrink(&storage, &ShrinkStats::default());
-    let shrink_collect = accounts_db.shrink_collect::<AliveAccounts<'_>>(
-        &storage,
-        &mut unique_accounts,
-        &ShrinkStats::default(),
-    );
+    let shrink_collect =
+        accounts_db.shrink_collect(&storage, &mut unique_accounts, &ShrinkStats::default());
     assert_eq!(shrink_collect.tombstones_to_carry_forward.len(), 1);
     assert!(shrink_collect.tombstones_total_bytes > 0);
     assert_eq!(
@@ -1498,11 +1495,8 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
     accounts_db.set_latest_full_snapshot_slot(slot);
     let mut unique_accounts =
         accounts_db.get_unique_accounts_from_storage_for_shrink(&storage, &ShrinkStats::default());
-    let shrink_collect = accounts_db.shrink_collect::<AliveAccounts<'_>>(
-        &storage,
-        &mut unique_accounts,
-        &ShrinkStats::default(),
-    );
+    let shrink_collect =
+        accounts_db.shrink_collect(&storage, &mut unique_accounts, &ShrinkStats::default());
     assert!(shrink_collect.tombstones_to_carry_forward.is_empty());
     assert_eq!(shrink_collect.tombstones_total_bytes, 0);
 }
@@ -1549,7 +1543,7 @@ fn test_fully_tombstoned_storage_reclaim() {
     // Shrink routes the fully-dead slot to clean; clean retains the storage because the latest full
     // snapshot is older than the slot, so the slot is not yet eligible for shrink.
     accounts_db.shrink_slot_forced(slot);
-    accounts_db.clean_accounts(Some(slot), false);
+    accounts_db.clean_accounts(slot, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot).is_some());
     // Verify that the slot is not queued for shrink at this time
     assert!(
@@ -1563,7 +1557,7 @@ fn test_fully_tombstoned_storage_reclaim() {
     // Advance the latest full snapshot past the slot so its tombstones become purgeable. Clean then
     // cleans the storage and it is reclaimed.
     accounts_db.set_latest_full_snapshot_slot(slot + 1);
-    accounts_db.clean_accounts(Some(slot + 1), false);
+    accounts_db.clean_accounts(slot + 1, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot).is_none());
 }
 
@@ -2030,7 +2024,7 @@ fn test_clean_max_slot_zero_lamport_account() {
 
     accounts.set_latest_full_snapshot_slot(2);
     // Now the account can be cleaned up
-    accounts.clean_accounts(Some(1), false);
+    accounts.clean_accounts(1, false);
     assert_eq!(accounts.alive_account_count_in_slot(0), 0);
     assert_eq!(accounts.alive_account_count_in_slot(1), 0);
 
@@ -2593,7 +2587,7 @@ fn test_verify_index_small_dataset_detects_mismatch() {
         (false, ())
     });
 
-    accounts.verify_index(Some(slot + 1));
+    accounts.verify_index(slot + 1);
 }
 
 #[test]
@@ -3222,7 +3216,7 @@ fn test_clean_does_not_tombstone_zero_lamport_above_clean_root() {
     db.flush_rooted_accounts_cache_without_clean();
 
     // Only clean zero lamport accounts up to slot 1
-    db.clean_accounts(Some(1), false);
+    db.clean_accounts(1, false);
 
     // The slot 2 entry is above the clean root: still indexed, no tombstone, loadable
     assert!(db.accounts_index.contains(&account_key));
@@ -3233,7 +3227,7 @@ fn test_clean_does_not_tombstone_zero_lamport_above_clean_root() {
     );
 
     // Once the clean root passes slot 2, the classic zero-lamport purge path removes it
-    db.clean_accounts(Some(2), false);
+    db.clean_accounts(2, false);
     assert!(!db.accounts_index.contains(&account_key));
     assert_eq!(
         db.do_load_for_tests(&Ancestors::default(), &account_key),
@@ -4265,7 +4259,7 @@ fn test_zero_lamport_single_ref_resweep_respects_last_swept(set_last_swept: bool
     // The sweep range is (0, 4] when not set, queueing both slot 2 and slot 3.
     // The sweep range is (2, 4] when set, queueing only slot 3.
     db.set_latest_full_snapshot_slot(full_snapshot_slot);
-    db.clean_accounts(Some(full_snapshot_slot), false);
+    db.clean_accounts(full_snapshot_slot, false);
 
     let queued = db.shrink_candidate_slots.lock().unwrap();
     assert_eq!(queued.contains(&slot_at_last_swept), !set_last_swept);
@@ -4683,7 +4677,7 @@ fn test_shrink_unref() {
     db.flush_rooted_accounts_cache_without_clean();
 
     // Clean to remove outdated entry from slot 0
-    db.clean_accounts(Some(1), false);
+    db.clean_accounts(1, false);
 
     // Shrink Slot 0
     {
@@ -4701,7 +4695,7 @@ fn test_shrink_unref() {
 
     // Should be one store before clean for slot 0
     db.get_and_assert_single_storage(0);
-    db.clean_accounts(Some(2), false);
+    db.clean_accounts(2, false);
 
     // No stores should exist for slot 0 after clean
     assert_no_storages_at_slot(&db, 0);
@@ -4733,7 +4727,7 @@ fn test_clean_drop_dead_zero_lamport_single_ref_accounts() {
     accounts_db.flush_accounts_cache(true, None);
 
     // run clean
-    accounts_db.clean_accounts(Some(1), false);
+    accounts_db.clean_accounts(1, false);
 
     // After clean, both slot0 and slot1 should be marked dead and dropped
     // from the store map.
@@ -4763,7 +4757,7 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
 
     // account_key1's zero-lamport write in slot 1 was deleted from the index and tombstoned at
     // flush, leaving its slot 0 version dead. Clean drops the now-empty slot 0.
-    db.clean_accounts(Some(1), false);
+    db.clean_accounts(1, false);
 
     // Assert that after clean, slot 0 is dropped.
     assert!(db.storage.get_slot_storage_entry(0).is_none());
@@ -4811,7 +4805,7 @@ fn test_clean_tombstones_zero_lamport_single_ref_at_reclaim() {
 
     // Clean reclaims the outdated slot 0 entries, removing them from the slot lists at
     // reclaim. That leaves each zero-lamport update as its account's only slot list entry.
-    db.clean_accounts(Some(3), false);
+    db.clean_accounts(3, false);
 
     // The reclaim leaves account_key1 zero-lamport single-ref, so it is tombstoned:
     // removed from the index, and slot 1's storage, now holding only the tombstone and
@@ -4829,7 +4823,7 @@ fn test_clean_tombstones_zero_lamport_single_ref_at_reclaim() {
     // Once the full snapshot advances past slot 3, clean drops the tombstone-only
     // storage.
     db.set_latest_full_snapshot_slot(3);
-    db.clean_accounts(Some(3), false);
+    db.clean_accounts(3, false);
     assert_no_storages_at_slot(&db, 3);
 
     // Slot 0 still holds the live account_key2; the other records there are obsolete.
@@ -4842,7 +4836,7 @@ fn test_clean_tombstones_zero_lamport_single_ref_at_reclaim() {
     // Flushes all roots
     db.flush_accounts_cache(true, None);
 
-    db.clean_accounts(Some(4), false);
+    db.clean_accounts(4, false);
 
     // No stores should exist for slot 0. Slot 0 stores are cleaned when
     // slot 4 is flushed; the older accounts are marked obsolete.
@@ -5161,9 +5155,9 @@ fn test_collect_uncleaned_slots_up_to_slot() {
     db.uncleaned_pubkeys.insert(slot2, vec![pubkey2]);
     db.uncleaned_pubkeys.insert(slot3, vec![pubkey3]);
 
-    let mut uncleaned_slots1 = db.collect_uncleaned_slots_up_to_slot(Some(slot1));
-    let mut uncleaned_slots2 = db.collect_uncleaned_slots_up_to_slot(Some(slot2));
-    let mut uncleaned_slots3 = db.collect_uncleaned_slots_up_to_slot(Some(slot3));
+    let mut uncleaned_slots1 = db.collect_uncleaned_slots_up_to_slot(slot1);
+    let mut uncleaned_slots2 = db.collect_uncleaned_slots_up_to_slot(slot2);
+    let mut uncleaned_slots3 = db.collect_uncleaned_slots_up_to_slot(slot3);
 
     uncleaned_slots1.sort_unstable();
     uncleaned_slots2.sort_unstable();
@@ -5207,7 +5201,7 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
         iter::repeat_with(|| RwLock::new(CleaningCandidatesBin::default()))
             .take(num_bins)
             .collect();
-    db.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(Some(slot3), &candidates);
+    db.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(slot3, &candidates);
 
     let candidates_contain = |pubkey: &Pubkey| {
         candidates
@@ -5604,15 +5598,15 @@ fn test_clean_accounts_with_latest_full_snapshot_slot() {
     accounts_db.add_root_and_flush_write_cache(slot3);
 
     accounts_db.set_latest_full_snapshot_slot(slot2);
-    accounts_db.clean_accounts(Some(slot2), false);
+    accounts_db.clean_accounts(slot2, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot3).is_some());
 
     accounts_db.set_latest_full_snapshot_slot(slot2);
-    accounts_db.clean_accounts(None, false);
+    accounts_db.clean_accounts(slot3, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot3).is_some());
 
     accounts_db.set_latest_full_snapshot_slot(slot3);
-    accounts_db.clean_accounts(None, false);
+    accounts_db.clean_accounts(slot3, false);
     // The full snapshot now covers slot3, so clean reclaims the tombstone-only storage
     assert!(accounts_db.storage.get_slot_storage_entry(slot3).is_none());
 }
@@ -5787,6 +5781,8 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
 #[test]
 fn test_get_sorted_potential_ancient_slots() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    // Ensure all slots are considered for ancients
+    db.max_cleaned_root.store(Slot::MAX, Ordering::Relaxed);
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap();
     let epoch_schedule = EpochSchedule::default();
     let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
@@ -5845,6 +5841,70 @@ fn test_get_sorted_potential_ancient_slots() {
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
         vec![root2]
     );
+}
+
+/// Storages above `max_cleaned_root` are not a potential for packing, since clean may not have
+/// reclaimed their older duplicates yet.
+#[test]
+fn test_get_sorted_potential_ancient_slots_bounded_by_max_cleaned_root() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap();
+    let epoch_schedule = EpochSchedule::default();
+
+    let root1 = DEFAULT_MAX_ANCIENT_STORAGES as u64 + ancient_append_vec_offset as u64 + 1;
+    let root2 = root1 + 1;
+    for root in [root1, root2] {
+        db.add_root(root);
+        db.storage.insert(Arc::new(db.create_store(root, 4096)));
+    }
+    // put both roots more than an epoch behind, so only the cleaned root bound is in play
+    db.add_root(AccountsDb::apply_offset_to_slot(
+        epoch_schedule.slots_per_epoch + root2,
+        ancient_append_vec_offset,
+    ));
+    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+
+    // clean has not run
+    assert!(
+        db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
+            .is_empty()
+    );
+
+    // cleaned root1; root2 is still uncleaned, so not included
+    db.max_cleaned_root.store(root1, Ordering::Relaxed);
+    assert_eq!(
+        db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
+        vec![root1]
+    );
+
+    // cleaned root2 so it is included
+    db.max_cleaned_root.store(root2, Ordering::Relaxed);
+    assert_eq!(
+        db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
+        vec![root1, root2]
+    );
+}
+
+/// Clean advances `max_cleaned_root` to the root it cleaned, and never backwards.
+#[test]
+fn test_max_cleaned_root_advances_with_clean() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    assert_eq!(db.max_cleaned_root.load(Ordering::Relaxed), 0);
+
+    let key = Pubkey::new_unique();
+    for slot in 1..=3 {
+        store_rooted_nonzero_accounts(&db, slot, [&key]);
+    }
+
+    db.clean_accounts(2, false);
+    assert_eq!(db.max_cleaned_root.load(Ordering::Relaxed), 2);
+
+    // a lower bound does not decrease max_cleaned_root
+    db.clean_accounts(1, false);
+    assert_eq!(db.max_cleaned_root.load(Ordering::Relaxed), 2);
+
+    db.clean_accounts(3, false);
+    assert_eq!(db.max_cleaned_root.load(Ordering::Relaxed), 3);
 }
 
 #[test]
@@ -5987,7 +6047,7 @@ fn test_shrink_collect_simple() {
                                     &ShrinkStats::default(),
                                 );
 
-                            let shrink_collect = db.shrink_collect::<AliveAccounts<'_>>(
+                            let shrink_collect = db.shrink_collect(
                                 &storage,
                                 &mut unique_accounts,
                                 &ShrinkStats::default(),
@@ -6148,11 +6208,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
     let mut unique_accounts =
         db.get_unique_accounts_from_storage_for_shrink(&storage, &ShrinkStats::default());
 
-    let shrink_collect = db.shrink_collect::<AliveAccounts<'_>>(
-        &storage,
-        &mut unique_accounts,
-        &ShrinkStats::default(),
-    );
+    let shrink_collect = db.shrink_collect(&storage, &mut unique_accounts, &ShrinkStats::default());
 
     assert_eq!(shrink_collect.slot, slot);
 
@@ -6178,7 +6234,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
 fn test_combine_ancient_slots_empty() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     // empty slots
-    db.combine_ancient_slots_packed(Vec::default(), false);
+    db.combine_ancient_slots_packed(Vec::default());
 }
 
 #[test]
@@ -6195,7 +6251,7 @@ fn test_combine_ancient_slots_simple() {
     let unique_accounts_pre = accounts_db.get_unique_accounts_from_storage(&storage_pre);
     assert_eq!(unique_accounts_pre.stored_accounts.len(), 1);
 
-    accounts_db.combine_ancient_slots_packed(vec![slot], false);
+    accounts_db.combine_ancient_slots_packed(vec![slot]);
 
     let storage_post = accounts_db.get_storage_for_slot(slot).unwrap();
     let unique_accounts_post = accounts_db.get_unique_accounts_from_storage(&storage_post);
@@ -6362,11 +6418,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     // 1. Insert a single zero-lamport account and verify it is not added to the index or the
     //    write cache. Since this is the first write to this slot, the slot cache should not be
     //    created.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey1, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    accounts_db.store_accounts_unfrozen((slot, [(&pubkey1, &zero_account)].as_slice()), &ancestors);
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(accounts_db.accounts_cache.slot_cache(slot).is_none());
 
@@ -6383,7 +6435,6 @@ fn test_new_zero_lamport_accounts_skipped() {
             ]
             .as_slice(),
         ),
-        UpdateIndexThreadSelection::Inline,
         &ancestors,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
@@ -6416,11 +6467,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     // 3. Insert a zero-lamport update for pubkey2, which already has a non-zero entry in the
     //    write cache. The update is stored rather than skipped, overwriting the cache entry
     //    with zero lamports.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey2, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    accounts_db.store_accounts_unfrozen((slot, [(&pubkey2, &zero_account)].as_slice()), &ancestors);
     assert_eq!(
         accounts_db
             .accounts_cache
@@ -6442,20 +6489,12 @@ fn test_new_zero_lamport_accounts_skipped() {
     //    (pubkey1) and verify the pubkey is added to the write cache.
     let slot = slot + 1;
     ancestors.insert(slot);
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey1, &account)].as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    accounts_db.store_accounts_unfrozen((slot, [(&pubkey1, &account)].as_slice()), &ancestors);
     assert!(accounts_db.accounts_cache.contains_pubkey(&pubkey1));
 
     // 6. Set pubkey3 to zero lamports and flush. The flush deletes zero-lamport accounts from the
     // index, so pubkey3 is no longer present afterwards.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey3, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    accounts_db.store_accounts_unfrozen((slot, [(&pubkey3, &zero_account)].as_slice()), &ancestors);
     accounts_db.add_root_and_flush_write_cache(slot);
 
     // Verify pubkey3 is no longer in the index
@@ -6513,27 +6552,15 @@ fn test_write_accounts_to_cache_scenarios(
         }
         InitialState::WithLamports(lamports) => {
             let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
-            db.store_accounts_unfrozen(
-                (slot, [(&key, &account)].as_slice()),
-                UpdateIndexThreadSelection::Inline,
-                &ancestors,
-            );
+            db.store_accounts_unfrozen((slot, [(&key, &account)].as_slice()), &ancestors);
         }
         InitialState::WithoutLamports => {
             let account = AccountSharedData::new(1, 0, &Pubkey::default());
             let account_zero = AccountSharedData::new(0, 0, &Pubkey::default());
             // Store a non-zero account first to create the index entry
-            db.store_accounts_unfrozen(
-                (slot, [(&key, &account)].as_slice()),
-                UpdateIndexThreadSelection::Inline,
-                &ancestors,
-            );
+            db.store_accounts_unfrozen((slot, [(&key, &account)].as_slice()), &ancestors);
             // Overwrite with a zero-lamport account to simulate ephemeral setup
-            db.store_accounts_unfrozen(
-                (slot, [(&key, &account_zero)].as_slice()),
-                UpdateIndexThreadSelection::Inline,
-                &ancestors,
-            );
+            db.store_accounts_unfrozen((slot, [(&key, &account_zero)].as_slice()), &ancestors);
         }
     }
 
@@ -6546,11 +6573,7 @@ fn test_write_accounts_to_cache_scenarios(
         .collect();
     let batch: Vec<_> = accounts.iter().map(|account| (&key, account)).collect();
 
-    db.store_accounts_unfrozen(
-        (slot, batch.as_slice()),
-        UpdateIndexThreadSelection::Inline,
-        &ancestors,
-    );
+    db.store_accounts_unfrozen((slot, batch.as_slice()), &ancestors);
 
     // Verify results
     let loaded = db.do_load_for_tests(&ancestors, &key);

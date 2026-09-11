@@ -33,10 +33,10 @@ enum SystemProgramAccountAllocation {
 }
 
 impl CostModel {
-    pub fn calculate_cost<'a, Tx: TransactionMeta + SVMStaticMessage>(
-        transaction: &'a Tx,
+    pub fn calculate_cost<Tx: TransactionMeta + SVMStaticMessage>(
+        transaction: &Tx,
         feature_set: &FeatureSet,
-    ) -> TransactionCost<'a, Tx> {
+    ) -> TransactionCost {
         let (programs_execution_cost, loaded_accounts_data_size_cost) =
             Self::get_estimated_execution_cost(transaction, feature_set);
         let data_bytes_cost = Self::get_instructions_data_cost(transaction);
@@ -53,12 +53,12 @@ impl CostModel {
 
     // Calculate executed transaction CU cost, with actual execution and loaded accounts size
     // costs.
-    pub fn calculate_cost_for_executed_transaction<'a, Tx: TransactionMeta + SVMStaticMessage>(
-        transaction: &'a Tx,
+    pub fn calculate_cost_for_executed_transaction<Tx: TransactionMeta + SVMStaticMessage>(
+        transaction: &Tx,
         actual_programs_execution_cost: u64,
         actual_loaded_accounts_data_size_bytes: u32,
         feature_set: &FeatureSet,
-    ) -> TransactionCost<'a, Tx> {
+    ) -> TransactionCost {
         let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
             actual_loaded_accounts_data_size_bytes,
             feature_set,
@@ -81,11 +81,11 @@ impl CostModel {
     /// - `instructions` - transaction instructions
     /// - `num_write_locks` - number of requested write locks
     pub fn estimate_cost<'a, Tx: TransactionMeta>(
-        transaction: &'a Tx,
+        transaction: &Tx,
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
         feature_set: &FeatureSet,
-    ) -> TransactionCost<'a, Tx> {
+    ) -> TransactionCost {
         let (programs_execution_cost, loaded_accounts_data_size_cost) =
             Self::get_estimated_execution_cost(transaction, feature_set);
         let data_bytes_cost = Self::get_instructions_data_cost(transaction);
@@ -101,14 +101,14 @@ impl CostModel {
     }
 
     fn calculate_transaction_cost<'a, Tx: TransactionMeta>(
-        transaction: &'a Tx,
+        transaction: &Tx,
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
         programs_execution_cost: u64,
         loaded_accounts_data_size_cost: u64,
         data_bytes_cost: u16,
         feature_set: &FeatureSet,
-    ) -> TransactionCost<'a, Tx> {
+    ) -> TransactionCost {
         let signature_cost = Self::get_signature_cost(transaction);
         let write_lock_cost = Self::get_write_lock_cost(num_write_locks);
 
@@ -116,7 +116,6 @@ impl CostModel {
             Self::calculate_allocated_accounts_data_size(instructions, feature_set);
 
         TransactionCost {
-            transaction,
             signature_cost,
             write_lock_cost,
             data_bytes_cost,
@@ -305,7 +304,6 @@ impl CostModel {
 mod tests {
     use {
         super::*,
-        itertools::Itertools,
         solana_compute_budget::{
             self,
             compute_budget_limits::{
@@ -317,7 +315,9 @@ mod tests {
         solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_message::{Message, compiled_instruction::CompiledInstruction},
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction, transaction_with_meta::writable_accounts,
+        },
         solana_sdk_ids::{compute_budget, system_program},
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMStaticMessage,
@@ -621,7 +621,7 @@ mod tests {
         // write-lock counts towards cost, even if it is demoted.
         let tx_cost = CostModel::calculate_cost(&simple_transaction, &FeatureSet::default());
         assert_eq!(2 * WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-        assert_eq!(1, tx_cost.writable_accounts().count());
+        assert_eq!(1, writable_accounts(&simple_transaction).count());
     }
 
     #[test]
@@ -767,38 +767,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cost_model_sort_message_accounts_by_type() {
-        // construct a transaction with two random instructions with same signer
-        let signer1 = Keypair::new();
-        let signer2 = Keypair::new();
-        let key1 = Pubkey::new_unique();
-        let key2 = Pubkey::new_unique();
-        let prog1 = Pubkey::new_unique();
-        let prog2 = Pubkey::new_unique();
-        let instructions = vec![
-            CompiledInstruction::new(4, &(), vec![0, 2]),
-            CompiledInstruction::new(5, &(), vec![1, 3]),
-        ];
-        let tx = RuntimeTransaction::from_transaction_for_tests(
-            Transaction::new_with_compiled_instructions(
-                &[&signer1, &signer2],
-                &[key1, key2],
-                Hash::new_unique(),
-                vec![prog1, prog2],
-                instructions,
-            ),
-        );
-
-        let tx_cost = CostModel::calculate_cost(&tx, &FeatureSet::all_enabled());
-        let writable_accounts = tx_cost.writable_accounts().collect_vec();
-        assert_eq!(2 + 2, writable_accounts.len());
-        assert_eq!(signer1.pubkey(), *writable_accounts[0]);
-        assert_eq!(signer2.pubkey(), *writable_accounts[1]);
-        assert_eq!(key1, *writable_accounts[2]);
-        assert_eq!(key2, *writable_accounts[3]);
-    }
-
-    #[test]
     fn test_cost_model_calculate_cost_all_default() {
         let (mint_keypair, start_hash) = test_setup();
         let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -821,7 +789,6 @@ mod tests {
         let tx_cost = CostModel::calculate_cost(&tx, &feature_set);
         assert_eq!(expected_account_cost, tx_cost.write_lock_cost());
         assert_eq!(expected_execution_cost, tx_cost.programs_execution_cost());
-        assert_eq!(2, tx_cost.writable_accounts().count());
         assert_eq!(
             expected_loaded_accounts_data_size_cost,
             tx_cost.loaded_accounts_data_size_cost()
@@ -852,7 +819,6 @@ mod tests {
         let tx_cost = CostModel::calculate_cost(&tx, &feature_set);
         assert_eq!(expected_account_cost, tx_cost.write_lock_cost());
         assert_eq!(expected_execution_cost, tx_cost.programs_execution_cost());
-        assert_eq!(2, tx_cost.writable_accounts().count());
         assert_eq!(
             expected_loaded_accounts_data_size_cost,
             tx_cost.loaded_accounts_data_size_cost()

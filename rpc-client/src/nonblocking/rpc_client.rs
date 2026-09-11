@@ -1669,6 +1669,24 @@ impl RpcClient {
         .await
     }
 
+    /// Gets the statuses of a list of transaction signatures with the given
+    /// [`RpcSignatureStatusConfig`], which can select a commitment level and a
+    /// minimum context slot.
+    ///
+    /// [`RpcSignatureStatusConfig`]: solana_rpc_client_api::config::RpcSignatureStatusConfig
+    pub async fn get_signature_statuses_with_config(
+        &self,
+        signatures: &[Signature],
+        config: solana_rpc_client_api::config::RpcSignatureStatusConfig,
+    ) -> RpcResult<Vec<Option<TransactionStatus>>> {
+        let signatures: Vec<_> = signatures.iter().map(|s| s.to_string()).collect();
+        self.send(
+            RpcRequest::GetSignatureStatuses,
+            json!([signatures, config]),
+        )
+        .await
+    }
+
     /// Check if a transaction has been processed with the given [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
@@ -2984,6 +3002,7 @@ impl RpcClient {
     ///     encoding: Some(UiTransactionEncoding::Json),
     ///     commitment: Some(CommitmentConfig::confirmed()),
     ///     max_supported_transaction_version: Some(0),
+    ///     min_context_slot: None,
     /// };
     /// let transaction = rpc_client.get_transaction_with_config(
     ///     &signature,

@@ -27,7 +27,7 @@ const MAX_STAKE_FOR_STAKED_ACCOUNT: u64 = 997;
 #[test]
 fn test_vote_account_try_from() {
     let mut rng = rand::rng();
-    let account = new_rand_vote_account(&mut rng, None, true);
+    let account = new_rand_vote_account(rng.random(), None, true, |_| 0);
     let lamports = account.lamports();
     let vote_account = VoteAccount::try_from(account.clone()).unwrap();
     assert_eq!(lamports, vote_account.lamports());
@@ -38,7 +38,7 @@ fn test_vote_account_try_from() {
 #[should_panic(expected = "InvalidOwner")]
 fn test_vote_account_try_from_invalid_owner() {
     let mut rng = rand::rng();
-    let mut account = new_rand_vote_account(&mut rng, None, true);
+    let mut account = new_rand_vote_account(rng.random(), None, true, |_| 0);
     account.set_owner(Pubkey::new_unique());
     VoteAccount::try_from(account).unwrap();
 }
@@ -46,7 +46,7 @@ fn test_vote_account_try_from_invalid_owner() {
 #[test]
 fn test_vote_account_serialize() {
     let mut rng = rand::rng();
-    let account = new_rand_vote_account(&mut rng, None, true);
+    let account = new_rand_vote_account(rng.random(), None, true, |_| 0);
     let vote_account = VoteAccount::try_from(account.clone()).unwrap();
     // Assert that VoteAccount has the same wire format as Account.
     assert_eq!(
@@ -101,7 +101,7 @@ fn test_vote_accounts_deserialize_invalid_account() {
     // being silently dropped (bad data)
     let mut vote_accounts_hash_map = HashMap::<Pubkey, (u64, AccountSharedData)>::new();
 
-    let valid_account = new_rand_vote_account(&mut rng, None, true);
+    let valid_account = new_rand_vote_account(rng.random(), None, true, |_| 0);
     vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xAA, valid_account.clone()));
 
     let invalid_account_data =
@@ -181,7 +181,7 @@ fn test_staked_nodes_update() {
     let mut rng = rand::rng();
     let pubkey = Pubkey::new_unique();
     let node_pubkey = Pubkey::new_unique();
-    let account1 = new_rand_vote_account(&mut rng, Some(node_pubkey), true);
+    let account1 = new_rand_vote_account(rng.random(), Some(node_pubkey), true, |_| 0);
     let vote_account1 = VoteAccount::try_from(account1).unwrap();
 
     // first insert
@@ -201,7 +201,7 @@ fn test_staked_nodes_update() {
     assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), Some(&42));
 
     // update with changed state, same node pubkey
-    let account2 = new_rand_vote_account(&mut rng, Some(node_pubkey), true);
+    let account2 = new_rand_vote_account(rng.random(), Some(node_pubkey), true, |_| 0);
     let vote_account2 = VoteAccount::try_from(account2).unwrap();
     let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
         panic!("should not be called")
@@ -214,7 +214,7 @@ fn test_staked_nodes_update() {
 
     // update with new node pubkey, stake must be moved
     let new_node_pubkey = Pubkey::new_unique();
-    let account3 = new_rand_vote_account(&mut rng, Some(new_node_pubkey), true);
+    let account3 = new_rand_vote_account(rng.random(), Some(new_node_pubkey), true, |_| 0);
     let vote_account3 = VoteAccount::try_from(account3).unwrap();
     let ret = vote_accounts.insert(pubkey, vote_account3, || panic!("should not be called"));
     assert_eq!(ret, Some(vote_account2));
@@ -232,7 +232,7 @@ fn test_staked_nodes_zero_stake() {
     let mut rng = rand::rng();
     let pubkey = Pubkey::new_unique();
     let node_pubkey = Pubkey::new_unique();
-    let account1 = new_rand_vote_account(&mut rng, Some(node_pubkey), true);
+    let account1 = new_rand_vote_account(rng.random(), Some(node_pubkey), true, |_| 0);
     let vote_account1 = VoteAccount::try_from(account1).unwrap();
 
     // we call this here to initialize VoteAccounts::staked_nodes which is a OnceLock
@@ -245,7 +245,7 @@ fn test_staked_nodes_zero_stake() {
 
     // update with new node pubkey, stake is 0 and should remain 0
     let new_node_pubkey = Pubkey::new_unique();
-    let account2 = new_rand_vote_account(&mut rng, Some(new_node_pubkey), true);
+    let account2 = new_rand_vote_account(rng.random(), Some(new_node_pubkey), true, |_| 0);
     let vote_account2 = VoteAccount::try_from(account2).unwrap();
     let ret = vote_accounts.insert(pubkey, vote_account2, || panic!("should not be called"));
     assert_eq!(ret, Some(vote_account1));
@@ -332,6 +332,7 @@ fn test_clone_and_filter_for_vat_truncates() {
         MIN_STAKE_FOR_STAKED_ACCOUNT,
         MAX_STAKE_FOR_STAKED_ACCOUNT,
         |_| 10_000_000_000,
+        |_| |_| 0,
     );
     // All vote accounts should be returned if the limit is high enough.
     let filtered =
@@ -375,6 +376,7 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
         MIN_STAKE_FOR_STAKED_ACCOUNT,
         MAX_STAKE_FOR_STAKED_ACCOUNT,
         |_| 10_000_000_000,
+        |_| |_| 0,
     );
     let new_limit = MAX_ALPENGLOW_VOTE_ACCOUNTS + 500;
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
@@ -408,7 +410,7 @@ fn test_clone_and_filter_for_vat_same_stake_at_border() {
     // Create exactly 2 accounts more than maximum to test border truncation
     let num_accounts = MAX_ALPENGLOW_VOTE_ACCOUNTS + 2;
     let accounts = (0..num_accounts).map(|index| {
-        let mut account = new_rand_vote_account(&mut rng, None, true);
+        let mut account = new_rand_vote_account(rng.random(), None, true, |_| 0);
         account.set_lamports(10_000_000_000);
         let vote_account = VoteAccount::try_from(account).unwrap();
         let stake = if index < MAX_ALPENGLOW_VOTE_ACCOUNTS - 10 {
@@ -449,6 +451,46 @@ fn test_clone_and_filter_for_vat_not_enough_lamports() {
                 10_000_000_000
             }
         },
+        |_| {
+            |lamports| {
+                let mut rng = rand::rng();
+                rng.random_range(0..=lamports.saturating_sub(DEFAULT_VAT_TO_BURN_PER_EPOCH))
+            }
+        },
+    );
+    let filtered = vote_accounts
+        .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, DEFAULT_VAT_TO_BURN_PER_EPOCH);
+    assert!(filtered.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS - entries_to_modify);
+}
+
+#[test]
+fn test_clone_and_filter_for_vat_not_enough_lamports_with_pending_delegator_rewards() {
+    let mut rng = rand::rng();
+    // For 10% of vote accounts, set the balance below the minimum.
+    let entries_to_modify = MAX_ALPENGLOW_VOTE_ACCOUNTS / 10;
+    let vote_accounts = new_staked_vote_accounts(
+        &mut rng,
+        MAX_ALPENGLOW_VOTE_ACCOUNTS,
+        MAX_ALPENGLOW_VOTE_ACCOUNTS,
+        None,
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
+        |_| 10_000_000_000,
+        |index| {
+            if index < entries_to_modify {
+                |lamports: u64| {
+                    let mut rng = rand::rng();
+                    rng.random_range(0..=lamports.saturating_sub(DEFAULT_VAT_TO_BURN_PER_EPOCH))
+                }
+            } else {
+                |lamports: u64| {
+                    let mut rng = rand::rng();
+                    rng.random_range(
+                        lamports.saturating_sub(DEFAULT_VAT_TO_BURN_PER_EPOCH) + 1..lamports,
+                    )
+                }
+            }
+        },
     );
     let filtered = vote_accounts
         .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, DEFAULT_VAT_TO_BURN_PER_EPOCH);
@@ -467,6 +509,7 @@ fn test_clone_and_filter_for_vat_empty_accounts() {
         MIN_STAKE_FOR_STAKED_ACCOUNT,
         MAX_STAKE_FOR_STAKED_ACCOUNT,
         |_| 10_000_000_000,
+        |_| |_| 0,
     );
     // Since everyone has the same stake and the limit is 500 less than number of accounts,
     // all border stake peers are removed and we end up with no valid accounts.
@@ -480,7 +523,7 @@ fn test_vote_account_trailing_bytes_ignored() {
     // Trailing bytes (zero and garbage) must not affect VoteAccount
     // accessor results.
     let mut rng = rand::rng();
-    let base_account = new_rand_vote_account(&mut rng, None, true);
+    let base_account = new_rand_vote_account(rng.random(), None, true, |_| 0);
     let base_data = base_account.data().to_vec();
 
     // With trailing zeros.

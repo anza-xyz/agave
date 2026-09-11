@@ -1,6 +1,6 @@
 use {
-    crate::is_zero_lamport::IsZeroLamport, solana_account::ReadableAccount, solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    super::FileOffset, crate::is_zero_lamport::IsZeroLamport, solana_account::ReadableAccount,
+    solana_clock::Epoch, solana_pubkey::Pubkey,
 };
 
 /// Meta contains enough context to recover the index from storage itself
@@ -42,7 +42,7 @@ pub struct StoredAccountMeta<'append_vec> {
     /// account data
     pub account_meta: &'append_vec AccountMeta,
     pub(crate) data: &'append_vec [u8],
-    pub(crate) offset: usize,
+    pub(crate) offset: FileOffset,
     /// Only read via `stored_size()` under `dev-context-only-utils` (tests, store-tool).
     #[allow(dead_code)]
     pub(crate) stored_size: usize,
@@ -58,7 +58,7 @@ impl<'append_vec> StoredAccountMeta<'append_vec> {
         self.stored_size
     }
 
-    pub fn offset(&self) -> usize {
+    pub fn offset(&self) -> FileOffset {
         self.offset
     }
 
@@ -95,7 +95,7 @@ impl<'append_vec> ReadableAccount for StoredAccountMeta<'append_vec> {
 pub struct StoredAccountNoData<'append_vec> {
     pub meta: &'append_vec StoredMeta,
     pub account_meta: &'append_vec AccountMeta,
-    pub offset: usize,
+    pub offset: FileOffset,
 }
 
 impl<'append_vec> StoredAccountNoData<'append_vec> {
@@ -120,7 +120,7 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
     }
 
     #[inline(always)]
-    pub fn offset(&self) -> usize {
+    pub fn offset(&self) -> FileOffset {
         self.offset
     }
 
@@ -223,7 +223,7 @@ mod tests {
             rent_epoch,
             data: data.clone(),
         };
-        let offset = 99 * size_of::<u64>(); // offset needs to be 8 byte aligned
+        let offset = 99 * size_of::<u64>() as FileOffset; // offset needs to be 8 byte aligned
         let stored_size = 101;
         let stored_account = StoredAccountMeta {
             meta: &meta,

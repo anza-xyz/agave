@@ -352,17 +352,15 @@ impl OutboundLoop {
                     self.stats.connection_lost.fetch_add(1, Ordering::Relaxed);
                     dead_peers.push(*peer);
                 }
-                // The peer does not support datagrams or advertises a datagram size limit below
-                // message size. Both are likely remote misconfigurations, reconnecting is not
-                // likely to help, so we keep these connections to avoid churn.
+                // The peer either does not support datagrams or advertises max size below our
+                // message size. Both are misconfigurations that reconnecting will not fix,
+                // so keep the connection to avoid churn but report errors for visibility.
                 Err(e @ (SendDatagramError::UnsupportedByPeer | SendDatagramError::TooLarge)) => {
                     debug!(
                         "OutboundLoop: peer {peer} refused a {} byte datagram: {e}",
                         message.len()
                     );
-                    self.stats
-                        .datagram_send_failed
-                        .fetch_add(1, Ordering::Relaxed);
+                    self.stats.peer_config_error.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(SendDatagramError::Disabled) => {
                     unreachable!("By construction (we enable datagrams)");

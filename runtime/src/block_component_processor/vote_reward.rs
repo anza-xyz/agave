@@ -6,6 +6,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
+    solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH,
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{
         BlockTimestamp, LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY,
@@ -112,7 +113,12 @@ impl VoteState {
     }
 
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
-        let mut updated_account = AccountSharedData::new(self.lamports, self.space, &self.owner);
+        let mut updated_account = AccountSharedData::new_rent_epoch(
+            self.lamports,
+            self.space,
+            &self.owner,
+            RENT_EXEMPT_RENT_EPOCH,
+        );
         match self
             .handler
             .serialize_into(updated_account.data_as_mut_slice())

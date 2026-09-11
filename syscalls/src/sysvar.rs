@@ -25,11 +25,7 @@ fn get_sysvar<T: SysvarId + Clone>(
         return Err(SyscallError::UnalignedPointer.into());
     }
 
-    if var_addr >= ebpf::MM_INPUT_START
-        && invoke_context
-            .get_feature_set()
-            .syscall_parameter_address_restrictions
-    {
+    if var_addr >= ebpf::MM_INPUT_START {
         return Err(SyscallError::InvalidPointer.into());
     }
 
@@ -225,11 +221,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetSysvar {
             return Err(SyscallError::UnalignedPointer.into());
         }
 
-        if var_addr >= ebpf::MM_INPUT_START
-            && invoke_context
-                .get_feature_set()
-                .syscall_parameter_address_restrictions
-        {
+        if var_addr >= ebpf::MM_INPUT_START {
             return Err(SyscallError::InvalidPointer.into());
         }
 

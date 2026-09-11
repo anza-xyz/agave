@@ -12,14 +12,14 @@
 //! firedancer's `wu_`/`wwu_` SIMD wrappers (`src/util/simd`).
 //!
 //! Two pieces are ours, in neither source: the [`Lanes`] trait, which lets one
-//! generic kernel body serve both AVX2 and AVX512, and the in-register SWAR `u16`
-//! reduction ([`swar_add_u16`]) — firedancer's `fd_lthash_add` group-adds with a
-//! scalar element loop, not in vectors.
+//! generic kernel body serve both AVX2 and AVX512, and the in-register `u16`
+//! reduction ([`Lanes::add_u16`]) — firedancer's `fd_lthash_add` group-adds with
+//! a scalar element loop, not in vectors.
 //!
 //! The per-lane vector ops are abstracted behind the [`Lanes`] trait; the kernel
-//! body (input-compress phase, XOF phase, transpose-load, SWAR-u16 reduce) is
+//! body (input-compress phase, XOF phase, transpose-load, u16 reduce) is
 //! written once, generic over `Lanes`.  Backends: AVX2 (`__m256i`, 8 lanes) and
-//! AVX512 (`__m512i`, 16 lanes).
+//! AVX512BW (`__m512i`, 16 lanes).
 //!
 //! Each backend is checked against the `blake3` crate in this module's `tests`
 //! (whichever backends the test CPU supports).
@@ -93,8 +93,9 @@ pub trait Lanes: Copy {
     /// Store `N` contiguous `u32` to `p`.
     unsafe fn store(self, p: *mut u32);
     unsafe fn add(self, o: Self) -> Self;
+    /// Add as `2 * N` independent wrapping `u16` fields (the LtHash group op).
+    unsafe fn add_u16(self, o: Self) -> Self;
     unsafe fn xor(self, o: Self) -> Self;
-    unsafe fn and(self, o: Self) -> Self;
     /// Rotate each lane right by `R` bits (`R` in {16,12,8,7}).
     unsafe fn ror<const R: u32>(self) -> Self;
     /// Build a mask from per-lane active flags (`active.len() == N`).
@@ -144,21 +145,6 @@ unsafe fn round<L: Lanes>(v: &mut [L; NUM_BLOCK_WORDS], m: &[L; NUM_BLOCK_WORDS]
         g(v, 1, 6, 11, 12, m[s[10]], m[s[11]]);
         g(v, 2, 7, 8, 13, m[s[12]], m[s[13]]);
         g(v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
-    }
-}
-
-/// SWAR add of two lane-vectors as independent wrapping `u16` fields:
-/// `(a & 0x7fff7fff) + (b & 0x7fff7fff)) ^ ((a ^ b) & 0x80008000)` — sum the low
-/// 15 bits of each `u16` without carrying across the 16-bit boundary, then patch
-/// the top bit back in via xor. New code (our vectorized LtHash group-add);
-/// firedancer's `fd_lthash_add` (`fd_lthash.h`) instead loops over the 1024
-/// elements with scalar `u16` adds.
-#[inline(always)]
-unsafe fn swar_add_u16<L: Lanes>(a: L, b: L) -> L {
-    unsafe {
-        let lo = L::splat(0x7fff_7fff);
-        let hi = L::splat(0x8000_8000);
-        a.and(lo).add(b.and(lo)).xor(a.xor(b).and(hi))
     }
 }
 
@@ -281,7 +267,7 @@ unsafe fn compress_batch<L: Lanes>(batch: Batch<'_>, acc: &mut LtHash) {
     // ---- XOF expansion phase (mirrors fd_blake3_fini_2048) ----
     // Re-compress the root block NUM_XOF_BLOCKS (32) times with an incrementing
     // output-block counter; each pass yields one 64-byte output block, which we
-    // transpose back to per-lane rows and SWAR-u16-reduce into `acc`.
+    // transpose back to per-lane rows and u16-reduce into `acc`.
     let mut out_words = [zero; NUM_BLOCK_WORDS];
     for xof_block in 0..NUM_XOF_BLOCKS {
         let counter = xof_block as u64;
@@ -314,13 +300,13 @@ unsafe fn compress_batch<L: Lanes>(batch: Batch<'_>, acc: &mut LtHash) {
                 L::transpose(tile);
                 let mut s = tile[0];
                 for &col in &tile[1..n] {
-                    s = swar_add_u16(s, col);
+                    s = s.add_u16(col);
                 }
                 // `s`'s `n` u32 words are `2n` contiguous `u16` accumulator
-                // elements: load that region, SWAR-add the batch's sum, store back.
+                // elements: load that region, u16-add the batch's sum, store back.
                 let start = base + blk * n * 2;
                 let acc_words = acc.0[start..start + 2 * n].as_mut_ptr().cast::<u32>();
-                swar_add_u16(L::load(acc_words), s).store(acc_words);
+                L::load(acc_words).add_u16(s).store(acc_words);
             }
         }
     }
@@ -349,12 +335,12 @@ impl Lanes for __m256i {
         unsafe { _mm256_add_epi32(self, o) }
     }
     #[inline(always)]
-    unsafe fn xor(self, o: Self) -> Self {
-        unsafe { _mm256_xor_si256(self, o) }
+    unsafe fn add_u16(self, o: Self) -> Self {
+        unsafe { _mm256_add_epi16(self, o) }
     }
     #[inline(always)]
-    unsafe fn and(self, o: Self) -> Self {
-        unsafe { _mm256_and_si256(self, o) }
+    unsafe fn xor(self, o: Self) -> Self {
+        unsafe { _mm256_xor_si256(self, o) }
     }
     #[inline(always)]
     unsafe fn ror<const R: u32>(self) -> Self {
@@ -448,12 +434,13 @@ impl Lanes for __m512i {
         unsafe { _mm512_add_epi32(self, o) }
     }
     #[inline(always)]
-    unsafe fn xor(self, o: Self) -> Self {
-        unsafe { _mm512_xor_si512(self, o) }
+    unsafe fn add_u16(self, o: Self) -> Self {
+        // vpaddw on zmm needs AVX512BW, hence this backend's second feature.
+        unsafe { _mm512_add_epi16(self, o) }
     }
     #[inline(always)]
-    unsafe fn and(self, o: Self) -> Self {
-        unsafe { _mm512_and_si512(self, o) }
+    unsafe fn xor(self, o: Self) -> Self {
+        unsafe { _mm512_xor_si512(self, o) }
     }
     #[inline(always)]
     unsafe fn ror<const R: u32>(self) -> Self {
@@ -566,9 +553,9 @@ impl Lanes for __m512i {
 /// AVX512 (16-lane) batch.
 ///
 /// # Safety
-/// AVX512F must be available, and `batch` must satisfy the contract on
-/// [`compress_batch`] (`len() == 16`, each buffer zero-padded to its blocks).
-#[target_feature(enable = "avx512f")]
+/// AVX512F + AVX512BW must be available, and `batch` must satisfy the contract
+/// on [`compress_batch`] (`len() == 16`, each buffer zero-padded to its blocks).
+#[target_feature(enable = "avx512f", enable = "avx512bw")]
 pub unsafe fn mix_in_avx512(batch: Batch<'_>, acc: &mut LtHash) {
     unsafe { compress_batch::<__m512i>(batch, acc) }
 }
@@ -671,11 +658,11 @@ mod tests {
 
     #[test]
     fn avx512_matches_oracle() {
-        if !is_x86_feature_detected!("avx512f") {
-            eprintln!("skipping: no AVX512F");
+        if !(is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw")) {
+            eprintln!("skipping: no AVX512F+BW");
             return;
         }
-        // SAFETY: AVX512F just confirmed available.
+        // SAFETY: AVX512F + AVX512BW just confirmed available.
         unsafe { exercise(mix_in_avx512, 16) };
     }
 }
