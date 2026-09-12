@@ -14,6 +14,9 @@ Release channels have their own copy of this changelog:
 
 <a name="edge-channel"></a>
 ## 4.4.0-Unreleased
+### CLI
+#### Changes
+* `solana-keygen recover` now supports a `--base58` flag to securely ingest base58-encoded private keys via masked prompt, compatible with UI wallet exports.
 ### RPC
 #### Breaking
 #### Changes
