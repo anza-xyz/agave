@@ -93,6 +93,7 @@ impl<T> Drop for TimedGuard<'_, T> {
 #[derive(Default)]
 pub struct GossipStats {
     pub(crate) bad_prune_destination: Counter,
+    pub(crate) contact_info_received_count: Counter,
     pub(crate) entrypoint2: Counter,
     pub(crate) entrypoint: Counter,
     pub(crate) epoch_slots_filled: Counter,
@@ -138,6 +139,7 @@ pub struct GossipStats {
     packets_sent_pull_requests_count: Counter,
     packets_sent_pull_responses_count: Counter,
     packets_sent_push_messages_count: Counter,
+    pub(crate) ping_timeout_count: Counter,
     pub(crate) process_gossip_packets_time: Counter,
     pub(crate) process_prune: Counter,
     pub(crate) process_pull_response: Counter,
@@ -499,6 +501,12 @@ pub(crate) fn submit_gossip_stats(
         (
             "num_unverifed_gossip_addrs",
             stats.num_unverifed_gossip_addrs.clear(),
+            i64
+        ),
+        ("ping_timeout_count", stats.ping_timeout_count.clear(), i64),
+        (
+            "contact_info_received_count",
+            stats.contact_info_received_count.clear(),
             i64
         ),
         (

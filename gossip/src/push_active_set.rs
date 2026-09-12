@@ -1,5 +1,8 @@
 use {
-    crate::weighted_shuffle::WeightedShuffle,
+    crate::{
+        crds::ROUTE_LOG_TAG, crds_gossip_push::CRDS_GOSSIP_PUSH_FANOUT,
+        weighted_shuffle::WeightedShuffle,
+    },
     indexmap::IndexMap,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
@@ -87,13 +90,23 @@ impl PushActiveSet {
                 let bucket = bucket.min(k) as u64;
                 bucket.saturating_add(1).saturating_pow(2)
             });
-            entry.rotate(rng, size, num_bloom_filter_items, &pubkeys, weights);
+            entry.rotate(rng, k, size, num_bloom_filter_items, &pubkeys, weights);
         }
     }
 
     fn get_entry(&self, stake: Option<&u64>) -> &PushActiveSetEntry {
         &self.0[get_stake_bucket(stake)]
     }
+}
+
+/// Which active-set entry `get_nodes` will consult for this origin, so that the
+/// push-side tracing can be joined to the matching `active_set_rotate` line.
+pub(crate) fn stake_bucket(
+    pubkey: &Pubkey, // This node.
+    origin: &Pubkey, // CRDS value owner.
+    stakes: &HashMap<Pubkey, u64>,
+) -> usize {
+    get_stake_bucket(stakes.get(pubkey).min(stakes.get(origin)))
 }
 
 impl PushActiveSetEntry {
@@ -129,13 +142,16 @@ impl PushActiveSetEntry {
     fn rotate<R: Rng>(
         &mut self,
         rng: &mut R,
-        size: usize, // Number of nodes to retain.
+        bucket: usize, // Stake bucket of this entry, for tracing only.
+        size: usize,   // Number of nodes to retain.
         num_bloom_filter_items: usize,
         nodes: &[Pubkey],
         weights: impl ExactSizeIterator<Item = u64> + Clone,
     ) {
         debug_assert_eq!(nodes.len(), weights.len());
         debug_assert!(weights.clone().all(|weight| weight != 0u64));
+        let mut added = Vec::new();
+        let mut evicted = Vec::new();
         let mut weighted_shuffle = WeightedShuffle::new("rotate-active-set", weights);
         for node in weighted_shuffle.shuffle(rng).map(|k| &nodes[k]) {
             // We intend to discard the oldest/first entry in the index-map.
@@ -152,10 +168,28 @@ impl PushActiveSetEntry {
             ));
             bloom.add(node);
             self.0.insert(*node, bloom);
+            added.push(*node);
         }
         // Drop the oldest entry while preserving the ordering of others.
         while self.0.len() > size {
-            self.0.shift_remove_index(0);
+            if let Some((node, _bloom_filter)) = self.0.shift_remove_index(0) {
+                evicted.push(node);
+            }
+        }
+        // A re-added destination gets a fresh bloom filter, so an eviction here
+        // wipes the prune state accumulated for it. `order` is the index-map
+        // order that `get_nodes` walks and `new_push_messages` then truncates to
+        // the fanout, so a destination at an index >= fanout receives nothing at
+        // all this round: traced to measure how long a destination sits past the
+        // cutoff after being appended here.
+        if !added.is_empty() || !evicted.is_empty() {
+            let order: Vec<_> = self.0.keys().collect();
+            warn!(
+                "{ROUTE_LOG_TAG} active_set_rotate: bucket={bucket}, size={}, \
+                 fanout={CRDS_GOSSIP_PUSH_FANOUT}, order={order:?}, added={added:?}, \
+                 evicted={evicted:?}",
+                self.0.len(),
+            );
         }
     }
 }
@@ -284,6 +318,7 @@ mod tests {
         let mut entry = PushActiveSetEntry::default();
         entry.rotate(
             &mut rng,
+            0, // bucket
             5, // size
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,
@@ -329,6 +364,7 @@ mod tests {
         // Assert that rotate adds new nodes.
         entry.rotate(
             &mut rng,
+            0, // bucket
             5,
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,
@@ -338,6 +374,7 @@ mod tests {
         assert!(entry.0.keys().eq(keys));
         entry.rotate(
             &mut rng,
+            0, // bucket
             6,
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,
@@ -349,6 +386,7 @@ mod tests {
         assert!(entry.0.keys().eq(keys));
         entry.rotate(
             &mut rng,
+            0, // bucket
             4,
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,

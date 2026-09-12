@@ -11,6 +11,7 @@ use {
     solana_signer::Signer,
     std::{
         borrow::Cow,
+        collections::VecDeque,
         net::{IpAddr, SocketAddr},
         ops::Range,
         time::{Duration, Instant},
@@ -50,6 +51,11 @@ pub struct Pong {
     signature: Signature,
 }
 
+struct OutstandingPing {
+    expiry: Instant,
+    hash: Hash,
+}
+
 /// Maintains records of remote nodes which have returned a valid response to a
 /// ping message, and on-the-fly ping messages pending a pong response from the
 /// remote node.
@@ -62,7 +68,9 @@ pub struct PingCache<const N: usize> {
     // Capacity for the pings store.
     max_pings: usize,
     // Expiry time and expected pong hash for each pinged remote node.
-    pings: IndexMap<(Pubkey, SocketAddr), (Instant, Hash)>,
+    pings: IndexMap<(Pubkey, SocketAddr), OutstandingPing>,
+    // Unanswered pings observed to have expired, awaiting reporting.
+    ping_timeouts: VecDeque<(Pubkey, SocketAddr)>,
     // Verified pong responses from remote nodes.
     pongs: LruCache<(Pubkey, SocketAddr), Instant>,
     // Timestamp of last ping message sent to a remote IP.
@@ -178,6 +186,7 @@ impl<const N: usize> PingCache<N> {
             outstanding_ping_timeout_ms,
             max_pings,
             pings: IndexMap::with_capacity(max_pings),
+            ping_timeouts: VecDeque::new(),
             pongs: LruCache::new(max_pings),
             ping_times: LruCache::new(max_pings),
         }
@@ -191,11 +200,11 @@ impl<const N: usize> PingCache<N> {
         // We can not just pop an entry from self.pings based on remote_node
         // contents - that value is attacker controlled and could invalidate an
         // in-flight ping.
-        let Some((index, _, (_timeout, hash))) = self.pings.get_full(&remote_node) else {
+        let Some((index, _, ping)) = self.pings.get_full(&remote_node) else {
             return false;
         };
         // check only hash, a late Pong is still perfectly valid.
-        if *hash != pong.hash {
+        if ping.hash != pong.hash {
             return false;
         }
         // at this point we are certain the pong is valid.
@@ -228,10 +237,11 @@ impl<const N: usize> PingCache<N> {
         remote_node: (Pubkey, SocketAddr),
     ) -> Option<Ping<N>> {
         // If the existing ping is still in-flight don't send another one.
-        let is_new_key = if let Some((expiry, _)) = self.pings.get(&remote_node) {
-            if now < *expiry {
+        let is_new_key = if let Some(ping) = self.pings.get(&remote_node) {
+            if now < ping.expiry {
                 return None;
             }
+            self.record_ping_timeout(remote_node);
             false // existing entry will be updated in-place
         } else {
             true // no entry for this node yet
@@ -247,10 +257,12 @@ impl<const N: usize> PingCache<N> {
             let mut evicted = false;
             for _ in 0..MAX_PING_PROBES {
                 let idx = rng.random_range(0..n);
-                if let Some((_, (expiry, _))) = self.pings.get_index(idx)
-                    && now >= *expiry
+                if let Some((node, ping)) = self.pings.get_index(idx)
+                    && now >= ping.expiry
                 {
+                    let node = *node;
                     self.pings.swap_remove_index(idx);
+                    self.record_ping_timeout(node);
                     evicted = true;
                     break;
                 }
@@ -277,7 +289,13 @@ impl<const N: usize> PingCache<N> {
             ));
         // The hash we expect to see in the Pong message
         let ping_hash = hash_ping_token(&token);
-        self.pings.insert(remote_node, (expiry, ping_hash));
+        self.pings.insert(
+            remote_node,
+            OutstandingPing {
+                expiry,
+                hash: ping_hash,
+            },
+        );
         self.ping_times.put(remote_node.1.ip(), Instant::now());
         Some(Ping::new(token, keypair))
     }
@@ -316,6 +334,20 @@ impl<const N: usize> PingCache<N> {
             .then(|| self.maybe_ping(rng, keypair, now, remote_node))
             .flatten();
         (check, ping)
+    }
+
+    fn record_ping_timeout(&mut self, remote_node: (Pubkey, SocketAddr)) {
+        if self.ping_timeouts.len() == self.max_pings {
+            self.ping_timeouts.pop_front();
+        }
+        self.ping_timeouts.push_back(remote_node);
+    }
+
+    /// Drains at most `limit` ping attempts observed to have expired.
+    #[must_use]
+    pub fn report_ping_timeouts(&mut self, limit: usize) -> Vec<(Pubkey, SocketAddr)> {
+        let count = limit.min(self.ping_timeouts.len());
+        self.ping_timeouts.drain(..count).collect()
     }
 
     /// Only for tests and simulations.
@@ -624,5 +656,59 @@ mod tests {
             ping.is_some(),
             "Should generate ping to re-verify expired node"
         );
+    }
+
+    #[test]
+    fn test_report_ping_timeouts() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let ttl = Duration::from_secs(20 * 60);
+        let now = Instant::now();
+        let mut cache = PingCache::<32>::new(ttl, 1..2, /*cap=*/ 1000);
+        let remote_keypair = Keypair::new();
+        let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 8001));
+        let remote_node = (remote_keypair.pubkey(), remote_socket);
+
+        let (_, ping) = cache.check(&mut rng, &this_node, now, remote_node);
+        ping.expect("first observation must generate a ping");
+        assert!(cache.report_ping_timeouts(100).is_empty());
+        let expired = now + Duration::from_millis(2);
+        let (_, ping) = cache.check(&mut rng, &this_node, expired, remote_node);
+        let ping = ping.expect("expired attempt must generate another ping");
+        assert_eq!(cache.report_ping_timeouts(100), vec![remote_node]);
+        assert!(cache.report_ping_timeouts(100).is_empty());
+
+        let pong = Pong::new(&ping, &remote_keypair);
+        assert!(cache.add(&pong, remote_socket, expired));
+        assert!(cache.report_ping_timeouts(100).is_empty());
+    }
+
+    #[test]
+    fn test_report_ping_timeouts_limit() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let ttl = Duration::from_secs(20 * 60);
+        let now = Instant::now();
+        let mut cache = PingCache::<32>::new(ttl, 1..2, /*cap=*/ 1000);
+        let remote_nodes: Vec<_> = (1u8..=3)
+            .map(|i| {
+                let socket = SocketAddr::V4(SocketAddrV4::new(
+                    Ipv4Addr::new(i, i, i, i),
+                    8000 + i as u16,
+                ));
+                (Keypair::new().pubkey(), socket)
+            })
+            .collect();
+        for remote_node in &remote_nodes {
+            let (_, ping) = cache.check(&mut rng, &this_node, now, *remote_node);
+            ping.expect("first observation must generate a ping");
+        }
+        let expired = now + Duration::from_millis(2);
+        for remote_node in &remote_nodes {
+            let (_, ping) = cache.check(&mut rng, &this_node, expired, *remote_node);
+            ping.expect("expired attempt must generate another ping");
+        }
+        assert_eq!(cache.report_ping_timeouts(2), remote_nodes[..2]);
+        assert_eq!(cache.report_ping_timeouts(2), remote_nodes[2..]);
     }
 }

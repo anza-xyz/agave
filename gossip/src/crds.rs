@@ -65,6 +65,11 @@ const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // log2(680k) = ~19.375.
 pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
 
+/// Grep tag on the ad-hoc push-propagation tracing below and in
+/// `received_cache`/`push_active_set`, alongside the RRRRRRRRRR
+/// wait-for-supermajority and PPPPPPPPPP ping/pong tags.
+pub(crate) const ROUTE_LOG_TAG: &str = "GGGGGGGGGG";
+
 pub struct Crds {
     /// Stores the map of labels and values
     table: IndexMap<CrdsValueLabel, VersionedCrdsValue>,
@@ -236,6 +241,33 @@ fn emit_contact_info_event(sender: Option<&ContactInfoSender>, event: ContactInf
     }
 }
 
+/// Traces which gossip route delivered each accepted contact-info, so that a
+/// gap in a peer's refreshes can be attributed to push propagation stopping
+/// (gaps ending on `pull_resp`) as opposed to the peer going quiet.
+/// `wallclock_age` is the same quantity the wait-for-supermajority liveness
+/// check ages out on.
+fn log_contact_info_insert(
+    node: &ContactInfo,
+    route: GossipRoute,
+    ordinal: u64,
+    now: u64,
+    entry: &str, // Whether the insert created or overrode a table entry.
+) {
+    let (route, from) = match route {
+        GossipRoute::LocalMessage => ("local", None),
+        GossipRoute::PullRequest => ("pull_req", None),
+        GossipRoute::PullResponse => ("pull_resp", None),
+        GossipRoute::PushMessage(from) => ("push", Some(from)),
+    };
+    warn!(
+        "{ROUTE_LOG_TAG} crds_insert: origin={}, route={route}, from={}, entry={entry}, \
+         wallclock_age={}ms, ordinal={ordinal}",
+        node.pubkey(),
+        from.map_or_else(|| "none".to_string(), |from| from.to_string()),
+        now.saturating_sub(node.wallclock()),
+    );
+}
+
 impl Crds {
     /// Returns true if the given value updates an existing one in the table.
     /// The value is outdated and fails to insert, if it already exists in the
@@ -276,6 +308,7 @@ impl Crds {
                 match value.value.data() {
                     CrdsData::ContactInfo(node) => {
                         self.nodes.insert(entry_index);
+                        log_contact_info_insert(node, route, value.ordinal, now, "new");
                         emit_contact_info_event(
                             self.contact_info_sender.as_ref(),
                             ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
@@ -308,6 +341,7 @@ impl Crds {
                         // self.nodes does not need to be updated since the
                         // entry at this index was and stays contact-info.
                         debug_assert_matches!(entry.get().value.data(), CrdsData::ContactInfo(_));
+                        log_contact_info_insert(node, route, value.ordinal, now, "update");
                         emit_contact_info_event(
                             self.contact_info_sender.as_ref(),
                             ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),

@@ -183,7 +183,7 @@ impl CrdsGossip {
         stakes: &HashMap<Pubkey, u64>,
         gossip_validators: Option<&HashSet<Pubkey>>,
         ping_cache: &Mutex<PingCache>,
-        pings: &mut Vec<(SocketAddr, Ping)>,
+        pings: &mut Vec<(Pubkey, SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
     ) {
         self.push.refresh_push_active_set(
@@ -210,7 +210,7 @@ impl CrdsGossip {
         stakes: &HashMap<Pubkey, u64>,
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
-        pings: &mut Vec<(SocketAddr, Ping)>,
+        pings: &mut Vec<(Pubkey, SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
     ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<>, CrdsGossipError>
     {
@@ -375,14 +375,14 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
     mut nodes: Vec<GossipStakePubkey>,
     keypair: &Keypair,
     ping_cache: &Mutex<PingCache>,
-    pings: &mut Vec<(SocketAddr, Ping)>,
+    pings: &mut Vec<(Pubkey, SocketAddr, Ping)>,
 ) -> Vec<GossipStakePubkey> {
     let mut ping_cache = ping_cache.lock().unwrap();
     let now = Instant::now();
     nodes.retain(|(gossip, _stake, pubkey)| {
         let (check, ping) = ping_cache.check(rng, keypair, now, (*pubkey, *gossip));
         if let Some(ping) = ping {
-            pings.push((*gossip, ping));
+            pings.push((*pubkey, *gossip, ping));
         }
         check
     });
