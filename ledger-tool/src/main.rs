@@ -185,6 +185,25 @@ impl FromStr for GraphVoteAccountMode {
     }
 }
 
+/// Returns true if a full (or incremental, per `is_incremental`) snapshot archive already
+/// exists for `slot` in `snapshot_archives_dir`. A snapshot archive filename encodes the
+/// accounts hash, so an existing archive for `slot` is not overwritten by a new one with a
+/// different hash; both remain on disk. See:
+/// https://github.com/anza-xyz/agave/issues/15164
+fn snapshot_archive_exists_for_slot(
+    snapshot_archives_dir: &Path,
+    slot: Slot,
+    is_incremental: bool,
+) -> bool {
+    if is_incremental {
+        agave_snapshots::paths::incremental_snapshot_archives_iter(snapshot_archives_dir)
+            .any(|info| info.slot() == slot)
+    } else {
+        agave_snapshots::paths::full_snapshot_archives_iter(snapshot_archives_dir)
+            .any(|info| info.slot() == slot)
+    }
+}
+
 struct GraphConfig {
     include_all_votes: bool,
     vote_account_mode: GraphVoteAccountMode,
@@ -2176,6 +2195,32 @@ fn main() {
                         None,
                     );
 
+                    // This is easy to hit when following a coordinated-restart runbook (e.g. a
+                    // hard fork) that asks for a snapshot at a slot the validator already
+                    // snapshotted on its own.
+                    if snapshot_archive_exists_for_slot(
+                        &output_directory,
+                        snapshot_slot,
+                        is_incremental,
+                    ) {
+                        warn!(
+                            "A {snapshot_type_str}snapshot archive for slot {snapshot_slot} \
+                             already exists in {}; the new archive will not replace it, and which \
+                             one a validator loads at startup depends on their accounts hashes, \
+                             not on which was created most recently.",
+                            output_directory.display(),
+                        );
+                    }
+                    if let Some(starting_snapshot_hashes) = starting_snapshot_hashes
+                        && starting_snapshot_hashes.full.0.0 == snapshot_slot
+                    {
+                        warn!(
+                            "Snapshot slot {snapshot_slot} is the same slot the ledger was loaded \
+                             from; the new snapshot will be generated from that same base state \
+                             rather than a distinct, more recent one.",
+                        );
+                    }
+
                     let mut bank = bank_forks
                         .read()
                         .unwrap()
@@ -3324,4 +3369,54 @@ fn main() {
     };
     measure_total_execution_time.stop();
     info!("{measure_total_execution_time}");
+}
+
+#[cfg(test)]
+mod snapshot_archive_exists_for_slot_tests {
+    use {super::*, solana_hash::Hash, std::fs::File};
+
+    fn touch_full_snapshot_archive(dir: &Path, slot: Slot, hash: Hash) {
+        File::create(dir.join(format!("snapshot-{slot}-{hash}.tar.zst"))).unwrap();
+    }
+
+    fn touch_incremental_snapshot_archive(dir: &Path, base_slot: Slot, slot: Slot, hash: Hash) {
+        File::create(dir.join(format!(
+            "incremental-snapshot-{base_slot}-{slot}-{hash}.tar.zst"
+        )))
+        .unwrap();
+    }
+
+    #[test]
+    fn detects_existing_full_snapshot_archive_at_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!snapshot_archive_exists_for_slot(dir.path(), 100, false));
+
+        touch_full_snapshot_archive(dir.path(), 100, Hash::default());
+        assert!(snapshot_archive_exists_for_slot(dir.path(), 100, false));
+        // A full snapshot at a different slot must not match.
+        assert!(!snapshot_archive_exists_for_slot(dir.path(), 200, false));
+        // Looking for an *incremental* snapshot at the same slot must not match a full one.
+        assert!(!snapshot_archive_exists_for_slot(dir.path(), 100, true));
+    }
+
+    #[test]
+    fn detects_existing_incremental_snapshot_archive_at_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!snapshot_archive_exists_for_slot(dir.path(), 150, true));
+
+        touch_incremental_snapshot_archive(dir.path(), 100, 150, Hash::default());
+        assert!(snapshot_archive_exists_for_slot(dir.path(), 150, true));
+        assert!(!snapshot_archive_exists_for_slot(dir.path(), 150, false));
+    }
+
+    /// Regression test for https://github.com/anza-xyz/agave/issues/15164: a snapshot archive
+    /// filename encodes the accounts hash, so a newly created archive for a restart slot does
+    /// not overwrite a pre-existing archive for that same slot with a different hash. Detection
+    /// must find the pre-existing archive regardless of which hash it was made with.
+    #[test]
+    fn detects_existing_archive_with_a_different_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        touch_full_snapshot_archive(dir.path(), 100, Hash::new_from_array([7; 32]));
+        assert!(snapshot_archive_exists_for_slot(dir.path(), 100, false));
+    }
 }
