@@ -12,8 +12,15 @@ Usage:
     gossip_routes.py --timeline --pubkey FT9... validator.log
     gossip_routes.py --prunes validator.log              # ingress prune table
     gossip_routes.py --rotations validator.log           # active-set churn
+    gossip_routes.py --cutoff validator.log              # time spent past the fanout
+    gossip_routes.py --truncations validator.log         # pushes the fanout dropped
 
 --join takes the log holding the RRRRRRRRRR episodes; usually the same file.
+
+--cutoff and --truncations describe pushes this node *sends*. To confirm that a
+gap seen here was caused by a sender truncating us, cross-reference a sender's
+log: take the upstreams named in this node's `from=` fields and check whether
+they had us past the cutoff over the same window.
 """
 
 import argparse
@@ -38,7 +45,12 @@ PRUNE_RE = re.compile(
 )
 ROTATE_RE = re.compile(
     rf"{TAG} active_set_rotate: bucket=(?P<bucket>\d+), size=(?P<size>\d+), "
+    r"fanout=(?P<fanout>\d+), order=\[(?P<order>[^\]]*)\], "
     r"added=\[(?P<added>[^\]]*)\], evicted=\[(?P<evicted>[^\]]*)\]"
+)
+TRUNCATED_RE = re.compile(
+    rf"{TAG} push_truncated: origin=(?P<origin>\S+), bucket=(?P<bucket>\d+), "
+    r"eligible=(?P<eligible>\d+), fanout=(?P<fanout>\d+), dropped=\[(?P<dropped>[^\]]*)\]"
 )
 
 ROUTES = ("push", "pull_resp", "pull_req", "local")
@@ -58,11 +70,16 @@ def open_log(path):
     return open(path, errors="replace")
 
 
+def split_list(raw):
+    return raw.split(", ") if raw else []
+
+
 def parse(paths):
-    """-> (inserts, prunes, rotations); inserts keyed by origin, in log order."""
+    """-> (inserts, prunes, rotations, truncations); inserts keyed by origin."""
     inserts = defaultdict(list)
     prunes = defaultdict(list)
     rotations = []
+    truncations = []
     for path in paths:
         with open_log(path) as handle:
             for line in handle:
@@ -97,13 +114,24 @@ def parse(paths):
                             "ts": ts,
                             "bucket": int(match["bucket"]),
                             "size": int(match["size"]),
-                            "added": match["added"].split(", ") if match["added"] else [],
-                            "evicted": (
-                                match["evicted"].split(", ") if match["evicted"] else []
-                            ),
+                            "fanout": int(match["fanout"]),
+                            "order": split_list(match["order"]),
+                            "added": split_list(match["added"]),
+                            "evicted": split_list(match["evicted"]),
                         }
                     )
-    return inserts, prunes, rotations
+                elif match := TRUNCATED_RE.search(line):
+                    truncations.append(
+                        {
+                            "ts": ts,
+                            "origin": match["origin"],
+                            "bucket": int(match["bucket"]),
+                            "eligible": int(match["eligible"]),
+                            "fanout": int(match["fanout"]),
+                            "dropped": split_list(match["dropped"]),
+                        }
+                    )
+    return inserts, prunes, rotations, truncations
 
 
 def max_gap(events):
@@ -238,7 +266,84 @@ def show_rotations(rotations, pubkeys):
         print(f"{node:44} {stats['added']:6} {stats['evicted']:8} {buckets}")
 
 
-def show_timeline(inserts, prunes, rotations, pubkeys):
+def show_cutoff(rotations, pubkeys):
+    """How long each push destination sits past the fanout cutoff.
+
+    `get_nodes` walks the active set in index-map order and `new_push_messages`
+    truncates to the fanout, so a destination at index >= fanout receives
+    nothing. Rotation appends at the tail and evicts index 0, so a freshly added
+    destination has to be shifted forward `size - fanout` times before its
+    sender pushes to it at all.
+    """
+    by_bucket = defaultdict(list)
+    for event in rotations:
+        if event["ts"] is not None:
+            by_bucket[event["bucket"]].append(event)
+
+    blind = defaultdict(float)  # ms spent in the active set but past the cutoff
+    resident = defaultdict(float)  # ms spent in the active set at all
+    delays = []  # ms from being added until first inside the cutoff
+    for bucket, events in sorted(by_bucket.items()):
+        events.sort(key=lambda e: e["ts"])
+        pending = {}
+        for index, event in enumerate(events):
+            for node in event["added"]:
+                pending[node] = event["ts"]
+            for position, node in enumerate(event["order"]):
+                if position < event["fanout"] and node in pending:
+                    delays.append(
+                        (event["ts"] - pending.pop(node)).total_seconds() * 1000
+                    )
+            if index + 1 >= len(events):
+                break
+            span = (events[index + 1]["ts"] - event["ts"]).total_seconds() * 1000
+            for position, node in enumerate(event["order"]):
+                resident[node] += span
+                if position >= event["fanout"]:
+                    blind[node] += span
+
+    if delays:
+        delays.sort()
+        print(
+            f"{len(delays)} add->first-push delays: "
+            f"median {delays[len(delays) // 2]:.0f}ms, "
+            f"p90 {delays[int(len(delays) * 0.9)]:.0f}ms, max {delays[-1]:.0f}ms"
+        )
+    total_blind = sum(blind.values())
+    total_resident = sum(resident.values())
+    if total_resident:
+        print(
+            f"aggregate: {total_blind / total_resident:.1%} of active-set residency "
+            f"is spent past the fanout cutoff"
+        )
+    print(f"{'DESTINATION':44} {'RESIDENT':>10} {'BLIND':>10} {'BLIND%':>7}")
+    for node, ms in sorted(resident.items(), key=lambda kv: -blind[kv[0]]):
+        if pubkeys and node not in pubkeys:
+            continue
+        print(f"{node:44} {ms:9.0f}ms {blind[node]:9.0f}ms {blind[node] / ms:7.1%}")
+
+
+def show_truncations(truncations, pubkeys):
+    """Which destinations were skipped, and for whose contact infos."""
+    per_node = defaultdict(lambda: {"drops": 0, "origins": set()})
+    per_origin = defaultdict(int)
+    for event in truncations:
+        per_origin[event["origin"]] += 1
+        for node in event["dropped"]:
+            per_node[node]["drops"] += 1
+            per_node[node]["origins"].add(event["origin"])
+    print(
+        f"{len(truncations)} truncated contact-info pushes, "
+        f"{len(per_origin)} origin(s), {len(per_node)} destination(s) skipped"
+    )
+    print(f"{'DESTINATION SKIPPED':44} {'DROPS':>7} {'ORIGINS':>8}")
+    for node, stats in sorted(per_node.items(), key=lambda kv: -kv[1]["drops"]):
+        if pubkeys and node not in pubkeys:
+            continue
+        print(f"{node:44} {stats['drops']:7} {len(stats['origins']):8}")
+
+
+def show_timeline(inserts, prunes, rotations, truncations, pubkeys):
     events = []
     for origin, records in inserts.items():
         if pubkeys and origin not in pubkeys:
@@ -271,11 +376,35 @@ def show_timeline(inserts, prunes, rotations, pubkeys):
         if pubkeys and not (touched & pubkeys):
             continue
         for node in record["added"]:
-            events.append((record["ts"], "active_set_add", node, f"bucket={record['bucket']}"))
+            position = (
+                record["order"].index(node) if node in record["order"] else len(record["order"])
+            )
+            events.append(
+                (
+                    record["ts"],
+                    "active_set_add",
+                    node,
+                    f"bucket={record['bucket']} position={position} fanout={record['fanout']}",
+                )
+            )
         for node in record["evicted"]:
             events.append(
                 (record["ts"], "active_set_evict", node, f"bucket={record['bucket']}")
             )
+    for record in truncations:
+        if pubkeys and not (
+            record["origin"] in pubkeys or set(record["dropped"]) & pubkeys
+        ):
+            continue
+        events.append(
+            (
+                record["ts"],
+                "push_truncated",
+                record["origin"],
+                f"bucket={record['bucket']} eligible={record['eligible']} "
+                f"dropped={','.join(record['dropped'])}",
+            )
+        )
     events.sort(key=lambda e: (e[0] is None, e[0]))
     for ts, kind, pubkey, detail in events:
         stamp = f"{ts:%H:%M:%S.%f}"[:12] if ts else "-"
@@ -292,21 +421,31 @@ def main():
     parser.add_argument("--timeline", action="store_true")
     parser.add_argument("--prunes", action="store_true")
     parser.add_argument("--rotations", action="store_true")
+    parser.add_argument(
+        "--cutoff", action="store_true", help="time each destination spends past the fanout"
+    )
+    parser.add_argument(
+        "--truncations", action="store_true", help="contact-info pushes dropped by the fanout"
+    )
     parser.add_argument("--old-ms", type=int, default=15000)
     parser.add_argument("--new-ms", type=int, default=45000)
     args = parser.parse_args()
 
     pubkeys = set(args.pubkey)
-    inserts, prunes, rotations = parse(args.logs)
-    if not (inserts or prunes or rotations):
+    inserts, prunes, rotations, truncations = parse(args.logs)
+    if not (inserts or prunes or rotations or truncations):
         sys.exit(f"no {TAG} events found")
 
     if args.timeline:
-        show_timeline(inserts, prunes, rotations, pubkeys)
+        show_timeline(inserts, prunes, rotations, truncations, pubkeys)
     elif args.prunes:
         show_prunes(prunes, pubkeys)
     elif args.rotations:
         show_rotations(rotations, pubkeys)
+    elif args.cutoff:
+        show_cutoff(rotations, pubkeys)
+    elif args.truncations:
+        show_truncations(truncations, pubkeys)
     elif args.join:
         join_episodes(inserts, args.join, args.old_ms, args.new_ms)
     else:

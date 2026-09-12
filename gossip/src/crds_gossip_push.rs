@@ -15,11 +15,14 @@ use {
     crate::{
         cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY,
         cluster_info_metrics::{log_gossip_crds_sample_egress, should_report_message_signature},
-        crds::{Crds, CrdsError, Cursor, GossipRoute, SIGNATURE_SAMPLE_LEADING_ZEROS},
+        crds::{
+            Crds, CrdsError, Cursor, GossipRoute, ROUTE_LOG_TAG, SIGNATURE_SAMPLE_LEADING_ZEROS,
+        },
+        crds_data::CrdsData,
         crds_gossip,
         crds_value::CrdsValue,
         protocol::{Ping, PingCache},
-        push_active_set::PushActiveSet,
+        push_active_set::{PushActiveSet, stake_bucket},
         received_cache::ReceivedCache,
     },
     itertools::Itertools,
@@ -40,7 +43,7 @@ use {
     },
 };
 
-const CRDS_GOSSIP_PUSH_FANOUT: usize = 9;
+pub(crate) const CRDS_GOSSIP_PUSH_FANOUT: usize = 9;
 // With a fanout of 9, a 2000 node cluster should only take ~3.5 hops to converge.
 // However since pushes are stake weighed, some trailing nodes
 // might need more time to receive values. 15 seconds should be plenty.
@@ -193,6 +196,24 @@ impl CrdsGossipPush {
             .filter(|value| should_retain_crds_value(value));
         'outer: for value in entries {
             let origin = value.pubkey();
+            // Contact infos only, to keep this tied to the crds_insert tracing
+            // and off the hot path for votes and epoch slots. The active set
+            // holds fanout + 3 nodes but `take` below keeps only the first
+            // `fanout` of them in index-map order, so any node past that index
+            // is skipped entirely for this value even though it was never
+            // pruned for this origin.
+            if matches!(value.data(), CrdsData::ContactInfo(_)) {
+                let eligible: Vec<_> = active_set.get_nodes(pubkey, &origin, stakes).collect();
+                if let Some(dropped) = eligible.get(self.push_fanout..) {
+                    warn!(
+                        "{ROUTE_LOG_TAG} push_truncated: origin={origin}, bucket={}, eligible={}, \
+                         fanout={}, dropped={dropped:?}",
+                        stake_bucket(pubkey, &origin, stakes),
+                        eligible.len(),
+                        self.push_fanout,
+                    );
+                }
+            }
             let mut nodes = active_set
                 .get_nodes(pubkey, &origin, stakes)
                 .take(self.push_fanout)

@@ -3046,7 +3046,7 @@ fn wait_for_supermajority(
                 ));
             }
 
-            for i in 1.. {
+            loop {
                 info!(
                     "Waiting for {}% of activated stake at slot {} to be in gossip...",
                     WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT,

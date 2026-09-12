@@ -1,5 +1,8 @@
 use {
-    crate::{crds::ROUTE_LOG_TAG, weighted_shuffle::WeightedShuffle},
+    crate::{
+        crds::ROUTE_LOG_TAG, crds_gossip_push::CRDS_GOSSIP_PUSH_FANOUT,
+        weighted_shuffle::WeightedShuffle,
+    },
     indexmap::IndexMap,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
@@ -96,6 +99,16 @@ impl PushActiveSet {
     }
 }
 
+/// Which active-set entry `get_nodes` will consult for this origin, so that the
+/// push-side tracing can be joined to the matching `active_set_rotate` line.
+pub(crate) fn stake_bucket(
+    pubkey: &Pubkey, // This node.
+    origin: &Pubkey, // CRDS value owner.
+    stakes: &HashMap<Pubkey, u64>,
+) -> usize {
+    get_stake_bucket(stakes.get(pubkey).min(stakes.get(origin)))
+}
+
 impl PushActiveSetEntry {
     const BLOOM_FALSE_RATE: f64 = 0.1;
     const BLOOM_MAX_BITS: usize = 1024 * 8 * 4;
@@ -164,11 +177,16 @@ impl PushActiveSetEntry {
             }
         }
         // A re-added destination gets a fresh bloom filter, so an eviction here
-        // wipes the prune state accumulated for it: traced to check whether
-        // gaps in a peer's contact-info line up with this rotation cycle.
+        // wipes the prune state accumulated for it. `order` is the index-map
+        // order that `get_nodes` walks and `new_push_messages` then truncates to
+        // the fanout, so a destination at an index >= fanout receives nothing at
+        // all this round: traced to measure how long a destination sits past the
+        // cutoff after being appended here.
         if !added.is_empty() || !evicted.is_empty() {
+            let order: Vec<_> = self.0.keys().collect();
             warn!(
-                "{ROUTE_LOG_TAG} active_set_rotate: bucket={bucket}, size={}, added={added:?}, \
+                "{ROUTE_LOG_TAG} active_set_rotate: bucket={bucket}, size={}, \
+                 fanout={CRDS_GOSSIP_PUSH_FANOUT}, order={order:?}, added={added:?}, \
                  evicted={evicted:?}",
                 self.0.len(),
             );
