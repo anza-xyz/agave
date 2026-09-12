@@ -64,6 +64,10 @@ enum TransactionErrorType {
     UNBALANCED_TRANSACTION = 36;
     PROGRAM_CACHE_HIT_MAX_LIMIT = 37;
     COMMIT_CANCELLED = 38;
+    BAIL_OUT_TX = 39;
+
+    // Out of band so it never collides with a sequentially allocated variant.
+    UNKNOWN_TX = 1000;
 }
 
 message InstructionError {
@@ -131,6 +135,10 @@ enum InstructionErrorType {
     MAX_ACCOUNTS_EXCEEDED = 51;
     MAX_INSTRUCTION_TRACE_LENGTH_EXCEEDED = 52;
     BUILTIN_PROGRAMS_MUST_CONSUME_COMPUTE_UNITS = 53;
+    BAIL_OUT = 54;
+
+    // Out of band so it never collides with a sequentially allocated variant.
+    UNKNOWN = 1000;
 }
 
 message UnixTimestamp {
