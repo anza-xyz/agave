@@ -105,9 +105,11 @@ impl Dashboard {
                 rpc_pubsub,
                 shred_version,
                 tpu_quic,
+                git_commit,
                 ..
             }) = contact_info
             {
+                println_name_value("Git Commit:", git_commit.as_deref().unwrap_or("unknown"));
                 println_name_value("Shred Version:", &shred_version.to_string());
                 println_name_value("Gossip Address:", &gossip.to_string());
                 if let Some(tpu_quic) = tpu_quic {
@@ -397,8 +399,9 @@ mod tests {
         std::sync::atomic::AtomicUsize,
     };
 
-    #[test]
-    fn test_wait_for_validator_startup_retries_legacy_contact_info() {
+    #[test_case::test_case(None; "legacy")]
+    #[test_case::test_case(Some("0123456789abcdef0123456789abcdef01234567"); "server_build")]
+    fn test_wait_for_validator_startup_retries_legacy_contact_info(git_commit: Option<&str>) {
         let ledger_path = tempfile::tempdir().unwrap();
         let rpc_addr = "127.0.0.1:8899".parse::<SocketAddr>().unwrap();
         let start_time = SystemTime::now();
@@ -407,6 +410,10 @@ mod tests {
             ContactInfo::new(keypair.pubkey(), 0, 0),
         ))
         .unwrap();
+        if let Some(git_commit) = git_commit {
+            assert_ne!(Some(git_commit), solana_version::git_commit());
+            contact_info["git_commit"] = serde_json::json!(git_commit);
+        }
         contact_info
             .as_object_mut()
             .unwrap()
@@ -447,7 +454,9 @@ mod tests {
             ))
             .unwrap();
 
-        assert!(contact_info.unwrap().tpu_quic.is_none());
+        let contact_info = contact_info.unwrap();
+        assert!(contact_info.tpu_quic.is_none());
+        assert_eq!(contact_info.git_commit.as_deref(), git_commit);
         assert_eq!(contact_info_attempts.load(Ordering::Relaxed), 2);
         server.close();
     }
