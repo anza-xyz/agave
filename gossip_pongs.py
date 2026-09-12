@@ -41,6 +41,16 @@ CONTACT_INFO_RE = re.compile(
 )
 
 
+TS_RE = re.compile(r"^\[(?P<ts>[^\s\]]+)")
+EVENT_PATTERNS = (
+    ("gossip_ping_sent", PING_RE),
+    ("gossip_ping_received", PING_RECVD_RE),
+    ("gossip_ping_timeout", PING_TIMEOUT_RE),
+    ("gossip_pong_received", PONG_RE),
+    ("gossip_contact_info_received", CONTACT_INFO_RE),
+)
+
+
 def open_log(path):
     if path == "-":
         return sys.stdin
@@ -101,6 +111,32 @@ def scan(paths):
     )
 
 
+def timeline(paths, pubkeys):
+    """Print every event for the selected peers, in log order."""
+    for path in paths:
+        with open_log(path) as log:
+            for line in log:
+                for marker, pattern in EVENT_PATTERNS:
+                    if marker not in line:
+                        continue
+                    match = pattern.search(line)
+                    if match is None or (pubkeys and match["pubkey"] not in pubkeys):
+                        break
+                    stamp = TS_RE.match(line)
+                    detail = ""
+                    if marker == "gossip_pong_received":
+                        detail = f"accepted={match['accepted']}"
+                    elif marker == "gossip_contact_info_received":
+                        age = match["wallclock_age"]
+                        detail = f"wallclock_age={age}ms" if age else ""
+                    print(
+                        f"{stamp['ts'] if stamp else '-':<32} "
+                        f"{marker.removeprefix('gossip_'):<22} "
+                        f"{match['pubkey']:<44} {match['ip']:<16} {detail}"
+                    )
+                    break
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="List hosts from which ContactInfo was received but no Pong "
@@ -137,11 +173,26 @@ def main():
         help="only show peers with or without an accepted Pong",
     )
     parser.add_argument(
+        "--pubkey",
+        action="append",
+        metavar="PUBKEY",
+        help="restrict to this peer (repeatable)",
+    )
+    parser.add_argument(
+        "--timeline",
+        action="store_true",
+        help="print every event in log order instead of the summary table",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="show every host with a logged event, including hosts which sent a Pong",
     )
     args = parser.parse_args()
+
+    if args.timeline:
+        timeline(args.logs, set(args.pubkey or ()))
+        return
 
     (
         pings,
@@ -178,6 +229,9 @@ def main():
     peers = {
         peer for peer in peers if expired_pings[peer] >= args.min_expired_pings
     }
+    if args.pubkey:
+        wanted = set(args.pubkey)
+        peers = {peer for peer in peers if peer[1] in wanted}
     if not peers:
         print("no matching peers found")
         return

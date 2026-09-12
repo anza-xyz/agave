@@ -96,6 +96,7 @@ def episodes(samples, old_ms, new_ms):
                     "first_ts": ts,
                     "first_age": age,
                     "local_ages": [],
+                    "offsets": [],
                     "samples": 0,
                 }
             run["last_index"] = index
@@ -104,16 +105,21 @@ def episodes(samples, old_ms, new_ms):
             run["last_local_age"] = local_age
             if local_age is not None:
                 run["local_ages"].append(local_age)
+                # How long the value had already been alive by the peer's clock
+                # when we inserted it: delivery latency, not staleness.
+                run["offsets"].append(age - local_age)
             run["samples"] += 1
         for pubkey in [p for p, r in open_runs.items() if r["last_index"] != index]:
             done.append(open_runs.pop(pubkey))
     done.extend(open_runs.values())
 
     for run in done:
-        # The crds entry was inserted by us recently, so the node was gossiping
-        # fine all along and only its self-reported wallclock trails ours.
+        # Every sample had a recent local insert, so the node was gossiping fine
+        # all along and only the peer-authored wallclock was old on arrival. The
+        # offsets vary per value, so this is delivery latency, not clock skew --
+        # a local-insert-based liveness check would not flag these at all.
         if run["local_ages"] and max(run["local_ages"]) < old_ms:
-            run["verdict"] = "SKEWED"
+            run["verdict"] = "LATE_VALUE"
             continue
         next_index = run["last_index"] + 1
         if next_index >= len(samples):
@@ -142,10 +148,13 @@ def main():
     if args.episodes:
         for run in runs:
             local = (
-                f" local_age max {max(run['local_ages'])}ms" if run["local_ages"] else ""
+                f" local_age {run['local_ages'][0]}->{run['local_ages'][-1]}ms"
+                f" offset max {max(run['offsets'])}ms"
+                if run["local_ages"]
+                else ""
             )
             print(
-                f"{run['first_ts']:%H:%M:%S} {run['verdict']:9} {run['stake']:6.3f}% "
+                f"{run['first_ts']:%H:%M:%S} {run['verdict']:10} {run['stake']:6.3f}% "
                 f"{run['pubkey']:44} {run['addr']:22} "
                 f"age {run['first_age']}->{run['last_age']}ms "
                 f"over {run['samples']} sample(s){local}"
@@ -160,7 +169,7 @@ def main():
     span = samples[-1][0] - samples[0][0]
     print(f"{len(samples)} samples over {span}, {len(runs)} grace-band episodes")
     for verdict, (count, stake) in sorted(by_verdict.items()):
-        print(f"  {verdict:9} {count:4} episode(s), {stake:7.3f}% stake (summed)")
+        print(f"  {verdict:10} {count:4} episode(s), {stake:7.3f}% stake (summed)")
     worst = max(samples, key=lambda s: s[1] - s[2])
     print(
         f"max gap {worst[1] - worst[2]:.3f}pp at {worst[0]:%H:%M:%S} "

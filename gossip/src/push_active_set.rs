@@ -1,5 +1,5 @@
 use {
-    crate::weighted_shuffle::WeightedShuffle,
+    crate::{crds::ROUTE_LOG_TAG, weighted_shuffle::WeightedShuffle},
     indexmap::IndexMap,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
@@ -87,7 +87,7 @@ impl PushActiveSet {
                 let bucket = bucket.min(k) as u64;
                 bucket.saturating_add(1).saturating_pow(2)
             });
-            entry.rotate(rng, size, num_bloom_filter_items, &pubkeys, weights);
+            entry.rotate(rng, k, size, num_bloom_filter_items, &pubkeys, weights);
         }
     }
 
@@ -129,13 +129,16 @@ impl PushActiveSetEntry {
     fn rotate<R: Rng>(
         &mut self,
         rng: &mut R,
-        size: usize, // Number of nodes to retain.
+        bucket: usize, // Stake bucket of this entry, for tracing only.
+        size: usize,   // Number of nodes to retain.
         num_bloom_filter_items: usize,
         nodes: &[Pubkey],
         weights: impl ExactSizeIterator<Item = u64> + Clone,
     ) {
         debug_assert_eq!(nodes.len(), weights.len());
         debug_assert!(weights.clone().all(|weight| weight != 0u64));
+        let mut added = Vec::new();
+        let mut evicted = Vec::new();
         let mut weighted_shuffle = WeightedShuffle::new("rotate-active-set", weights);
         for node in weighted_shuffle.shuffle(rng).map(|k| &nodes[k]) {
             // We intend to discard the oldest/first entry in the index-map.
@@ -152,10 +155,23 @@ impl PushActiveSetEntry {
             ));
             bloom.add(node);
             self.0.insert(*node, bloom);
+            added.push(*node);
         }
         // Drop the oldest entry while preserving the ordering of others.
         while self.0.len() > size {
-            self.0.shift_remove_index(0);
+            if let Some((node, _bloom_filter)) = self.0.shift_remove_index(0) {
+                evicted.push(node);
+            }
+        }
+        // A re-added destination gets a fresh bloom filter, so an eviction here
+        // wipes the prune state accumulated for it: traced to check whether
+        // gaps in a peer's contact-info line up with this rotation cycle.
+        if !added.is_empty() || !evicted.is_empty() {
+            warn!(
+                "{ROUTE_LOG_TAG} active_set_rotate: bucket={bucket}, size={}, added={added:?}, \
+                 evicted={evicted:?}",
+                self.0.len(),
+            );
         }
     }
 }
@@ -284,6 +300,7 @@ mod tests {
         let mut entry = PushActiveSetEntry::default();
         entry.rotate(
             &mut rng,
+            0, // bucket
             5, // size
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,
@@ -329,6 +346,7 @@ mod tests {
         // Assert that rotate adds new nodes.
         entry.rotate(
             &mut rng,
+            0, // bucket
             5,
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,
@@ -338,6 +356,7 @@ mod tests {
         assert!(entry.0.keys().eq(keys));
         entry.rotate(
             &mut rng,
+            0, // bucket
             6,
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,
@@ -349,6 +368,7 @@ mod tests {
         assert!(entry.0.keys().eq(keys));
         entry.rotate(
             &mut rng,
+            0, // bucket
             4,
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,
