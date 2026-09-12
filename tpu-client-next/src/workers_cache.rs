@@ -5,12 +5,20 @@
 use {
     crate::{
         SendTransactionStats, WireTransaction,
-        connection_worker::ConnectionWorker,
+        connection_worker::{ConnectionWorker, RTT_UNSET},
         logging::{debug, trace},
     },
     lru::LruCache,
     quinn::Endpoint,
-    std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration},
+    std::{
+        net::SocketAddr,
+        num::NonZeroUsize,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::Duration,
+    },
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
@@ -23,6 +31,7 @@ use {
 /// transactions.
 pub struct WorkerInfo {
     sender: mpsc::Sender<WireTransaction>,
+    rtt_ms: Arc<AtomicU64>,
     handle: JoinHandle<()>,
     cancel: CancellationToken,
 }
@@ -30,11 +39,13 @@ pub struct WorkerInfo {
 impl WorkerInfo {
     pub fn new(
         sender: mpsc::Sender<WireTransaction>,
+        rtt_ms: Arc<AtomicU64>,
         handle: JoinHandle<()>,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             sender,
+            rtt_ms,
             handle,
             cancel,
         }
@@ -75,6 +86,13 @@ impl WorkerInfo {
     fn is_active(&self) -> bool {
         !(self.cancel.is_cancelled() || self.sender.is_closed())
     }
+
+    fn rtt_ms(&self) -> Option<u64> {
+        match self.rtt_ms.load(Ordering::Relaxed) {
+            RTT_UNSET => None,
+            rtt_ms => Some(rtt_ms),
+        }
+    }
 }
 
 /// Spawns a worker to handle communication with a given peer.
@@ -89,6 +107,7 @@ pub fn spawn_worker(
     let (transaction_sender, transaction_receiver) = mpsc::channel(worker_channel_size);
     let endpoint = endpoint.clone();
     let peer = *peer;
+    let rtt_ms = Arc::new(AtomicU64::new(RTT_UNSET));
 
     let (mut worker, cancel) = ConnectionWorker::new(
         endpoint,
@@ -96,13 +115,14 @@ pub fn spawn_worker(
         transaction_receiver,
         max_reconnect_attempts,
         stats,
+        rtt_ms.clone(),
         handshake_timeout,
     );
     let handle = tokio::spawn(async move {
         worker.run().await;
     });
 
-    WorkerInfo::new(transaction_sender, handle, cancel)
+    WorkerInfo::new(transaction_sender, rtt_ms, handle, cancel)
 }
 
 /// [`WorkersCache`] manages and caches workers. It uses an LRU cache to store and
@@ -283,6 +303,10 @@ impl WorkersCache {
             .run_until_cancelled(body)
             .await
             .unwrap_or(Err(WorkersCacheError::ShutdownError))
+    }
+
+    pub(crate) fn rtt_ms(&self, peer: &SocketAddr) -> Option<u64> {
+        self.workers.peek(peer)?.rtt_ms()
     }
 
     /// Flushes the cache and asynchronously shuts down all workers. This method

@@ -62,6 +62,8 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
         // the speed of fastest leader.
         worker_channel_size: 100,
         max_reconnect_attempts: 4,
+        skip_current_leader_if_late: false,
+        slot_update_latency: 0,
         leaders_fanout: Fanout {
             send: 1,
             connect: 1,
