@@ -1528,7 +1528,7 @@ fn resolve_xdp_source_ipv4(
 
 #[cfg(not(target_os = "linux"))]
 fn validate_config_file_without_xdp(matches: &ArgMatches) -> Result<(), String> {
-    let user_path = matches.value_of("config_file");
+    let user_path = matches.value_of("experimental_config_file");
     let effective = config_file::load(user_path.map(Path::new))?;
     let application = config_file::apply_cli(effective, cli_xdp_overrides(matches)?)?;
     for warning in &application.warnings {
@@ -1554,7 +1554,7 @@ fn build_xdp_config(
     operation: &Operation,
     bind_addresses: &BindIpAddrs,
 ) -> Result<Option<ResolvedXdp>, String> {
-    let effective = config_file::load(matches.value_of("config_file").map(Path::new))?;
+    let effective = config_file::load(matches.value_of("experimental_config_file").map(Path::new))?;
     let overrides = cli_xdp_overrides(matches)?;
     if *operation == Operation::Initialize {
         info!("ledger initialization does not start XDP; skipping XDP policy validation");
@@ -1637,7 +1637,7 @@ mod versioned_xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &defaults);
         let matches = app.get_matches_from(vec![
             "agave-validator",
-            "--config-file",
+            "--experimental-config-file",
             file.path().to_str().unwrap(),
         ]);
         let binds = BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap();
@@ -1660,6 +1660,8 @@ mod versioned_xdp_tests {
     #[test]
     fn init_parses_config_without_applying_live_policy() {
         let config = br#"
+schema_version = 1
+
 [interfaces.one]
 device.name = "eth0"
 [interfaces.one.xdp]

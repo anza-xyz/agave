@@ -40,9 +40,9 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
-* Added the versioned `--config-file <PATH>` TOML configuration. The file is parsed and validated
-  on every platform; its XDP transmit settings are applied on Linux and reported as inactive
-  elsewhere.
+* Added the versioned `--experimental-config-file <PATH>` TOML configuration. The file is parsed
+  and validated on every platform; its XDP transmit settings are applied on Linux and reported as
+  inactive elsewhere.
   The embedded policy is complete, user files patch it with atomic device/worker choices, and
   matching CLI arguments form the final layer. Interfaces use stable logical labels, worker modes
   are expressed as `workers.auto`, `workers.cpus`, or `workers.bindings`, and each module selects
