@@ -42,6 +42,12 @@ still accepted for backwards compatibility but slated for full removal in the fu
 * Unstaked nodes can now receive consensus messages via votor from any staked node.
   Specify `--votor-peer-overrides <VALIDATOR IDENTITY>...` to additionally send votor
   messages to identities outside the staked set.
+### CLI
+#### Breaking
+#### Changes
+* Added `vote-update-commission-bps` to set a vote account's commission in basis points. The
+  `--commission-kind` argument selects which commission to update: `inflation-rewards` or
+  `block-revenue`.
 ### Geyser
 #### Deprecations
 * The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
