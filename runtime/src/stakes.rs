@@ -534,9 +534,14 @@ impl Stakes<StakeAccount> {
         self.stake_history = stake_history;
         self.vote_accounts = vote_accounts;
         self.delegated_stakes = delegated_stakes;
-        // Inert delegations contribute no stake and earn no rewards, so
-        // we can drop them here with no consensus effect. We bound the number
-        // of removals for performance reasons.
+        // With SIMD-0599, inert delegations contribute no stake or points and
+        // earn no rewards, so we can drop them here with no consensus effect.
+        // We bound the number of removals for performance reasons. If we have
+        // more inactives than MAX_INERT_STAKES_REMOVED_PER_EPOCH, this will
+        // remove a random subset on each validator due to how imbl is seeded,
+        // again with no consensus effect.
+        //
+        // Before SIMD-0599, inert_stake_delegations is empty, so this is a no-op.
         for stake_pubkey in inert_stake_delegations
             .iter()
             .take(MAX_INERT_STAKES_REMOVED_PER_EPOCH)
