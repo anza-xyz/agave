@@ -1371,6 +1371,7 @@ mod tests {
             unfiltered_distribution_vote_accounts,
             delegated_stakes: _,
             reward_epoch_delegated_stakes,
+            inert_stake_delegations: _,
             filtered_distribution_vote_accounts,
             rewards_calculation: _,
             calculate_activated_stake_time_us: _,
