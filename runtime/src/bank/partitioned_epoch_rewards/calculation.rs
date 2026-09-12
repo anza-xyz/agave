@@ -2266,10 +2266,9 @@ mod tests {
         assert!(feature_snapshot.relax_post_exec_min_balance_check);
 
         // A delegation deactivated in the epoch it was activated in never has
-        // effective or activating stake, so the epoch boundary evicts it from
-        // the stakes cache. Its lamports leave no room for the rent-exempt
-        // reserve, which is what makes SIMD-0392 want to rewrite it at
-        // distribution time.
+        // effective or activating stake. Its lamports leave no room for the
+        // rent-exempt reserve, which is what makes SIMD-0392 want to rewrite it
+        // at distribution time.
         let delegation = LAMPORTS_PER_SOL;
         let inert_stake_address = Pubkey::new_unique();
         let mut inert_stake_account =
@@ -2284,9 +2283,8 @@ mod tests {
             .unwrap();
 
         // Seed the cache directly. Once the feature is active, storing an inert
-        // delegation never puts it in the cache to begin with; the boundary
-        // sweep exists for delegations that were cached before activation, or
-        // that went inert while cached.
+        // delegation never puts it in the cache to begin with. This represents
+        // an inert delegation that existed before the feature was active.
         bank.store_account_without_stakes_cache(&inert_stake_address, &inert_stake_account);
         bank.stakes_cache.check_and_store(
             &inert_stake_address,
