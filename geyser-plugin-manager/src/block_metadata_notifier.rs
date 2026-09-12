@@ -1,8 +1,6 @@
 use {
-    crate::{
-        block_metadata_notifier_interface::BlockMetadataNotifier,
-        geyser_plugin_manager::GeyserPluginManager,
-    },
+    crate::block_metadata_notifier_interface::BlockMetadataNotifier,
+    agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::{
         geyser_plugin_interface::{ReplicaBlockInfoV5, ReplicaBlockInfoVersions},
         transaction_status_meta::{Reward, RewardsAndNumPartitions},
@@ -15,7 +13,7 @@ use {
 };
 
 pub(crate) struct BlockMetadataNotifierImpl {
-    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
 }
 
 impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
@@ -35,7 +33,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         commission_rate_in_basis_points: bool,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
@@ -64,7 +62,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             entry_count,
         );
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             let block_info = ReplicaBlockInfoVersions::V0_0_5(&block_info);
             match plugin.notify_block_metadata_for_bank(block_info, bank_id) {
                 Err(err) => {
@@ -141,7 +139,7 @@ impl BlockMetadataNotifierImpl {
         }
     }
 
-    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginHost>>) -> Self {
         Self { plugin_manager }
     }
 }
@@ -150,7 +148,7 @@ impl BlockMetadataNotifierImpl {
 mod tests {
     use {
         super::*,
-        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_host::{GeyserPluginHost, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{
             GeyserPlugin, GeyserPluginError, Result,
         },
@@ -217,13 +215,13 @@ mod tests {
     #[test]
     fn test_notify_block_metadata_includes_bank_id() {
         let updates = Arc::new(Mutex::new(Vec::new()));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded_test_plugin(TestBlockMetadataPlugin {
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![loaded_test_plugin(TestBlockMetadataPlugin {
                 updates: updates.clone(),
                 rewards_debug: Arc::new(Mutex::new(Vec::new())),
                 fail: false,
             })],
-        })));
+        ))));
         let notifier = BlockMetadataNotifierImpl::new(plugin_manager);
         let rewards = KeyedRewardsAndNumPartitions {
             keyed_rewards: Vec::new(),
@@ -250,9 +248,7 @@ mod tests {
     #[test]
     fn converts_rewards_reports_errors_and_skips_empty() {
         // Empty plugin set: dispatch returns before building anything.
-        let empty = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![],
-        })));
+        let empty = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::default())));
         let notifier = BlockMetadataNotifierImpl::new(empty);
         let no_rewards = KeyedRewardsAndNumPartitions {
             keyed_rewards: vec![],
@@ -266,8 +262,8 @@ mod tests {
         let fail_rewards_debug = Arc::new(Mutex::new(Vec::new()));
         let updates = Arc::new(Mutex::new(Vec::new()));
         let rewards_debug = Arc::new(Mutex::new(Vec::new()));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![
                 loaded_test_plugin(TestBlockMetadataPlugin {
                     updates: fail_updates.clone(),
                     rewards_debug: fail_rewards_debug.clone(),
@@ -279,7 +275,7 @@ mod tests {
                     fail: false,
                 }),
             ],
-        })));
+        ))));
         let notifier = BlockMetadataNotifierImpl::new(plugin_manager);
 
         let pk = Pubkey::new_unique();

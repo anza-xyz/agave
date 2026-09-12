@@ -167,6 +167,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-geyser-plugin-host"
+version = "4.4.0-alpha.4"
+dependencies = [
+ "agave-geyser-plugin-host-test-plugin",
+ "agave-geyser-plugin-interface",
+ "json5",
+ "libloading",
+ "log",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "agave-geyser-plugin-host-test-plugin"
+version = "4.4.0-alpha.4"
+dependencies = [
+ "agave-geyser-plugin-interface",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "4.4.0-alpha.4"
 dependencies = [
@@ -8460,17 +8481,16 @@ dependencies = [
 name = "solana-geyser-plugin-manager"
 version = "4.4.0-alpha.4"
 dependencies = [
+ "agave-geyser-plugin-host",
  "agave-geyser-plugin-interface",
  "agave-votor-messages",
  "arc-swap",
  "bs58",
  "crossbeam-channel",
- "json5",
  "jsonrpc-core",
  "lazy-lru",
  "libloading",
  "log",
- "serde_json",
  "smallvec",
  "solana-account",
  "solana-account-decoder-client-types",
@@ -8480,14 +8500,17 @@ dependencies = [
  "solana-entry",
  "solana-gossip",
  "solana-hash",
+ "solana-keypair",
  "solana-ledger",
  "solana-measure",
  "solana-message",
+ "solana-net-utils",
  "solana-pubkey 4.3.0",
  "solana-reward-info",
  "solana-rpc",
  "solana-runtime",
  "solana-signature",
+ "solana-signer",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
