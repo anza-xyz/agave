@@ -232,16 +232,20 @@ mod tests {
             if pass == 0 {
                 index.insert(&key, &[0, 1]);
             } else {
-                let result = index.try_insert(&key, &[0, 1]);
-                assert!(result.is_err());
+                let err = index.try_insert(&key, &[0, 1]).unwrap_err();
                 assert_eq!(index.read_value::<Vec<_>>(&key), None);
-                if pass == 2 {
+                let second_err = if pass == 2 {
                     // another call to try insert again - should still return an error
-                    let result = index.try_insert(&key, &[0, 1]);
-                    assert!(result.is_err());
+                    let err = index.try_insert(&key, &[0, 1]).unwrap_err();
                     assert_eq!(index.read_value::<Vec<_>>(&key), None);
+                    Some(err)
+                } else {
+                    None
+                };
+                bucket.grow(err);
+                if let Some(err) = second_err {
+                    bucket.grow(err);
                 }
-                bucket.grow(result.unwrap_err());
                 let result = index.try_insert(&key, &[0, 1]);
                 assert!(result.is_ok());
             }
