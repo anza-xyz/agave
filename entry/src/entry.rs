@@ -241,17 +241,6 @@ struct TxVerificationData<D: TransactionData> {
     transaction_view: UnsanitizedTransactionView<D>,
 }
 
-/// TODO: we will move this API into solana-sdk.
-#[inline]
-pub fn batch_verify<'a, I>(items: I) -> bool
-where
-    I: IntoParallelIterator<Item = (&'a Signature, &'a Address, &'a [u8])>,
-{
-    items
-        .into_par_iter()
-        .all(|(signature, pubkey, message)| signature.verify(pubkey.as_ref(), message))
-}
-
 pub struct UnverifiedSignatures<D: TransactionData> {
     signatures: Vec<TxVerificationData<D>>,
 }
@@ -266,15 +255,22 @@ where
         }
     }
 
+    /// Verifies all collected signatures in parallel on the current rayon
+    /// thread pool, checking each signature individually.
     pub fn verify(&self) -> Result<()> {
-        let verification_items = self.signatures.par_iter().flat_map_iter(|tx| {
-            let message = tx.transaction_view.message_data();
-            let len = tx.signatures.len();
+        let all_valid = self
+            .signatures
+            .par_iter()
+            .flat_map_iter(|tx| {
+                let message = tx.transaction_view.message_data();
+                tx.signatures
+                    .iter()
+                    .zip(tx.signer_pubkeys.iter())
+                    .map(move |(signature, pubkey)| (signature, pubkey, message))
+            })
+            .all(|(signature, pubkey, message)| signature.verify(pubkey.as_ref(), message));
 
-            (0..len).map(move |i| (&tx.signatures[i], &tx.signer_pubkeys[i], message))
-        });
-
-        if batch_verify(verification_items) {
+        if all_valid {
             Ok(())
         } else {
             Err(TransactionError::SignatureFailure)
@@ -282,7 +278,8 @@ where
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    /// todo: this function is for benches only and will be removed after we move the batch verify logic to sdk
+    /// Per-signature verification baseline, kept only for benchmarking against
+    /// [`Self::verify`].
     pub fn verify_single_loop_for_benches(&self) -> Result<()> {
         self.signatures.par_iter().try_for_each(|tx_signatures| {
             if tx_signatures
