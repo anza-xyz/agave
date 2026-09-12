@@ -486,13 +486,12 @@ impl Stakes<StakeAccount> {
                     )
                     .reduce(
                         identity,
-                        |(activation_status_a, delegated_stakes_a, mut inert_a),
+                        |(activation_status_a, delegated_stakes_a, inert_a),
                          (activation_status_b, delegated_stakes_b, inert_b)| {
-                            inert_a.extend(inert_b);
                             (
                                 activation_status_a + activation_status_b,
                                 merge_delegated_stakes(delegated_stakes_a, delegated_stakes_b),
-                                inert_a,
+                                merge_inert_stake_delegations(inert_a, inert_b),
                             )
                         },
                     )
@@ -834,6 +833,14 @@ fn merge_delegated_stakes(
         *stakes.entry(pubkey).or_default() += stake;
     }
     stakes
+}
+
+fn merge_inert_stake_delegations(mut inert: Vec<Pubkey>, other: Vec<Pubkey>) -> Vec<Pubkey> {
+    if inert.len() < other.len() {
+        return merge_inert_stake_delegations(other, inert);
+    }
+    inert.extend(other);
+    inert
 }
 
 fn refresh_vote_accounts(
