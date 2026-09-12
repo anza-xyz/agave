@@ -1256,8 +1256,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("config_file")
-            .long("config-file")
+        Arg::with_name("experimental_config_file")
+            .long("experimental-config-file")
             .takes_value(true)
             .value_name("PATH")
             .help(

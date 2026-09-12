@@ -397,7 +397,12 @@ fn parse_toml(text: &str, description: &str, built_in: bool) -> Result<toml::Val
             )
         })?,
         None if built_in => return Err("built-in config is missing schema_version".to_string()),
-        None => 1,
+        None => {
+            return Err(format!(
+                "config `{description}` is missing required schema_version; this binary supports \
+                 version {SCHEMA_VERSION}"
+            ));
+        }
     };
     if version != i64::from(SCHEMA_VERSION) {
         return Err(format!(
@@ -766,8 +771,7 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
             continue;
         }
         let message = format!(
-            "{name}.xdp.tx.interface names {:?}, which is not a declared interface; declared: \
-             {:?}",
+            "{name}.xdp.tx.interface names {:?}, which is not a declared interface; declared: {:?}",
             module.tx.interface, label
         );
         if active && module.enabled {
@@ -1013,10 +1017,14 @@ tx.queues = [0]
 tx.queues = [0]
 "#;
 
-    fn user(contents: &str) -> EffectiveConfig {
+    fn load_user(contents: &str) -> Result<EffectiveConfig, String> {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         file.write_all(contents.as_bytes()).unwrap();
-        load(Some(file.path())).unwrap()
+        load(Some(file.path()))
+    }
+
+    fn user(contents: &str) -> EffectiveConfig {
+        load_user(&format!("schema_version = 1\n{contents}")).unwrap()
     }
 
     fn user_with_all_modules_queue_zero(contents: &str) -> EffectiveConfig {
@@ -1191,18 +1199,22 @@ workers.bindings = [{ queue = 0, cpu = 8 }]
     }
 
     #[test]
-    fn absent_version_is_one_and_mismatch_fails() {
-        user(
+    fn absent_and_mismatched_versions_fail() {
+        let error = load_user(
             r#"
 [xdp]
 enabled = false
 "#,
-        );
-        let error = user_error(
+        )
+        .unwrap_err();
+        assert!(error.contains("missing required schema_version"), "{error}");
+
+        let error = load_user(
             r#"
 schema_version = 2
 "#,
-        );
+        )
+        .unwrap_err();
         assert!(error.contains("supports version 1"), "{error}");
     }
 
@@ -1523,8 +1535,6 @@ tx.queues = true
     }
 
     fn user_error(contents: &str) -> String {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(contents.as_bytes()).unwrap();
-        load(Some(file.path())).unwrap_err()
+        load_user(&format!("schema_version = 1\n{contents}")).unwrap_err()
     }
 }

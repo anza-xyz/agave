@@ -10,7 +10,7 @@
 #   may inherit fields; new labels must fully define `device`, `xdp.zero_copy`,
 #   and `xdp.workers`.
 # XDP transmit is Linux-only. Other platforms validate this policy, then report
-# it as inactive. schema_version must be 1; omitting it means 1.
+# it as inactive. schema_version is required and must be 1.
 #
 # [xdp]
 # enabled       Global gate. False puts every module on OS sockets. `--no-xdp`
