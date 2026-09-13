@@ -8,10 +8,16 @@ use {
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
-    std::collections::HashMap,
+    std::{collections::HashMap, sync::LazyLock},
 };
 
 const NUM_PUSH_ACTIVE_SET_ENTRIES: usize = 25;
+
+/// EXPERIMENT (H_02): set `GOSSIP_ROTATE_OFFSET` to make `get_nodes` start its
+/// walk at a rotating index instead of always at 0, so that the same binary can
+/// run both arms of the A/B.
+static ROTATE_OFFSET: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("GOSSIP_ROTATE_OFFSET").is_some());
 
 // Each entry corresponds to a stake bucket for
 //     min stake of { this node, crds value owner }
@@ -22,8 +28,13 @@ pub(crate) struct PushActiveSet([PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES
 
 // Keys are gossip nodes to push messages to.
 // Values are which origins the node has pruned.
+// The second field is the rotating start index used by `get_nodes`, advanced
+// once per `rotate`; see the comment there.
 #[derive(Default)]
-struct PushActiveSetEntry(IndexMap</*node:*/ Pubkey, /*origins:*/ ConcurrentBloom<Pubkey>>);
+struct PushActiveSetEntry(
+    IndexMap</*node:*/ Pubkey, /*origins:*/ ConcurrentBloom<Pubkey>>,
+    /*offset:*/ usize,
+);
 
 impl PushActiveSet {
     const MIN_NUM_BLOOM_ITEMS: usize = crate::cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY;
@@ -119,8 +130,22 @@ impl PushActiveSetEntry {
         origin: &'a Pubkey, // CRDS value owner.
     ) -> impl Iterator<Item = &'a Pubkey> + 'a {
         let pubkey_eq_origin = pubkey == origin;
+        // EXPERIMENT (H_02): start the walk at a rotating offset instead of
+        // always at index 0. The caller keeps only the first `fanout` of these,
+        // so with a fixed start the last `size - fanout` entries never receive
+        // anything until eviction shifts them forward -- a 22.5s blind window
+        // for every newly added destination. Rotating the start spreads that
+        // loss uniformly at identical egress.
+        let offset = if *ROTATE_OFFSET {
+            self.1 % self.0.len().max(1)
+        } else {
+            0
+        };
         self.0
             .iter()
+            .cycle()
+            .skip(offset)
+            .take(self.0.len())
             .filter(move |(node, bloom_filter)| {
                 // Bloom filter can return false positive for origin == pubkey
                 // but a node should always be able to push its own values.
@@ -135,6 +160,11 @@ impl PushActiveSetEntry {
         origin: &Pubkey, // CRDS value owner
     ) {
         if let Some(bloom_filter) = self.0.get(node) {
+            // A pruned (node, origin) pair drops out of `get_nodes` entirely,
+            // so it appears in neither `kept` nor `dropped` and an open blind
+            // run for it never closes. Trace it to tell prune-driven silence
+            // apart from position-driven silence.
+            warn!("{ROUTE_LOG_TAG} active_set_prune: node={node}, origin={origin}");
             bloom_filter.add(origin);
         }
     }
@@ -150,6 +180,7 @@ impl PushActiveSetEntry {
     ) {
         debug_assert_eq!(nodes.len(), weights.len());
         debug_assert!(weights.clone().all(|weight| weight != 0u64));
+        self.1 = self.1.wrapping_add(1);
         let mut added = Vec::new();
         let mut evicted = Vec::new();
         let mut weighted_shuffle = WeightedShuffle::new("rotate-active-set", weights);

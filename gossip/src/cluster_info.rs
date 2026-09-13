@@ -2114,6 +2114,8 @@ impl ClusterInfo {
                 value,
                 &self.socket_addr_space,
                 &self.ping_cache,
+                &self.gossip.crds,
+                stakes,
                 &mut pings,
                 &self.stats,
             ) {
@@ -2603,8 +2605,13 @@ fn get_node_addr(
     query(node).filter(|addr| socket_addr_space.check(addr))
 }
 
-// If the CRDS value is an unstaked contact-info, verifies if
-// it has responded to ping on its gossip socket address.
+// If the CRDS value is a contact-info, verifies if it has responded to ping on
+// its gossip socket address.
+// A staked node which is already in CRDS under the same gossip IP is exempt: its
+// address has been verified before, so the refreshed contact-info is admitted
+// while the renewal ping is still in flight. Without this, a staked node whose
+// ping-cache entry has aged out goes unseen until a full ping/pong round-trip
+// completes, which shows up as a liveness gap.
 // Returns false if the CRDS value should be discarded.
 #[must_use]
 fn verify_gossip_addr<R: Rng + CryptoRng>(
@@ -2613,6 +2620,8 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     value: &CrdsValue,
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
+    crds: &RwLock<Crds>,
+    stakes: &HashMap<Pubkey, u64>,
     pings: &mut Vec<(Pubkey, SocketAddr, Ping)>,
     stats: &GossipStats,
 ) -> bool {
@@ -2641,10 +2650,36 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
         let mut ping_cache = ping_cache.lock().unwrap();
         ping_cache.check(rng, keypair, now, node)
     };
+    // Sent regardless of the verdict below, so that an exempted staked node's
+    // ping-cache entry is renewed rather than left to keep missing.
     if let Some(ping) = ping {
         pings.push((*pubkey, addr, ping));
     }
-    out
+    out || is_known_staked_gossip_addr(pubkey, addr, crds, stakes, stats)
+}
+
+// Whether the node is staked and already in CRDS under a contact-info with the
+// same gossip IP, in which case a pending ping need not hold up the update.
+fn is_known_staked_gossip_addr(
+    pubkey: &Pubkey,
+    addr: SocketAddr,
+    crds: &RwLock<Crds>,
+    stakes: &HashMap<Pubkey, u64>,
+    stats: &GossipStats,
+) -> bool {
+    if stakes.get(pubkey).copied().unwrap_or_default() == 0u64 {
+        return false;
+    }
+    let known = {
+        let crds = crds.read().unwrap();
+        crds.get::<&ContactInfo>(*pubkey)
+            .and_then(ContactInfo::gossip)
+            .is_some_and(|known| known.ip() == addr.ip())
+    };
+    if known {
+        stats.num_unverified_staked_addrs_admitted.add_relaxed(1);
+    }
+    known
 }
 
 fn send_gossip_packets<S: Borrow<SocketAddr>>(

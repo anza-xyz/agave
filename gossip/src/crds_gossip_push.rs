@@ -204,13 +204,18 @@ impl CrdsGossipPush {
             // pruned for this origin.
             if matches!(value.data(), CrdsData::ContactInfo(_)) {
                 let eligible: Vec<_> = active_set.get_nodes(pubkey, &origin, stakes).collect();
-                if let Some(dropped) = eligible.get(self.push_fanout..) {
+                if let Some(dropped) = eligible.get(self.push_fanout..).filter(|d| !d.is_empty()) {
+                    // `kept` is needed to tell "served this round" apart from
+                    // "filtered out by the bloom before truncation": a
+                    // destination absent from `dropped` may have been either,
+                    // and without it a blind run cannot be measured.
                     warn!(
                         "{ROUTE_LOG_TAG} push_truncated: origin={origin}, bucket={}, eligible={}, \
-                         fanout={}, dropped={dropped:?}",
+                         fanout={}, kept={:?}, dropped={dropped:?}",
                         stake_bucket(pubkey, &origin, stakes),
                         eligible.len(),
                         self.push_fanout,
+                        &eligible[..self.push_fanout],
                     );
                 }
             }

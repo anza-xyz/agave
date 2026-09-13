@@ -268,6 +268,27 @@ fn log_contact_info_insert(
     );
 }
 
+/// Counterpart to [`log_contact_info_insert`] for contact-infos that arrived
+/// but were not accepted, so that delivery can be measured separately from
+/// value novelty. `outdated` distinguishes a value older than the one held
+/// from a byte-identical duplicate.
+fn log_contact_info_reject(node: &ContactInfo, route: GossipRoute, now: u64, outdated: bool) {
+    let (route, from) = match route {
+        GossipRoute::LocalMessage => ("local", None),
+        GossipRoute::PullRequest => ("pull_req", None),
+        GossipRoute::PullResponse => ("pull_resp", None),
+        GossipRoute::PushMessage(from) => ("push", Some(from)),
+    };
+    warn!(
+        "{ROUTE_LOG_TAG} crds_reject: origin={}, route={route}, from={}, kind={}, \
+         wallclock_age={}ms",
+        node.pubkey(),
+        from.map_or_else(|| "none".to_string(), |from| from.to_string()),
+        if outdated { "outdated" } else { "duplicate" },
+        now.saturating_sub(node.wallclock()),
+    );
+}
+
 impl Crds {
     /// Returns true if the given value updates an existing one in the table.
     /// The value is outdated and fails to insert, if it already exists in the
@@ -378,6 +399,15 @@ impl Crds {
                     value.value.label(),
                     value.value.wallclock(),
                 );
+                // A gap in accepted inserts is not necessarily a gap in
+                // delivery: a value we already hold is rejected here and never
+                // reaches log_contact_info_insert. Trace rejections so that an
+                // apparent outage can be told apart from the origin simply not
+                // having published anything new.
+                if let CrdsData::ContactInfo(node) = value.value.data() {
+                    let outdated = entry.get().value.hash() != value.value.hash();
+                    log_contact_info_reject(node, route, now, outdated);
+                }
                 // Identify if the message is outdated (as opposed to
                 // duplicate) by comparing value hashes.
                 if entry.get().value.hash() != value.value.hash() {

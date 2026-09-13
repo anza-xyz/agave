@@ -8,14 +8,16 @@ it.  H_01_PRUNE predicts the latter, i.e. gaps that end on a `pull_resp` insert.
 
 Usage:
     gossip_routes.py validator.log                       # per-origin summary
-    gossip_routes.py --join validator.log validator.log  # join to RRRRRRRRRR episodes
+                                                         #   + RRRRRRRRRR episode join
     gossip_routes.py --timeline --pubkey FT9... validator.log
     gossip_routes.py --prunes validator.log              # ingress prune table
     gossip_routes.py --rotations validator.log           # active-set churn
     gossip_routes.py --cutoff validator.log              # time spent past the fanout
     gossip_routes.py --truncations validator.log         # pushes the fanout dropped
 
---join takes the log holding the RRRRRRRRRR episodes; usually the same file.
+The default mode also joins the per-origin summary to the RRRRRRRRRR
+grace-band episodes, which the same validator emits into the same log.  The
+join is skipped with a note on stderr if the log carries no RRRRRRRRRR lines.
 
 --cutoff and --truncations describe pushes this node *sends*. To confirm that a
 gap seen here was caused by a sender truncating us, cross-reference a sender's
@@ -174,13 +176,16 @@ def join_episodes(inserts, wfsm_logs, old_ms, new_ms):
     try:
         import wfsm_grace
     except ImportError:
-        sys.exit("--join needs wfsm_grace.py importable (run from the repo root)")
+        print("skipping episode join: wfsm_grace.py not importable", file=sys.stderr)
+        return
 
     samples = wfsm_grace.parse_samples(wfsm_grace.grep_tag(wfsm_logs))
     if not samples:
-        sys.exit("no RRRRRRRRRR samples found in --join logs")
+        print("skipping episode join: no RRRRRRRRRR samples", file=sys.stderr)
+        return
     runs = wfsm_grace.episodes(samples, old_ms, new_ms)
 
+    print()
     print(
         f"{'START':8} {'VERDICT':10} {'ORIGIN':44} "
         f"{'BEFORE':>9} {'AFTER':>9} {'BLIND':>9} ROUTES_IN_GAP"
@@ -417,7 +422,6 @@ def main():
     parser.add_argument(
         "--pubkey", action="append", default=[], help="restrict to this pubkey (repeatable)"
     )
-    parser.add_argument("--join", nargs="+", metavar="LOG", help="RRRRRRRRRR logs to join")
     parser.add_argument("--timeline", action="store_true")
     parser.add_argument("--prunes", action="store_true")
     parser.add_argument("--rotations", action="store_true")
@@ -446,10 +450,9 @@ def main():
         show_cutoff(rotations, pubkeys)
     elif args.truncations:
         show_truncations(truncations, pubkeys)
-    elif args.join:
-        join_episodes(inserts, args.join, args.old_ms, args.new_ms)
     else:
         summarize(inserts, pubkeys)
+        join_episodes(inserts, args.logs, args.old_ms, args.new_ms)
 
 
 if __name__ == "__main__":
