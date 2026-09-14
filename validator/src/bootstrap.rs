@@ -12,7 +12,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_core::validator::{ValidatorConfig, ValidatorStartProgress},
     solana_download_utils::{DownloadProgressRecord, download_snapshot_archive},
-    solana_genesis_utils::download_then_check_genesis_hash,
+    solana_genesis_utils::{download_then_check_genesis_hash, open_genesis_config},
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
@@ -565,7 +565,7 @@ pub fn rpc_bootstrap(
     minimal_snapshot_download_speed: f32,
     maximum_snapshot_download_abort: u64,
     socket_addr_space: SocketAddrSpace,
-) {
+) -> Result<(), String> {
     if do_port_check {
         let mut order: Vec<_> = (0..cluster_entrypoints.len()).collect();
         order.shuffle(&mut rng());
@@ -577,12 +577,12 @@ pub fn rpc_bootstrap(
                 &socket_addr_space,
             )
         }) {
-            exit(1);
+            return Err("reachable port check failed".to_string());
         }
     }
 
     if bootstrap_config.no_genesis_fetch && bootstrap_config.no_snapshot_fetch {
-        return;
+        return Ok(());
     }
 
     let total_snapshot_download_time = Instant::now();
@@ -592,6 +592,35 @@ pub fn rpc_bootstrap(
     let mut gossip = None;
     let mut vetted_rpc_nodes = vec![];
     let mut download_abort_count = 0;
+
+    // Load the local genesis from disk if present.
+    // If the expected genesis hash is unset, set it to the local genesis hash.
+    // Otherwise check the expected genesis hash matches the local genesis hash
+    // and exit before entering the snapshot download loop if they do not match.
+    if let Ok(local_genesis) = open_genesis_config(
+        ledger_path,
+        bootstrap_config.max_genesis_archive_unpacked_size,
+    ) {
+        let local_genesis_hash = local_genesis.hash();
+        match validator_config.expected_genesis_hash {
+            Some(expected_genesis_hash) => {
+                if local_genesis_hash != expected_genesis_hash {
+                    return Err(format!(
+                        "Genesis hash mismatch: expected {expected_genesis_hash} but local genesis hash is {local_genesis_hash}"
+                    ));
+                }
+            }
+            None => {
+                validator_config.expected_genesis_hash = Some(local_genesis_hash);
+                info!("Expected genesis hash set to {local_genesis_hash}");
+            }
+        }
+    } else if bootstrap_config.no_genesis_fetch {
+        return Err(format!(
+            "No valid local genesis is present and genesis fetching is disabled"
+        ));
+    }
+
     loop {
         if gossip.is_none() {
             *start_progress.write().unwrap() = ValidatorStartProgress::SearchingForRpcService;
@@ -681,6 +710,8 @@ pub fn rpc_bootstrap(
         ("download_abort_count", download_abort_count, i64),
         ("blacklisted_nodes_count", blacklisted_rpc_nodes.len(), i64),
     );
+
+    Ok(())
 }
 
 /// Get RPC peer node candidates to download from.
