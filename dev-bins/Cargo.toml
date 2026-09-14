@@ -97,7 +97,7 @@ solana-cost-model = { path = "../cost-model", version = "=4.4.0-alpha.4", featur
 solana-entry = { path = "../entry", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-epoch-schedule = "3.2.0"
 solana-faucet = { path = "../faucet", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
-solana-feature-gate-interface = "4.0.0"
+solana-feature-gate-interface = "5.0.0"
 solana-fee-calculator = "3.2.2"
 solana-genesis = { path = "../genesis", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-genesis-config = "4.1.0"
