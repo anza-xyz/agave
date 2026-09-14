@@ -8193,7 +8193,7 @@ dependencies = [
  "solana-instruction 3.5.0",
  "solana-keypair",
  "solana-loader-v3-interface",
- "solana-message 5.0.0",
+ "solana-message 4.6.0",
  "solana-program-binaries",
  "solana-program-runtime",
  "solana-pubkey 4.3.0",
