@@ -3086,16 +3086,31 @@ fn wait_for_supermajority(
 // consecutive missed refreshes.
 const NODE_LIVENESS_TIMEOUT_MS: u64 = 3 * CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
 
+// Contact-info age at which a node is pinged directly, so that a pong is on
+// record by the time its contact info leaves the
+// CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS window; two seconds short of the window
+// leaves room for the ping/pong round trip.
+const NODE_LIVENESS_PING_AGE_MS: u64 = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS - 2000;
+
 // Get the activated stake percentage (based on the provided bank) that is visible in gossip
 fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo) -> u64 {
     let mut online_stake = 0;
     // Stake that would have been considered online under the old, un-tripled
     // timeout. Reported alongside online_stake for comparison only.
     let mut online_stake_old_timeout = 0;
+    // Stake counted online under the ping-backed criterion: either the contact
+    // info is inside the old timeout, or the node answered a ping more recently
+    // than it authored that contact info. This is the criterion the returned
+    // percentage is based on; the others are reported for comparison only.
+    let mut online_stake_ping = 0;
     let mut offline_stake = 0;
     let mut offline_nodes = vec![];
     // Nodes that are only online thanks to the extended timeout.
     let mut grace_nodes = vec![];
+    // Nodes whose contact info is close enough to the old timeout that we probe
+    // them directly, so their liveness does not hinge on a contact info that
+    // may not be reaching us.
+    let mut ping_targets = vec![];
 
     // Stake whose crds entry was inserted locally within the old timeout. Unlike
     // the wallclock ages, this is stamped with our own clock, so it is immune to
@@ -3144,47 +3159,75 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo) -> u64 {
             if local_age.is_some_and(|local_age| local_age < CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS) {
                 online_stake_local_ts += activated_stake;
             }
+            // A pong is only a useful liveness signal while it is more recent
+            // than the contact info it stands in for, so record its age either
+            // way and let the criterion below decide.
+            let pong_age = node
+                .gossip()
+                .and_then(|addr| cluster_info.pong_age(vote_state_node_pubkey, addr))
+                .map(|pong_age| pong_age.as_millis() as u64);
             if *age < CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS {
                 online_stake_old_timeout += activated_stake;
+                online_stake_ping += activated_stake;
             } else {
+                if pong_age.is_some_and(|pong_age| pong_age < *age) {
+                    online_stake_ping += activated_stake;
+                }
                 grace_nodes.push((
                     activated_stake,
                     vote_state_node_pubkey,
                     node.gossip(),
                     *age,
                     *local_age,
+                    pong_age,
                 ));
+            }
+            // Probe while the contact info is still inside the window, so a pong
+            // is already on record if it ages out.
+            if *age >= NODE_LIVENESS_PING_AGE_MS
+                && let Some(gossip_addr) = node.gossip()
+            {
+                ping_targets.push((vote_state_node_pubkey, gossip_addr));
             }
         } else if vote_state_node_pubkey == my_id {
             // This node is online, under either timeout
             online_stake += activated_stake;
             online_stake_old_timeout += activated_stake;
             online_stake_local_ts += activated_stake;
+            online_stake_ping += activated_stake;
         } else {
             offline_stake += activated_stake;
             offline_nodes.push((activated_stake, vote_state_node_pubkey));
         }
     }
 
+    cluster_info.queue_liveness_pings(ping_targets);
+
     let online_stake_percentage = (online_stake as f64 / total_activated_stake as f64) * 100.;
     let online_stake_percentage_old_timeout =
         (online_stake_old_timeout as f64 / total_activated_stake as f64) * 100.;
     let online_stake_percentage_local_ts =
         (online_stake_local_ts as f64 / total_activated_stake as f64) * 100.;
-    info!("{online_stake_percentage:.3}% of active stake visible in gossip");
+    let online_stake_percentage_ping =
+        (online_stake_ping as f64 / total_activated_stake as f64) * 100.;
+    info!("{online_stake_percentage_ping:.3}% of active stake visible in gossip");
     info!(
         "RRRRRRRRRR {online_stake_percentage:.3}% of active stake visible in gossip with \
          {NODE_LIVENESS_TIMEOUT_MS}ms timeout, {online_stake_percentage_old_timeout:.3}% with \
          {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms timeout, {online_stake_percentage_local_ts:.3}% \
-         with {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms local-insert timeout"
+         with {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms local-insert timeout, \
+         {online_stake_percentage_ping:.3}% with ping-backed {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms \
+         timeout"
     );
     grace_nodes.sort_by_key(|node| cmp::Reverse(node.0)); // sort by reverse stake weight
-    for (stake, identity, gossip_addr, age, local_age) in grace_nodes {
+    for (stake, identity, gossip_addr, age, local_age, pong_age) in grace_nodes {
         info!(
-            "RRRRRRRRRR    {:.3}% - {identity} - gossip {} - age {age}ms - local_age {}ms",
+            "RRRRRRRRRR    {:.3}% - {identity} - gossip {} - age {age}ms - local_age {}ms - \
+             pong_age {}ms",
             (stake as f64 / total_activated_stake as f64) * 100.,
             gossip_addr.map_or_else(|| "none".to_string(), |addr| addr.to_string()),
             local_age.map_or_else(|| "none".to_string(), |local_age| local_age.to_string()),
+            pong_age.map_or_else(|| "none".to_string(), |pong_age| pong_age.to_string()),
         );
     }
 
@@ -3207,11 +3250,12 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo) -> u64 {
         ("online_stake", online_stake, i64),
         ("online_stake_old_timeout", online_stake_old_timeout, i64),
         ("online_stake_local_ts", online_stake_local_ts, i64),
+        ("online_stake_ping", online_stake_ping, i64),
         ("offline_stake", offline_stake, i64),
         ("total_activated_stake", total_activated_stake, i64),
     );
 
-    online_stake_percentage as u64
+    online_stake_percentage_ping as u64
 }
 
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {

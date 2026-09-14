@@ -201,6 +201,9 @@ pub struct ClusterInfo {
     sigverify_cache: SigVerifyCache,
     /// Alpenglow migration status
     migration_status: OnceLock<Arc<MigrationStatus>>,
+    /// Peers to ping on the next gossip round, queued out of band by
+    /// [`ClusterInfo::queue_liveness_pings`].
+    liveness_ping_queue: Mutex<HashSet<(Pubkey, SocketAddr)>>,
 }
 
 impl ClusterInfo {
@@ -240,6 +243,7 @@ impl ClusterInfo {
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
             migration_status: OnceLock::new(),
+            liveness_ping_queue: Mutex::default(),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -272,6 +276,59 @@ impl ClusterInfo {
 
     pub fn bind_ip_addrs(&self) -> Arc<BindIpAddrs> {
         self.bind_ip_addrs.clone()
+    }
+
+    /// Queues a ping to each of `peers`, to be sent on the next gossip round.
+    ///
+    /// A pong answers the one question a contact info about to age out cannot:
+    /// whether the node is still there. Liveness checks which would otherwise
+    /// have to read staleness as absence (see
+    /// `validator::get_stake_percent_in_gossip`) use this to probe a peer while
+    /// its contact info is still inside the liveness window.
+    pub fn queue_liveness_pings(&self, peers: impl IntoIterator<Item = (Pubkey, SocketAddr)>) {
+        let peers = peers
+            .into_iter()
+            .filter(|(_, addr)| ContactInfo::is_valid_address(addr, &self.socket_addr_space));
+        self.liveness_ping_queue.lock().unwrap().extend(peers);
+    }
+
+    /// How long ago `peer` last responded to a ping on `addr`, or None if it has
+    /// not responded within the ping cache ttl.
+    pub fn pong_age(&self, peer: Pubkey, addr: SocketAddr) -> Option<Duration> {
+        self.ping_cache
+            .lock()
+            .unwrap()
+            .pong_age(Instant::now(), &(peer, addr))
+    }
+
+    /// Pings queued by [`Self::queue_liveness_pings`]. Nodes with a ping already
+    /// in flight are skipped, so a peer sitting in a caller's at-risk band for
+    /// several rounds is pinged at the ping cache's own rate, not the caller's.
+    fn new_liveness_pings(&self) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
+        let peers = std::mem::take(&mut *self.liveness_ping_queue.lock().unwrap());
+        if peers.is_empty() {
+            return Either::Left(std::iter::empty());
+        }
+        let keypair = self.keypair();
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let pings: Vec<_> = {
+            let mut ping_cache = self.ping_cache.lock().unwrap();
+            peers
+                .into_iter()
+                .filter_map(|node| {
+                    let ping = ping_cache.force_ping(&mut rng, &keypair, now, node)?;
+                    Some((node.0, node.1, ping))
+                })
+                .collect()
+        };
+        self.stats
+            .liveness_pings_sent
+            .add_relaxed(pings.len() as u64);
+        Either::Right(pings.into_iter().map(|(pubkey, addr, ping)| {
+            warn!("{PING_LOG_TAG} gossip_liveness_ping_sent: pubkey={pubkey}, addr={addr}");
+            (addr, Protocol::PingMessage(ping))
+        }))
     }
 
     fn refresh_push_active_set(
@@ -1409,7 +1466,9 @@ impl ClusterInfo {
         // pull-request bloom filters, preventing pull responses to return the
         // same values back to the node itself. Note that packets will arrive
         // and are processed out of order.
-        let out = self.new_push_requests(stakes);
+        let out = self
+            .new_push_requests(stakes)
+            .chain(self.new_liveness_pings());
         if generate_pull_requests {
             let reqs = self.new_pull_requests(thread_pool, gossip_validators, stakes);
             Either::Right(out.chain(reqs))

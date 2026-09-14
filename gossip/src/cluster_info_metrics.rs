@@ -120,6 +120,7 @@ pub struct GossipStats {
     pub(crate) handle_batch_pull_requests_time: Counter,
     pub(crate) handle_batch_pull_responses_time: Counter,
     pub(crate) handle_batch_push_messages_time: Counter,
+    pub(crate) liveness_pings_sent: Counter,
     pub(crate) new_pull_requests: Counter,
     pub(crate) new_push_requests2: Counter,
     pub(crate) new_push_requests: Counter,
@@ -507,6 +508,11 @@ pub(crate) fn submit_gossip_stats(
         (
             "num_unverified_staked_addrs_admitted",
             stats.num_unverified_staked_addrs_admitted.clear(),
+            i64
+        ),
+        (
+            "liveness_pings_sent",
+            stats.liveness_pings_sent.clear(),
             i64
         ),
         ("ping_timeout_count", stats.ping_timeout_count.clear(), i64),

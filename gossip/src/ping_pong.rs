@@ -336,6 +336,29 @@ impl<const N: usize> PingCache<N> {
         (check, ping)
     }
 
+    /// How long ago the remote node last responded to a ping, or None if it has
+    /// not responded within the cache ttl. Unlike [`Self::check`] this neither
+    /// evicts an expired entry nor generates a new ping, so it can be used as a
+    /// read-only liveness signal.
+    pub fn pong_age(&self, now: Instant, remote_node: &(Pubkey, SocketAddr)) -> Option<Duration> {
+        let age = now.saturating_duration_since(*self.pongs.get(remote_node)?);
+        (age <= self.ttl).then_some(age)
+    }
+
+    /// Pings the remote node even if it has already responded recently, so that
+    /// a fresh pong can serve as a liveness signal of its own. Returns None
+    /// while an earlier ping is still in flight, which bounds this to one ping
+    /// per `outstanding_ping_timeout_ms` per node.
+    pub fn force_ping<R: Rng + CryptoRng>(
+        &mut self,
+        rng: &mut R,
+        keypair: &Keypair,
+        now: Instant,
+        remote_node: (Pubkey, SocketAddr),
+    ) -> Option<Ping<N>> {
+        self.maybe_ping(rng, keypair, now, remote_node)
+    }
+
     fn record_ping_timeout(&mut self, remote_node: (Pubkey, SocketAddr)) {
         if self.ping_timeouts.len() == self.max_pings {
             self.ping_timeouts.pop_front();
