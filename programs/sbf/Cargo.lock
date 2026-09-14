@@ -151,12 +151,12 @@ dependencies = [
  "solana-bls-signatures",
  "solana-clock",
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-reward-info",
  "solana-signature",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "thiserror 2.0.20",
 ]
 
@@ -199,7 +199,7 @@ dependencies = [
  "openssl",
  "solana-ed25519-program",
  "solana-keccak-hasher",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-precompile-error",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
@@ -256,7 +256,7 @@ dependencies = [
  "solana-fee",
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
 ]
 
 [[package]]
@@ -296,14 +296,14 @@ checksum = "83adf0eb2a269e96090deb451df68e72ed03bc3005bd8222dd82bdf33f8fbd08"
 dependencies = [
  "bytes",
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-packet",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
- "solana-svm-transaction",
- "solana-transaction",
+ "solana-svm-transaction 5.0.0",
+ "solana-transaction 4.3.0",
 ]
 
 [[package]]
@@ -359,7 +359,7 @@ dependencies = [
  "solana-inflation",
  "solana-keypair",
  "solana-ledger",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-native-token",
  "solana-net-utils",
@@ -427,7 +427,7 @@ dependencies = [
  "solana-streamer",
  "solana-time-utils",
  "solana-tls-utils",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-validator-exit",
  "thiserror 2.0.20",
  "tokio",
@@ -5579,7 +5579,7 @@ dependencies = [
  "serde_derive",
  "solana-account-info",
  "solana-clock",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
  "solana-sysvar",
@@ -5604,7 +5604,7 @@ dependencies = [
  "solana-config-interface",
  "solana-epoch-schedule",
  "solana-fee-calculator",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-loader-v3-interface",
  "solana-nonce",
  "solana-program-option",
@@ -5695,7 +5695,7 @@ dependencies = [
  "solana-keypair",
  "solana-lattice-hash",
  "solana-measure",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-nohash-hasher",
  "solana-nonce",
@@ -5706,13 +5706,13 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-stake-interface",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "solana-system-interface",
  "solana-sysvar",
  "solana-time-utils",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-vote-program",
  "spl-generic-token",
  "tempfile",
@@ -5765,8 +5765,8 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-clock",
- "solana-instruction",
- "solana-instruction-error",
+ "solana-instruction 3.5.0",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
  "solana-slot-hashes",
@@ -5793,15 +5793,15 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-program-pack",
  "solana-pubkey 4.3.0",
  "solana-rent",
  "solana-signature",
  "solana-sysvar-id",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "tarpc",
  "thiserror 2.0.20",
  "tokio",
@@ -5818,12 +5818,12 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-signature",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "tarpc",
 ]
 
@@ -5839,14 +5839,14 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-send-transaction-service",
  "solana-signature",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "tarpc",
  "tokio",
 ]
@@ -5869,7 +5869,7 @@ checksum = "278a1a5bad62cd9da89ac8d4b7ec444e83caa8ae96aa656dfc27684b28d49a5d"
 dependencies = [
  "bincode",
  "serde_core",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
 ]
 
 [[package]]
@@ -5968,7 +5968,7 @@ dependencies = [
  "solana-account",
  "solana-bincode",
  "solana-clock",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-loader-v3-interface",
  "solana-packet",
  "solana-program-runtime",
@@ -6046,7 +6046,7 @@ dependencies = [
  "solana-derivation-path",
  "solana-hash",
  "solana-keypair",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-native-token",
  "solana-presigner",
  "solana-pubkey 4.3.0",
@@ -6098,7 +6098,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-epoch-schedule",
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-native-token",
  "solana-packet",
  "solana-pubkey 4.3.0",
@@ -6108,7 +6108,7 @@ dependencies = [
  "solana-stake-history",
  "solana-stake-interface",
  "solana-system-interface",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-status",
  "solana-transaction-status-client-types",
  "solana-vote-program",
@@ -6130,7 +6130,7 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-measure",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-net-utils",
  "solana-pubkey 4.3.0",
  "solana-pubsub-client",
@@ -6145,8 +6145,8 @@ dependencies = [
  "solana-tls-utils",
  "solana-tpu-client",
  "solana-tpu-client-next",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "solana-udp-client",
  "tokio",
 ]
@@ -6161,15 +6161,15 @@ dependencies = [
  "solana-commitment-config",
  "solana-epoch-info",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
 ]
 
 [[package]]
@@ -6225,11 +6225,11 @@ dependencies = [
  "solana-builtins-default-costs",
  "solana-compute-budget",
  "solana-compute-budget-interface",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
- "solana-svm-transaction",
- "solana-transaction-error",
+ "solana-svm-transaction 6.0.0",
+ "solana-transaction-error 3.4.0",
 ]
 
 [[package]]
@@ -6239,7 +6239,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0139c131989ae133c23b31c04ecf03949c198a335e5dc028ddd54bb5c9fe6ee8"
 dependencies = [
  "borsh",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-sdk-ids",
 ]
 
@@ -6259,7 +6259,7 @@ dependencies = [
  "bincode",
  "serde",
  "serde_derive",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
  "solana-short-vec",
@@ -6280,7 +6280,7 @@ dependencies = [
  "solana-metrics",
  "solana-net-utils",
  "solana-time-utils",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "thiserror 2.0.20",
 ]
 
@@ -6359,12 +6359,12 @@ dependencies = [
  "solana-gossip",
  "solana-hard-forks",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
  "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-native-token",
  "solana-net-utils",
@@ -6391,7 +6391,7 @@ dependencies = [
  "solana-streamer",
  "solana-svm",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-sysvar",
@@ -6399,8 +6399,8 @@ dependencies = [
  "solana-tls-utils",
  "solana-tpu-client",
  "solana-tpu-client-next",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status",
  "solana-turbine",
  "solana-unified-scheduler-logic",
@@ -6436,9 +6436,9 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
  "solana-sdk-ids",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "solana-system-interface",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-vote-program",
 ]
 
@@ -6450,7 +6450,7 @@ checksum = "4dea26709d867aada85d0d3617db0944215c8bb28d3745b912de7db13a23280c"
 dependencies = [
  "solana-account-info",
  "solana-define-syscall 4.0.1",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-program-error",
  "solana-pubkey 4.3.0",
  "solana-stable-layout",
@@ -6539,7 +6539,7 @@ checksum = "e1419197f1c06abf760043f6d64ba9d79a03ad5a43f18c7586471937122094da"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-sdk-ids",
 ]
 
@@ -6567,8 +6567,8 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-sha256-hasher",
  "solana-signature",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "thiserror 2.0.20",
  "wincode",
 ]
@@ -6645,7 +6645,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-nonce",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
@@ -6661,9 +6661,9 @@ dependencies = [
  "log",
  "solana-cli-output",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-net-utils",
  "solana-packet",
@@ -6671,7 +6671,7 @@ dependencies = [
  "solana-signer",
  "solana-system-interface",
  "solana-system-transaction",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "spl-memo-interface",
  "thiserror 2.0.20",
  "tokio",
@@ -6689,7 +6689,7 @@ dependencies = [
  "serde_derive",
  "solana-account",
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-program-error",
  "solana-pubkey 4.3.0",
  "solana-rent",
@@ -6702,7 +6702,7 @@ name = "solana-fee"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-fee-structure",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
 ]
 
 [[package]]
@@ -6816,12 +6816,12 @@ dependencies = [
  "solana-hash",
  "solana-ledger",
  "solana-measure",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-rpc",
  "solana-runtime",
  "solana-signature",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
  "solana-transaction-status",
  "thiserror 2.0.20",
@@ -6872,7 +6872,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-time-utils",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-version",
  "solana-vote",
  "solana-vote-program",
@@ -6939,9 +6939,19 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-define-syscall 5.2.0",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "wincode",
+]
+
+[[package]]
+name = "solana-instruction"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ea8442b67a58dd54d5497bfc6cd3106b00f9fe6f6877d33c271c3ec4672eedc"
+dependencies = [
+ "solana-define-syscall 5.2.0",
+ "solana-pubkey 4.3.0",
 ]
 
 [[package]]
@@ -6958,6 +6968,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-instruction-error"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d45854131ca87ba37ca0d537d06b460f8e0e99f00a8cd5f15492be961c85338"
+dependencies = [
+ "solana-program-error",
+]
+
+[[package]]
 name = "solana-instructions-sysvar"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6965,8 +6984,8 @@ checksum = "9e0732294560e88ecdb2bbc656e67383e9f88c78ec09469cef172f0d28cd1bcd"
 dependencies = [
  "bitflags 2.13.1",
  "solana-account-info",
- "solana-instruction",
- "solana-instruction-error",
+ "solana-instruction 3.5.0",
+ "solana-instruction-error 2.5.0",
  "solana-program-error",
  "solana-sanitize",
  "solana-sdk-ids",
@@ -6982,8 +7001,8 @@ checksum = "e38363a181313d607f7a118df2b401bb27b477a0104b09283cbf504f5f0f00cc"
 dependencies = [
  "bitflags 2.13.1",
  "solana-account-info",
- "solana-instruction",
- "solana-instruction-error",
+ "solana-instruction 3.5.0",
+ "solana-instruction-error 2.5.0",
  "solana-program-error",
  "solana-sanitize",
  "solana-sdk-ids",
@@ -7109,11 +7128,11 @@ dependencies = [
  "solana-genesis-config",
  "solana-genesis-utils",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
  "solana-leader-schedule",
  "solana-measure",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-native-token",
  "solana-net-utils",
@@ -7134,13 +7153,13 @@ dependencies = [
  "solana-streamer",
  "solana-svm",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-time-utils",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status",
  "solana-vote",
  "solana-vote-program",
@@ -7164,7 +7183,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_derive",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 3.0.0",
  "solana-sdk-ids",
 ]
@@ -7178,7 +7197,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_derive",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
  "solana-system-interface",
@@ -7190,7 +7209,7 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4c948b33ff81fa89699911b207059e493defdba9647eaf18f23abdf3674e0fb"
 dependencies = [
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 3.0.0",
  "solana-sdk-ids",
 ]
@@ -7218,12 +7237,26 @@ dependencies = [
  "serde_derive",
  "solana-address 2.7.0",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-sanitize",
  "solana-sdk-ids",
  "solana-short-vec",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "wincode",
+]
+
+[[package]]
+name = "solana-message"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "904166464d72cad48c4767e0317463a1662a54f9a113071554b083dc2ae12ebe"
+dependencies = [
+ "solana-address 2.7.0",
+ "solana-hash",
+ "solana-instruction 4.0.0",
+ "solana-sanitize",
+ "solana-sdk-ids",
+ "solana-transaction-error 4.0.0",
 ]
 
 [[package]]
@@ -7370,7 +7403,7 @@ dependencies = [
  "solana-clock",
  "solana-hash",
  "solana-keypair",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-packet",
  "solana-pubkey 4.3.0",
@@ -7382,7 +7415,7 @@ dependencies = [
  "solana-system-interface",
  "solana-system-transaction",
  "solana-time-utils",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
  "solana-vote",
  "solana-vote-program",
@@ -7409,7 +7442,7 @@ dependencies = [
  "solana-poh-config",
  "solana-pubkey 4.3.0",
  "solana-runtime",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "thiserror 2.0.20",
 ]
 
@@ -7474,8 +7507,8 @@ dependencies = [
  "solana-example-mocks",
  "solana-fee-calculator",
  "solana-hash",
- "solana-instruction",
- "solana-instruction-error",
+ "solana-instruction 3.5.0",
+ "solana-instruction-error 2.5.0",
  "solana-instructions-sysvar 4.0.0",
  "solana-keccak-hasher",
  "solana-last-restart-slot",
@@ -7580,10 +7613,10 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-structure",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-last-restart-slot",
  "solana-loader-v3-interface",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-program-entrypoint",
  "solana-pubkey 4.3.0",
  "solana-rent",
@@ -7597,7 +7630,7 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-measure",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
@@ -7636,10 +7669,10 @@ dependencies = [
  "solana-fee-calculator",
  "solana-genesis-config",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
  "solana-loader-v3-interface",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-msg",
  "solana-native-token",
  "solana-poh-config",
@@ -7659,9 +7692,9 @@ dependencies = [
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-vote-program",
  "spl-generic-token",
  "spl-memo-interface",
@@ -7729,7 +7762,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-tls-utils",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -7831,7 +7864,7 @@ dependencies = [
  "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-net-utils",
  "solana-perf",
@@ -7853,9 +7886,9 @@ dependencies = [
  "solana-sysvar",
  "solana-time-utils",
  "solana-tls-utils",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status",
  "solana-validator-exit",
  "solana-version",
@@ -7898,13 +7931,13 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-feature-gate-interface",
  "solana-hash",
- "solana-instruction",
- "solana-message",
+ "solana-instruction 3.5.0",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-rpc-client-api",
  "solana-signature",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status-client-types",
  "solana-version",
  "solana-vote-interface",
@@ -7925,7 +7958,7 @@ dependencies = [
  "solana-clock",
  "solana-rpc-client-types",
  "solana-signer",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status-client-types",
  "thiserror 2.0.20",
 ]
@@ -7937,7 +7970,7 @@ dependencies = [
  "solana-account",
  "solana-commitment-config",
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-nonce",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",
@@ -7962,8 +7995,8 @@ dependencies = [
  "solana-fee-calculator",
  "solana-inflation",
  "solana-reward-info",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status-client-types",
  "solana-version",
  "thiserror 2.0.20",
@@ -8040,13 +8073,13 @@ dependencies = [
  "solana-hard-forks",
  "solana-hash",
  "solana-inflation",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
  "solana-lattice-hash",
  "solana-leader-schedule",
  "solana-loader-v3-interface",
  "solana-measure",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-native-token",
  "solana-nonce",
@@ -8076,16 +8109,16 @@ dependencies = [
  "solana-svm",
  "solana-svm-callback",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "solana-syscalls",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-time-utils",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status",
  "solana-transaction-status-client-types",
  "solana-unified-scheduler-logic",
@@ -8112,15 +8145,15 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-program-entrypoint",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
  "solana-signature",
- "solana-svm-transaction",
- "solana-transaction",
+ "solana-svm-transaction 6.0.0",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "wincode",
 ]
 
@@ -8152,10 +8185,10 @@ dependencies = [
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
  "solana-loader-v3-interface",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-program-binaries",
  "solana-program-runtime",
  "solana-pubkey 4.3.0",
@@ -8171,13 +8204,13 @@ dependencies = [
  "solana-svm",
  "solana-svm-feature-set",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
  "solana-test-validator",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
@@ -8281,7 +8314,7 @@ name = "solana-sbf-rust-caller-access"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8322,7 +8355,7 @@ name = "solana-sbf-rust-deprecated-loader"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-error",
@@ -8359,7 +8392,7 @@ name = "solana-sbf-rust-dup-accounts"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8396,7 +8429,7 @@ name = "solana-sbf-rust-inner_instruction_alignment_check"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8409,7 +8442,7 @@ name = "solana-sbf-rust-instruction-introspection"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-instructions-sysvar 4.0.0",
  "solana-msg",
  "solana-program",
@@ -8423,7 +8456,7 @@ name = "solana-sbf-rust-invoke"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8442,7 +8475,7 @@ name = "solana-sbf-rust-invoke-and-error"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-program",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -8454,7 +8487,7 @@ name = "solana-sbf-rust-invoke-and-ok"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-program",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -8466,7 +8499,7 @@ name = "solana-sbf-rust-invoke-and-return"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-program",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -8496,7 +8529,7 @@ dependencies = [
 name = "solana-sbf-rust-invoked-dep"
 version = "4.4.0-alpha.4"
 dependencies = [
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 4.3.0",
 ]
 
@@ -8641,7 +8674,7 @@ dependencies = [
 name = "solana-sbf-rust-realloc-dep"
 version = "4.4.0-alpha.4"
 dependencies = [
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 4.3.0",
 ]
 
@@ -8650,7 +8683,7 @@ name = "solana-sbf-rust-realloc-invoke"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8682,7 +8715,7 @@ name = "solana-sbf-rust-ro-account_modify"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8746,7 +8779,7 @@ name = "solana-sbf-rust-sibling-inner-instructions"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -8758,7 +8791,7 @@ name = "solana-sbf-rust-sibling-instructions"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8785,7 +8818,7 @@ name = "solana-sbf-rust-spoof1"
 version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8810,7 +8843,7 @@ version = "4.4.0-alpha.4"
 dependencies = [
  "solana-account-info",
  "solana-define-syscall 3.0.0",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-instructions-sysvar 4.0.0",
  "solana-msg",
  "solana-program-entrypoint",
@@ -8930,7 +8963,7 @@ checksum = "445d8e12592631d76fc4dc57858bae66c9fd7cc838c306c62a472547fc9d0ce6"
 dependencies = [
  "bytemuck",
  "openssl",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-sdk-ids",
 ]
 
@@ -9000,7 +9033,7 @@ version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "761357b0853c9623bf12c1d2314b3d6160a85b087b84c45224fb85766d22616b"
 dependencies = [
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-sanitize",
 ]
@@ -9071,7 +9104,7 @@ checksum = "520bd6021163ee517f4bdc7ae03ded904f97e11320001ba0b3355f45eb14f558"
 dependencies = [
  "solana-pubkey 4.3.0",
  "solana-signature",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
 ]
 
 [[package]]
@@ -9121,7 +9154,7 @@ version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9f6a291ba063a37780af29e7db14bdd3dc447584d8ba5b3fc4b88e2bbc982fa"
 dependencies = [
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 4.3.0",
 ]
 
@@ -9151,7 +9184,7 @@ dependencies = [
  "serde_derive",
  "solana-clock",
  "solana-cpi",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-program-error",
  "solana-pubkey 4.3.0",
  "solana-stake-history",
@@ -9179,15 +9212,15 @@ dependencies = [
  "smpl_jwt",
  "solana-clock",
  "solana-entry",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-metrics",
  "solana-pubkey 4.3.0",
  "solana-serde",
  "solana-signature",
  "solana-storage-proto",
  "solana-time-utils",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status",
  "thiserror 2.0.20",
  "tokio",
@@ -9207,14 +9240,14 @@ dependencies = [
  "serde",
  "solana-account-decoder",
  "solana-hash",
- "solana-instruction",
- "solana-message",
+ "solana-instruction 3.5.0",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-serde",
  "solana-signature",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status",
  "thiserror 2.0.20",
  "tonic-prost-build",
@@ -9250,7 +9283,7 @@ dependencies = [
  "solana-signer",
  "solana-time-utils",
  "solana-tls-utils",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util 0.7.19",
@@ -9275,12 +9308,12 @@ dependencies = [
  "solana-compute-budget-program",
  "solana-fee-structure",
  "solana-hash",
- "solana-instruction",
- "solana-instruction-error",
+ "solana-instruction 3.5.0",
+ "solana-instruction-error 2.5.0",
  "solana-instructions-sysvar 4.0.0",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-nonce",
  "solana-nonce-account",
  "solana-precompile-error",
@@ -9296,14 +9329,14 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-measure",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "solana-svm-type-overrides",
  "solana-syscalls",
  "solana-system-interface",
  "solana-system-program",
  "solana-sysvar-id",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "spl-generic-token",
  "thiserror 2.0.20",
 ]
@@ -9349,11 +9382,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0afde938e0d3f06e87853e6e189396d67256e3b600675d867a47d066f8cebadb"
 dependencies = [
  "solana-hash",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
  "solana-signature",
- "solana-transaction",
+ "solana-transaction 4.3.0",
+]
+
+[[package]]
+name = "solana-svm-transaction"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e1d4d6932de8290b7835f9926281c210291718e14732f5a736ae31ca54e2e47"
+dependencies = [
+ "solana-hash",
+ "solana-message 5.0.0",
+ "solana-pubkey 4.3.0",
+ "solana-sdk-ids",
+ "solana-signature",
+ "solana-transaction 5.0.0",
 ]
 
 [[package]]
@@ -9382,7 +9429,7 @@ dependencies = [
  "solana-define-syscall 5.2.0",
  "solana-hash",
  "solana-hash-512",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keccak-hasher",
  "solana-poseidon",
  "solana-program-entrypoint",
@@ -9414,7 +9461,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-address 2.7.0",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-msg",
  "solana-program-error",
  "wincode",
@@ -9429,7 +9476,7 @@ dependencies = [
  "solana-account",
  "solana-bincode",
  "solana-fee-calculator",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-nonce",
  "solana-nonce-account",
  "solana-packet",
@@ -9450,11 +9497,11 @@ checksum = "63f5bfbf00b68749dec8facc7c6dfe48eb42d4834b21b3fd64cd10d81f55874d"
 dependencies = [
  "solana-hash",
  "solana-keypair",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-signer",
  "solana-system-interface",
- "solana-transaction",
+ "solana-transaction 4.3.0",
 ]
 
 [[package]]
@@ -9478,7 +9525,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-get-sysvar",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-last-restart-slot",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -9533,11 +9580,11 @@ dependencies = [
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-inflation",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-native-token",
  "solana-net-utils",
  "solana-program-binaries",
@@ -9554,7 +9601,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-syscalls",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-validator-exit",
  "solana-vote-interface",
  "tokio",
@@ -9592,15 +9639,15 @@ dependencies = [
  "solana-connection-cache",
  "solana-epoch-schedule",
  "solana-leader-schedule",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-pubsub-client",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signature",
  "solana-signer",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "thiserror 2.0.20",
  "tokio",
  "wincode",
@@ -9647,16 +9694,33 @@ dependencies = [
  "serde_derive",
  "solana-address 2.7.0",
  "solana-hash",
- "solana-instruction",
- "solana-instruction-error",
- "solana-message",
+ "solana-instruction 3.5.0",
+ "solana-instruction-error 2.5.0",
+ "solana-message 4.6.0",
  "solana-sanitize",
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
  "solana-signer",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "wincode",
+]
+
+[[package]]
+name = "solana-transaction"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29242fe2ba04e84aa298c431f5aa687e89e42d27e85aea4a5c39c467f0f47799"
+dependencies = [
+ "solana-address 2.7.0",
+ "solana-hash",
+ "solana-instruction 4.0.0",
+ "solana-instruction-error 3.0.0",
+ "solana-message 5.0.0",
+ "solana-sanitize",
+ "solana-sdk-ids",
+ "solana-signature",
+ "solana-transaction-error 4.0.0",
 ]
 
 [[package]]
@@ -9666,7 +9730,7 @@ dependencies = [
  "bincode",
  "serde",
  "solana-account",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-instructions-sysvar 4.0.0",
  "solana-pubkey 4.3.0",
  "solana-rent",
@@ -9683,9 +9747,19 @@ checksum = "8a37cf28c58b03878d38c38411f0414d3a99a9e3b7e5ebb0f83f3317b2796d18"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-sanitize",
  "wincode",
+]
+
+[[package]]
+name = "solana-transaction-error"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85286bfd93440b49a90dbb0b62c2514bcb95ef6b3d34a36dc7ca0c3e4f4a9f45"
+dependencies = [
+ "solana-instruction-error 3.0.0",
+ "solana-sanitize",
 ]
 
 [[package]]
@@ -9705,10 +9779,10 @@ dependencies = [
  "solana-clock",
  "solana-entry",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-loader-v2-interface",
  "solana-loader-v3-interface",
- "solana-message",
+ "solana-message 4.6.0",
  "solana-program-option",
  "solana-pubkey 4.3.0",
  "solana-reward-info",
@@ -9716,8 +9790,8 @@ dependencies = [
  "solana-signature",
  "solana-stake-interface",
  "solana-system-interface",
- "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction 4.3.0",
+ "solana-transaction-error 3.4.0",
  "solana-transaction-status-client-types",
  "solana-vote-interface",
  "solana-zk-sdk-pod",
@@ -9742,13 +9816,13 @@ dependencies = [
  "serde_json",
  "solana-account-decoder-client-types",
  "solana-commitment-config",
- "solana-instruction",
- "solana-message",
+ "solana-instruction 3.5.0",
+ "solana-message 4.6.0",
  "solana-reward-info",
  "solana-signature",
- "solana-transaction",
+ "solana-transaction 4.3.0",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "thiserror 2.0.20",
  "wincode",
 ]
@@ -9794,7 +9868,7 @@ dependencies = [
  "solana-streamer",
  "solana-system-transaction",
  "solana-time-utils",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "thiserror 2.0.20",
  "wincode",
 ]
@@ -9808,7 +9882,7 @@ dependencies = [
  "solana-keypair",
  "solana-net-utils",
  "solana-streamer",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
 ]
 
 [[package]]
@@ -9820,7 +9894,7 @@ dependencies = [
  "solana-hash",
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
- "solana-svm-transaction",
+ "solana-svm-transaction 6.0.0",
  "static_assertions",
 ]
 
@@ -9845,7 +9919,7 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-svm",
  "solana-svm-timings",
- "solana-transaction-error",
+ "solana-transaction-error 3.4.0",
  "solana-unified-scheduler-logic",
  "static_assertions",
 ]
@@ -9884,7 +9958,7 @@ dependencies = [
  "solana-bls-signatures",
  "solana-clock",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-keypair",
  "solana-packet",
  "solana-pubkey 4.3.0",
@@ -9892,8 +9966,8 @@ dependencies = [
  "solana-serialize-utils",
  "solana-signature",
  "solana-signer",
- "solana-svm-transaction",
- "solana-transaction",
+ "solana-svm-transaction 6.0.0",
+ "solana-transaction 4.3.0",
  "solana-vote-interface",
  "thiserror 2.0.20",
  "wincode",
@@ -9914,8 +9988,8 @@ dependencies = [
  "serde_with",
  "solana-clock",
  "solana-hash",
- "solana-instruction",
- "solana-instruction-error",
+ "solana-instruction 3.5.0",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-rent",
  "solana-sdk-ids",
@@ -9940,7 +10014,7 @@ dependencies = [
  "solana-clock",
  "solana-epoch-schedule",
  "solana-hash",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-packet",
  "solana-program-runtime",
  "solana-pubkey 4.3.0",
@@ -9982,7 +10056,7 @@ dependencies = [
  "num-derive 0.4.2",
  "num-traits",
  "solana-address 2.7.0",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-sdk-ids",
  "solana-zk-sdk-pod",
 ]
@@ -9992,7 +10066,7 @@ name = "solana-zk-elgamal-proof-program"
 version = "4.4.0-alpha.4"
 dependencies = [
  "bytemuck",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-program-runtime",
  "solana-sdk-ids",
  "solana-svm-log-collector",
@@ -10076,7 +10150,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6433917b60441d68d99a17e121d9db0ea15a9a69c0e5afa34649cf5ba12612f"
 dependencies = [
  "borsh",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 3.0.0",
 ]
 
@@ -10132,7 +10206,7 @@ version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3745d384b0afee980d43d62b66c27bdcbbd03507732b8d3626d3413cb72084f2"
 dependencies = [
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-pubkey 4.3.0",
 ]
 
@@ -10150,7 +10224,7 @@ dependencies = [
  "num_enum",
  "solana-account-info",
  "solana-address 2.7.0",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-nullable",
  "solana-program-error",
  "solana-program-option",
@@ -10176,7 +10250,7 @@ dependencies = [
  "solana-account-info",
  "solana-address 2.7.0",
  "solana-curve25519",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-instructions-sysvar 3.0.1",
  "solana-msg",
  "solana-program-error",
@@ -10197,7 +10271,7 @@ dependencies = [
  "num-traits",
  "num_enum",
  "solana-address 2.7.0",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-nullable",
  "solana-program-error",
  "solana-zero-copy",
@@ -10216,7 +10290,7 @@ dependencies = [
  "num-derive 0.4.2",
  "num-traits",
  "num_enum",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-program-error",
  "solana-program-option",
  "solana-program-pack",
@@ -10237,7 +10311,7 @@ dependencies = [
  "num_enum",
  "solana-address 2.7.0",
  "solana-borsh",
- "solana-instruction",
+ "solana-instruction 3.5.0",
  "solana-nullable",
  "solana-program-error",
  "spl-discriminator",
