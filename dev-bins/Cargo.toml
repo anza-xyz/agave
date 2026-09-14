@@ -85,7 +85,7 @@ solana-clap-utils = { path = "../clap-utils", version = "=4.4.0-alpha.4", featur
 solana-cli-config = { path = "../cli-config", version = "=4.4.0-alpha.4" }
 solana-cli-output = { path = "../cli-output", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-client = { path = "../client", version = "=4.4.0-alpha.4" }
-solana-clock = "3.2.0"
+solana-clock = "4.0.0"
 solana-cluster-type = "3.2.0"
 solana-commitment-config = "3.0.0"
 solana-compute-budget = { path = "../compute-budget", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
