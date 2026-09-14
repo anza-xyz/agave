@@ -6101,7 +6101,6 @@ name = "solana-client"
 version = "4.4.0-alpha.5"
 dependencies = [
  "async-trait",
- "bincode",
  "dashmap",
  "futures-util",
  "indicatif",
@@ -6130,6 +6129,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-udp-client",
  "tokio",
+ "wincode",
 ]
 
 [[package]]

@@ -22,7 +22,7 @@ use {
         instruction::{self as loader_v3_instruction, MINIMUM_EXTEND_PROGRAM_BYTES},
         state::UpgradeableLoaderState,
     },
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -38,7 +38,7 @@ use {
     solana_signer::{Signer, null_signer::NullSigner},
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_test_validator::{TestValidator, TestValidatorGenesis},
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
@@ -179,6 +179,7 @@ async fn setup_extend_program_test<'a>(
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -260,6 +261,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -310,6 +312,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -371,6 +374,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -399,6 +403,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -479,6 +484,7 @@ async fn test_cli_program_deploy_no_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -510,6 +516,7 @@ async fn test_cli_program_deploy_no_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -595,6 +602,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -627,6 +635,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
             max_sign_attempts: 5,
             auto_extend: true,
             use_rpc: false,
+            use_txv1: false,
             skip_feature_verification: true,
         });
 
@@ -743,6 +752,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -895,6 +905,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -928,6 +939,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: false,
     });
 
@@ -960,6 +972,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: false,
     });
 
@@ -1034,6 +1047,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1090,6 +1104,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1137,6 +1152,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1216,6 +1232,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1299,6 +1316,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -1325,6 +1343,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1456,6 +1475,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1480,6 +1500,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         max_sign_attempts: 5,
         auto_extend: false, // --no-auto-extend flag is present
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     if skip_preflight {
@@ -1528,6 +1549,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         max_sign_attempts: 5,
         auto_extend: true, // --no-auto-extend flag is absent
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1628,6 +1650,7 @@ async fn test_cli_program_close_program() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1762,6 +1785,7 @@ async fn test_cli_program_extend_program() {
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
 
@@ -1816,6 +1840,7 @@ async fn test_cli_program_extend_program() {
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2378,6 +2403,7 @@ async fn test_cli_program_write_buffer() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2626,6 +2652,7 @@ async fn test_cli_program_set_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2689,6 +2716,7 @@ async fn test_cli_program_set_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2787,6 +2815,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -2817,6 +2846,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2909,6 +2939,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3159,6 +3190,7 @@ async fn test_cli_program_show() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_txv1: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3382,10 +3414,17 @@ async fn create_buffer_with_offline_authority<'a>(
 
 #[allow(clippy::assertions_on_constants)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-#[test_case(None, false; "default")]
-#[test_case(Some(10), false; "with_compute_unit_price")]
-#[test_case(None, true; "use_rpc")]
-async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: bool) {
+#[test_case(None, false, false; "default")]
+#[test_case(Some(10), false, false; "with_compute_unit_price")]
+#[test_case(None, true, false; "use_rpc")]
+#[test_case(None, false, true; "use_txv1")]
+#[test_case(Some(10), false, true; "use_txv1_with_compute_unit_price")]
+#[test_case(None, true, true; "use_txv1_with_rpc")]
+async fn test_cli_program_deploy_with_args(
+    compute_unit_price: Option<u64>,
+    use_rpc: bool,
+    use_txv1: bool,
+) {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
     noop_path.push("fixtures");
@@ -3455,6 +3494,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc,
+        use_txv1,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3482,13 +3522,14 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     async fn fetch_and_decode_transaction(
         rpc_client: &RpcClient,
         signature: &Signature,
-    ) -> Transaction {
+    ) -> VersionedTransaction {
         rpc_client
             .get_transaction_with_config(
                 signature,
                 RpcTransactionConfig {
                     encoding: Some(UiTransactionEncoding::Base64),
                     commitment: Some(CommitmentConfig::confirmed()),
+                    max_supported_transaction_version: Some(1),
                     ..RpcTransactionConfig::default()
                 },
             )
@@ -3497,8 +3538,6 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
             .transaction
             .transaction
             .decode()
-            .unwrap()
-            .into_legacy_transaction()
             .unwrap()
     }
 
@@ -3529,7 +3568,43 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]).await;
     let final_tx = fetch_and_decode_transaction(&rpc_client, &deploy_signature).await;
 
-    if let Some(compute_unit_price) = compute_unit_price {
+    if use_txv1 {
+        for tx in [&initial_tx, &write_tx, &final_tx] {
+            let VersionedMessage::V1(message) = &tx.message else {
+                panic!("expected v1 deployment transaction");
+            };
+            let compute_unit_limit = message.config.compute_unit_limit.unwrap();
+            assert!(compute_unit_limit > 0);
+            assert_eq!(
+                message.config.loaded_accounts_data_size_limit,
+                Some(64 * 1024 * 1024)
+            );
+            assert_eq!(
+                message.config.priority_fee,
+                compute_unit_price.map(|price| {
+                    (price as u128)
+                        .saturating_mul(compute_unit_limit as u128)
+                        .div_ceil(1_000_000) as u64
+                })
+            );
+        }
+        let write_tx_size = wincode::serialize(&write_tx).unwrap().len();
+        assert!(write_tx_size > solana_packet::PACKET_DATA_SIZE);
+        assert!(write_tx_size <= solana_message::v1::MAX_TRANSACTION_SIZE);
+        let VersionedMessage::V1(write_message) = &write_tx.message else {
+            unreachable!();
+        };
+        assert!(write_message.instructions.len() > 1);
+        assert!(
+            write_message
+                .instructions
+                .iter()
+                .all(|instruction| instruction.data.len() <= solana_packet::PACKET_DATA_SIZE)
+        );
+    } else if let Some(compute_unit_price) = compute_unit_price {
+        let initial_tx = initial_tx.into_legacy_transaction().unwrap();
+        let write_tx = write_tx.into_legacy_transaction().unwrap();
+        let final_tx = final_tx.into_legacy_transaction().unwrap();
         for tx in [&initial_tx, &write_tx, &final_tx] {
             let ix_len = tx.message.instructions.len();
             for i in [1, 2] {
@@ -3558,6 +3633,9 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
             Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2970))
         );
     } else {
+        let initial_tx = initial_tx.into_legacy_transaction().unwrap();
+        let write_tx = write_tx.into_legacy_transaction().unwrap();
+        let final_tx = final_tx.into_legacy_transaction().unwrap();
         assert_eq!(
             initial_tx.message.instructions[0].program_id(&initial_tx.message.account_keys),
             &system_program::id()
