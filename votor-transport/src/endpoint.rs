@@ -195,6 +195,7 @@ impl QuicDatagramEndpoint {
             inbound_endpoints,
             inbound_events_sender,
             inbound_events_receiver,
+            local_pubkey,
             server_key_updates,
             server_stats,
             cancel.clone(),

@@ -315,6 +315,8 @@ pub(crate) struct InboundLoop {
     ban_receiver: mpsc::Receiver<BanCommand>,
     /// Latest version of the admitted peer list.
     peer_list_receiver: PeerListReceiver,
+    /// Our current identity. Inbound connections attesting to it are rejected.
+    local_pubkey: Pubkey,
     /// Identity-rotation notification channel.
     key_updates: KeyUpdateListener,
     /// Endpoints that handle connections. On identity rotation we need to
@@ -347,6 +349,7 @@ impl InboundLoop {
         endpoints: Vec<Endpoint>,
         inbound_events_sender: mpsc::Sender<InboundConnectionEvent>,
         inbound_events_receiver: mpsc::Receiver<InboundConnectionEvent>,
+        local_pubkey: Pubkey,
         key_updates: KeyUpdateListener,
         stats: Arc<ServerStats>,
         cancel: CancellationToken,
@@ -363,6 +366,7 @@ impl InboundLoop {
             banlist: Banlist::default(),
             ban_receiver,
             peer_list_receiver,
+            local_pubkey,
             key_updates,
             endpoints,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
@@ -420,7 +424,8 @@ impl InboundLoop {
                     for endpoint in &self.endpoints {
                         endpoint.set_server_config(Some(server_config.clone()));
                     }
-                    info!("inbound applied new identity {}", keypair.pubkey());
+                    self.local_pubkey = keypair.pubkey();
+                    info!("inbound applied new identity {}", self.local_pubkey);
 
                     let total_closed = self.close_all(close_codes::IDENTITY_CHANGED);
                     self.stats.connection_closed_identity_changed.fetch_add(total_closed, Ordering::Relaxed);
@@ -554,6 +559,14 @@ impl InboundLoop {
     /// Admission checks for a freshly handshaked inbound connection.
     fn maybe_admit_connection(&mut self, peer: Pubkey, connection: Connection) {
         let remote_addr = connection.remote_address();
+        // Our own outbound never dials us, so a peer attesting to our identity
+        // is another node holding our keypair.
+        if peer == self.local_pubkey {
+            debug!("Connection from {remote_addr} attests to our own identity, rejected");
+            close_codes::INVALID_IDENTITY.close(&connection);
+            record_server_error(&Error::InvalidIdentity(remote_addr), &self.stats);
+            return;
+        }
         if self.banlist.is_banned(&peer) {
             debug!("Banned peer {peer} attempted a connection from {remote_addr}, rejected");
             close_codes::BANNED.close(&connection);
@@ -626,15 +639,17 @@ mod tests {
         super::*,
         crate::{
             ALPENGLOW_ALPN, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE, MAX_ENDPOINTS,
-            MAX_INFLIGHT_HANDSHAKES,
+            MAX_INFLIGHT_HANDSHAKES, PeerList, PeerListSender,
             transport::{compute_max_incoming, new_client_config, new_transport_config},
         },
-        quinn::{ClientConfig, IdleTimeout, crypto::rustls::QuicClientConfig},
+        bytes::Bytes,
+        crossbeam_channel::{Receiver, bounded, unbounded},
+        quinn::{ClientConfig, ConnectionError, IdleTimeout, crypto::rustls::QuicClientConfig},
         solana_keypair::Keypair,
         solana_net_utils::sockets::{bind_to_localhost_async, unique_port_range_for_tests},
         solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
         std::{net::Ipv4Addr, time::Duration},
-        tokio::{spawn, time::sleep},
+        tokio::{spawn, sync::watch, task::spawn_blocking, time::sleep},
     };
 
     #[test]
@@ -1012,5 +1027,197 @@ mod tests {
 
         cancel.cancel();
         let _ = accept_loop_handle.await;
+    }
+
+    /// Accept and inbound loops of a server listening on localhost.
+    struct TestServer {
+        // Declared first so a panicking test aborts the loops before their
+        // channels below are dropped.
+        tasks: JoinSet<()>,
+        addr: SocketAddr,
+        ingress: Receiver<Datagram>,
+        identity_sender: watch::Sender<Keypair>,
+        identity_acks: Receiver<()>,
+        cancel: CancellationToken,
+        _ban_sender: mpsc::Sender<BanCommand>,
+        _peer_list_sender: PeerListSender,
+    }
+
+    impl TestServer {
+        /// Spawns a server running as `identity` that admits `admitted`.
+        fn spawn(identity: &Keypair, admitted: &[Pubkey]) -> Self {
+            let port = unique_port_range_for_tests(1).start;
+            let endpoint = Endpoint::server(
+                new_server_config(identity, 50, 1),
+                SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+            )
+            .expect("bind server endpoint");
+            let addr = endpoint.local_addr().expect("server local addr");
+            let (events_sender, events_receiver) = mpsc::channel(8);
+            let stats = Arc::new(ServerStats::default());
+            let cancel = CancellationToken::new();
+            let mut tasks = JoinSet::new();
+            let accept = AcceptLoop::new(
+                endpoint.clone(),
+                events_sender.clone(),
+                stats.clone(),
+                cancel.clone(),
+                SocketAddrSpace::Unspecified,
+                TokenBucket::new(
+                    HANDSHAKE_BURST,
+                    HANDSHAKE_BURST,
+                    HANDSHAKE_GLOBAL_RATE as f64,
+                ),
+                MAX_INFLIGHT_HANDSHAKES,
+            );
+            tasks.spawn(accept.run());
+
+            let (ban_sender, ban_receiver) = mpsc::channel(1);
+            let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(PeerList {
+                peers: admitted.iter().map(|peer| (*peer, None)).collect(),
+                push_enabled: false,
+            }));
+            let (identity_sender, identity_receiver) = watch::channel(identity.insecure_clone());
+            let (ack, identity_acks) = bounded(1);
+            let (ingress_sender, ingress) = unbounded();
+            let inbound = InboundLoop::new(
+                ingress_sender,
+                ban_receiver,
+                peer_list_receiver,
+                vec![endpoint],
+                events_sender,
+                events_receiver,
+                identity.pubkey(),
+                KeyUpdateListener {
+                    receiver: identity_receiver,
+                    ack,
+                },
+                stats,
+                cancel.clone(),
+                50,
+            );
+            tasks.spawn(inbound.run());
+
+            Self {
+                tasks,
+                addr,
+                ingress,
+                identity_sender,
+                identity_acks,
+                cancel,
+                _ban_sender: ban_sender,
+                _peer_list_sender: peer_list_sender,
+            }
+        }
+
+        /// Rotates the server identity and waits until the inbound loop has applied it.
+        async fn rotate_identity(&self, keypair: &Keypair) {
+            self.identity_sender
+                .send(keypair.insecure_clone())
+                .expect("inbound loop holds the identity receiver");
+            let acks = self.identity_acks.clone();
+            spawn_blocking(move || acks.recv_timeout(Duration::from_secs(5)))
+                .await
+                .expect("blocking task panicked")
+                .expect("inbound loop did not apply the new identity");
+        }
+
+        /// Stops the server and surfaces any panic from its loops.
+        async fn join(mut self) {
+            self.cancel.cancel();
+            while let Some(joined) = self.tasks.join_next().await {
+                joined.expect("server task panicked");
+            }
+        }
+    }
+
+    /// Completes a TLS handshake with `server_addr` presenting `identity`.
+    async fn connect_as(identity: &Keypair, server_addr: SocketAddr) -> Connection {
+        let port = unique_port_range_for_tests(1).start;
+        let mut client = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+            .expect("bind client endpoint");
+        client.set_default_client_config(new_client_config(identity, 50));
+        client
+            .connect(server_addr, "votor")
+            .expect("client connect to server")
+            .await
+            .expect("TLS handshake should complete")
+    }
+
+    /// The TLS handshake succeeds (the peer does hold the key), so the rejection
+    /// has to come from admission: nothing the peer sends is ingested, and it is
+    /// told why rather than being left hanging.
+    async fn assert_rejected_as_own_identity(server: &TestServer, connection: Connection) {
+        let _ = connection.send_datagram(Bytes::from_static(b"self"));
+        let ingress = server.ingress.clone();
+        let ingested = spawn_blocking(move || ingress.recv_timeout(Duration::from_millis(500)))
+            .await
+            .expect("blocking task panicked");
+        assert!(
+            ingested.is_err(),
+            "a connection attesting to our own identity must not reach ingress, got {ingested:?}",
+        );
+
+        let reason = timeout(Duration::from_secs(5), connection.closed())
+            .await
+            .expect("self-identified connection should be closed promptly");
+        let ConnectionError::ApplicationClosed(close) = reason else {
+            panic!("expected an application close, got {reason:?}");
+        };
+        assert_eq!(
+            close.error_code,
+            close_codes::INVALID_IDENTITY.code,
+            "self-identified connections are refused with INVALID_IDENTITY",
+        );
+    }
+
+    /// Our own outbound never dials us, so a peer attesting to our identity is
+    /// another node holding our keypair. It must be refused even though a staked
+    /// node is a member of its own peer list.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handshake_with_own_identity_is_rejected() {
+        let identity = Keypair::new();
+        let server = TestServer::spawn(&identity, &[identity.pubkey()]);
+
+        let connection = connect_as(&identity, server.addr).await;
+        assert_rejected_as_own_identity(&server, connection).await;
+
+        server.join().await;
+    }
+
+    /// After an identity rotation the new identity is refused as our own, while
+    /// the old one is admitted like any other peer (e.g. the node that took it over).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn own_identity_check_follows_identity_rotation() {
+        let old_identity = Keypair::new();
+        let old_pubkey = old_identity.pubkey();
+        let new_identity = Keypair::new();
+        let server = TestServer::spawn(&old_identity, &[old_pubkey, new_identity.pubkey()]);
+        server.rotate_identity(&new_identity).await;
+
+        let connection = connect_as(&new_identity, server.addr).await;
+        assert_rejected_as_own_identity(&server, connection).await;
+
+        let connection = connect_as(&old_identity, server.addr).await;
+        let ingress = server.ingress.clone();
+        let delivered_from = spawn_blocking(move || {
+            // Datagrams are unreliable, so keep sending until one gets through.
+            (0..50).find_map(|_| {
+                let _ = connection.send_datagram(Bytes::from_static(b"old-identity"));
+                ingress
+                    .recv_timeout(Duration::from_millis(100))
+                    .ok()
+                    .map(|datagram| datagram.peer_pubkey)
+            })
+        })
+        .await
+        .expect("blocking task panicked");
+        assert_eq!(
+            delivered_from,
+            Some(old_pubkey),
+            "the old identity must be admitted once we no longer hold it",
+        );
+
+        server.join().await;
     }
 }
