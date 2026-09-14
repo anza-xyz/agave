@@ -1468,14 +1468,20 @@ impl AccountsDb {
     // can be purged because there are no live append vecs in the ancestors
     pub fn clean_accounts(&self, max_clean_root_inclusive: Slot, is_startup: bool) {
         if self.verify_index {
-            //at startup use all cores to verify the index
-            if is_startup {
-                self.verify_index(max_clean_root_inclusive);
+            // verify_index calls par_iter, so give it a pool of its own rather than inheriting
+            // whichever one the caller happens to be running on. At startup there is no replay to
+            // protect, so use all cores; otherwise stay narrow and leave the rest for replay.
+            let num_threads = if is_startup {
+                num_cpus::get()
             } else {
-                // otherwise, use the background thread pool
-                self.thread_pool_background
-                    .install(|| self.verify_index(max_clean_root_inclusive));
-            }
+                quarter_thread_count()
+            };
+            let pool = rayon::ThreadPoolBuilder::new()
+                .thread_name(|i| format!("solAcctsDbVfy{i:02}"))
+                .num_threads(num_threads)
+                .build()
+                .expect("new rayon threadpool");
+            pool.install(|| self.verify_index(max_clean_root_inclusive));
         }
 
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
