@@ -372,7 +372,6 @@ fn create_accounts_db() -> Accounts {
     let single_thread = NonZeroUsize::new(1).unwrap();
     let accounts_db_config = AccountsDbConfig {
         num_background_threads: Some(single_thread),
-        num_foreground_threads: Some(single_thread),
         read_cache_num_shards: Some(2),
         skip_initial_hash_calc: true,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING
