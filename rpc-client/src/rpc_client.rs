@@ -28,7 +28,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface::Feature,
     solana_hash::Hash,
-    solana_message::{Message as LegacyMessage, v0},
+    solana_message::{Message as LegacyMessage, VersionedMessage, v0},
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
@@ -88,6 +88,11 @@ impl SerializableMessage for LegacyMessage {
     }
 }
 impl SerializableMessage for v0::Message {
+    fn serialize(&self) -> Vec<u8> {
+        self.serialize()
+    }
+}
+impl SerializableMessage for VersionedMessage {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
     }
@@ -5163,7 +5168,18 @@ mod tests {
             }],
             address_table_lookups: vec![],
         }; "v0 message")]
-    fn test_get_fee_for_message_sends_properly_serialized_v0_transaction<M>(message: M)
+    #[test_case(VersionedMessage::V1(v1::Message::new(
+        MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 0,
+        },
+        v1::TransactionConfig::empty().with_compute_unit_limit(1),
+        Hash::new_unique(),
+        vec![Pubkey::new_unique()],
+        vec![],
+    )); "v1 message")]
+    fn test_get_fee_for_message_sends_properly_serialized_message<M>(message: M)
     where
         M: SerializableMessage,
     {
