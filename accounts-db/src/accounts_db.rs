@@ -1421,50 +1421,40 @@ impl AccountsDb {
             return;
         }
         let failed = AtomicBool::default();
-        let threads = rayon::current_num_threads();
-        let per_batch = total.div_ceil(threads);
-        (0..=threads).into_par_iter().for_each(|attempt| {
-            pubkey_slot_lists
-                .iter()
-                .skip(attempt * per_batch)
-                .take(per_batch)
-                .for_each(|entry| {
-                    let mut storage_slots = entry.value().clone();
-                    storage_slots.sort_unstable();
-                    self.accounts_index
-                        .get_and_then(entry.key(), |index_entry| {
-                            let Some(index_entry) = index_entry else {
-                                failed.store(true, Ordering::Relaxed);
-                                error!(
-                                    "verify_index: {} has no index entry, storages: \
-                                     {storage_slots:?}",
-                                    entry.key(),
-                                );
-                                return (false, ());
-                            };
-                            let slot_list = index_entry.slot_list_read_lock();
-                            // Slots newer than `max_slot_inclusive` are in the index but were
-                            // excluded from the storage scan, so exclude them from the comparison
-                            // too.
-                            let mut index_slots = slot_list
-                                .iter()
-                                .map(|(slot, _)| *slot)
-                                .filter(|slot| *slot <= max_slot_inclusive)
-                                .collect::<Vec<_>>();
-                            index_slots.sort_unstable();
+        pubkey_slot_lists.par_iter().for_each(|entry| {
+            let mut storage_slots = entry.value().clone();
+            storage_slots.sort_unstable();
+            self.accounts_index
+                .get_and_then(entry.key(), |index_entry| {
+                    let Some(index_entry) = index_entry else {
+                        failed.store(true, Ordering::Relaxed);
+                        error!(
+                            "verify_index: {} has no index entry, storages: {storage_slots:?}",
+                            entry.key(),
+                        );
+                        return (false, ());
+                    };
+                    let slot_list = index_entry.slot_list_read_lock();
+                    // Slots newer than `max_slot_inclusive` are in the index but were
+                    // excluded from the storage scan, so exclude them from the comparison
+                    // too.
+                    let mut index_slots = slot_list
+                        .iter()
+                        .map(|(slot, _)| *slot)
+                        .filter(|slot| *slot <= max_slot_inclusive)
+                        .collect::<Vec<_>>();
+                    index_slots.sort_unstable();
 
-                            if index_slots != storage_slots {
-                                failed.store(true, Ordering::Relaxed);
-                                error!(
-                                    "verify_index: {} index slot list does not match storages: \
-                                     index: {index_slots:?}, storages: {storage_slots:?}, slot \
-                                     list: {:?}",
-                                    entry.key(),
-                                    slot_list,
-                                );
-                            }
-                            (false, ())
-                        });
+                    if index_slots != storage_slots {
+                        failed.store(true, Ordering::Relaxed);
+                        error!(
+                            "verify_index: {} index slot list does not match storages: index: \
+                             {index_slots:?}, storages: {storage_slots:?}, slot list: {:?}",
+                            entry.key(),
+                            slot_list,
+                        );
+                    }
+                    (false, ())
                 });
         });
         if failed.load(Ordering::Relaxed) {
