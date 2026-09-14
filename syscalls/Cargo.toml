@@ -55,6 +55,7 @@ solana-sha256-hasher = { workspace = true }
 solana-sha512-hasher = { workspace = true, features = ["sha2"] }
 solana-stable-layout = { workspace = true }
 solana-stake-history = { workspace = true }
+solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-svm-type-overrides = { workspace = true }

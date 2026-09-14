@@ -80,6 +80,7 @@ pub struct FeatureSnapshot {
     pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
+    pub enable_get_leader_syscall: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -179,6 +180,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
+            enable_get_leader_syscall: is_active(&enable_get_leader_syscall::ID),
         }
     }
 }
@@ -338,6 +340,7 @@ impl FeatureSet {
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
+            enable_get_leader_syscall: snapshot.enable_get_leader_syscall,
         }
     }
 }
@@ -1527,6 +1530,11 @@ pub mod double_disinflation_rate {
     pub const TAPER: f64 = 0.30;
 }
 
+pub mod enable_get_leader_syscall {
+    // placeholder!!!!
+    solana_pubkey::declare_id!("CrFqZvFQLu4V7XEDNRxAgKJFChCVn5WDFbFfCLZe4Lxk");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1552,6 +1560,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             require_custodian_for_locked_stake_authorize::id(),
             "require custodian to authorize withdrawer change for locked stake",
         ),
+        (enable_get_leader_syscall::id(), "enable get leader syscall"),
         (
             spl_token_v2_self_transfer_fix::id(),
             "spl-token self-transfer fix",
