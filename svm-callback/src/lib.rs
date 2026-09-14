@@ -31,6 +31,10 @@ pub trait InvokeContextCallback {
     ) -> Result<(), PrecompileError> {
         Err(PrecompileError::InvalidPublicKey)
     }
+
+    fn get_leader_info(&self) -> Option<LeaderInfo> {
+        None
+    }
 }
 
 /// Account loading for SVM.
@@ -49,4 +53,13 @@ pub trait TransactionProcessingCallback: AccountLoadCallback {
             load_filter(account.lamports(), account.owner(), account.data().len())
         })
     }
+}
+
+#[repr(C)]
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct LeaderInfo {
+    pub leader_id: Pubkey,
+    pub next_leader_id: Pubkey,
+    pub leader_vote: Pubkey,
+    pub next_leader_vote: Pubkey,
 }

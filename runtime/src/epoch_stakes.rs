@@ -9,6 +9,7 @@ use {
         PopVerified, PubkeyAffine as BLSPubkeyAffine, PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::Epoch,
+    solana_leader_schedule::LeaderSchedule,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::Stake as InterfaceStake,
     solana_vote::vote_account::{VoteAccounts, VoteAccountsHashMap},
@@ -238,6 +239,9 @@ pub enum VersionedEpochStakes {
         #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
         #[wincode(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
+        #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
+        #[wincode(skip)]
+        leader_schedule: OnceLock<Arc<solana_leader_schedule::LeaderSchedule>>,
     },
 }
 
@@ -255,23 +259,33 @@ impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
             node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
             epoch_authorized_voters: Arc::new(epoch_authorized_voters),
             bls_pubkey_to_rank_map: OnceLock::new(),
+            leader_schedule: OnceLock::new(),
         }
     }
 }
 
 impl VersionedEpochStakes {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn new(stakes: SerdeStakesToStakeFormat, leader_schedule_epoch: Epoch) -> Self {
+    pub(crate) fn new(
+        stakes: SerdeStakesToStakeFormat,
+        leader_schedule_epoch: Epoch,
+        leader_schedule: Option<LeaderSchedule>,
+    ) -> Self {
         let stakes = EpochStakes::from(stakes);
         let epoch_vote_accounts = stakes.vote_accounts();
         let (total_stake, node_id_to_vote_accounts, epoch_authorized_voters) =
             Self::parse_epoch_vote_accounts(epoch_vote_accounts.as_ref(), leader_schedule_epoch);
+        let leader_schedule = match leader_schedule {
+            Some(ls) => OnceLock::from(Arc::new(ls)),
+            None => OnceLock::new(),
+        };
         Self::Current {
             stakes,
             total_stake,
             node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
             epoch_authorized_voters: Arc::new(epoch_authorized_voters),
             bls_pubkey_to_rank_map: OnceLock::new(),
+            leader_schedule,
         }
     }
 
@@ -287,6 +301,7 @@ impl VersionedEpochStakes {
                 imbl::HashMap::default(),
             )),
             leader_schedule_epoch,
+            None,
         )
     }
 
@@ -958,7 +973,8 @@ pub(crate) mod tests {
         // ensure stake delegations start off *not* empty
         assert!(!stakes.stake_delegations().is_empty());
 
-        let epoch_stakes = VersionedEpochStakes::new(SerdeStakesToStakeFormat::Account(stakes), 0);
+        let epoch_stakes =
+            VersionedEpochStakes::new(SerdeStakesToStakeFormat::Account(stakes), 0, None);
 
         assert_eq!(
             epoch_stakes
