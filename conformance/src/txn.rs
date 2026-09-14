@@ -119,6 +119,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         let mut entry = VersionedEpochStakes::new(
             SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
             key,
+            None,
         );
         entry.set_total_stake(txn_bank.total_epoch_stake);
         epoch_stakes.insert(key, entry);

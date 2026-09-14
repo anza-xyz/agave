@@ -6958,7 +6958,7 @@ fn test_vat_burn_slot_params() {
         let incinerator_lamports_before = bank.get_balance(&incinerator::id());
         let rewards_len_before = bank.rewards.read().unwrap().len();
         let stakes = SerdeStakesToStakeFormat::from(bank.get_top_epoch_stakes());
-        let epoch_stakes = VersionedEpochStakes::new(stakes, bank.epoch());
+        let epoch_stakes = VersionedEpochStakes::new(stakes, bank.epoch(), None);
         bank.maybe_burn_vat_from_staked_accounts(&epoch_stakes);
         let vat_to_burn_per_epoch = params.vat_to_burn_per_epoch();
         let vote_lamports_after = vote_lamports_before
@@ -13679,6 +13679,7 @@ fn test_new_for_txn_tests_system_transfer() {
             VersionedEpochStakes::new(
                 SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
                 key,
+                None,
             ),
         );
     }
