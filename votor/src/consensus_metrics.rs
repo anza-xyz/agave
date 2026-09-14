@@ -123,24 +123,20 @@ impl ConsensusMetrics {
     fn run(&mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             match self.receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok((received, events)) => {
-                    for event in events {
-                        match event {
-                            ConsensusMetricsEvent::Vote { ids, vote } => {
-                                self.record_vote(ids, &vote, received);
-                            }
-                            ConsensusMetricsEvent::BlockHashSeen { leader, slot } => {
-                                self.record_block_hash_seen(leader, slot, received);
-                            }
-                            ConsensusMetricsEvent::StartOfSlot { slot } => {
-                                self.record_start_of_slot(slot, received);
-                            }
-                            ConsensusMetricsEvent::SlotFinalized { slot } => {
-                                self.handle_slot_finalized(slot);
-                            }
-                        }
+                Ok((received, event)) => match event {
+                    ConsensusMetricsEvent::Vote { ids, vote } => {
+                        self.record_vote(ids, &vote, received);
                     }
-                }
+                    ConsensusMetricsEvent::BlockHashSeen { leader, slot } => {
+                        self.record_block_hash_seen(leader, slot, received);
+                    }
+                    ConsensusMetricsEvent::StartOfSlot { slot } => {
+                        self.record_start_of_slot(slot, received);
+                    }
+                    ConsensusMetricsEvent::SlotFinalized { slot } => {
+                        self.handle_slot_finalized(slot);
+                    }
+                },
                 Err(err) => match err {
                     RecvTimeoutError::Timeout => trace!("ConsensusMetricsEventReceiver timeout"),
                     RecvTimeoutError::Disconnected => {
