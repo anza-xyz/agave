@@ -135,7 +135,7 @@ solana-sbpf = { version = "=0.24.0", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
-solana-signer = "3.0.1"
+solana-signer = "4.0.0"
 solana-signer-store = "0.1.0"
 solana-stake-interface = "4.3.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
