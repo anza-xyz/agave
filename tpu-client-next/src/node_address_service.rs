@@ -73,13 +73,13 @@
 //!
 use {
     crate::{
-        leader_updater::LeaderUpdater,
+        leader_updater::{LeaderUpdater, LeaderUpdaterError},
         node_address_service::{
             leader_tpu_cache_service::{Error as LeaderTpuCacheServiceError, LeaderUpdateReceiver},
             slot_update_service::Error as SlotUpdateServiceError,
         },
     },
-    futures::StreamExt,
+    futures::{StreamExt, future::BoxFuture},
     solana_clock::Slot,
     std::{net::SocketAddr, sync::Arc},
     thiserror::Error,
@@ -182,6 +182,18 @@ impl LeaderUpdater for NodeAddressProvider {
     fn next_leaders(&mut self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
         self.leaders_receiver
             .next_leaders(lookahead_leaders, leaders);
+    }
+
+    fn wait_for_leader_change(
+        &mut self,
+        current_leader: Option<SocketAddr>,
+    ) -> BoxFuture<'_, Result<(), LeaderUpdaterError>> {
+        Box::pin(async move {
+            self.leaders_receiver
+                .wait_for_leader_change(current_leader)
+                .await
+                .map_err(|_| LeaderUpdaterError)
+        })
     }
 }
 
