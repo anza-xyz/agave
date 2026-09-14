@@ -422,7 +422,7 @@ solana-native-token = "3.0.0"
 solana-net-utils = { path = "net-utils", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-nohash-hasher = "0.2.1"
 solana-nonce = "3.3.0"
-solana-nonce-account = { version = "4.3.0", default-features = false }
+solana-nonce-account = { version = "5.0.0", default-features = false }
 solana-notifier = { path = "notifier", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-offchain-message = "3.0.1"
 solana-packet = "4.3.0"
