@@ -1455,4 +1455,96 @@ mod tests {
             reward_epoch_delegated_stakes
         );
     }
+
+    fn epoch_boundary_accounts_for_test(
+        account_with_rewards_addresses: &[Pubkey],
+        swept_vote_account_addresses: &[Pubkey],
+    ) -> EpochBoundaryAccounts {
+        let reward_info = RewardInfo {
+            reward_type: RewardType::Staking,
+            lamports: 0,
+            post_balance: 0,
+            commission_bps: None,
+        };
+        EpochBoundaryAccounts {
+            accounts_with_rewards: account_with_rewards_addresses
+                .iter()
+                .map(|address| (*address, reward_info, AccountSharedData::default()))
+                .collect(),
+            swept_vote_accounts: swept_vote_account_addresses
+                .iter()
+                .map(|address| (*address, AccountSharedData::default()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_epoch_boundary_accounts_storable_get() {
+        let first_len = 10;
+        let account_with_rewards_addresses = std::iter::repeat_with(Pubkey::new_unique)
+            .take(first_len)
+            .collect::<Vec<_>>();
+        let second_len = 2;
+        let swept_vote_account_addresses = std::iter::repeat_with(Pubkey::new_unique)
+            .take(second_len)
+            .collect::<Vec<_>>();
+
+        let accounts = epoch_boundary_accounts_for_test(
+            &account_with_rewards_addresses,
+            &swept_vote_account_addresses,
+        );
+        let storable_accounts = EpochBoundaryAccountsStorable {
+            slot: 0,
+            epoch_boundary_accounts: &accounts,
+        };
+        assert_eq!(
+            *storable_accounts.get_unchecked(0).0,
+            account_with_rewards_addresses[0]
+        );
+        assert_eq!(
+            *storable_accounts.get_unchecked(first_len - 1).0,
+            account_with_rewards_addresses[first_len - 1]
+        );
+        assert_eq!(
+            *storable_accounts.get_unchecked(first_len).0,
+            swept_vote_account_addresses[0]
+        );
+        assert_eq!(
+            *storable_accounts
+                .get_unchecked(first_len + second_len - 1)
+                .0,
+            swept_vote_account_addresses[second_len - 1]
+        );
+        assert_eq!(
+            *storable_accounts
+                .get_unchecked(first_len + second_len - 1)
+                .0,
+            swept_vote_account_addresses[second_len - 1]
+        );
+        assert_eq!(storable_accounts.len(), first_len + second_len);
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds: the len is 2 but the index is 2")]
+    fn test_epoch_boundary_accounts_storable_get_past_range() {
+        let first_len = 10;
+        let account_with_rewards_addresses = std::iter::repeat_with(Pubkey::new_unique)
+            .take(first_len)
+            .collect::<Vec<_>>();
+        let second_len = 2;
+        let swept_vote_account_addresses = std::iter::repeat_with(Pubkey::new_unique)
+            .take(second_len)
+            .collect::<Vec<_>>();
+
+        let accounts = epoch_boundary_accounts_for_test(
+            &account_with_rewards_addresses,
+            &swept_vote_account_addresses,
+        );
+        let storable_accounts = EpochBoundaryAccountsStorable {
+            slot: 0,
+            epoch_boundary_accounts: &accounts,
+        };
+        let _ = storable_accounts.get_unchecked(first_len + second_len);
+    }
 }

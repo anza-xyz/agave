@@ -10,7 +10,6 @@ use solana_frozen_abi::rand::{Rng, RngCore};
 use {
     crate::vote_state_view::VoteStateView,
     log::*,
-    rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     serde::{Deserialize, Deserializer, Serialize, ser::Serializer},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
@@ -292,8 +291,11 @@ impl VoteAccounts {
             .map(|(vote_pubkey, (_stake, vote_account))| (vote_pubkey, vote_account))
     }
 
-    pub fn keys_par_iter(&self) -> impl ParallelIterator<Item = &Pubkey> {
-        self.vote_accounts.par_iter().map(|(key, _)| key)
+    /// Helper used if some other kind of iterator is needed directly on the
+    /// inner HashMap. In general, prefer using any other getter, such as
+    /// `iter()`, `delegated_starkes()`, `get()`, or `get_delegated_stake()`
+    pub fn inner(&self) -> &VoteAccountsHashMap {
+        &self.vote_accounts
     }
 
     pub fn delegated_stakes(&self) -> impl Iterator<Item = (&Pubkey, u64)> {

@@ -231,13 +231,18 @@ fn calculate_block_reward(
 }
 
 /// Sweeps the given vote account's pending delegator rewards, and returns
-/// true if a sweep was preformed
+/// true if a sweep was preformed. If `None` is returned, then no action was
+/// taken, and the account can be ignored.
 fn sweep_vote_account(
+    vote_address: &Pubkey,
     account: &mut AccountSharedData,
     maybe_stake: Option<&u64>,
     total_block_reward_lamports: &AtomicU64,
 ) -> Option<bool> {
     let account_data = account.data_as_mut_slice();
+    // `VoteStateViewMut::new_v4` returns an error if the account data bytes do
+    // not represent a `VoteStateV4`. In the current implementation of the
+    // function, no other error matters.
     let mut vote_state = VoteStateViewMut::new_v4(account_data).ok()?;
     let pending_delegator_rewards = vote_state.reset_pending_delegator_rewards();
     // If validator has no stake, delegator rewards go back to the validator, no
@@ -247,7 +252,13 @@ fn sweep_vote_account(
     if maybe_stake != Some(&0) && pending_delegator_rewards != 0 {
         account
             .checked_sub_lamports(pending_delegator_rewards)
-            .expect("Vote account holds enough lamports for pending delegator rewards");
+            .unwrap_or_else(|_| {
+                panic!(
+                    "vote account {vote_address} should hold at least {pending_delegator_rewards} \
+                     lamports for pending delegator rewards, but only holds {}",
+                    account.lamports()
+                )
+            });
         total_block_reward_lamports.fetch_add(pending_delegator_rewards, Relaxed);
     }
     Some(pending_delegator_rewards != 0)
@@ -1214,6 +1225,7 @@ impl Bank {
                                     // result doesn't matter since this account
                                     // will get stored regardless
                                     let _ = sweep_vote_account(
+                                        commission_pubkey,
                                         &mut commission_account,
                                         maybe_stake,
                                         &total_block_reward_lamports,
@@ -1263,7 +1275,9 @@ impl Bank {
                     self.stakes_cache
                         .stakes()
                         .vote_accounts()
-                        .keys_par_iter()
+                        .inner()
+                        .par_iter()
+                        .map(|(key, _)| key)
                         .filter_map(|vote_address| {
                             if commission_receiving_vote_accounts.contains(vote_address) {
                                 return None;
@@ -1274,6 +1288,7 @@ impl Bank {
                                 .delegated_stakes
                                 .get(vote_address);
                             sweep_vote_account(
+                                vote_address,
                                 &mut account,
                                 maybe_stake,
                                 &total_block_reward_lamports,
