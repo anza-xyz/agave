@@ -122,24 +122,20 @@ impl ConsensusMetrics {
     fn run(&mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             match self.receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok((received, events)) => {
-                    for event in events {
-                        match event {
-                            ConsensusMetricsEvent::Vote { ids, vote } => {
-                                self.record_vote(ids, &vote, received);
-                            }
-                            ConsensusMetricsEvent::ReplayCompleted { leader, slot } => {
-                                self.record_replay_completed(leader, slot, received);
-                            }
-                            ConsensusMetricsEvent::ParentReadySeen { slot } => {
-                                self.record_parent_ready_seen(slot, received);
-                            }
-                            ConsensusMetricsEvent::SlotFinalized { slot } => {
-                                self.handle_slot_finalized(slot);
-                            }
-                        }
+                Ok((received, event)) => match event {
+                    ConsensusMetricsEvent::Vote { ids, vote } => {
+                        self.record_vote(ids, &vote, received);
                     }
-                }
+                    ConsensusMetricsEvent::ReplayCompleted { leader, slot } => {
+                        self.record_replay_completed(leader, slot, received);
+                    }
+                    ConsensusMetricsEvent::ParentReadySeen { slot } => {
+                        self.record_parent_ready_seen(slot, received);
+                    }
+                    ConsensusMetricsEvent::SlotFinalized { slot } => {
+                        self.handle_slot_finalized(slot);
+                    }
+                },
                 Err(err) => match err {
                     RecvTimeoutError::Timeout => trace!("ConsensusMetricsEventReceiver timeout"),
                     RecvTimeoutError::Disconnected => {

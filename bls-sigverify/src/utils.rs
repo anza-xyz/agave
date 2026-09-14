@@ -24,14 +24,13 @@ const REPAIR_CHANNEL: &str = "channel_to_repair";
 
 pub(super) fn send_votes_to_metrics(
     my_pubkey: &Pubkey,
-    votes: Vec<ConsensusMetricsEvent>,
+    event: ConsensusMetricsEvent,
     channel: &ConsensusMetricsEventSender,
     stats: &mut VoteSenderStats,
 ) {
-    let len = votes.len();
-    let msg = (Instant::now(), votes);
+    let msg = (Instant::now(), event);
     match channel.try_send(msg) {
-        Ok(()) => stats.metrics_sender.sent += len as u64,
+        Ok(()) => stats.metrics_sender.sent += 1,
         Err(TrySendError::Full(_)) => {
             warn!("{my_pubkey}: channel \"{METRICS_CHANNEL}\" is full, dropping msg");
             stats.metrics_sender.channel_full += 1;
