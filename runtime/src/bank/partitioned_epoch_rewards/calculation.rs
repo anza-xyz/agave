@@ -11,7 +11,8 @@ use {
         alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
         bank::{
             RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
-            fee_distribution::ExternalCollectorType, null_tracer,
+            fee_distribution::{ExternalCollectorType, default_system_account},
+            null_tracer,
         },
         block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
         inflation_rewards::{
@@ -1127,7 +1128,7 @@ impl Bank {
                             // If the account doesn't exist, the vote commission
                             // may be enough lamports to cover rent-exemption
                             // and properly create the commission account.
-                            maybe_commission_account.unwrap_or_default()
+                            maybe_commission_account.unwrap_or_else(default_system_account)
                         } else {
                             // Before SIMD-0232, commission accounts were always
                             // vote accounts, which cannot be closed unless the
