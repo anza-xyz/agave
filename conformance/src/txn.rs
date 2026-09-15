@@ -230,10 +230,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         virtual_address_space_adjustments_active,
         cu_avail,
         has_err,
-        txn_result
-            .modified_accounts
-            .iter_mut()
-            .map(|acc| &mut acc.data),
+        txn_result.modified_accounts.iter_mut(),
     );
 
     txn_result
@@ -426,9 +423,9 @@ mod tests {
             MessageAddressTableLookup as ProtoMessageAddressTableLookup,
             MessageHeader as ProtoMessageHeader, SanitizedTransaction as ProtoSanitizedTransaction,
             TransactionMessage as ProtoTransactionMessage, TxnBank as ProtoTxnBank,
-            TxnContext as ProtoTxnContext,
+            TxnContext as ProtoTxnContext, acct_state::DataRepr,
         },
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, ReadableAccount},
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
@@ -445,7 +442,7 @@ mod tests {
         solana_signature::Signature,
         solana_slot_hashes::SlotHashes,
         solana_svm::{
-            conformance::account_state::account_to_proto,
+            conformance::fd_hash::fd_hash_or_zero,
             transaction_processing_result::ProcessedTransaction,
         },
         solana_transaction::versioned::VersionedTransaction,
@@ -574,7 +571,13 @@ mod tests {
             tx: Some(proto_transaction(&transaction)),
             account_shared_data: accounts
                 .into_iter()
-                .map(|(pubkey, account)| account_to_proto((pubkey, account.into())))
+                .map(|(pubkey, account)| protosol::protos::AcctState {
+                    address: pubkey.to_bytes().to_vec(),
+                    owner: account.owner().to_bytes().to_vec(),
+                    lamports: account.lamports(),
+                    data_repr: Some(DataRepr::Data(account.data().to_vec())),
+                    executable: account.executable(),
+                })
                 .collect(),
             bank: Some(ProtoTxnBank {
                 blockhash_queue,
@@ -781,7 +784,7 @@ mod tests {
         assert_eq!(fee_details.prioritization_fee, 0);
         assert!(result.modified_accounts.is_empty());
         assert!(result.rollback_accounts.is_empty());
-        assert!(result.return_data.is_empty());
+        assert_eq!(result.return_data_hash, 0);
     }
 
     #[test]
@@ -822,7 +825,10 @@ mod tests {
         let result = execute_txn_proto(&txn_context(accounts, transaction, blockhash_queue));
 
         assert_executed_ok(&result);
-        assert_eq!(result.return_data.len(), 8);
+        assert_eq!(
+            result.return_data_hash,
+            fd_hash_or_zero(&1720556855i64.to_be_bytes())
+        );
     }
 
     #[test]

@@ -762,6 +762,7 @@ mod tests {
             MessageHeader as ProtoMessageHeader, PrevVoteAccount as ProtoPrevVoteAccount,
             SanitizedTransaction as ProtoSanitizedTransaction,
             TransactionMessage as ProtoTransactionMessage, VoteAccountVersion,
+            acct_state::DataRepr,
         },
         solana_account::{Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS},
         solana_clock::Clock,
@@ -773,7 +774,6 @@ mod tests {
         solana_slot_hashes::SlotHashes,
         solana_slot_history::SlotHistory,
         solana_stake_history::StakeHistory,
-        solana_svm::conformance::account_state::account_to_proto,
         solana_sysvar::{
             epoch_rewards::EpochRewards, last_restart_slot::LastRestartSlot,
             recent_blockhashes::RecentBlockhashes,
@@ -792,8 +792,19 @@ mod tests {
     const LEADER_NODE_T_2: [u8; 32] = [0xaa; 32];
     const LAMPORTS_PER_SIGNATURE: u32 = 5_000;
 
+    /// Build an input account carrying raw data, as block contexts expect.
+    fn input_account(pubkey: Pubkey, account: Account) -> AcctState {
+        AcctState {
+            address: pubkey.to_bytes().to_vec(),
+            owner: account.owner.to_bytes().to_vec(),
+            lamports: account.lamports,
+            data_repr: Some(DataRepr::Data(account.data)),
+            executable: account.executable,
+        }
+    }
+
     fn account(pubkey: Pubkey, lamports: u64, owner: Pubkey) -> AcctState {
-        account_to_proto((
+        input_account(
             pubkey,
             Account {
                 lamports,
@@ -802,17 +813,17 @@ mod tests {
                 executable: false,
                 rent_epoch: u64::MAX,
             },
-        ))
+        )
     }
 
     fn sysvar_account<T>(pubkey: Pubkey, value: &T) -> AcctState
     where
         T: wincode::Serialize<Src = T> + SysvarId,
     {
-        account_to_proto((
+        input_account(
             pubkey,
             create_account(value, DUMMY_INHERITABLE_ACCOUNT_FIELDS).into(),
-        ))
+        )
     }
 
     fn block_sysvar_accounts(parent_slot: u64, epoch_schedule: &EpochSchedule) -> Vec<AcctState> {
@@ -841,7 +852,7 @@ mod tests {
                 sysvar::recent_blockhashes::id(),
                 &RecentBlockhashes::default(),
             ),
-            account_to_proto((
+            input_account(
                 sysvar::stake_history::id(),
                 Account {
                     lamports: 1,
@@ -850,14 +861,14 @@ mod tests {
                     executable: false,
                     rent_epoch: u64::MAX,
                 },
-            )),
+            ),
             sysvar_account(sysvar::last_restart_slot::id(), &LastRestartSlot::default()),
             sysvar_account(sysvar::slot_history::id(), &slot_history),
         ]
     }
 
     fn system_program_account() -> AcctState {
-        account_to_proto((
+        input_account(
             system_program::id(),
             Account {
                 lamports: 1,
@@ -866,7 +877,7 @@ mod tests {
                 executable: true,
                 rent_epoch: u64::MAX,
             },
-        ))
+        )
     }
 
     fn previous_vote_account(

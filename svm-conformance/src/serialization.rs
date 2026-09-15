@@ -148,7 +148,9 @@ pub unsafe extern "C" fn sol_compat_vm_serialize_execute_v1(
 mod tests {
     use {
         super::*,
-        protosol::protos::{AcctState as ProtoAcctState, InstrAcct as ProtoInstrAcct},
+        protosol::protos::{
+            AcctState as ProtoAcctState, InstrAcct as ProtoInstrAcct, acct_state::DataRepr,
+        },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::{bpf_loader_deprecated, bpf_loader_upgradeable, sysvar},
@@ -160,7 +162,7 @@ mod tests {
         ProtoAcctState {
             address: vec![address; 32],
             lamports: 1,
-            data: vec![0; data_len],
+            data_repr: Some(DataRepr::Data(vec![0; data_len])),
             executable: false,
             owner: owner.to_bytes().to_vec(),
         }
@@ -178,7 +180,9 @@ mod tests {
         ProtoAcctState {
             address: sysvar::rent::id().to_bytes().to_vec(),
             lamports: 1,
-            data: bincode::serialize(&Rent::default()).unwrap(),
+            data_repr: Some(DataRepr::Data(
+                bincode::serialize(&Rent::default()).unwrap(),
+            )),
             executable: false,
             owner: sysvar::id().to_bytes().to_vec(),
         }

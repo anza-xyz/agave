@@ -42,6 +42,7 @@ use {
     solana_runtime_transaction::sanitize_config::sanitize_config,
     solana_sdk_ids::sysvar,
     solana_streamer::evicting_sender::EvictingSender,
+    solana_svm::conformance::fd_hash::fd_hash_or_zero,
     solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
     std::{
         borrow::Cow,
@@ -293,7 +294,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
                 completed: true,
                 merkle_root,
                 chained_merkle_root,
-                payload,
+                payload_hash: fd_hash_or_zero(&payload),
                 slot,
                 fec_set_index,
                 parent_offset: slot.saturating_sub(parent) as u32,
