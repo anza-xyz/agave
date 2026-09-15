@@ -58,9 +58,20 @@ pub const NUM_SLOTS_FOR_VERIFY: Slot = 30_000;
 /// memory while still allowing enough lookahead to maintain liveness.
 const MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY: Slot = 40;
 
+/// Maximum distance from the root at which a vote can be admitted.
+///
+/// Let's say root slot is as R.  We are willing to accept certs for upto R + [`NUM_SLOTS_FOR_VERIFY`]
+/// slots into the future.  A cert at slot S can produce a parent ready event for the slot S+1, hence
+/// the +1.  And then we are willing to accepts votes for another
+/// [`MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY`] slots.
+pub const MAX_VOTE_SLOT_DISTANCE_FROM_ROOT: Slot =
+    NUM_SLOTS_FOR_VERIFY + 1 + MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY;
+
 fn max_admitted_vote_slot(root_slot: Slot, highest_parent_ready_slot: Slot) -> Slot {
-    cmp::max(root_slot, highest_parent_ready_slot)
+    root_slot
+        .max(highest_parent_ready_slot)
         .saturating_add(MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY)
+        .min(root_slot.saturating_add(MAX_VOTE_SLOT_DISTANCE_FROM_ROOT))
 }
 
 /// If we receive an invalid certificate or vote from a QUIC connection, we ban the sender.
@@ -2151,6 +2162,43 @@ mod tests {
     }
 
     #[test]
+    fn votes_are_bounded_by_root() {
+        let mut ctx = TestContext::new();
+        let root_bank = ctx.verifier.sharable_banks.root();
+        let root_slot = root_bank.slot();
+        *ctx.verifier.highest_parent_ready.write().unwrap() =
+            (Slot::MAX, Block::new_unique(Slot::MAX));
+        let max_vote_slot = root_slot + MAX_VOTE_SLOT_DISTANCE_FROM_ROOT;
+
+        let messages = [max_vote_slot, max_vote_slot + 1]
+            .into_iter()
+            .enumerate()
+            .map(|(rank, slot)| {
+                let vote = ConsensusMessage::Vote(create_signed_vote_message(
+                    &root_bank,
+                    &ctx.validator_keypairs,
+                    ctx.verifier.cluster_info.my_shred_version(),
+                    Vote::new_skip_vote(slot),
+                    rank,
+                ));
+                (vote, ctx.validator_keypairs[rank].node_keypair.pubkey())
+            })
+            .collect::<Vec<_>>();
+        let datagrams =
+            messages_to_datagrams(&messages, ctx.verifier.cluster_info.my_shred_version());
+
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
+
+        assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
+        let SigVerifiedBatch::Votes(votes) = ctx.pool_receiver.try_recv().unwrap() else {
+            panic!("expected verified votes");
+        };
+        assert_eq!(votes.len(), 1);
+        assert_eq!(votes[0].vote().slot(), max_vote_slot);
+    }
+
+    #[test]
     fn genesis_votes_bypass_future_bound_during_migration() {
         let mut ctx = TestContext::new();
         let highest_parent_ready_slot = 100;
@@ -2272,7 +2320,11 @@ mod tests {
     #[test]
     fn max_admitted_vote_slot_handles_startup_and_overflow() {
         assert_eq!(max_admitted_vote_slot(500, 0), 540);
-        assert_eq!(max_admitted_vote_slot(0, Slot::MAX), Slot::MAX);
+        assert_eq!(
+            max_admitted_vote_slot(0, Slot::MAX),
+            MAX_VOTE_SLOT_DISTANCE_FROM_ROOT
+        );
+        assert_eq!(max_admitted_vote_slot(Slot::MAX, Slot::MAX), Slot::MAX);
     }
 
     #[test]
