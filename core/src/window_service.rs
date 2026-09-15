@@ -300,12 +300,34 @@ where
     F: Fn(PossibleDuplicateShred),
 {
     const RECV_TIMEOUT: Duration = Duration::from_millis(200);
-    let recovery_tasks = recovery_receiver.recv_timeout(RECV_TIMEOUT)?;
-    recovery_metrics.record_task_batch(recovery_tasks.len(), recovery_receiver.len());
+    let mut recovery_tasks = recovery_receiver.recv_timeout(RECV_TIMEOUT)?;
+    let queue_depth = recovery_receiver.len();
+    for tasks in recovery_receiver.try_iter().take(queue_depth) {
+        recovery_tasks.extend(tasks);
+    }
+    recovery_metrics.record_task_batch(recovery_tasks.len(), queue_depth);
+    if queue_depth > 0 {
+        // Stable sorting after reversing keeps the newest snapshot of each FEC
+        // set, including when a block switch replaced its shreds while queued.
+        recovery_tasks.reverse();
+        recovery_tasks.sort_by_key(ShredRecoveryTask::erasure_set);
+        recovery_tasks.dedup_by(|older, newer| {
+            if older.erasure_set() != newer.erasure_set() {
+                return false;
+            }
+            newer.merge_check_requirement(older);
+            true
+        });
+    }
     let mut next_recovered_batch = 0;
     let mut recovery_elapsed = Measure::start("Shred recovery");
     for task in recovery_tasks {
         let erasure_set = task.erasure_set();
+        if !task.must_check_completed_set()
+            && blockstore.is_erasure_set_complete(erasure_set, pinnable_slice)?
+        {
+            continue;
+        }
         // Successful batches occupy a compact prefix of the scratch buffer. A
         // failed recovery leaves the index unchanged, so the next task reuses
         // the same allocation.
@@ -723,6 +745,110 @@ mod test {
             .expect("Expect successful processing of shred");
 
         assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), original_entries);
+    }
+
+    #[test_case::test_case(false; "recovery_completes_set")]
+    #[test_case::test_case(true; "network_completes_set")]
+    fn test_run_recovery_skips_redundant_tasks(network_completes_set: bool) {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch();
+        let (mut data, coding) = Shredder::new(1, 0, 0, 0)
+            .unwrap()
+            .entries_to_merkle_shreds_for_tests(
+                &Keypair::new(),
+                &create_ticks(1, 0, Hash::default()),
+                true,
+                Hash::new_unique(),
+                0,
+                0,
+                &mut ProcessShredsStats::default(),
+            );
+        let missing = data.pop().unwrap();
+        let erasure_set = shred::ErasureSetId::new(missing.slot(), missing.fec_set_index());
+        blockstore.insert_shreds(data, false).unwrap();
+        assert!(
+            !blockstore
+                .is_erasure_set_complete(erasure_set, &mut pinnable_slice)
+                .unwrap()
+        );
+
+        // Each coding-shred arrival independently schedules the still-incomplete
+        // set. Leave a third snapshot aside to simulate work queued during recovery.
+        let mut task_batches = coding.into_iter().take(3).map(|shred| {
+            let (_, tasks) = blockstore
+                .insert_shreds_with_recovered(
+                    [(Cow::Owned(shred), false, BlockLocation::Original, None)],
+                    &mut [],
+                    &bounded(0).0,
+                    None,
+                    &mut pinnable_slice,
+                    &mut write_batch,
+                    &|_| {},
+                    &mut BlockstoreInsertionMetrics::default(),
+                )
+                .unwrap();
+            assert_eq!(tasks.len(), 1);
+            tasks
+        });
+        let (sender, receiver) = bounded(4);
+        sender.send(task_batches.next().unwrap()).unwrap();
+        sender.send(task_batches.next().unwrap()).unwrap();
+        let delayed_tasks = task_batches.next().unwrap();
+        if network_completes_set {
+            blockstore.insert_shreds([missing.clone()], false).unwrap();
+        }
+
+        let (retransmit_sender, retransmit_receiver) = bounded(4);
+        let bank = Arc::new(Bank::new_for_tests(
+            &create_genesis_config(2).genesis_config,
+        ));
+        let mut context = ShredRecoveryContext::new(bank, 0);
+        let mut scratch = Vec::new();
+        let mut metrics = BlockstoreInsertionMetrics::default();
+        let mut recovery_metrics = WindowRecoveryMetrics::default();
+        for tasks in [None, Some(delayed_tasks)] {
+            if let Some(tasks) = tasks {
+                sender.send(tasks).unwrap();
+            }
+            run_recovery(
+                &receiver,
+                &retransmit_sender,
+                &blockstore,
+                &mut context,
+                &mut scratch,
+                &mut pinnable_slice,
+                &mut write_batch,
+                |duplicate| panic!("unexpected duplicate: {duplicate:?}"),
+                &mut metrics,
+                &mut recovery_metrics,
+                None,
+            )
+            .unwrap();
+            assert!(receiver.is_empty());
+            assert!(
+                blockstore
+                    .is_erasure_set_complete(erasure_set, &mut pinnable_slice)
+                    .unwrap()
+            );
+        }
+        assert_eq!(recovery_metrics.num_recovery_tasks, 3);
+        assert_eq!(recovery_metrics.num_recovered_batches, 1);
+        assert_eq!(metrics.num_fec_set_checks_passed, 1);
+        assert_eq!(recovery_metrics.num_recovery_tasks_failed, 0);
+        assert_eq!(
+            metrics.num_recovered_exists,
+            usize::from(network_completes_set)
+        );
+        assert_eq!(
+            blockstore
+                .get_data_shred(missing.slot(), u64::from(missing.index()))
+                .unwrap()
+                .unwrap(),
+            missing.payload().as_ref()
+        );
+        assert_eq!(retransmit_receiver.len(), 1);
     }
 
     #[test]
