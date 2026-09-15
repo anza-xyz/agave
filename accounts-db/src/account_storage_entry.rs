@@ -133,11 +133,7 @@ impl AccountStorageEntry {
         let obsolete_bytes: usize = self
             .obsolete_accounts_read_lock()
             .filter_obsolete_accounts(slot)
-            .map(|(offset, data_len)| {
-                self.accounts
-                    .calculate_stored_size(data_len)
-                    .min(self.accounts.len() - offset as usize)
-            })
+            .map(|(_offset, data_len)| self.accounts.calculate_stored_size(data_len))
             .sum();
         obsolete_bytes
     }

@@ -134,7 +134,7 @@ fn create_store_for_shrink_tests(
     ));
     accounts_db.storage.insert(Arc::clone(&store));
     store.add_accounts(num_tombstones.max(1), alive_bytes);
-    store.batch_insert_tombstone_offsets(0..num_tombstones as u64);
+    store.batch_insert_tombstone_offsets(0..num_tombstones as Offset);
     (temp_dir, store)
 }
 
