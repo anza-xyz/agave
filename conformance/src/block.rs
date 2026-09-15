@@ -1,21 +1,9 @@
 //! Block execution conformance harness.
 
 use {
-    super::{
+    crate::txn::{
         deserialize_accounts, fee_rate_governor_from_proto, new_accounts_for_tests_single_threaded,
         restore_blockhash_queue,
-    },
-    crate::{
-        bank::{
-            Bank, BankFieldsToDeserialize, BankRc,
-            bank_hash_details::{
-                AccountsDetails, BankHashComponents, BankHashDetails, SlotDetails,
-            },
-        },
-        epoch_stakes::VersionedEpochStakes,
-        stake_account,
-        stake_history::StakeHistory,
-        stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
     },
     agave_feature_set::FeatureSet,
     protosol::protos::{
@@ -34,6 +22,18 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_leader_schedule::{LeaderSchedule, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_pubkey::Pubkey,
+    solana_runtime::{
+        bank::{
+            Bank, BankFieldsToDeserialize, BankRc,
+            bank_hash_details::{
+                AccountsDetails, BankHashComponents, BankHashDetails, SlotDetails,
+            },
+        },
+        epoch_stakes::VersionedEpochStakes,
+        stake_account,
+        stake_history::StakeHistory,
+        stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
+    },
     solana_runtime_transaction::transaction_with_meta::writable_accounts,
     solana_sdk_ids::sysvar,
     solana_stake_interface::state::Delegation,
@@ -409,7 +409,7 @@ fn validate_transaction_message(message: &protos::TransactionMessage) {
 }
 
 #[allow(deprecated)]
-pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
+pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
     let bank_ctx = context.bank.as_ref().unwrap();
     let fd_features = bank_ctx.features.clone().unwrap_or_default();
     let feature_set = feature_set_from_proto(&fd_features);
@@ -711,7 +711,7 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
 //
 // Excluded from `test` builds: the symbol would otherwise be defined both here
 // and in the `path = "."` dev-dependency rlib, producing a duplicate-symbol link
-// error. Tests call the safe `execute_block` API directly.
+// error. Tests call the safe `execute_block_proto` API directly.
 #[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_block_execute_v1(
@@ -731,7 +731,7 @@ pub unsafe extern "C" fn sol_compat_block_execute_v1(
         return 0;
     };
 
-    let block_result = execute_block(&block_context);
+    let block_result = execute_block_proto(&block_context);
 
     let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
     let out_vec = block_result.encode_to_vec();
@@ -750,8 +750,7 @@ mod tests {
     #![allow(deprecated)]
 
     use {
-        super::{LEADER_SCHEDULE_HASH_SEED, execute_block, hash_epoch_leaders},
-        crate::sysvar_account::create_account,
+        super::{LEADER_SCHEDULE_HASH_SEED, execute_block_proto, hash_epoch_leaders},
         protosol::protos::{
             AcctState, BlockBank as ProtoBlockBank, BlockContext as ProtoBlockContext,
             BlockhashQueueEntry as ProtoBlockhashQueueEntry,
@@ -769,6 +768,7 @@ mod tests {
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
+        solana_runtime::sysvar_account::create_account,
         solana_sdk_ids::{native_loader, system_program, sysvar},
         solana_slot_hashes::SlotHashes,
         solana_slot_history::SlotHistory,
@@ -822,11 +822,14 @@ mod tests {
             epoch_start_timestamp: 1_700_000_000,
             epoch: parent_epoch,
             leader_schedule_epoch: epoch_schedule.get_leader_schedule_epoch(parent_slot),
-            unix_timestamp: 1_700_000_000 + parent_slot as i64,
+            unix_timestamp: 1_700_000_000i64.saturating_add(parent_slot as i64),
         };
         let mut slot_hashes = SlotHashes::default();
         if parent_slot > 0 {
-            slot_hashes.add(parent_slot - 1, Hash::new_from_array(PARENT_BANK_HASH));
+            slot_hashes.add(
+                parent_slot.saturating_sub(1),
+                Hash::new_from_array(PARENT_BANK_HASH),
+            );
         }
         let mut slot_history = SlotHistory::default();
         slot_history.add(parent_slot);
@@ -1031,8 +1034,8 @@ mod tests {
     fn execute_empty_block_is_deterministic() {
         let context = block_context(1, 0);
 
-        let first = execute_block(&context);
-        let second = execute_block(&context);
+        let first = execute_block_proto(&context);
+        let second = execute_block_proto(&context);
 
         assert_eq!(first, second);
         assert!(!first.has_error);
@@ -1061,7 +1064,7 @@ mod tests {
 
     #[test]
     fn execute_empty_block_at_warmup_epoch_boundary() {
-        let effects = execute_block(&block_context(32, 31));
+        let effects = execute_block_proto(&block_context(32, 31));
 
         assert!(!effects.has_error);
         assert_nonzero_bytes(&effects.bank_hash, 32);
@@ -1089,8 +1092,8 @@ mod tests {
 
     #[test]
     fn committed_system_transfer_changes_bank_hash_with_amount() {
-        let one_lamport = execute_block(&transfer_context(1));
-        let two_lamports = execute_block(&transfer_context(2));
+        let one_lamport = execute_block_proto(&transfer_context(1));
+        let two_lamports = execute_block_proto(&transfer_context(2));
 
         assert!(!one_lamport.has_error);
         assert!(!two_lamports.has_error);
@@ -1109,7 +1112,7 @@ mod tests {
         let mut context = block_context(1, 0);
         context.txns.push(ProtoSanitizedTransaction::default());
 
-        let effects = execute_block(&context);
+        let effects = execute_block_proto(&context);
 
         assert!(effects.has_error);
         assert_eq!(effects.slot_capitalization, 0);
@@ -1128,7 +1131,7 @@ mod tests {
         let mut context = transfer_context(1);
         context.txns[0].message.as_mut().unwrap().account_keys[0] = vec![0; 31];
 
-        execute_block(&context);
+        execute_block_proto(&context);
     }
 
     #[test]
@@ -1137,7 +1140,7 @@ mod tests {
         let mut context = transfer_context(1);
         context.txns[0].message.as_mut().unwrap().recent_blockhash = vec![0; 31];
 
-        execute_block(&context);
+        execute_block_proto(&context);
     }
 
     #[test]
@@ -1154,7 +1157,7 @@ mod tests {
                 readonly_indexes: Vec::new(),
             });
 
-        execute_block(&context);
+        execute_block_proto(&context);
     }
 
     #[test]
@@ -1171,7 +1174,7 @@ mod tests {
                 readonly_indexes: Vec::new(),
             });
 
-        let effects = execute_block(&context);
+        let effects = execute_block_proto(&context);
 
         assert!(!effects.has_error);
     }
