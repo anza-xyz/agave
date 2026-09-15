@@ -131,8 +131,8 @@ mod serde_snapshot_tests {
             io::copy(&mut reader, &mut writer)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(output_path, reader.len())?;
+            let file_info = FileInfo::new_from_path(output_path)?;
+            let accounts_file = AccountsFile::new_for_startup(file_info)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),

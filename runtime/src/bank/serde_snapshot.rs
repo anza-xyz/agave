@@ -14,6 +14,7 @@ mod tests {
             snapshot_bank_utils,
             snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
         },
+        agave_fs::FileInfo,
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
             ObsoleteAccounts,
@@ -55,8 +56,8 @@ mod tests {
             std::fs::copy(storage_path, &output_path)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(output_path, storage_entry.accounts.len())?;
+            let file_info = FileInfo::new_from_path(output_path)?;
+            let accounts_file = AccountsFile::new_for_startup(file_info)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),

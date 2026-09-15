@@ -51,16 +51,6 @@ pub enum AccountsFile {
 }
 
 impl AccountsFile {
-    /// Create an AccountsFile instance from the specified path.
-    ///
-    /// The second element of the returned tuple is the number of accounts in the
-    /// accounts file.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
-        let (av, num_accounts) = AppendVec::new_from_file(path, current_len)?;
-        Ok((Self::AppendVec(av), num_accounts))
-    }
-
     /// Creates a new AccountsFile for the underlying storage at `file_info`
     ///
     /// This version of `new()` may only be called when reconstructing storages as part of startup.

@@ -199,7 +199,7 @@ mod tests {
             append_vec,
             utils::create_account_shared_data,
         },
-        agave_fs::io_setup::IoSetupState,
+        agave_fs::{FileInfo, io_setup::IoSetupState},
         log::*,
         rand::{
             SeedableRng,
@@ -377,10 +377,12 @@ mod tests {
         // If the number of accounts left is not zero, create a new AccountsFile from the output file
         // and verify that the number of accounts in the new file is correct
         if (total_accounts - number_of_accounts_to_remove) != 0 {
-            let (accounts_file, num_accounts) =
-                AccountsFile::new_from_file(temp_file_path, bytes_written as usize).unwrap();
+            let file_info = FileInfo::new_from_path(temp_file_path).unwrap();
+            let accounts_file = AccountsFile::new_for_startup(file_info).unwrap();
 
             // Verify that the correct number of accounts were found in the file
+            let mut num_accounts = 0;
+            accounts_file.scan_pubkeys(|_| num_accounts += 1).unwrap();
             assert_eq!(
                 num_accounts,
                 (total_accounts - number_of_accounts_to_remove)
@@ -533,10 +535,9 @@ mod tests {
             // Close the file
             drop(output_file);
 
-            let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(temp_file_path, bytes_written as usize).unwrap();
-
             // Create a new AccountStorageEntry from the output file
+            let file_info = FileInfo::new_from_path(temp_file_path).unwrap();
+            let accounts_file = AccountsFile::new_for_startup(file_info).unwrap();
             let new_storage = AccountStorageEntry::new_existing(
                 slot,
                 0,

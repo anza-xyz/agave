@@ -328,15 +328,6 @@ impl AppendVec {
         self.file_size
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
-        let file_info = FileInfo::new_from_path(path)?;
-        let new = Self::new_from_file_info_unchecked(file_info, current_len)?;
-
-        let num_accounts = new.sanitize_layout_and_length()?;
-        Ok((new, num_accounts))
-    }
-
     /// Creates a new AppendVec for the underlying storage at `file_info`
     ///
     /// This version of `new()` may only be called when reconstructing storages as part of startup.
@@ -372,34 +363,6 @@ impl AppendVec {
         let file_info = FileInfo::new_from_path(path)?;
         let file_size = file_info.size;
         Self::new_from_file_info_unchecked(file_info, file_size as usize)
-    }
-
-    /// Checks that all accounts layout is correct and returns the number of accounts.
-    #[cfg(feature = "dev-context-only-utils")]
-    fn sanitize_layout_and_length(&self) -> Result<usize> {
-        // This discards allocated accounts immediately after check at each loop iteration.
-        //
-        // This code should not reuse AppendVec.accounts() method as the current form or
-        // extend it to be reused here because it would allow attackers to accumulate
-        // some measurable amount of memory needlessly.
-        let mut num_accounts = 0;
-        let mut matches = true;
-        let mut last_offset = 0;
-        self.scan_stored_accounts_no_data(|account| {
-            if !matches || !account.sanitize() {
-                matches = false;
-                return;
-            }
-            last_offset = account.offset() + account.stored_size() as FileOffset;
-            num_accounts += 1;
-        })?;
-        let aligned_current_len = u64_align!(self.current_len.load(Ordering::Acquire));
-
-        if !matches || last_offset != aligned_current_len as FileOffset {
-            return Err(AppendVecError::IncorrectLayout(self.path.clone()));
-        }
-
-        Ok(num_accounts)
     }
 
     /// Get a reference to the data at `offset` of `size` bytes if that slice
@@ -684,38 +647,6 @@ impl AppendVec {
                 account_meta.rent_epoch,
             )
         })
-    }
-
-    #[cfg(test)]
-    pub fn get_account_test(
-        &self,
-        offset: FileOffset,
-    ) -> Option<(Pubkey, solana_account::AccountSharedData)> {
-        let data_len = self.get_account_data_lens(&[offset]);
-        let sizes: usize = data_len
-            .iter()
-            .map(|len| AppendVec::calculate_stored_size(*len))
-            .sum();
-        let result = self.get_stored_account_meta_callback(offset, |r_callback| {
-            let r2 = self.get_account_shared_data(offset);
-            assert!(solana_account::accounts_equal(
-                &r_callback,
-                r2.as_ref().unwrap()
-            ));
-            assert_eq!(sizes, r_callback.stored_size());
-            let pubkey = r_callback.meta.pubkey;
-            Some((pubkey, create_account_shared_data(&r_callback)))
-        });
-        if result.is_none() {
-            assert!(
-                self.get_stored_account_meta_callback(offset, |_| {})
-                    .is_none()
-            );
-            assert!(self.get_account_shared_data(offset).is_none());
-            // it has different rules for checking len and returning None
-            assert_eq!(sizes, 0);
-        }
-        result.flatten()
     }
 
     /// Returns the path to the file where the data is stored
@@ -1124,6 +1055,72 @@ mod tests {
     };
 
     impl AppendVec {
+        fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
+            let file_info = FileInfo::new_from_path(path)?;
+            let new = Self::new_from_file_info_unchecked(file_info, current_len)?;
+
+            let num_accounts = new.sanitize_layout_and_length()?;
+            Ok((new, num_accounts))
+        }
+
+        /// Checks that all accounts layout is correct and returns the number of accounts.
+        fn sanitize_layout_and_length(&self) -> Result<usize> {
+            // This discards allocated accounts immediately after check at each loop iteration.
+            //
+            // This code should not reuse AppendVec.accounts() method as the current form or
+            // extend it to be reused here because it would allow attackers to accumulate
+            // some measurable amount of memory needlessly.
+            let mut num_accounts = 0;
+            let mut matches = true;
+            let mut last_offset = 0;
+            self.scan_stored_accounts_no_data(|account| {
+                if !matches || !account.sanitize() {
+                    matches = false;
+                    return;
+                }
+                last_offset = account.offset() + account.stored_size() as FileOffset;
+                num_accounts += 1;
+            })?;
+            let aligned_current_len = u64_align!(self.current_len.load(Ordering::Acquire));
+
+            if !matches || last_offset != aligned_current_len as FileOffset {
+                return Err(AppendVecError::IncorrectLayout(self.path.clone()));
+            }
+
+            Ok(num_accounts)
+        }
+
+        fn get_account_test(
+            &self,
+            offset: FileOffset,
+        ) -> Option<(Pubkey, solana_account::AccountSharedData)> {
+            let data_len = self.get_account_data_lens(&[offset]);
+            let sizes: usize = data_len
+                .iter()
+                .map(|len| AppendVec::calculate_stored_size(*len))
+                .sum();
+            let result = self.get_stored_account_meta_callback(offset, |r_callback| {
+                let r2 = self.get_account_shared_data(offset);
+                assert!(solana_account::accounts_equal(
+                    &r_callback,
+                    r2.as_ref().unwrap()
+                ));
+                assert_eq!(sizes, r_callback.stored_size());
+                let pubkey = r_callback.meta.pubkey;
+                Some((pubkey, create_account_shared_data(&r_callback)))
+            });
+            if result.is_none() {
+                assert!(
+                    self.get_stored_account_meta_callback(offset, |_| {})
+                        .is_none()
+                );
+                assert!(self.get_account_shared_data(offset).is_none());
+                // it has different rules for checking len and returning None
+                assert_eq!(sizes, 0);
+            }
+            result.flatten()
+        }
+
         fn append_account_test(&self, data: &(Pubkey, AccountSharedData)) -> Option<FileOffset> {
             let slot_ignored = Slot::MAX;
             let accounts = [(&data.0, &data.1)];
