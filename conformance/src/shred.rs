@@ -21,7 +21,11 @@ use {
     solana_clock::{DEFAULT_HASHES_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
-        blockstore::{Blockstore, BlockstoreInsertionMetrics, PurgeType},
+        blockstore::{
+            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType,
+            RecoveredShredBatch,
+        },
+        blockstore_meta::BlockLocation,
         blockstore_processor::{set_alpenglow_ticks, verify_ticks},
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Shred,
@@ -163,25 +167,57 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         }
     };
     let retransmit_sender = new_dummy_retransmit_sender();
-    let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
+    let mut recovery = ShredRecoveryContext::new(bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
-    // Blockstore stores duplicate proofs at insert time.
-    let handle_duplicate = |_| {};
-
     let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
     slots.sort_unstable();
     slots.dedup();
-
-    let shreds_iter = parsed
-        .into_iter()
-        .map(|shred| (shred, /*is_repaired:*/ false));
-    let _ = blockstore.insert_shreds_handle_duplicate(
-        shreds_iter,
-        false, // is_trusted: keep dedup + integrity checks
-        &mut recovery,
-        &handle_duplicate,
-        &mut metrics,
-    );
+    let handle_duplicate = |_: PossibleDuplicateShred| {};
+    {
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch();
+        let shreds_iter = parsed.into_iter().map(|shred| {
+            (
+                shred,
+                /*is_repaired:*/ false,
+                BlockLocation::Original,
+                None,
+            )
+        });
+        if let Ok((_, tasks)) = blockstore.insert_shreds_with_recovered(
+            shreds_iter,
+            &mut [],
+            &retransmit_sender,
+            recovery.stricter_shred_validation_from(),
+            &mut pinnable_slice,
+            &mut write_batch,
+            &handle_duplicate,
+            &mut metrics,
+        ) {
+            // Finish recovery synchronously before inspecting the blockstore below.
+            let mut recovered_batches: Vec<_> = tasks
+                .into_iter()
+                .filter_map(|task| {
+                    let mut batch = RecoveredShredBatch::new(task.erasure_set());
+                    blockstore
+                        .recover_shreds_from_task(task, &mut recovery, &mut batch)
+                        .then_some(batch)
+                })
+                .collect();
+            if !recovered_batches.is_empty() {
+                let _ = blockstore.insert_shreds_with_recovered(
+                    std::iter::empty(),
+                    &mut recovered_batches,
+                    &retransmit_sender,
+                    recovery.stricter_shred_validation_from(),
+                    &mut pinnable_slice,
+                    &mut write_batch,
+                    &handle_duplicate,
+                    &mut metrics,
+                );
+            }
+        }
+    }
 
     // Replay only reaches a slot whose parent chain is connected to the root
     // through full slots; the other slots are held unverified.  FEC sets are
