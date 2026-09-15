@@ -28,7 +28,7 @@ fn sample_hash(rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized)) -> Ha
 }
 
 /// An alpenglow block
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(
     Clone,
     Copy,

@@ -454,6 +454,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self.storage.storage.stats
     }
 
+    /// Number of pubkeys tracked by the index, in-mem and on-disk.
+    pub fn num_accounts(&self) -> usize {
+        self.stats().total_count()
+    }
+
     /// get stats related to startup
     pub(crate) fn get_startup_stats(&self) -> &StartupStats {
         &self.storage.storage.startup_stats

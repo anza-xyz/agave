@@ -196,6 +196,8 @@ mod tests {
             account_storage_entry::AccountStorageEntry,
             accounts_db::get_temp_accounts_paths,
             accounts_file::{AccountsFile, AccountsFileProvider},
+            append_vec,
+            utils::create_account_shared_data,
         },
         agave_fs::io_setup::IoSetupState,
         log::*,
@@ -206,7 +208,7 @@ mod tests {
         },
         solana_account::AccountSharedData,
         solana_pubkey::Pubkey,
-        std::{fs::File, iter},
+        std::{collections::HashMap, fs::File, iter},
         test_case::test_case,
     };
 
@@ -283,7 +285,7 @@ mod tests {
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
-        dbg!("Generated seed: {seed}");
+        dbg!(seed);
 
         // Use a seedable RNG with the generated seed for reproducibility
         let mut rng = StdRng::seed_from_u64(seed);
@@ -357,12 +359,9 @@ mod tests {
         let mut reader =
             AccountStorageReader::new(&storage, None, tombstones_filter, &mut file_reader).unwrap();
         let mut number_of_accounts_to_remove = num_obsolete;
-        let mut current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
         if tombstones_filter == TombstonesFilter::Exclude {
             number_of_accounts_to_remove += num_tombstones;
-            current_len -= num_tombstones * storage.accounts.calculate_stored_size(0);
         }
-        assert_eq!(reader.len(), current_len);
 
         // Create a temporary directory and a file within it
         let temp_dir = tempfile::tempdir().unwrap();
@@ -379,7 +378,7 @@ mod tests {
         // and verify that the number of accounts in the new file is correct
         if (total_accounts - number_of_accounts_to_remove) != 0 {
             let (accounts_file, num_accounts) =
-                AccountsFile::new_from_file(temp_file_path, current_len).unwrap();
+                AccountsFile::new_from_file(temp_file_path, bytes_written as usize).unwrap();
 
             // Verify that the correct number of accounts were found in the file
             assert_eq!(
@@ -397,6 +396,35 @@ mod tests {
 
             // Verify that the new storage has the same length as the reader
             assert_eq!(new_storage.accounts.len(), reader.len());
+
+            // Verify that the new storage has all the expected accounts
+            let include_tombstones = tombstones_filter == TombstonesFilter::Include;
+            let expected_accounts: HashMap<_, _> = accounts_to_append
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (pubkey, account))| {
+                    let is_obsolete = obsolete_indexes.contains(&i);
+                    let is_tombstone = tombstone_indexes.contains(&i);
+                    (!is_obsolete && (!is_tombstone || include_tombstones))
+                        .then(|| (*pubkey, account.clone()))
+                })
+                .collect();
+            let mut reader_for_scan_accounts = append_vec::new_scan_accounts_reader();
+            let accounts_in_new_storage = {
+                let mut accounts = HashMap::new();
+                new_storage
+                    .accounts
+                    .scan_accounts(&mut reader_for_scan_accounts, |_offset, stored_account| {
+                        let old_value = accounts.insert(
+                            *stored_account.pubkey(),
+                            create_account_shared_data(&stored_account),
+                        );
+                        assert!(old_value.is_none());
+                    })
+                    .unwrap();
+                accounts
+            };
+            assert_eq!(accounts_in_new_storage, expected_accounts);
         }
     }
 
@@ -482,19 +510,17 @@ mod tests {
         )
         .unwrap();
         for snapshot_slot in 0..slot_marked_dead {
+            let obsolete_slot = Some(snapshot_slot);
             file_reader
                 .set_file(files[0].as_ref(), storage.accounts.len() as u64)
                 .unwrap();
             let mut reader = AccountStorageReader::new(
                 &storage,
-                Some(snapshot_slot),
+                obsolete_slot,
                 TombstonesFilter::Include,
                 &mut file_reader,
             )
             .unwrap();
-            let current_len =
-                storage.accounts.len() - storage.get_obsolete_bytes(Some(snapshot_slot));
-            assert_eq!(reader.len(), current_len);
 
             // Create a file to write the reader's output. It will get deleted by AccountsFile::drop() every
             // iteration so it does not need a unique name
@@ -508,7 +534,7 @@ mod tests {
             drop(output_file);
 
             let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(temp_file_path, current_len).unwrap();
+                AccountsFile::new_from_file(temp_file_path, bytes_written as usize).unwrap();
 
             // Create a new AccountStorageEntry from the output file
             let new_storage = AccountStorageEntry::new_existing(
@@ -520,6 +546,41 @@ mod tests {
 
             // Verify that the new storage has the same length as the reader
             assert_eq!(new_storage.accounts.len(), reader.len());
+
+            // Verify that the new storage has all the expected accounts
+            let mut reader_for_scan_accounts = append_vec::new_scan_accounts_reader();
+            let accounts_in_old_storage = {
+                let mut accounts = HashMap::new();
+                storage
+                    .scan_accounts(
+                        &mut reader_for_scan_accounts,
+                        obsolete_slot,
+                        |_offset, stored_account| {
+                            let old_value = accounts.insert(
+                                *stored_account.pubkey(),
+                                create_account_shared_data(&stored_account),
+                            );
+                            assert!(old_value.is_none());
+                        },
+                    )
+                    .unwrap();
+                accounts
+            };
+            let accounts_in_new_storage = {
+                let mut accounts = HashMap::new();
+                new_storage
+                    .accounts
+                    .scan_accounts(&mut reader_for_scan_accounts, |_offset, stored_account| {
+                        let old_value = accounts.insert(
+                            *stored_account.pubkey(),
+                            create_account_shared_data(&stored_account),
+                        );
+                        assert!(old_value.is_none());
+                    })
+                    .unwrap();
+                accounts
+            };
+            assert_eq!(accounts_in_new_storage, accounts_in_old_storage);
         }
     }
 }

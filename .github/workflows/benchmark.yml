@@ -9,6 +9,9 @@ jobs:
     if: github.repository == 'anza-xyz/agave'
     name: benchmark
     runs-on: benchmark
+    # Fail fast on a stalled bench instead of waiting out the 360 minute
+    # default. All jobs run in the order of minutes, well below this cap.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

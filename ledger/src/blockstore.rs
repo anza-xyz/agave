@@ -5146,11 +5146,14 @@ impl Blockstore {
                 .tuple_windows()
                 .all(|(a, b)| a.start < a.end && a.end == b.start && b.start < b.end)
         );
-        let maybe_panic = |index: u64| {
+        let maybe_print_error = |index: u64| {
             if let Some(slot_meta) = slot_meta
                 && slot > self.lowest_cleanup_slot()
             {
-                panic!("Missing shred. slot: {slot}, index: {index}, slot meta: {slot_meta:?}");
+                error!(
+                    "A data shred is believed to be present by SlotMeta but is actually missing. \
+                     Slot: {slot}, index: {index}, slot meta: {slot_meta:?}"
+                );
             }
         };
         let Some((&Range { start, .. }, &Range { end, .. })) =
@@ -5167,7 +5170,7 @@ impl Blockstore {
                 .zip(indices)
                 .map(|(shred, index)| {
                     shred?.ok_or_else(|| {
-                        maybe_panic(index);
+                        maybe_print_error(index);
                         BlockstoreError::MissingShred(slot, index)
                     })
                 });

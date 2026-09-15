@@ -3224,6 +3224,7 @@ impl RpcClient {
     /// let config = RpcLeaderScheduleConfig {
     ///     identity: Some(validator_pubkey_str),
     ///     commitment: Some(CommitmentConfig::processed()),
+    ///     ..RpcLeaderScheduleConfig::default()
     /// };
     /// let leader_schedule = rpc_client.get_leader_schedule_with_config(
     ///     Some(slot),

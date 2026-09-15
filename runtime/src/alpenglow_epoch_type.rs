@@ -14,6 +14,7 @@ use {
 /// Note that this is not the same as `epoch_stakes`, which is calculated an epoch
 /// in advance.
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct RewardEpochDelegatedStakes {
     pub(crate) epoch: Epoch,
     pub(crate) delegated_stakes: HashMap<Pubkey, u64>,
@@ -68,32 +69,39 @@ impl RewardEpochDelegatedStakesAccount {
 }
 
 impl RewardEpochDelegatedStakes {
-    pub(crate) fn set(&self, bank: &Bank, distribution_vote_accounts: &VoteAccounts) {
+    pub(crate) fn set(&mut self, bank: &Bank, distribution_vote_accounts: &VoteAccounts) {
         assert!(
             distribution_vote_accounts.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS,
             "reward epoch delegated stakes account must be bounded by MAX_ALPENGLOW_VOTE_ACCOUNTS"
         );
 
-        let mut delegated_stakes = distribution_vote_accounts
+        // Drop entries that didn't pay VAT
+        self.delegated_stakes
+            .retain(|vote_address, _| distribution_vote_accounts.get(vote_address).is_some());
+        // Add new vote accounts that paid VAT (note: this shouldn't ever do
+        // anything, but provides some extra safety)
+        distribution_vote_accounts
             .delegated_stakes()
+            .for_each(|(&vote_address, _)| {
+                self.delegated_stakes.entry(vote_address).or_insert(0);
+            });
+        let mut delegated_stakes = self
+            .delegated_stakes
+            .iter()
             .map(
-                |(vote_pubkey, _delegated_stake)| RewardEpochDelegatedStake {
-                    vote_pubkey: *vote_pubkey,
-                    delegated_stake: self
-                        .delegated_stakes
-                        .get(vote_pubkey)
-                        .copied()
-                        .unwrap_or_default(),
+                |(&vote_pubkey, &delegated_stake)| RewardEpochDelegatedStake {
+                    vote_pubkey,
+                    delegated_stake,
                 },
             )
             .collect::<Vec<_>>();
         delegated_stakes.sort_unstable_by_key(|stake| stake.vote_pubkey);
 
-        let account = RewardEpochDelegatedStakesAccount {
+        let delegated_stakes_account = RewardEpochDelegatedStakesAccount {
             epoch: self.epoch,
             delegated_stakes,
         };
-        let data = wincode::serialize(&account).unwrap();
+        let data = wincode::serialize(&delegated_stakes_account).unwrap();
         let lamports = bank
             .get_minimum_balance_for_rent_exemption(RewardEpochDelegatedStakesAccount::max_size());
         let mut account = AccountSharedData::new(lamports, data.len(), &system_program::ID);

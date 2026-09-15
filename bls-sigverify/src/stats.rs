@@ -433,7 +433,7 @@ impl VoteVerificationStats {
 /// Stats from sigverifying votes.
 pub(super) struct SigVerifyVoteStats {
     /// Number of votes [`verify_and_send_votes`] was requested to verify the signature of.
-    pub(super) votes_to_sig_verify: Saturating<u64>,
+    pub(super) votes_to_sig_verify: Saturating<usize>,
     pub(super) senders: VoteSenderStats,
     /// Stats for [`verify_and_send_votes`].
     pub(super) fn_verify_and_send_votes_stats: WelfordStats,
@@ -469,7 +469,7 @@ impl SigVerifyVoteStats {
         } = self;
         senders.report();
         vote_verification_stats.report();
-        let votes_per_sec = per_second(votes_to_sig_verify.0, elapsed);
+        let votes_per_sec = per_second(votes_to_sig_verify.0 as u64, elapsed);
         datapoint_info!(
             "bls_vote_sigverify_stats",
             ("votes_to_sig_verify", votes_to_sig_verify.0, i64),

@@ -443,9 +443,8 @@ pub fn filter_packets_by_socket_addr_space<'a>(
 pub trait ResponseSender {
     /// Send a batch of packets.
     ///
-    /// Returns Ok if all the packets with valid destination within batch were sent successfully,
-    /// and returns an error if any packet within the batch failed to send with number of failed
-    /// packets.
+    /// Returns Ok if the batch was handed to a usable socket, and an error if the send path is
+    /// broken. Packets with an invalid or unreachable destination are dropped silently.
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError>;
 }
 
@@ -557,7 +556,7 @@ mod test {
         fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
             let packets =
                 filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
-            batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>())
+            batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>()).map(|_num_sent| ())
         }
     }
 

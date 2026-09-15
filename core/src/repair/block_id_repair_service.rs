@@ -1017,10 +1017,9 @@ impl BlockIdRepairService {
                     .iter()
                     .map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, failed)| {
+            .inspect_err(|SendPktsError::IoError(err)| {
                 error!(
-                    "{}: failed to send block_id repair packets, packets failed {failed}/{total}: \
-                     {err:?}",
+                    "{}: failed to send a batch of {total} block_id repair packets: {err:?}",
                     repair_info.cluster_info.id(),
                 )
             });
@@ -1031,10 +1030,9 @@ impl BlockIdRepairService {
                 repair_socket,
                 shred_socket_batch.iter().map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, failed)| {
+            .inspect_err(|SendPktsError::IoError(err)| {
                 error!(
-                    "{}: failed to send shred repair requests, packets failed {failed}/{total}: \
-                     {err:?}",
+                    "{}: failed to send a batch of {total} shred repair requests: {err:?}",
                     repair_info.cluster_info.id(),
                 )
             });

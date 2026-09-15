@@ -843,15 +843,11 @@ impl RepairService {
                 }
             } else {
                 let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
-                match batch_send(repair_socket, batch) {
-                    Ok(()) => (),
-                    Err(SendPktsError::IoError(err, num_failed)) => {
-                        error!(
-                            "{} batch_send failed to send {num_failed}/{num_pkts} packets first \
-                             error {err:?}",
-                            repair_info.cluster_info.id()
-                        );
-                    }
+                if let Err(SendPktsError::IoError(err)) = batch_send(repair_socket, batch) {
+                    error!(
+                        "{} batch_send failed to send a batch of {num_pkts} packets: {err:?}",
+                        repair_info.cluster_info.id()
+                    );
                 }
             }
         }
@@ -1196,10 +1192,10 @@ impl RepairService {
 
         // Send packet batch
         match batch_send(repair_socket, reqs) {
-            Ok(()) => {
+            Ok(_) => {
                 debug!("successfully sent repair request to {pubkey} / {address}!");
             }
-            Err(SendPktsError::IoError(err, _num_failed)) => {
+            Err(SendPktsError::IoError(err)) => {
                 error!("batch_send failed to send packet - error = {err:?}");
             }
         }

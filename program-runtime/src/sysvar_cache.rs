@@ -18,14 +18,6 @@ use {
     solana_transaction_context::{IndexOfAccount, instruction::InstructionContext},
 };
 
-#[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
-    fn example() -> Self {
-        // SysvarCache is not Serialize so just rely on Default.
-        SysvarCache::default()
-    }
-}
-
 #[derive(Default, Clone, Debug)]
 pub struct SysvarCache {
     // full account data as provided by bank, including any trailing zero bytes

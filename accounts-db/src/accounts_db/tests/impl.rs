@@ -6234,7 +6234,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
 fn test_combine_ancient_slots_empty() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     // empty slots
-    db.combine_ancient_slots_packed(Vec::default(), false);
+    db.combine_ancient_slots_packed(Vec::default());
 }
 
 #[test]
@@ -6251,7 +6251,7 @@ fn test_combine_ancient_slots_simple() {
     let unique_accounts_pre = accounts_db.get_unique_accounts_from_storage(&storage_pre);
     assert_eq!(unique_accounts_pre.stored_accounts.len(), 1);
 
-    accounts_db.combine_ancient_slots_packed(vec![slot], false);
+    accounts_db.combine_ancient_slots_packed(vec![slot]);
 
     let storage_post = accounts_db.get_storage_for_slot(slot).unwrap();
     let unique_accounts_post = accounts_db.get_unique_accounts_from_storage(&storage_post);

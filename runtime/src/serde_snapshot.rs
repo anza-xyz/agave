@@ -68,12 +68,14 @@ use {
 };
 
 mod obsolete_accounts;
+mod startup_hints;
 mod status_cache;
 mod storage;
 mod storages_list;
 mod tests;
 mod types;
 
+pub use startup_hints::StartupHints;
 pub(crate) use {
     obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
     status_cache::{deserialize_status_cache, serialize_status_cache},

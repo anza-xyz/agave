@@ -307,7 +307,6 @@ pub struct ShrinkAncientStats {
     pub ancient_append_vecs_shrunk: AtomicU64,
     pub total_us: AtomicU64,
     pub select_slots_us: AtomicU64,
-    pub random_shrink: AtomicU64,
     pub slots_considered: AtomicU64,
     pub shrinks_bounded_by_max_cleaned_root: AtomicU64,
     pub bytes_ancient_created: AtomicU64,
@@ -674,7 +673,6 @@ impl ShrinkAncientStats {
                 self.ancient_append_vecs_shrunk.swap(0, Ordering::Relaxed),
                 i64
             ),
-            ("random", self.random_shrink.swap(0, Ordering::Relaxed), i64),
             (
                 "total_dead_bytes",
                 self.total_dead_bytes.swap(0, Ordering::Relaxed),

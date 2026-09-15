@@ -1825,7 +1825,7 @@ impl Bank {
                 stake_history,
                 unfiltered_distribution_vote_accounts,
                 delegated_stakes,
-                reward_epoch_delegated_stakes,
+                mut reward_epoch_delegated_stakes,
             ),
             calculate_activated_stake_time_us,
         ) = measure_us!(stakes.calculate_activated_stake(

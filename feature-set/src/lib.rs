@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 use {
     ahash::{AHashMap, AHashSet},
@@ -184,7 +183,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
     active: AHashMap<Pubkey, u64>,
@@ -1412,19 +1410,19 @@ pub mod set_lamports_per_byte_to_5080 {
 }
 
 pub mod set_lamports_per_byte_to_2575 {
-    solana_pubkey::declare_id!("Ftxb3ZKq7aNqgxDBbP7EonvR2RszZk9ctjdsTX38kQaz");
+    solana_pubkey::declare_id!("rntCigrTppP5JdZz7K8TyN9sMzLdAcXp8SejYpVpX6D");
 
     pub const LAMPORTS_PER_BYTE: u64 = 2575;
 }
 
 pub mod set_lamports_per_byte_to_1322 {
-    solana_pubkey::declare_id!("GsUBNYNDPdMLHPD37TToHzrzcNcjpC9w5n1EcJk5iTaM");
+    solana_pubkey::declare_id!("rntD7invRBswCAdKtRsh1G4psKjrPdS3BKqtnA78C7N");
 
     pub const LAMPORTS_PER_BYTE: u64 = 1322;
 }
 
 pub mod set_lamports_per_byte_to_696 {
-    solana_pubkey::declare_id!("mZdnRh9T2EbDNvqKjkCR3bvo5c816tJaojtE9Xs7iuY");
+    solana_pubkey::declare_id!("rntTjNZ9boq8owDxjGVFHPfWNQPDaKiM5JcjxmDGg47");
 
     pub const LAMPORTS_PER_BYTE: u64 = 696;
 }
@@ -1490,7 +1488,7 @@ pub mod define_ltds_fee_only_semantics {
 }
 
 pub mod set_lamports_per_byte_to_6960 {
-    solana_pubkey::declare_id!("5AqsUgSb6cgLizSaNiFn3o9XB7VUtKDtDZfcKEjEDmni");
+    solana_pubkey::declare_id!("rnt8ZQpz2HYhX3DkYBDGjJS1a36mYq69oXka7JrhEdi");
 
     pub const LAMPORTS_PER_BYTE: u64 = 6960;
 }
