@@ -459,7 +459,8 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features_alpenglow,
-                create_genesis_config_with_vote_accounts, deactivate_features,
+                create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
+                deactivate_features,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
@@ -475,10 +476,12 @@ mod tests {
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             partitioned_rewards::PartitionedEpochRewardsConfig,
         },
+        solana_clock::Epoch,
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
+        solana_rent::Rent,
         solana_reward_info::RewardType,
         solana_signer::Signer,
         solana_stake_interface::{stake_flags::StakeFlags, state::StakeStateV2},
@@ -486,7 +489,10 @@ mod tests {
         solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
         solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
-        std::sync::{Arc, RwLock},
+        std::{
+            collections::HashSet,
+            sync::{Arc, RwLock},
+        },
     };
 
     impl PartitionedStakeReward {
@@ -698,6 +704,259 @@ mod tests {
                     .collect(),
             },
             bank_forks,
+        )
+    }
+
+    pub(super) fn modify_vote_state(
+        bank: &Bank,
+        vote_address: &Pubkey,
+        modify_fn: &dyn Fn(&mut VoteStateV4),
+    ) {
+        let mut vote_account = bank.get_account_with_fixed_root(vote_address).unwrap();
+        let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
+        let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
+            panic!("unexpected version");
+        };
+
+        modify_fn(&mut vote_state);
+
+        vote_account
+            .set_state(&VoteStateVersions::V4(vote_state))
+            .unwrap();
+        bank.store_account(vote_address, &vote_account);
+    }
+
+    pub(super) fn add_vote_and_stake_accounts(
+        bank: &Bank,
+        voters: &mut HashSet<Pubkey>,
+        stakers: &mut HashSet<Pubkey>,
+        stake_lamports: u64,
+        vote_lamports: u64,
+    ) -> Pubkey {
+        add_vote_and_stake_accounts_with_activation_and_deactivation_epochs(
+            bank,
+            voters,
+            stakers,
+            stake_lamports,
+            vote_lamports,
+            Epoch::MAX,
+            Epoch::MAX,
+        )
+    }
+
+    pub(super) fn add_vote_and_stake_accounts_with_activation_and_deactivation_epochs(
+        bank: &Bank,
+        voters: &mut HashSet<Pubkey>,
+        stakers: &mut HashSet<Pubkey>,
+        stake_lamports: u64,
+        vote_lamports: u64,
+        activation_epoch: Epoch,
+        deactivation_epoch: Epoch,
+    ) -> Pubkey {
+        let ((vote_address, mut vote_account), (stake_address, stake_account)) =
+            crate::stakes::tests::create_staked_node_accounts_with_activation_and_deactivation_epochs(
+                stake_lamports,
+                &bank.rent_collector.rent,
+                activation_epoch,
+                deactivation_epoch,
+            );
+        vote_account.checked_add_lamports(vote_lamports).unwrap();
+        bank.store_account_and_update_capitalization(&vote_address, &vote_account);
+        bank.store_account_and_update_capitalization(&stake_address, &stake_account);
+        voters.insert(vote_address);
+        stakers.insert(stake_address);
+
+        vote_address
+    }
+
+    /// Vote account addresses for cases with notable behavior during block
+    /// revenue sharing
+    pub(super) struct BlockRevenueSharingCases {
+        /// Receives commission
+        pub(super) commission_collector: Pubkey,
+        /// Receives inflation commission to itself
+        pub(super) self_collector: Pubkey,
+        /// Receives inflation commission to an external collector
+        pub(super) external_collector: Pubkey,
+        /// Nothing staked to the validator
+        pub(super) zero_stake: Pubkey,
+        /// Does not pay VAT in the distribution epoch, normally receives
+        /// inflation commission to itself
+        pub(super) non_vat_self_collector: Pubkey,
+        /// Does not pay VAT in the distribution epoch, normally receives
+        /// inflation commission to an external collector
+        pub(super) non_vat_external_collector: Pubkey,
+        /// Stake goes to 0 in distribution epoch
+        pub(super) deactivating: Pubkey,
+        /// Stake goes to non-zero in distribution epoch
+        pub(super) activating: Pubkey,
+    }
+
+    pub(super) fn create_reward_bank_for_block_revenue_sharing(
+        stake_lamports: u64,
+        pending_delegator_rewards: u64,
+        stake_account_stores_per_block: u64,
+    ) -> (RewardBank, Arc<RwLock<BankForks>>, BlockRevenueSharingCases) {
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            42 * LAMPORTS_PER_SOL,
+        );
+
+        genesis_config.rent = Rent::default();
+        genesis_config.epoch_schedule = EpochSchedule::without_warmup();
+        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
+        accounts_db_config.partitioned_epoch_rewards_config =
+            PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
+
+        let bank = Bank::new_from_genesis(
+            &genesis_config,
+            Arc::new(RuntimeConfig::default()),
+            Vec::new(),
+            None,
+            accounts_db_config,
+            None,
+            None,
+            Arc::default(),
+            None,
+            None,
+        );
+
+        let commission_collector = Pubkey::new_unique();
+        {
+            let mut commission_account = AccountSharedData::default();
+            commission_account.set_lamports(genesis_config.rent.minimum_balance(0));
+            bank.store_account_and_update_capitalization(
+                &commission_collector,
+                &commission_account,
+            );
+        }
+
+        let mut voters = HashSet::new();
+        let mut stakers = HashSet::new();
+
+        // Vote account receives commission
+        let self_collector = add_vote_and_stake_accounts(
+            &bank,
+            &mut voters,
+            &mut stakers,
+            stake_lamports,
+            pending_delegator_rewards,
+        );
+        modify_vote_state(&bank, &self_collector, &|vote_state| {
+            vote_state.pending_delegator_rewards = pending_delegator_rewards;
+        });
+
+        // External commission collector
+        let external_collector = add_vote_and_stake_accounts(
+            &bank,
+            &mut voters,
+            &mut stakers,
+            stake_lamports,
+            pending_delegator_rewards,
+        );
+        modify_vote_state(&bank, &external_collector, &|vote_state| {
+            vote_state.pending_delegator_rewards = pending_delegator_rewards;
+            vote_state.inflation_rewards_collector = commission_collector;
+        });
+
+        // Zero stake just resets rewards
+        let zero_stake = add_vote_and_stake_accounts(
+            &bank,
+            &mut voters,
+            &mut stakers,
+            0,
+            pending_delegator_rewards,
+        );
+        modify_vote_state(&bank, &zero_stake, &|vote_state| {
+            vote_state.pending_delegator_rewards = pending_delegator_rewards;
+        });
+
+        // Non-VAT paying, loses all rewards
+        let non_vat_self_collector = add_vote_and_stake_accounts(
+            &bank,
+            &mut voters,
+            &mut stakers,
+            stake_lamports,
+            pending_delegator_rewards,
+        );
+        modify_vote_state(&bank, &non_vat_self_collector, &|vote_state| {
+            vote_state.pending_delegator_rewards = pending_delegator_rewards;
+        });
+
+        // Non-VAT paying external collector, loses all rewards
+        let non_vat_external_collector = add_vote_and_stake_accounts(
+            &bank,
+            &mut voters,
+            &mut stakers,
+            stake_lamports,
+            pending_delegator_rewards,
+        );
+        modify_vote_state(&bank, &non_vat_external_collector, &|vote_state| {
+            vote_state.pending_delegator_rewards = pending_delegator_rewards;
+            vote_state.inflation_rewards_collector = commission_collector;
+        });
+
+        // Activating stake gets everything back, same as zero stake
+        let activating = add_vote_and_stake_accounts_with_activation_and_deactivation_epochs(
+            &bank,
+            &mut voters,
+            &mut stakers,
+            stake_lamports,
+            pending_delegator_rewards,
+            bank.epoch(),
+            Epoch::MAX,
+        );
+        modify_vote_state(&bank, &activating, &|vote_state| {
+            vote_state.pending_delegator_rewards = pending_delegator_rewards;
+        });
+
+        // Deactivating stake functions like activated stake
+        let deactivating = add_vote_and_stake_accounts_with_activation_and_deactivation_epochs(
+            &bank,
+            &mut voters,
+            &mut stakers,
+            stake_lamports,
+            pending_delegator_rewards,
+            0,
+            bank.epoch(),
+        );
+        modify_vote_state(&bank, &deactivating, &|vote_state| {
+            vote_state.pending_delegator_rewards = pending_delegator_rewards;
+        });
+
+        let commission = 50;
+        populate_vote_accounts_with_votes(&bank, voters.iter().copied(), commission);
+
+        // Go right before the first boundary
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let slots_per_epoch = bank.epoch_schedule().slots_per_epoch;
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            slots_per_epoch - 1,
+        );
+
+        (
+            RewardBank {
+                bank,
+                voters: voters.into_iter().collect(),
+                stakers: stakers.into_iter().collect(),
+            },
+            bank_forks,
+            BlockRevenueSharingCases {
+                commission_collector,
+                self_collector,
+                external_collector,
+                zero_stake,
+                non_vat_self_collector,
+                non_vat_external_collector,
+                deactivating,
+                activating,
+            },
         )
     }
 
