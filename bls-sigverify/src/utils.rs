@@ -14,7 +14,7 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
-    std::{collections::HashMap, time::Instant},
+    std::time::Instant,
 };
 
 const REWARDS_CHANNEL: &str = "channel_to_rewards";
@@ -101,14 +101,11 @@ pub(super) fn send_sig_verified_batch_to_pool(
 
 pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
-    votes: HashMap<Slot, VoteAccountPubkeys>,
+    msg: (Slot, VoteAccountPubkeys),
     channel: &EvictingSender<VerifiedVotorSlotsMessage>,
     stats: &mut VoteSenderStats,
 ) {
-    if votes.is_empty() {
-        return;
-    }
-    match channel.try_send(votes) {
+    match channel.try_send(msg) {
         Ok(()) => stats.repair_sender.sent += 1,
         Err(TrySendError::Full(_)) => {
             warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");

@@ -707,19 +707,17 @@ impl RepairService {
         // Add new votes to the weighting heuristic
         let mut get_votes_us = Measure::start("get_votes_us");
         let mut slot_to_vote_pubkeys = HashMap::new();
-        for map in verified_voter_slots_receiver.try_iter() {
-            for (slot, pubkeys) in map {
-                match slot_to_vote_pubkeys.entry(slot) {
-                    Entry::Vacant(e) => {
-                        let pubkeys = match pubkeys {
-                            VoteAccountPubkeys::Shared(p) => Arc::unwrap_or_clone(p),
-                            VoteAccountPubkeys::Owned(p) => p,
-                        };
-                        e.insert(pubkeys);
-                    }
-                    Entry::Occupied(e) => {
-                        e.into_mut().extend_from_slice(pubkeys.as_slice());
-                    }
+        for (slot, pubkeys) in verified_voter_slots_receiver.try_iter() {
+            match slot_to_vote_pubkeys.entry(slot) {
+                Entry::Vacant(e) => {
+                    let pubkeys = match pubkeys {
+                        VoteAccountPubkeys::Shared(p) => Arc::unwrap_or_clone(p),
+                        VoteAccountPubkeys::Owned(p) => p,
+                    };
+                    e.insert(pubkeys);
+                }
+                Entry::Occupied(e) => {
+                    e.into_mut().extend_from_slice(pubkeys.as_slice());
                 }
             }
         }

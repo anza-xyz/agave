@@ -20,7 +20,7 @@ use {
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::{collections::HashMap, sync::Arc},
+    std::sync::Arc,
 };
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -73,8 +73,7 @@ impl VerifiedBatch {
             Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
                 let pubkeys = Arc::new(self.sender_vote_account_pubkeys);
                 let vote_slot = self.vote.slot();
-                let repair_msg =
-                    HashMap::from([(vote_slot, VoteAccountPubkeys::Shared(pubkeys.clone()))]);
+                let repair_msg = (vote_slot, VoteAccountPubkeys::Shared(pubkeys.clone()));
                 send_votes_to_repair(my_pubkey, repair_msg, &channels.channel_to_repair, stats);
                 VoteAccountPubkeys::Shared(pubkeys)
             }
