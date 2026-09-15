@@ -1120,7 +1120,7 @@ mod tests {
         // Gossip votes are legacy Transaction values, not tx-v1 packets.
         packet_batches
             .iter_mut()
-            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true, false));
+            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true));
         // There is no worker thread in these tests, so preload the verified
         // responses that verify_votes() will receive after it sends work.
         votes

@@ -17,7 +17,7 @@ pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 /// Returns true if the signature on the packet verifies.
 /// Caller must do packet.set_discard(true) if this returns false.
 #[must_use]
-fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool, enable_tx_v1: bool) -> bool {
+fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
     // If this packet was already marked as discard, drop it
     if packet.meta().discard() {
         return false;
@@ -31,10 +31,6 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool, enable_tx_v1:
         let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()) else {
             return false;
         };
-
-        if !enable_tx_v1 && matches!(view.version(), TransactionVersion::V1) {
-            return false;
-        }
 
         let is_simple_vote_tx = is_simple_vote_transaction_view(&view);
         if reject_non_vote && !is_simple_vote_tx {
@@ -110,23 +106,20 @@ pub fn ed25519_verify(
     batches: &mut [PacketBatch],
     reject_non_vote: bool,
     packet_count: usize,
-    enable_tx_v1: bool,
 ) {
     debug!("CPU ECDSA for {packet_count}");
     thread_pool.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
-            if !packet.meta().discard()
-                && !verify_packet(&mut packet, reject_non_vote, enable_tx_v1)
-            {
+            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
                 packet.meta_mut().set_discard(true);
             }
         });
     });
 }
 
-pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool, enable_tx_v1: bool) {
+pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool) {
     for mut packet in batch.iter_mut() {
-        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote, enable_tx_v1) {
+        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
             packet.meta_mut().set_discard(true);
         }
     }
@@ -233,11 +226,7 @@ mod tests {
         let actual_num_sigs = 5;
 
         let mut packet = packet_from_num_sigs(required_num_sigs, actual_num_sigs);
-        assert!(!sigverify::verify_packet(
-            &mut packet.as_mut(),
-            false,
-            false
-        ));
+        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
     }
 
     #[test]
@@ -250,11 +239,7 @@ mod tests {
         data.truncate(2);
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(
-            &mut packet.as_mut(),
-            false,
-            false
-        ));
+        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
     }
 
     #[test]
@@ -268,7 +253,7 @@ mod tests {
         tx.message.header.num_required_signatures = NUM_SIG as u8;
         let mut packet = BytesPacket::from_data(tx).unwrap();
 
-        assert!(!verify_packet(&mut packet.as_mut(), false, false));
+        assert!(!verify_packet(&mut packet.as_mut(), false));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
@@ -299,7 +284,7 @@ mod tests {
 
         let mut packet = BytesPacket::from_data(tx).unwrap();
 
-        assert!(!verify_packet(&mut packet.as_mut(), false, false));
+        assert!(!verify_packet(&mut packet.as_mut(), false));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
@@ -316,11 +301,7 @@ mod tests {
         data[0] = 0x7f;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(
-            &mut packet.as_mut(),
-            false,
-            false
-        ));
+        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
     }
 
     #[test]
@@ -335,11 +316,7 @@ mod tests {
         data[3] = 0xff;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(
-            &mut packet.as_mut(),
-            false,
-            false
-        ));
+        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
     }
 
     #[test]
@@ -353,11 +330,7 @@ mod tests {
         data[PUBKEY_OFFSET] = 0x7f;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(
-            &mut packet.as_mut(),
-            false,
-            false
-        ));
+        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
     }
 
     #[test]
@@ -375,11 +348,7 @@ mod tests {
         let mut tx = Transaction::new_unsigned(message);
         tx.signatures = vec![Signature::default()];
         let mut packet = BytesPacket::from_data(tx).unwrap();
-        assert!(!sigverify::verify_packet(
-            &mut packet.as_mut(),
-            false,
-            false
-        ));
+        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
     }
 
     #[test]
@@ -393,11 +362,7 @@ mod tests {
         data[MESSAGE_OFFSET] = MESSAGE_VERSION_PREFIX + 2;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(
-            &mut packet.as_mut(),
-            false,
-            false
-        ));
+        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
     }
 
     fn generate_bytes_packet_batches(
@@ -469,7 +434,7 @@ mod tests {
     fn ed25519_verify(batches: &mut [PacketBatch]) {
         let threadpool = threadpool_for_tests();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(&threadpool, batches, false, packet_count, false);
+        sigverify::ed25519_verify(&threadpool, batches, false, packet_count);
     }
 
     #[test]
@@ -675,20 +640,16 @@ mod tests {
         };
 
         assert_eq!(
-            sigverify::verify_packet(&mut packet.as_mut(), false, false),
+            sigverify::verify_packet(&mut packet.as_mut(), false),
             !too_many_ixs
         );
     }
 
-    #[test_case(false, false; "tx_v1_disabled")]
-    #[test_case(true, true; "tx_v1_enabled")]
-    fn test_verify_packet_tx_v1_feature_gate(enable_tx_v1: bool, expected: bool) {
+    #[test]
+    fn test_verify_packet_tx_v1() {
         let tx = test_tx_v1();
         let mut packet = BytesPacket::from_bytes(None, wincode::serialize(&tx).unwrap());
 
-        assert_eq!(
-            verify_packet(&mut packet.as_mut(), false, enable_tx_v1),
-            expected,
-        );
+        assert!(verify_packet(&mut packet.as_mut(), false));
     }
 }
