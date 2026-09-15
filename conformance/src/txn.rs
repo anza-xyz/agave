@@ -241,7 +241,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
 
 /// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
 /// accounts (treated as nonexistent).
-fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
+pub(crate) fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
     accounts
         .iter()
         .filter(|account| account.lamports > 0)
@@ -252,7 +252,7 @@ fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedDat
         .collect()
 }
 
-fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> BlockhashQueue {
+pub(crate) fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> BlockhashQueue {
     let mut blockhash_queue = BlockhashQueue::default();
     for entry in entries {
         let blockhash =
@@ -262,7 +262,7 @@ fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> BlockhashQue
     blockhash_queue
 }
 
-fn fee_rate_governor_from_proto(
+pub(crate) fn fee_rate_governor_from_proto(
     value: &ProtoFeeRateGovernor,
     lamports_per_signature: u64,
 ) -> FeeRateGovernor {
@@ -286,7 +286,7 @@ fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
     }
 }
 
-fn new_accounts_for_tests_single_threaded() -> Accounts {
+pub(crate) fn new_accounts_for_tests_single_threaded() -> Accounts {
     Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
         Vec::new(),
         new_accounts_db_config_for_tests_single_threaded(),
