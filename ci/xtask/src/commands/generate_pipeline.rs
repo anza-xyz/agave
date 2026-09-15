@@ -288,6 +288,9 @@ async fn generate_pull_request_pipeline(
     if flags.checks {
         pipeline.add_step(default_checks_step());
     }
+    // TEMPORARY: exercises release-check on PR builds while the step is being
+    // tuned. Drop before merge; release-check runs in the merge queue.
+    pipeline.add_step(default_release_check_step());
     if flags.feature_check {
         pipeline.add_step(default_feature_check_step(5));
     }
