@@ -335,6 +335,7 @@ version = "4.4.0-alpha.4"
 dependencies = [
  "agave-fs",
  "agave-logger",
+ "agave-snapshots",
  "assert_matches",
  "bincode",
  "bzip2",
