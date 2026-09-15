@@ -1555,7 +1555,6 @@ pub mod unbound_loader_v3_instruction_data {
 }
 
 pub mod enable_get_leader_syscall {
-    // placeholder!!!!
     solana_pubkey::declare_id!("CrFqZvFQLu4V7XEDNRxAgKJFChCVn5WDFbFfCLZe4Lxk");
 }
 
