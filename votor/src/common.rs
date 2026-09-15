@@ -23,9 +23,6 @@ pub const DELTA: Duration = Duration::from_millis(250);
 /// Base leader handover timeout: Time after parent-ready that a validator would
 /// see a leaders first fec set if that leader sent it at the very start of their
 /// window.
-///
-/// With the current 400ms slot duration, this schedules both
-/// `TimeoutCrashedLeader(s)` and `Timeout(s)` at 800ms after `ParentReady`.
 pub(crate) const DELTA_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// Timeout for standstill detection mechanism.
