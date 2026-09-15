@@ -125,7 +125,8 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
         }
 
         excluded_accounts.sort_unstable_by(|(a_offset, _), (b_offset, _)| b_offset.cmp(a_offset));
-        excluded_accounts.dedup_by_key(|(offset, _)| *offset);
+        // ensure there are no duplicates
+        debug_assert!(excluded_accounts.array_windows::<2>().all(|[a, b]| a != b));
         let len_for_archive = storage.accounts.len_for_archive(&excluded_accounts);
         Ok(Self {
             storage,
