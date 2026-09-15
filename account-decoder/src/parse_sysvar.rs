@@ -82,8 +82,8 @@ pub fn parse_sysvar(data: &[u8], pubkey: &Pubkey) -> Result<SysvarAccountType, P
                 let stake_history = stake_history
                     .iter()
                     .map(|entry| UiStakeHistoryEntry {
-                        epoch: entry.0,
-                        stake_history: entry.1.clone(),
+                        epoch: entry.epoch,
+                        stake_history: entry.entry.clone(),
                     })
                     .collect();
                 SysvarAccountType::StakeHistory(stake_history)

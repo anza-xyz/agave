@@ -24,8 +24,9 @@ pub const DELTA: Duration = Duration::from_millis(250);
 /// see a leaders first fec set if that leader sent it at the very start of their
 /// window.
 ///
-/// With the current 400ms slot duration, this schedules both
-/// `TimeoutCrashedLeader(s)` and `Timeout(s)` at 800ms after `ParentReady`.
+/// A fixed budget, not a multiple of the slot duration. Added to the 300ms
+/// `DEFAULT_MS_PER_SLOT`, it schedules both `TimeoutCrashedLeader(s)` and
+/// `Timeout(s)` at 700ms after `ParentReady`.
 pub(crate) const DELTA_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// Timeout for standstill detection mechanism.

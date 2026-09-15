@@ -361,7 +361,7 @@ solana-cli-config = { path = "cli-config", version = "=4.4.0-alpha.4" }
 solana-cli-output = { path = "cli-output", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-client = { path = "client", version = "=4.4.0-alpha.4" }
 solana-client-traits = "4.1.0"
-solana-clock = "3.2.0"
+solana-clock = "4.0.0"
 solana-cluster-type = "3.2.0"
 solana-commitment-config = "3.1.1"
 solana-compute-budget = { path = "compute-budget", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
@@ -476,8 +476,8 @@ solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.2.0"
 solana-slot-history = "3.2.0"
 solana-stable-layout = "3.0.1"
-solana-stake-history = "1.1.0"
-solana-stake-interface = "4.4.0"
+solana-stake-history = "2.0.0"
+solana-stake-interface = "5.0.0"
 solana-storage-bigtable = { path = "storage-bigtable", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-storage-proto = { path = "storage-proto", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-streamer = { path = "streamer", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }

@@ -55,7 +55,7 @@ pub enum ConnectionWorkersSchedulerError {
 /// be targeted when sending transactions and connecting.
 ///
 /// Note, that the unit is number of leaders per
-/// [`solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
+/// [`solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
 /// [L1, L1, L1, L1, L1, L1, L1, L1, L2, L2, L2, L2], the leaders per
 /// consecutive leader slots are [L1, L1, L2], so there are 3 of them.
 ///

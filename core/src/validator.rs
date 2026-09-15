@@ -3746,10 +3746,7 @@ mod tests {
     }
 
     fn target_tick_duration() -> Duration {
-        let target_tick_duration_us =
-            solana_clock::DEFAULT_MS_PER_SLOT * 1000 / solana_clock::DEFAULT_TICKS_PER_SLOT;
-        assert_eq!(target_tick_duration_us, 6250);
-        Duration::from_micros(target_tick_duration_us)
+        Duration::from_nanos(solana_clock::DEFAULT_NS_PER_TICK)
     }
 
     #[test]

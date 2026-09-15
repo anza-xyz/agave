@@ -40,7 +40,7 @@ solana-bls-signatures = { workspace = true }
 solana-clap-v3-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-derivation-path = { workspace = true }
-solana-instruction = { version = "=3.5.0", features = ["bincode"] }
+solana-instruction = { version = "=3.5.1", features = ["bincode"] }
 solana-keypair = "=3.1.2"
 solana-message = { version = "=4.6.0", features = ["wincode"] }
 solana-pubkey = { version = "=4.3.0", default-features = false }
