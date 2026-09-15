@@ -61,353 +61,6 @@ use {prost::Message, std::ffi::c_int};
 const LEADER_SCHEDULE_HASH_SEED: u64 = 0xDEADFACE;
 const SECONDS_PER_YEAR: f64 = 365.242199 * 24.0 * 60.0 * 60.0;
 
-// This is a little bit hacky because there's no direct Agave API that gets us a populated
-// Stakes<Delegation> object from a set of account states. Fine, I'll do it myself...
-fn build_latest_stake_delegations(
-    account_states: &[(Pubkey, AccountSharedData)],
-    epoch: Epoch,
-    stake_history: &StakeHistory,
-) -> DeserializableDelegationStakes {
-    let mut stakes = DeserializableDelegationStakes {
-        vote_accounts: VoteAccounts::default(),
-        stake_delegations: account_states
-            .iter()
-            .filter(|(_, account)| account.lamports() > 0)
-            .filter_map(|(pubkey, account)| {
-                if let Ok(stake_account) =
-                    stake_account::StakeAccount::<Delegation>::try_from(account.clone())
-                {
-                    // Skip zero-stake delegations
-                    if stake_account.delegation().stake > 0 {
-                        return Some((*pubkey, *stake_account.delegation()));
-                    }
-                }
-                None
-            })
-            .collect(),
-        unused: 0,
-        epoch,
-        stake_history: stake_history.clone(),
-    };
-
-    // Then populate the vote accounts
-    account_states
-        .iter()
-        .filter(|(_, account)| account.lamports() > 0)
-        .for_each(|(pubkey, account)| {
-            if let Ok(vote_account) = VoteAccount::try_from(account.clone()) {
-                // We can pass `new_rate_activation_epoch = 0` because the feature is
-                // activated on all clusters.
-                stakes.vote_accounts.insert(*pubkey, vote_account, || {
-                    stakes
-                        .stake_delegations
-                        .iter()
-                        .filter_map(|(_, delegation)| {
-                            if delegation.voter_pubkey == *pubkey {
-                                Some(delegation.stake_v2(epoch, stake_history, Some(0)))
-                            } else {
-                                None
-                            }
-                        })
-                        .sum()
-                });
-            }
-        });
-
-    stakes
-}
-
-fn synthesize_vote_account(pva: &ProtoPrevVoteAccount) -> (Pubkey, u64, VoteAccount) {
-    let vote_pubkey = Pubkey::new_from_array(pva.address.clone().try_into().unwrap());
-    let node_pk = Pubkey::new_from_array(pva.node_pubkey.clone().try_into().unwrap());
-
-    let inflation_rewards_collector =
-        <[u8; 32]>::try_from(pva.inflation_rewards_collector.as_slice())
-            .map(Pubkey::new_from_array)
-            .unwrap_or(vote_pubkey);
-    let block_revenue_collector = <[u8; 32]>::try_from(pva.block_revenue_collector.as_slice())
-        .map(Pubkey::new_from_array)
-        .unwrap_or(node_pk);
-
-    let epoch_credits: Vec<(Epoch, u64, u64)> = pva
-        .epoch_credits
-        .iter()
-        .map(|ec| (ec.epoch, ec.credits, ec.prev_credits))
-        .collect();
-
-    let versioned = match pva.version() {
-        protos::VoteAccountVersion::V11411 => {
-            VoteStateVersions::V1_14_11(Box::new(VoteState1_14_11 {
-                node_pubkey: node_pk,
-                commission: (pva.commission_bps / 100) as u8,
-                epoch_credits,
-                ..VoteState1_14_11::default()
-            }))
-        }
-        protos::VoteAccountVersion::V3 => VoteStateVersions::new_v3(VoteStateV3 {
-            node_pubkey: node_pk,
-            commission: (pva.commission_bps / 100) as u8,
-            epoch_credits,
-            ..VoteStateV3::default()
-        }),
-        protos::VoteAccountVersion::V4 => VoteStateVersions::new_v4(VoteStateV4 {
-            node_pubkey: node_pk,
-            inflation_rewards_commission_bps: pva.commission_bps as u16,
-            epoch_credits,
-            inflation_rewards_collector,
-            block_revenue_collector,
-            ..VoteStateV4::default()
-        }),
-    };
-
-    let serialized = bincode::serialize(&versioned).unwrap();
-    let mut account = AccountSharedData::new(1, serialized.len(), &solana_sdk_ids::vote::id());
-    account.set_data_from_slice(&serialized);
-
-    let vote_account = VoteAccount::try_from(account).unwrap();
-    (vote_pubkey, pva.stake, vote_account)
-}
-
-// Build stake delegations for previous epochs. Unlike `build_latest_stake_delegations()`,
-// this uses the provided votes cache instead of the latest input account states.
-#[allow(deprecated)]
-fn build_prev_epoch_stakes(
-    vote_accounts: &[ProtoPrevVoteAccount],
-) -> Stakes<stake_account::StakeAccount<Delegation>> {
-    let stakes = DeserializableDelegationStakes {
-        vote_accounts: vote_accounts
-            .iter()
-            .fold(VoteAccounts::default(), |mut acc, pva| {
-                let (pubkey, stake, vote_account) = synthesize_vote_account(pva);
-                acc.insert(pubkey, vote_account, || stake);
-                acc
-            }),
-        stake_delegations: Vec::default(),
-        unused: 0,
-        epoch: Epoch::default(),
-        stake_history: StakeHistory::default(),
-    };
-
-    Stakes::load_from_deserialized_delegations(stakes.clone(), |pubkey| {
-        stakes
-            .vote_accounts
-            .get(pubkey)
-            .map(|vote_account| vote_account.account().clone())
-    })
-    .unwrap()
-}
-
-/// Create account state for each active feature in the given feature set.
-fn feature_accounts_from_proto(
-    proto_features: &protos::FeatureSet,
-    feature_set: &FeatureSet,
-) -> Vec<(Pubkey, AccountSharedData)> {
-    let indexed_features: HashMap<u64, Pubkey> = feature_set
-        .active()
-        .keys()
-        .map(|pubkey| {
-            let bytes = pubkey.to_bytes();
-            (u64::from_le_bytes(bytes[..8].try_into().unwrap()), *pubkey)
-        })
-        .collect();
-    let feature = Feature {
-        activated_at: Some(0),
-    };
-    // Ensure all feature accounts are rent-exempt
-    const FEATURE_ACCOUNT_LAMPORTS: u64 = 100_000_000;
-    proto_features
-        .features
-        .iter()
-        .filter_map(|id| indexed_features.get(id).copied())
-        .map(|pubkey| {
-            (
-                pubkey,
-                feature::create_account(&feature, FEATURE_ACCOUNT_LAMPORTS),
-            )
-        })
-        .collect()
-}
-
-fn inflation_from_proto(input: &protos::Inflation) -> Inflation {
-    let mut inflation = Inflation::default();
-    inflation.initial = input.initial;
-    inflation.terminal = input.terminal;
-    inflation.taper = input.taper;
-    inflation.foundation = input.foundation;
-    inflation.foundation_term = input.foundation_term;
-    inflation
-}
-
-fn get_changed_accounts(
-    initial_accounts: &[AcctState],
-    bank: &Bank,
-) -> Vec<(Pubkey, AccountSharedData)> {
-    let mut changed_accounts = Vec::new();
-
-    for initial_account in initial_accounts {
-        let (pubkey, initial_account_data) = account_from_proto(initial_account.clone());
-        let initial_account_data = AccountSharedData::from(initial_account_data);
-
-        if let Some(current_account_data) = bank.get_account(&pubkey) {
-            if accounts_differ(&initial_account_data, &current_account_data) {
-                changed_accounts.push((pubkey, current_account_data));
-            }
-        } else if initial_account.lamports > 0 {
-            changed_accounts.push((pubkey, AccountSharedData::default()));
-        }
-    }
-
-    changed_accounts
-}
-
-fn accounts_differ(account1: &AccountSharedData, account2: &AccountSharedData) -> bool {
-    account1.lamports() != account2.lamports()
-        || account1.data() != account2.data()
-        || account1.owner() != account2.owner()
-        || account1.executable() != account2.executable()
-}
-
-fn create_changed_accounts_bank_hash_details(
-    bank: &Bank,
-    initial_accounts: &[AcctState],
-) -> Result<BankHashDetails, String> {
-    let slot = bank.slot();
-    if !bank.is_frozen() {
-        return Err(format!(
-            "Bank {slot} must be frozen in order to get bank hash details"
-        ));
-    }
-
-    let full_slot_details = SlotDetails::new_from_bank(bank, true)?;
-    let accounts_lt_hash_checksum = full_slot_details
-        .bank_hash_components
-        .as_ref()
-        .map(|components| components.accounts_lt_hash_checksum.clone())
-        .unwrap_or_else(|| "unavailable".to_string());
-
-    let changed_accounts = get_changed_accounts(initial_accounts, bank);
-
-    let slot_details = SlotDetails {
-        slot,
-        bank_hash: bank.hash().to_string(),
-        bank_hash_components: Some(BankHashComponents {
-            parent_bank_hash: bank.parent_hash().to_string(),
-            signature_count: bank.signature_count(),
-            last_blockhash: bank.last_blockhash().to_string(),
-            accounts_lt_hash_checksum,
-            accounts: AccountsDetails {
-                accounts: changed_accounts,
-            },
-        }),
-        transactions: Vec::new(),
-    };
-
-    Ok(BankHashDetails::new(vec![slot_details]))
-}
-
-/// Single-pass mapping during dedup (rotation-compressed).
-/// - Build (Pubkey, rotation_idx) entries from the schedule (sampling every 4 slots).
-/// - Sort entries by Pubkey bytes for deterministic order.
-/// - Dedup in one pass and write mapped indices directly into sched_mapped[rotation_idx].
-/// - Hash unique pubkeys and mapped indices into out[0..8] and out[8..16].
-///   Returns the number of unique leaders.
-pub fn hash_epoch_leaders(
-    leader_schedule: &[Pubkey], // per-slot leaders for the whole epoch
-    seed: u64,
-    out: &mut [u8; 16],
-) -> usize {
-    // Build composite entries: one per 4-slot rotation
-    #[derive(Clone, Copy)]
-    struct Entry {
-        pk: Pubkey,
-        rot_idx: usize,
-    }
-
-    let mut entries: Vec<Entry> = leader_schedule
-        .iter()
-        .step_by(4) // one representative per rotation
-        .enumerate()
-        .map(|(rot_idx, pk)| Entry { pk: *pk, rot_idx })
-        .collect();
-
-    if entries.is_empty() {
-        out.fill(0);
-        return 0;
-    }
-
-    // Sort by pubkey bytes deterministically
-    entries.sort_unstable_by_key(|a| a.pk.to_bytes());
-
-    // Dedup + write mapping in a single pass
-    let rotations = entries.len();
-    let mut sched_mapped: Vec<u32> = vec![0u32; rotations];
-
-    let mut uniq_cnt = 0usize;
-    let mut prev_bytes: Option<[u8; 32]> = None;
-
-    for e in &entries {
-        let bytes = e.pk.to_bytes();
-        if prev_bytes != Some(bytes) {
-            uniq_cnt = uniq_cnt.saturating_add(1);
-            prev_bytes = Some(bytes);
-        }
-        // uniq index is uniq_cnt - 1
-        sched_mapped[e.rot_idx] = uniq_cnt.saturating_sub(1) as u32;
-    }
-
-    // Build unique_pubkeys for hashing (exact size = uniq_cnt)
-    let mut unique_pubkeys: Vec<Pubkey> = Vec::with_capacity(uniq_cnt);
-    prev_bytes = None;
-    for e in &entries {
-        let bytes = e.pk.to_bytes();
-        if prev_bytes != Some(bytes) {
-            unique_pubkeys.push(e.pk);
-            prev_bytes = Some(bytes);
-        }
-    }
-
-    // Hash unique pubkeys
-    let pub_bytes: &[u8] = unsafe {
-        core::slice::from_raw_parts(
-            unique_pubkeys.as_ptr() as *const u8,
-            unique_pubkeys
-                .len()
-                .saturating_mul(core::mem::size_of::<Pubkey>()),
-        )
-    };
-    let h1 = fd_hash(seed, pub_bytes);
-    out[0..8].copy_from_slice(&h1.to_le_bytes());
-
-    // Part 2 (last 64 bits): Hash of the compressed schedule (leader indices)
-    // This captures the scheduled order of the leaders throughout the epoch
-    let sched_bytes: &[u8] = unsafe {
-        core::slice::from_raw_parts(
-            sched_mapped.as_ptr() as *const u8,
-            sched_mapped
-                .len()
-                .saturating_mul(core::mem::size_of::<u32>()),
-        )
-    };
-    let h2 = fd_hash(seed, sched_bytes);
-    out[8..16].copy_from_slice(&h2.to_le_bytes());
-
-    uniq_cnt
-}
-
-fn validate_transaction_message(message: &protos::TransactionMessage) {
-    for account_key in &message.account_keys {
-        let _: [u8; 32] = account_key.as_slice().try_into().unwrap();
-    }
-    if !message.recent_blockhash.is_empty() {
-        let _: [u8; 32] = message.recent_blockhash.as_slice().try_into().unwrap();
-    }
-    if !message.is_legacy {
-        for lookup in &message.address_table_lookups {
-            let _: [u8; 32] = lookup.account_key.as_slice().try_into().unwrap();
-        }
-    }
-}
-
 #[allow(deprecated)]
 pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
     let bank_ctx = context.bank.as_ref().unwrap();
@@ -701,6 +354,353 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         }),
         leader_schedule: Some(leader_schedule_effects),
     }
+}
+
+/// Create account state for each active feature in the given feature set.
+fn feature_accounts_from_proto(
+    proto_features: &protos::FeatureSet,
+    feature_set: &FeatureSet,
+) -> Vec<(Pubkey, AccountSharedData)> {
+    let indexed_features: HashMap<u64, Pubkey> = feature_set
+        .active()
+        .keys()
+        .map(|pubkey| {
+            let bytes = pubkey.to_bytes();
+            (u64::from_le_bytes(bytes[..8].try_into().unwrap()), *pubkey)
+        })
+        .collect();
+    let feature = Feature {
+        activated_at: Some(0),
+    };
+    // Ensure all feature accounts are rent-exempt
+    const FEATURE_ACCOUNT_LAMPORTS: u64 = 100_000_000;
+    proto_features
+        .features
+        .iter()
+        .filter_map(|id| indexed_features.get(id).copied())
+        .map(|pubkey| {
+            (
+                pubkey,
+                feature::create_account(&feature, FEATURE_ACCOUNT_LAMPORTS),
+            )
+        })
+        .collect()
+}
+
+// This is a little bit hacky because there's no direct Agave API that gets us a populated
+// Stakes<Delegation> object from a set of account states. Fine, I'll do it myself...
+fn build_latest_stake_delegations(
+    account_states: &[(Pubkey, AccountSharedData)],
+    epoch: Epoch,
+    stake_history: &StakeHistory,
+) -> DeserializableDelegationStakes {
+    let mut stakes = DeserializableDelegationStakes {
+        vote_accounts: VoteAccounts::default(),
+        stake_delegations: account_states
+            .iter()
+            .filter(|(_, account)| account.lamports() > 0)
+            .filter_map(|(pubkey, account)| {
+                if let Ok(stake_account) =
+                    stake_account::StakeAccount::<Delegation>::try_from(account.clone())
+                {
+                    // Skip zero-stake delegations
+                    if stake_account.delegation().stake > 0 {
+                        return Some((*pubkey, *stake_account.delegation()));
+                    }
+                }
+                None
+            })
+            .collect(),
+        unused: 0,
+        epoch,
+        stake_history: stake_history.clone(),
+    };
+
+    // Then populate the vote accounts
+    account_states
+        .iter()
+        .filter(|(_, account)| account.lamports() > 0)
+        .for_each(|(pubkey, account)| {
+            if let Ok(vote_account) = VoteAccount::try_from(account.clone()) {
+                // We can pass `new_rate_activation_epoch = 0` because the feature is
+                // activated on all clusters.
+                stakes.vote_accounts.insert(*pubkey, vote_account, || {
+                    stakes
+                        .stake_delegations
+                        .iter()
+                        .filter_map(|(_, delegation)| {
+                            if delegation.voter_pubkey == *pubkey {
+                                Some(delegation.stake_v2(epoch, stake_history, Some(0)))
+                            } else {
+                                None
+                            }
+                        })
+                        .sum()
+                });
+            }
+        });
+
+    stakes
+}
+
+fn synthesize_vote_account(pva: &ProtoPrevVoteAccount) -> (Pubkey, u64, VoteAccount) {
+    let vote_pubkey = Pubkey::new_from_array(pva.address.clone().try_into().unwrap());
+    let node_pk = Pubkey::new_from_array(pva.node_pubkey.clone().try_into().unwrap());
+
+    let inflation_rewards_collector =
+        <[u8; 32]>::try_from(pva.inflation_rewards_collector.as_slice())
+            .map(Pubkey::new_from_array)
+            .unwrap_or(vote_pubkey);
+    let block_revenue_collector = <[u8; 32]>::try_from(pva.block_revenue_collector.as_slice())
+        .map(Pubkey::new_from_array)
+        .unwrap_or(node_pk);
+
+    let epoch_credits: Vec<(Epoch, u64, u64)> = pva
+        .epoch_credits
+        .iter()
+        .map(|ec| (ec.epoch, ec.credits, ec.prev_credits))
+        .collect();
+
+    let versioned = match pva.version() {
+        protos::VoteAccountVersion::V11411 => {
+            VoteStateVersions::V1_14_11(Box::new(VoteState1_14_11 {
+                node_pubkey: node_pk,
+                commission: (pva.commission_bps / 100) as u8,
+                epoch_credits,
+                ..VoteState1_14_11::default()
+            }))
+        }
+        protos::VoteAccountVersion::V3 => VoteStateVersions::new_v3(VoteStateV3 {
+            node_pubkey: node_pk,
+            commission: (pva.commission_bps / 100) as u8,
+            epoch_credits,
+            ..VoteStateV3::default()
+        }),
+        protos::VoteAccountVersion::V4 => VoteStateVersions::new_v4(VoteStateV4 {
+            node_pubkey: node_pk,
+            inflation_rewards_commission_bps: pva.commission_bps as u16,
+            epoch_credits,
+            inflation_rewards_collector,
+            block_revenue_collector,
+            ..VoteStateV4::default()
+        }),
+    };
+
+    let serialized = bincode::serialize(&versioned).unwrap();
+    let mut account = AccountSharedData::new(1, serialized.len(), &solana_sdk_ids::vote::id());
+    account.set_data_from_slice(&serialized);
+
+    let vote_account = VoteAccount::try_from(account).unwrap();
+    (vote_pubkey, pva.stake, vote_account)
+}
+
+// Build stake delegations for previous epochs. Unlike `build_latest_stake_delegations()`,
+// this uses the provided votes cache instead of the latest input account states.
+#[allow(deprecated)]
+fn build_prev_epoch_stakes(
+    vote_accounts: &[ProtoPrevVoteAccount],
+) -> Stakes<stake_account::StakeAccount<Delegation>> {
+    let stakes = DeserializableDelegationStakes {
+        vote_accounts: vote_accounts
+            .iter()
+            .fold(VoteAccounts::default(), |mut acc, pva| {
+                let (pubkey, stake, vote_account) = synthesize_vote_account(pva);
+                acc.insert(pubkey, vote_account, || stake);
+                acc
+            }),
+        stake_delegations: Vec::default(),
+        unused: 0,
+        epoch: Epoch::default(),
+        stake_history: StakeHistory::default(),
+    };
+
+    Stakes::load_from_deserialized_delegations(stakes.clone(), |pubkey| {
+        stakes
+            .vote_accounts
+            .get(pubkey)
+            .map(|vote_account| vote_account.account().clone())
+    })
+    .unwrap()
+}
+
+fn inflation_from_proto(input: &protos::Inflation) -> Inflation {
+    let mut inflation = Inflation::default();
+    inflation.initial = input.initial;
+    inflation.terminal = input.terminal;
+    inflation.taper = input.taper;
+    inflation.foundation = input.foundation;
+    inflation.foundation_term = input.foundation_term;
+    inflation
+}
+
+fn validate_transaction_message(message: &protos::TransactionMessage) {
+    for account_key in &message.account_keys {
+        let _: [u8; 32] = account_key.as_slice().try_into().unwrap();
+    }
+    if !message.recent_blockhash.is_empty() {
+        let _: [u8; 32] = message.recent_blockhash.as_slice().try_into().unwrap();
+    }
+    if !message.is_legacy {
+        for lookup in &message.address_table_lookups {
+            let _: [u8; 32] = lookup.account_key.as_slice().try_into().unwrap();
+        }
+    }
+}
+
+fn accounts_differ(account1: &AccountSharedData, account2: &AccountSharedData) -> bool {
+    account1.lamports() != account2.lamports()
+        || account1.data() != account2.data()
+        || account1.owner() != account2.owner()
+        || account1.executable() != account2.executable()
+}
+
+fn get_changed_accounts(
+    initial_accounts: &[AcctState],
+    bank: &Bank,
+) -> Vec<(Pubkey, AccountSharedData)> {
+    let mut changed_accounts = Vec::new();
+
+    for initial_account in initial_accounts {
+        let (pubkey, initial_account_data) = account_from_proto(initial_account.clone());
+        let initial_account_data = AccountSharedData::from(initial_account_data);
+
+        if let Some(current_account_data) = bank.get_account(&pubkey) {
+            if accounts_differ(&initial_account_data, &current_account_data) {
+                changed_accounts.push((pubkey, current_account_data));
+            }
+        } else if initial_account.lamports > 0 {
+            changed_accounts.push((pubkey, AccountSharedData::default()));
+        }
+    }
+
+    changed_accounts
+}
+
+fn create_changed_accounts_bank_hash_details(
+    bank: &Bank,
+    initial_accounts: &[AcctState],
+) -> Result<BankHashDetails, String> {
+    let slot = bank.slot();
+    if !bank.is_frozen() {
+        return Err(format!(
+            "Bank {slot} must be frozen in order to get bank hash details"
+        ));
+    }
+
+    let full_slot_details = SlotDetails::new_from_bank(bank, true)?;
+    let accounts_lt_hash_checksum = full_slot_details
+        .bank_hash_components
+        .as_ref()
+        .map(|components| components.accounts_lt_hash_checksum.clone())
+        .unwrap_or_else(|| "unavailable".to_string());
+
+    let changed_accounts = get_changed_accounts(initial_accounts, bank);
+
+    let slot_details = SlotDetails {
+        slot,
+        bank_hash: bank.hash().to_string(),
+        bank_hash_components: Some(BankHashComponents {
+            parent_bank_hash: bank.parent_hash().to_string(),
+            signature_count: bank.signature_count(),
+            last_blockhash: bank.last_blockhash().to_string(),
+            accounts_lt_hash_checksum,
+            accounts: AccountsDetails {
+                accounts: changed_accounts,
+            },
+        }),
+        transactions: Vec::new(),
+    };
+
+    Ok(BankHashDetails::new(vec![slot_details]))
+}
+
+/// Single-pass mapping during dedup (rotation-compressed).
+/// - Build (Pubkey, rotation_idx) entries from the schedule (sampling every 4 slots).
+/// - Sort entries by Pubkey bytes for deterministic order.
+/// - Dedup in one pass and write mapped indices directly into sched_mapped[rotation_idx].
+/// - Hash unique pubkeys and mapped indices into out[0..8] and out[8..16].
+///   Returns the number of unique leaders.
+pub fn hash_epoch_leaders(
+    leader_schedule: &[Pubkey], // per-slot leaders for the whole epoch
+    seed: u64,
+    out: &mut [u8; 16],
+) -> usize {
+    // Build composite entries: one per 4-slot rotation
+    #[derive(Clone, Copy)]
+    struct Entry {
+        pk: Pubkey,
+        rot_idx: usize,
+    }
+
+    let mut entries: Vec<Entry> = leader_schedule
+        .iter()
+        .step_by(4) // one representative per rotation
+        .enumerate()
+        .map(|(rot_idx, pk)| Entry { pk: *pk, rot_idx })
+        .collect();
+
+    if entries.is_empty() {
+        out.fill(0);
+        return 0;
+    }
+
+    // Sort by pubkey bytes deterministically
+    entries.sort_unstable_by_key(|a| a.pk.to_bytes());
+
+    // Dedup + write mapping in a single pass
+    let rotations = entries.len();
+    let mut sched_mapped: Vec<u32> = vec![0u32; rotations];
+
+    let mut uniq_cnt = 0usize;
+    let mut prev_bytes: Option<[u8; 32]> = None;
+
+    for e in &entries {
+        let bytes = e.pk.to_bytes();
+        if prev_bytes != Some(bytes) {
+            uniq_cnt = uniq_cnt.saturating_add(1);
+            prev_bytes = Some(bytes);
+        }
+        // uniq index is uniq_cnt - 1
+        sched_mapped[e.rot_idx] = uniq_cnt.saturating_sub(1) as u32;
+    }
+
+    // Build unique_pubkeys for hashing (exact size = uniq_cnt)
+    let mut unique_pubkeys: Vec<Pubkey> = Vec::with_capacity(uniq_cnt);
+    prev_bytes = None;
+    for e in &entries {
+        let bytes = e.pk.to_bytes();
+        if prev_bytes != Some(bytes) {
+            unique_pubkeys.push(e.pk);
+            prev_bytes = Some(bytes);
+        }
+    }
+
+    // Hash unique pubkeys
+    let pub_bytes: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            unique_pubkeys.as_ptr() as *const u8,
+            unique_pubkeys
+                .len()
+                .saturating_mul(core::mem::size_of::<Pubkey>()),
+        )
+    };
+    let h1 = fd_hash(seed, pub_bytes);
+    out[0..8].copy_from_slice(&h1.to_le_bytes());
+
+    // Part 2 (last 64 bits): Hash of the compressed schedule (leader indices)
+    // This captures the scheduled order of the leaders throughout the epoch
+    let sched_bytes: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            sched_mapped.as_ptr() as *const u8,
+            sched_mapped
+                .len()
+                .saturating_mul(core::mem::size_of::<u32>()),
+        )
+    };
+    let h2 = fd_hash(seed, sched_bytes);
+    out[8..16].copy_from_slice(&h2.to_le_bytes());
+
+    uniq_cnt
 }
 
 /// # Safety
