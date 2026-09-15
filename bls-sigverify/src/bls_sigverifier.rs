@@ -161,14 +161,13 @@ impl SigVerifier {
             .thread_name(|i| format!("solSigVerBLS{i:02}"))
             .build()
             .unwrap();
-        let root_slot = sharable_banks.root().slot();
         Self {
             migration_status,
             ban_sender,
             channels,
             sharable_banks,
             highest_parent_ready,
-            stats: SigVerifierStats::new(root_slot),
+            stats: SigVerifierStats::default(),
             verified_certs: HashSet::new(),
             vote_pool: VotePool::default(),
             last_checked_root_slot: 0,
@@ -200,6 +199,7 @@ impl SigVerifier {
             if self.migration_status.is_pre_feature_activation() {
                 continue;
             }
+            self.stats.maybe_report(self.sharable_banks.root().slot());
             if datagrams_buffer.is_empty() && certificates.is_empty() {
                 continue;
             }
@@ -217,11 +217,8 @@ impl SigVerifier {
                 error!("verify_and_send_batch() failed with {e}. Exiting.");
                 break;
             }
-            self.stats.maybe_report(self.sharable_banks.root().slot());
         }
-        let elapsed = self.stats.elapsed_since_last_report();
-        self.stats
-            .do_report(self.sharable_banks.root().slot(), elapsed);
+        self.stats.do_report(self.sharable_banks.root().slot());
     }
 
     #[cfg(test)]
@@ -949,7 +946,7 @@ mod tests {
             ConsensusMessage::Vote(vote_message2),
             ctx.validator_keypairs[vote_rank2].node_keypair.pubkey(),
         )];
-        ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
+        ctx.verifier.stats = SigVerifierStats::default();
         ctx.verifier
             .verify_and_send_datagrams(messages_to_datagrams(
                 &messages2,
@@ -979,7 +976,7 @@ mod tests {
             ConsensusMessage::Vote(vote_message3),
             ctx.validator_keypairs[vote_rank3].node_keypair.pubkey(),
         )];
-        ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
+        ctx.verifier.stats = SigVerifierStats::default();
         ctx.verifier
             .verify_and_send_datagrams(messages_to_datagrams(
                 &messages3,
@@ -1794,7 +1791,7 @@ mod tests {
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
+        ctx.verifier.stats = SigVerifierStats::default();
         ctx.verifier.verify_and_send_datagrams(datagrams2).unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received.0, 1);

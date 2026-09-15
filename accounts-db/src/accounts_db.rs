@@ -110,10 +110,6 @@ const DEFAULT_NUM_DIRS: u32 = 4;
 // several io_uring instances with fixed buffers for large disk IO operations.
 pub const TOTAL_IO_URING_BUFFERS_SIZE_LIMIT: usize = 2_000_000_000;
 
-// When getting accounts for shrinking from the index, this is the # of accounts to lookup per thread.
-// This allows us to split up accounts index accesses across multiple threads.
-const SHRINK_COLLECT_CHUNK_SIZE: usize = 50;
-
 /// The number of shrink candidate slots that is small enough so that
 /// additional storages from ancient slots can be added to the
 /// candidates for shrinking.
@@ -1421,50 +1417,40 @@ impl AccountsDb {
             return;
         }
         let failed = AtomicBool::default();
-        let threads = rayon::current_num_threads();
-        let per_batch = total.div_ceil(threads);
-        (0..=threads).into_par_iter().for_each(|attempt| {
-            pubkey_slot_lists
-                .iter()
-                .skip(attempt * per_batch)
-                .take(per_batch)
-                .for_each(|entry| {
-                    let mut storage_slots = entry.value().clone();
-                    storage_slots.sort_unstable();
-                    self.accounts_index
-                        .get_and_then(entry.key(), |index_entry| {
-                            let Some(index_entry) = index_entry else {
-                                failed.store(true, Ordering::Relaxed);
-                                error!(
-                                    "verify_index: {} has no index entry, storages: \
-                                     {storage_slots:?}",
-                                    entry.key(),
-                                );
-                                return (false, ());
-                            };
-                            let slot_list = index_entry.slot_list_read_lock();
-                            // Slots newer than `max_slot_inclusive` are in the index but were
-                            // excluded from the storage scan, so exclude them from the comparison
-                            // too.
-                            let mut index_slots = slot_list
-                                .iter()
-                                .map(|(slot, _)| *slot)
-                                .filter(|slot| *slot <= max_slot_inclusive)
-                                .collect::<Vec<_>>();
-                            index_slots.sort_unstable();
+        pubkey_slot_lists.par_iter().for_each(|entry| {
+            let mut storage_slots = entry.value().clone();
+            storage_slots.sort_unstable();
+            self.accounts_index
+                .get_and_then(entry.key(), |index_entry| {
+                    let Some(index_entry) = index_entry else {
+                        failed.store(true, Ordering::Relaxed);
+                        error!(
+                            "verify_index: {} has no index entry, storages: {storage_slots:?}",
+                            entry.key(),
+                        );
+                        return (false, ());
+                    };
+                    let slot_list = index_entry.slot_list_read_lock();
+                    // Slots newer than `max_slot_inclusive` are in the index but were
+                    // excluded from the storage scan, so exclude them from the comparison
+                    // too.
+                    let mut index_slots = slot_list
+                        .iter()
+                        .map(|(slot, _)| *slot)
+                        .filter(|slot| *slot <= max_slot_inclusive)
+                        .collect::<Vec<_>>();
+                    index_slots.sort_unstable();
 
-                            if index_slots != storage_slots {
-                                failed.store(true, Ordering::Relaxed);
-                                error!(
-                                    "verify_index: {} index slot list does not match storages: \
-                                     index: {index_slots:?}, storages: {storage_slots:?}, slot \
-                                     list: {:?}",
-                                    entry.key(),
-                                    slot_list,
-                                );
-                            }
-                            (false, ())
-                        });
+                    if index_slots != storage_slots {
+                        failed.store(true, Ordering::Relaxed);
+                        error!(
+                            "verify_index: {} index slot list does not match storages: index: \
+                             {index_slots:?}, storages: {storage_slots:?}, slot list: {:?}",
+                            entry.key(),
+                            slot_list,
+                        );
+                    }
+                    (false, ())
                 });
         });
         if failed.load(Ordering::Relaxed) {
@@ -1478,14 +1464,20 @@ impl AccountsDb {
     // can be purged because there are no live append vecs in the ancestors
     pub fn clean_accounts(&self, max_clean_root_inclusive: Slot, is_startup: bool) {
         if self.verify_index {
-            //at startup use all cores to verify the index
-            if is_startup {
-                self.verify_index(max_clean_root_inclusive);
+            // verify_index calls par_iter, so give it a pool of its own rather than inheriting
+            // whichever one the caller happens to be running on. At startup there is no replay to
+            // protect, so use all cores; otherwise stay narrow and leave the rest for replay.
+            let num_threads = if is_startup {
+                num_cpus::get()
             } else {
-                // otherwise, use the background thread pool
-                self.thread_pool_background
-                    .install(|| self.verify_index(max_clean_root_inclusive));
-            }
+                quarter_thread_count()
+            };
+            let pool = rayon::ThreadPoolBuilder::new()
+                .thread_name(|i| format!("solAcctsDbVfy{i:02}"))
+                .num_threads(num_threads)
+                .build()
+                .expect("new rayon threadpool");
+            pool.install(|| self.verify_index(max_clean_root_inclusive));
         }
 
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
@@ -1974,13 +1966,8 @@ impl AccountsDb {
         stats
             .obsolete_accounts_filtered
             .fetch_add(num_obsolete_filtered as u64, Ordering::Relaxed);
-        self.thread_pool_background.install(|| {
-            stored_accounts
-                .par_chunks(SHRINK_COLLECT_CHUNK_SIZE)
-                .for_each(|stored_accounts| {
-                    self.verify_accounts_index_for_shrink(stored_accounts, stats, slot);
-                });
-        });
+
+        self.verify_accounts_index_for_shrink(stored_accounts, stats, slot);
 
         index_read_elapsed.stop();
 
@@ -2432,20 +2419,14 @@ impl AccountsDb {
 
         let num_selected = shrink_slots.len();
         let (_, shrink_all_us) = measure_us!({
-            self.thread_pool_background.install(|| {
-                shrink_slots
-                    .into_par_iter()
-                    .for_each(|(slot, slot_shrink_candidate)| {
-                        if self.ancient_append_vec_offset.is_some()
-                            && slot < oldest_non_ancient_slot
-                        {
-                            self.shrink_stats
-                                .num_ancient_slots_shrunk
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                        self.shrink_storage(slot_shrink_candidate);
-                    });
-            })
+            for (slot, slot_shrink_candidate) in shrink_slots {
+                if self.ancient_append_vec_offset.is_some() && slot < oldest_non_ancient_slot {
+                    self.shrink_stats
+                        .num_ancient_slots_shrunk
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                self.shrink_storage(slot_shrink_candidate);
+            }
         });
 
         let mut pended_counts: usize = 0;
@@ -4127,81 +4108,50 @@ impl AccountsDb {
 
     /// Updates the accounts index with the given `infos` and `accounts`.
     /// Used when storing accounts to storage for flush.
-    /// Returns a vector of `SlotList<AccountInfo>` containing the reclaims for each batch processed.
-    /// The element of the returned vector is guaranteed to be non-empty.
+    /// Returns the reclaims produced by the updates, empty if there were none.
     fn update_index_for_flush<'a>(
         &self,
-        infos: Vec<AccountInfo>,
+        infos: &[AccountInfo],
         accounts: &impl StorableAccounts<'a>,
         reclaim: UpsertReclaim,
-    ) -> Vec<ReclaimsSlotList<AccountInfo>> {
+    ) -> ReclaimsSlotList<AccountInfo> {
+        assert_eq!(infos.len(), accounts.len());
         let target_slot = accounts.target_slot();
-        let len = std::cmp::min(accounts.len(), infos.len());
+        let mut reclaims = ReclaimsSlotList::with_capacity(infos.len() / 2);
 
-        let update = |start, end| {
-            let mut reclaims = ReclaimsSlotList::with_capacity((end - start) / 2);
+        for (i, info) in infos.iter().enumerate() {
+            let pubkey = accounts.pubkey(i);
+            if info.is_zero_lamport() && reclaim == UpsertReclaim::ReclaimOldSlots {
+                self.accounts_index.delete(pubkey, &mut reclaims);
+                // The account's own newest entry: a reclaim at the flushed slot,
+                // which handle_reclaims records as a tombstone in the flushed
+                // storage instead of marking it obsolete
+                reclaims.push((target_slot, *info));
+                continue;
+            }
+            let old_slot = accounts.slot(i);
+            self.accounts_index.upsert(
+                target_slot,
+                old_slot,
+                pubkey,
+                *info,
+                &mut reclaims,
+                reclaim,
+            );
 
-            (start..end).for_each(|i| {
-                let info: AccountInfo = infos[i];
-                let pubkey = accounts.pubkey(i);
-                if info.is_zero_lamport() && reclaim == UpsertReclaim::ReclaimOldSlots {
-                    self.accounts_index.delete(pubkey, &mut reclaims);
-                    // The account's own newest entry: a reclaim at the flushed slot,
-                    // which handle_reclaims records as a tombstone in the flushed
-                    // storage instead of marking it obsolete
-                    reclaims.push((target_slot, info));
-                    return;
-                }
-                let old_slot = accounts.slot(i);
-                self.accounts_index.upsert(
-                    target_slot,
-                    old_slot,
-                    pubkey,
-                    info,
-                    &mut reclaims,
-                    reclaim,
-                );
-
-                if !self.account_indexes.is_empty() {
-                    // Since StorableAccounts::account() may read the account from disk,
-                    // avoid calling it unless secondary indexes are enabled.
-                    accounts.account(i, |account| {
-                        self.accounts_index.update_secondary_indexes(
-                            pubkey,
-                            &account,
-                            &self.account_indexes,
-                        );
-                    });
-                }
-            });
-            reclaims
-        };
-
-        let threshold = 1;
-        if len > threshold {
-            let thread_pool = &self.thread_pool_background;
-            let chunk_size = len.div_ceil(thread_pool.current_num_threads());
-            let batches = 1 + len / chunk_size;
-            thread_pool.install(|| {
-                (0..batches)
-                    .into_par_iter()
-                    .map(|batch| {
-                        let start = batch * chunk_size;
-                        let end = std::cmp::min(start + chunk_size, len);
-                        update(start, end)
-                    })
-                    .filter(|reclaims| !reclaims.is_empty())
-                    .collect()
-            })
-        } else {
-            let reclaims = update(0, len);
-            if reclaims.is_empty() {
-                // If no reclaims, return an empty vector
-                vec![]
-            } else {
-                vec![reclaims]
+            if !self.account_indexes.is_empty() {
+                // Since StorableAccounts::account() may read the account from disk,
+                // avoid calling it unless secondary indexes are enabled.
+                accounts.account(i, |account| {
+                    self.accounts_index.update_secondary_indexes(
+                        pubkey,
+                        &account,
+                        &self.account_indexes,
+                    );
+                });
             }
         }
+        reclaims
     }
 
     /// Updates the accounts index for the shrink path: each account at `accounts.slot(i)` has
@@ -4215,33 +4165,12 @@ impl AccountsDb {
         infos: &[AccountInfo],
         accounts: &impl StorableAccounts<'a>,
     ) {
+        assert_eq!(infos.len(), accounts.len());
         let target_slot = accounts.target_slot();
-        let len = std::cmp::min(accounts.len(), infos.len());
 
-        let update = |start, end| {
-            (start..end).for_each(|i| {
-                let info: AccountInfo = infos[i];
-                let old_slot = accounts.slot(i);
-                let pubkey = accounts.pubkey(i);
-                self.accounts_index
-                    .replace(target_slot, old_slot, pubkey, info);
-            });
-        };
-
-        let threshold = 1;
-        if len > threshold {
-            let thread_pool = &self.thread_pool_background;
-            let chunk_size = len.div_ceil(thread_pool.current_num_threads());
-            let batches = 1 + len / chunk_size;
-            thread_pool.install(|| {
-                (0..batches).into_par_iter().for_each(|batch| {
-                    let start = batch * chunk_size;
-                    let end = std::cmp::min(start + chunk_size, len);
-                    update(start, end)
-                })
-            });
-        } else {
-            update(0, len);
+        for ((old_slot, pubkey), info) in accounts.slots_and_pubkeys().zip(infos) {
+            self.accounts_index
+                .replace(target_slot, old_slot, pubkey, *info);
         }
     }
 
@@ -4586,24 +4515,21 @@ impl AccountsDb {
         self.storage.insert(Arc::new(storage));
 
         let update_index_time = Measure::start("update_index");
-        let reclaims = self.update_index_for_flush(infos, &accounts, reclaim_handling);
+        let reclaims = self.update_index_for_flush(&infos, &accounts, reclaim_handling);
         let update_index_us = update_index_time.end_as_us();
 
         // If there are any reclaims then they should be handled. Reclaims affect
         // all storages, and may result in the removal of dead storages.
-        // since reclaims only contains non-empty SlotList<AccountInfo>, we
-        // should skip handle_reclaims only when reclaims is empty. No need to
-        // check the elements of reclaims are empty.
         let handle_reclaims_time = Measure::start("handle_reclaims");
         let mut num_reclaims = 0;
         let mut num_obsolete_slots_removed = 0;
         let mut num_obsolete_bytes_removed = 0;
         let mut is_slot_dead = false;
         if !reclaims.is_empty() {
-            num_reclaims = reclaims.iter().map(|r| r.len() as u64).sum();
+            num_reclaims = reclaims.len() as u64;
             let purge_stats = PurgeStats::default();
             let dead_slots = self.handle_reclaims(
-                reclaims.iter().flatten(),
+                reclaims.iter(),
                 &purge_stats,
                 MarkAccountsObsolete::Yes(slot),
             );

@@ -24,8 +24,8 @@ path = "src/bin/test_exec_instr.rs"
 required-features = ["cli", "ffi"]
 
 [[bin]]
-name = "test_exec_txn"
-path = "src/bin/test_exec_txn.rs"
+name = "test_exec_svm_txn"
+path = "src/bin/test_exec_svm_txn.rs"
 required-features = ["cli", "ffi"]
 
 [[bin]]

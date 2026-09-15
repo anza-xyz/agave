@@ -5909,12 +5909,7 @@ fn test_max_cleaned_root_advances_with_clean() {
 
 #[test]
 fn test_shrink_collect_simple() {
-    let account_counts = [
-        1,
-        SHRINK_COLLECT_CHUNK_SIZE,
-        SHRINK_COLLECT_CHUNK_SIZE + 1,
-        SHRINK_COLLECT_CHUNK_SIZE * 2,
-    ];
+    let account_counts = [1, 50, 51, 100];
     // 2 = append_opposite_alive_account + append_opposite_zero_lamport_account
     let max_appended_accounts = 2;
     let max_num_accounts = *account_counts.iter().max().unwrap();

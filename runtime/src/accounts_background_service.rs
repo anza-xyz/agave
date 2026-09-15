@@ -17,7 +17,6 @@ use {
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind, error::SnapshotError},
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
-    rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_clock::{BankId, Slot},
     solana_measure::{measure::Measure, measure_us},
     stats::StatsManager,
@@ -364,17 +363,13 @@ impl PrunedBanksRequestHandler {
             );
         }
 
-        // Purge all the slots in parallel
         // Banks for the same slot are purged sequentially
         let accounts_db = bank.rc.accounts.accounts_db.as_ref();
-        accounts_db.thread_pool_background.install(|| {
-            grouped_banks_to_purge.into_par_iter().for_each(|group| {
-                group.iter().for_each(|(slot, bank_id)| {
-                    accounts_db.purge_slot(*slot, *bank_id, true);
-                })
-            });
+        grouped_banks_to_purge.into_iter().for_each(|group| {
+            group.iter().for_each(|(slot, bank_id)| {
+                accounts_db.purge_slot(*slot, *bank_id, true);
+            })
         });
-
         num_banks_to_purge
     }
 

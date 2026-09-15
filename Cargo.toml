@@ -313,7 +313,7 @@ rolling-file = "0.2.0"
 rpassword = "7.5"
 rts-alloc = { version = "5.1.0" }
 rusb = "0.9"
-rustls = { version = "0.23.43", features = ["std"], default-features = false }
+rustls = { version = "0.23.45", features = ["std"], default-features = false }
 rustls-webpki = { version = "0.103.15", default-features = false, features = ["std"] }
 scopeguard = "1.2.0"
 semver = "1.0.28"

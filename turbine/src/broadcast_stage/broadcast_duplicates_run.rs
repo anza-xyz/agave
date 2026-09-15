@@ -450,7 +450,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 panic!("Xdp not supported for duplicate shreds run");
             }
         };
-        batch_send(sock, packets).map_err(|SendPktsError::IoError(err, _)| Error::Io(err))
+        batch_send(sock, packets)
+            .map(|_num_sent| ())
+            .map_err(|SendPktsError::IoError(err)| Error::Io(err))
     }
 
     fn record<'db>(

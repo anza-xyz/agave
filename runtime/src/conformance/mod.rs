@@ -1,7 +1,6 @@
 //! Solana runtime conformance harnesses.
 
 pub mod block;
-pub mod txn;
 
 use {
     protosol::protos::{

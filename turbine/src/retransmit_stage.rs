@@ -537,13 +537,13 @@ fn retransmit_shred(
         RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
             let socket = socket.get_socket();
             match multi_target_send(socket, shred, addrs.as_ref()) {
-                Ok(()) => num_addrs,
-                Err(SendPktsError::IoError(ioerr, num_failed)) => {
+                Ok(num_sent) => num_sent,
+                Err(SendPktsError::IoError(ioerr)) => {
                     error!(
-                        "retransmit_to multi_target_send error: {ioerr:?}, \
-                         {num_failed}/{num_addrs} packets failed"
+                        "retransmit_to multi_target_send error: {ioerr:?}, {num_addrs} \
+                         destinations"
                     );
-                    num_addrs - num_failed
+                    0
                 }
             }
         }

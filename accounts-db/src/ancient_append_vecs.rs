@@ -16,13 +16,12 @@ use {
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align,
     },
-    rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
     solana_clock::Slot,
     solana_measure::measure_us,
     std::{
         collections::{HashMap, VecDeque},
         num::{NonZeroU64, Saturating},
-        sync::{Arc, Mutex, atomic::Ordering},
+        sync::{Arc, atomic::Ordering},
     },
 };
 
@@ -469,7 +468,7 @@ impl AccountsDb {
         accounts_to_combine: &'b AccountsToCombine<'b>,
         packed_contents: Vec<PackedAncientStorage<'b>>,
     ) -> WriteAncientAccounts<'a> {
-        let write_ancient_accounts = Mutex::new(WriteAncientAccounts::default());
+        let mut write_ancient_accounts = WriteAncientAccounts::default();
 
         // ok if we have more slots, but NOT ok if we have fewer slots than we have contents
         assert!(accounts_to_combine.target_slots_sorted.len() >= packed_contents.len());
@@ -493,25 +492,11 @@ impl AccountsDb {
                 Ordering::Relaxed,
             );
 
-        self.thread_pool_background.install(|| {
-            packer.par_iter().for_each(|(target_slot, pack)| {
-                let mut write_ancient_accounts_local = WriteAncientAccounts::default();
-                self.write_one_packed_storage(
-                    pack,
-                    **target_slot,
-                    &mut write_ancient_accounts_local,
-                );
-                let mut write = write_ancient_accounts.lock().unwrap();
-                write
-                    .shrinks_in_progress
-                    .extend(write_ancient_accounts_local.shrinks_in_progress);
-                write
-                    .metrics
-                    .accumulate(&write_ancient_accounts_local.metrics);
-            });
-        });
+        for (target_slot, pack) in packer {
+            self.write_one_packed_storage(&pack, *target_slot, &mut write_ancient_accounts);
+        }
 
-        write_ancient_accounts.into_inner().unwrap()
+        write_ancient_accounts
     }
 
     /// for each slot in 'ancient_slots', collect all accounts in that slot
