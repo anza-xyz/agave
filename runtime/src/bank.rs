@@ -5704,13 +5704,8 @@ impl Bank {
     where
         D: TransactionData,
     {
-        // Discard v1 transactions until feature gate is activated.
-        let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
-        if !enable_tx_v1 && matches!(tx.version(), TransactionVersion::V1) {
-            return Err(TransactionError::UnsupportedVersion);
-        }
         let max_transaction_size = match tx.version() {
-            TransactionVersion::V1 if enable_tx_v1 => solana_message::v1::MAX_TRANSACTION_SIZE,
+            TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
             _ => PACKET_DATA_SIZE,
         };
 

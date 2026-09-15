@@ -323,11 +323,9 @@ impl SigVerifyWorkerPool {
             }
         }
 
-        let enable_tx_v1 = working_bank.feature_set.snapshot().enable_tx_v1;
         let (_, verify_time_us) = measure_us!(sigverify::ed25519_verify_serial(
             &mut batch,
             reject_non_vote,
-            enable_tx_v1,
         ));
         let num_valid_packets = sigverify::count_valid_packets(std::iter::once(&batch));
         state
@@ -379,7 +377,7 @@ impl SigVerifyWorkerPool {
         verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
     ) -> bool {
         // Gossip votes are legacy Transaction values, not tx-v1 packets.
-        sigverify::ed25519_verify_serial(&mut work.batch, true, false);
+        sigverify::ed25519_verify_serial(&mut work.batch, true);
 
         if let Err(err) = verified_vote_sender.send(GossipVerifiedVoteBatch {
             transaction: work.transaction,
