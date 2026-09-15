@@ -22,6 +22,8 @@ Release channels have their own copy of this changelog:
   the node's context slot at the requested commitment is below the minimum. `getSignatureStatuses`
   still defaults to `processed` when no commitment is given.
 * Added `RpcClient::get_signature_statuses_with_config`.
+* `accountSubscribe` and `programSubscribe` now honor `dataSlice` for binary account data.
+  A zero-length slice returns empty data; omitting `dataSlice` returns the full account data.
 ### Validator
 #### Breaking
 * scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
