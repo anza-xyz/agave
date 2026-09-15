@@ -1545,7 +1545,6 @@ pub mod loader_v3_set_program_data_to_elf_length {
 }
 
 pub mod enable_get_leader_syscall {
-    // placeholder!!!!
     solana_pubkey::declare_id!("CrFqZvFQLu4V7XEDNRxAgKJFChCVn5WDFbFfCLZe4Lxk");
 }
 
