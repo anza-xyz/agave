@@ -305,7 +305,7 @@ impl WorkersCache {
             .unwrap_or(Err(WorkersCacheError::ShutdownError))
     }
 
-    pub(crate) fn rtt_ms(&self, peer: &SocketAddr) -> Option<u64> {
+    pub fn rtt_ms(&self, peer: &SocketAddr) -> Option<u64> {
         self.workers.peek(peer)?.rtt_ms()
     }
 

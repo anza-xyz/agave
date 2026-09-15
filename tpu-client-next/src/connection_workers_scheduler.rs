@@ -400,7 +400,7 @@ fn select_unique_leaders(
 
 /// Returns whether the current leader window has expired or estimated arrival is at or past its end.
 /// Without RTT, only an already expired window is skipped; without timing, it is retained.
-fn should_skip_current_leader(
+pub fn should_skip_current_leader(
     enabled: bool,
     leader_window_end_ms: Option<u64>,
     rtt_ms: Option<u64>,
