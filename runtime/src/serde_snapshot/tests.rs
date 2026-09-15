@@ -120,7 +120,7 @@ mod serde_snapshot_tests {
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
             buf_reader.set_file(file.as_ref(), storage_entry.accounts.len() as u64)?;
-            let mut reader = AccountStorageReader::new(
+            let reader = AccountStorageReader::new(
                 storage_entry,
                 None,
                 TombstonesFilter::Include,
@@ -128,11 +128,12 @@ mod serde_snapshot_tests {
             )
             .unwrap();
             let mut writer = File::create(&output_path)?;
-            io::copy(&mut reader, &mut writer)?;
+            let archive_len = reader.len_for_archive();
+            reader.write_to(&mut writer)?;
 
             // Read new file into append-vec and build new entry
             let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(output_path, reader.len())?;
+                AccountsFile::new_from_file(output_path, archive_len)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),

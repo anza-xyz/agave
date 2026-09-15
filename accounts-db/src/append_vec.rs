@@ -4,7 +4,7 @@
 //!
 //! <https://docs.anza.xyz/implemented-proposals/persistent-account-storage>
 
-mod meta;
+pub(crate) mod meta;
 
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::StoredAccountMeta;
@@ -21,7 +21,7 @@ use {
     agave_fs::{
         FileInfo, FileSize,
         buffered_reader::{
-            BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
+            BufReaderWithOverflow, BufferedReader, FileBufRead, RequiredLenBufFileRead,
             RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
@@ -776,9 +776,25 @@ impl AppendVec {
     pub(crate) fn scan_accounts<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
+        callback: impl for<'local> FnMut(FileOffset, StoredAccountInfo<'local>),
+    ) -> Result<()> {
+        reader.set_file(&self.file, self.len() as FileSize)?;
+        self.scan_accounts_with(reader, callback)
+    }
+
+    /// See [`scan_accounts`] for documentation.
+    ///
+    /// This fn differs in that it does not call `FileBufRead::set_file()` first, before scanning.
+    /// Instead, the *caller* is responsible for setting the file.
+    ///
+    /// This is used when generating snapshot archives, which may use a different file descriptor
+    /// than the one already open with this AppendVec instance (e.g. direct-io).
+    pub(crate) fn scan_accounts_with<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(FileOffset, StoredAccountInfo<'local>),
     ) -> Result<()> {
-        self.scan_accounts_stored_meta(reader, |stored_account_meta| {
+        self.scan_accounts_stored_meta_with(reader, |stored_account_meta| {
             let offset = stored_account_meta.offset();
             let account = StoredAccountInfo {
                 pubkey: stored_account_meta.pubkey(),
@@ -796,13 +812,25 @@ impl AppendVec {
     ///
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
+    #[cfg(feature = "dev-context-only-utils")]
     fn scan_accounts_stored_meta<'a>(
+        &'a self,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) -> Result<()> {
+        let mut reader = new_scan_accounts_reader();
+        reader.set_file(&self.file, self.len() as FileSize)?;
+        self.scan_accounts_stored_meta_with(&mut reader, callback)
+    }
+
+    /// See [`scan_accounts_stored_meta`] for documentation.
+    ///
+    /// This fn does not call `FileBufRead::set_file()` first, before scanning.
+    /// The *caller* is responsible for setting the file.
+    fn scan_accounts_stored_meta_with<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
-        reader.set_file(&self.file, self.len() as FileSize)?;
-
         let mut min_buf_len = STORE_META_OVERHEAD;
         loop {
             let offset = reader.get_file_offset();
@@ -854,8 +882,7 @@ impl AppendVec {
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
-        let mut reader = new_scan_accounts_reader();
-        self.scan_accounts_stored_meta(&mut reader, callback)
+        self.scan_accounts_stored_meta(callback)
     }
 
     /// Returns the number of bytes required to store an account with the passed in `data_len`.
@@ -870,7 +897,7 @@ impl AppendVec {
 
     /// Checked, unaligned variant of [`calculate_stored_size`].
     #[inline(always)]
-    fn calculate_unaligned_stored_size_checked(data_len: usize) -> Option<usize> {
+    pub fn calculate_unaligned_stored_size_checked(data_len: usize) -> Option<usize> {
         STORE_META_OVERHEAD.checked_add(data_len)
     }
 
@@ -1352,10 +1379,9 @@ mod tests {
         let (av_writer, _, test_accounts, path, _temp_dir) =
             rand_exhaustive_append_vec(num_accounts);
         let av_reader = AppendVec::new_from_file(&path, av_writer.len()).unwrap().0;
-        let mut reader = new_scan_accounts_reader();
         for av in [&av_writer, &av_reader] {
             let mut index = 0;
-            av.scan_accounts_stored_meta(&mut reader, |v| {
+            av.scan_accounts_stored_meta(|v| {
                 let (pubkey, account) = &test_accounts[index];
                 let recovered = create_account_shared_data(&v);
                 assert_eq!(&recovered, account);
@@ -1430,10 +1456,9 @@ mod tests {
 
         let file_info = FileInfo::new_from_path(&path).unwrap();
         let av_reader = AppendVec::new_from_file_info_unchecked(file_info, av_current_len).unwrap();
-        let mut reader = new_scan_accounts_reader();
         let mut index = 0;
         av_reader
-            .scan_accounts_stored_meta(&mut reader, |stored_account| {
+            .scan_accounts_stored_meta(|stored_account| {
                 let (pubkey, account) = &test_accounts[index];
                 let recovered = create_account_shared_data(&stored_account);
                 assert_eq!(stored_account.pubkey(), pubkey);
@@ -1491,10 +1516,8 @@ mod tests {
         assert_eq!(indexes[0], 0);
         assert_eq!(av.accounts_count(), size);
 
-        let mut reader = new_scan_accounts_reader();
-
         let mut sample = 0;
-        av.scan_accounts_stored_meta(&mut reader, |v| {
+        av.scan_accounts_stored_meta(|v| {
             let account = create_test_account(sample + 1);
             let recovered = create_account_shared_data(&v);
             assert_eq!(recovered, account.1);
@@ -2061,10 +2084,9 @@ mod tests {
         test_scan_helper(
             modify_fn,
             |append_vec, pubkeys, account_offsets, accounts| {
-                let mut reader = new_scan_accounts_reader();
                 let mut i = 0;
                 append_vec
-                    .scan_accounts_stored_meta(&mut reader, |stored_account| {
+                    .scan_accounts_stored_meta(|stored_account| {
                         let pubkey = pubkeys.get(i).unwrap();
                         let offset = account_offsets.get(i).unwrap();
                         let account = accounts.get(i).unwrap();
