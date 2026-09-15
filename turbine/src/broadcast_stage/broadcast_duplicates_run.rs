@@ -1,6 +1,6 @@
 use {
     super::*,
-    crate::cluster_nodes::ClusterNodesCache,
+    crate::{broadcast_stage::broadcast_utils::BroadcastItem, cluster_nodes::ClusterNodesCache},
     agave_votor::event::VotorEventSender,
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
@@ -127,7 +127,11 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             self.num_slots_broadcasted += 1;
         }
 
-        let BlockComponent::EntryBatch(ref mut entries) = receive_results.component else {
+        let BroadcastItem::Component(ref mut component) = receive_results.item else {
+            // This test only TowerBFT implementation does not use block markers
+            return Ok(());
+        };
+        let BlockComponent::EntryBatch(entries) = component else {
             // This test only TowerBFT implementation does not use block markers
             return Ok(());
         };
@@ -206,7 +210,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
 
         let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
             keypair,
-            &receive_results.component,
+            component,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
             self.chained_merkle_root,
             self.next_shred_index,
