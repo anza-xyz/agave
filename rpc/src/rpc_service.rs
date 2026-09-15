@@ -58,13 +58,14 @@ use {
         },
         task::{Context, Poll},
         thread::{self, Builder, JoinHandle},
-        time::{Duration, Instant},
+        time::Duration,
     },
     tokio::runtime::{Builder as TokioBuilder, Handle as RuntimeHandle, Runtime as TokioRuntime},
     tokio_util::{
         bytes::Bytes,
         codec::{BytesCodec, FramedRead},
         sync::CancellationToken,
+        task::AbortOnDropHandle,
     },
 };
 
@@ -83,34 +84,49 @@ enum SnapshotKind {
     Incremental,
 }
 
-struct TimeoutStream<S> {
-    inner: S,
-    deadline: Instant,
+struct SnapshotStream {
+    receiver: hyper::Body,
+    _sender_task: AbortOnDropHandle<()>,
 }
 
-impl<S> TimeoutStream<S> {
-    fn new(inner: S, timeout: Duration) -> Self {
+impl SnapshotStream {
+    fn new<S>(mut stream: S, timeout: Duration) -> Self
+    where
+        S: Stream<Item = std::io::Result<Bytes>> + Unpin + Send + 'static,
+    {
+        let (mut sender, receiver) = hyper::Body::channel();
+        let deadline = tokio::time::Instant::now() + timeout;
+        // Hyper stops polling the response body while socket writes are blocked. The task must
+        // own the file stream so its deadline can release the file without another body poll.
+        let sender_task = tokio::spawn(async move {
+            let result = tokio::time::timeout_at(deadline, async {
+                while let Some(chunk) = stream.try_next().await? {
+                    if sender.send_data(chunk).await.is_err() {
+                        break;
+                    }
+                }
+                Ok::<_, std::io::Error>(())
+            })
+            .await;
+            if !matches!(result, Ok(Ok(()))) {
+                // Report an incomplete response on a read error or timeout. This does not wait
+                // for the socket to become writable, so the file is dropped when this task exits.
+                sender.abort();
+            }
+        });
         Self {
-            inner,
-            deadline: Instant::now() + timeout,
+            receiver,
+            // A client disconnect must also release the file, including during a pending read.
+            _sender_task: AbortOnDropHandle::new(sender_task),
         }
     }
 }
 
-impl<S> Stream for TimeoutStream<S>
-where
-    S: Stream<Item = std::io::Result<Bytes>> + Unpin,
-{
-    type Item = std::io::Result<Bytes>;
+impl Stream for SnapshotStream {
+    type Item = Result<Bytes, hyper::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if Instant::now() >= self.deadline {
-            return Poll::Ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "snapshot transfer deadline exceeded",
-            ))));
-        }
-        Pin::new(&mut self.inner).poll_next(cx)
+        Pin::new(&mut self.receiver).poll_next(cx)
     }
 }
 
@@ -322,7 +338,7 @@ impl RpcRequestMiddleware {
                         let stream =
                             FramedRead::new(file, BytesCodec::new()).map_ok(|b| b.freeze());
                         let body = if let Some(timeout) = snapshot_timeout {
-                            hyper::Body::wrap_stream(TimeoutStream::new(stream, timeout))
+                            hyper::Body::wrap_stream(SnapshotStream::new(stream, timeout))
                         } else {
                             hyper::Body::wrap_stream(stream)
                         };
@@ -854,8 +870,205 @@ mod tests {
             io::Write,
             net::{IpAddr, Ipv4Addr},
         },
-        tokio::runtime::Runtime,
+        tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            runtime::Runtime,
+            sync::oneshot,
+            time::{advance, timeout},
+        },
     };
+
+    struct DropTrackedStream<S> {
+        inner: S,
+        dropped: Option<oneshot::Sender<()>>,
+    }
+
+    impl<S> DropTrackedStream<S> {
+        fn new(inner: S) -> (Self, oneshot::Receiver<()>) {
+            let (sender, receiver) = oneshot::channel();
+            (
+                Self {
+                    inner,
+                    dropped: Some(sender),
+                },
+                receiver,
+            )
+        }
+    }
+
+    impl<S: Stream + Unpin> Stream for DropTrackedStream<S> {
+        type Item = S::Item;
+
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Pin::new(&mut self.inner).poll_next(cx)
+        }
+    }
+
+    impl<S> Drop for DropTrackedStream<S> {
+        fn drop(&mut self) {
+            let _ = self.dropped.take().unwrap().send(());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_snapshot_stream_deadline_without_body_polls() {
+        let (stream, dropped) = DropTrackedStream::new(stream::repeat_with(|| {
+            Ok(Bytes::from_static(b"snapshot data"))
+        }));
+        let body = SnapshotStream::new(stream, Duration::from_secs(1));
+        tokio::task::yield_now().await;
+        advance(Duration::from_secs(1)).await;
+
+        // Keep the response alive without ever polling it. The sender is blocked by backpressure,
+        // but the source must be released at the deadline anyway.
+        timeout(Duration::from_secs(1), dropped)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(body.try_collect::<Vec<_>>().await.is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_snapshot_stream_deadline_during_read() {
+        let (stream, dropped) = DropTrackedStream::new(stream::pending::<std::io::Result<Bytes>>());
+        let mut body = SnapshotStream::new(stream, Duration::from_secs(1));
+        tokio::task::yield_now().await;
+        advance(Duration::from_secs(1)).await;
+        timeout(Duration::from_secs(1), dropped)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(body.next().await.unwrap().is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_snapshot_stream_drop_cancels_pending_read() {
+        let (started, read_started) = oneshot::channel();
+        let mut started = Some(started);
+        let pending = stream::poll_fn(move |_| {
+            if let Some(started) = started.take() {
+                started.send(()).unwrap();
+            }
+            Poll::Pending::<Option<std::io::Result<Bytes>>>
+        });
+        let (stream, dropped) = DropTrackedStream::new(pending);
+        let body = SnapshotStream::new(stream, Duration::from_secs(3600));
+        read_started.await.unwrap();
+        drop(body);
+        // Cancellation must not wait for either the read or the transfer deadline.
+        timeout(Duration::from_secs(1), dropped)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_stream_completion_and_read_error() {
+        let chunks = vec![
+            Ok(Bytes::from_static(b"snapshot ")),
+            Ok(Bytes::from_static(b"data")),
+        ];
+        let (stream, dropped) = DropTrackedStream::new(stream::iter(chunks));
+        let body = hyper::Body::wrap_stream(SnapshotStream::new(stream, Duration::from_secs(60)));
+        assert_eq!(hyper::body::to_bytes(body).await.unwrap(), "snapshot data");
+        dropped.await.unwrap();
+
+        let (stream, dropped) = DropTrackedStream::new(stream::iter([
+            Ok(Bytes::from_static(b"partial snapshot")),
+            Err(std::io::Error::other("read failed")),
+        ]));
+        let body = hyper::Body::wrap_stream(SnapshotStream::new(stream, Duration::from_secs(60)));
+        assert!(hyper::body::to_bytes(body).await.is_err());
+        dropped.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_stream_releases_file_with_stalled_http_client() {
+        let directory = get_tmp_ledger_path_auto_delete!();
+        let path = directory.path().join("snapshot.tar.zst");
+        let file = std::fs::File::create(&path).unwrap();
+        let file_size = 1024 * 1024;
+        file.set_len(file_size).unwrap();
+        drop(file);
+        let file = RpcRequestMiddleware::open_no_follow(&path).await.unwrap();
+        let (reading, read_started) = oneshot::channel();
+        let mut reading = Some(reading);
+        let mut bytes_read = 0;
+        let (stream, dropped) = DropTrackedStream::new(
+            FramedRead::new(file, BytesCodec::new())
+                .map_ok(|b| b.freeze())
+                .inspect_ok(move |chunk| {
+                    bytes_read += chunk.len();
+                    if bytes_read >= 32 * 1024
+                        && let Some(reading) = reading.take()
+                    {
+                        let _ = reading.send(());
+                    }
+                }),
+        );
+        let body = SnapshotStream::new(stream, Duration::from_secs(3600));
+        let body = Arc::new(std::sync::Mutex::new(Some(body)));
+
+        // A small, bounded transport makes socket backpressure deterministic without depending
+        // on platform-specific TCP buffer sizes. Hyper serves the same streaming HTTP response.
+        let (server_io, mut client_io) = tokio::io::duplex(1024);
+        let server = tokio::spawn(async move {
+            hyper::server::conn::Http::new()
+                .max_buf_size(8192)
+                .serve_connection(
+                    server_io,
+                    hyper::service::service_fn(move |_| {
+                        let response = hyper::Response::builder()
+                            .header(hyper::header::CONTENT_LENGTH, file_size)
+                            .header(hyper::header::CONNECTION, "close")
+                            .body(hyper::Body::wrap_stream(
+                                body.lock().unwrap().take().unwrap(),
+                            ))
+                            .unwrap();
+                        async { Ok::<_, std::convert::Infallible>(response) }
+                    }),
+                )
+                .await
+        });
+        client_io
+            .write_all(b"GET /snapshot.tar.zst HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut headers = Vec::new();
+        timeout(Duration::from_secs(5), async {
+            while !headers.ends_with(b"\r\n\r\n") {
+                headers.push(client_io.read_u8().await.unwrap());
+            }
+        })
+        .await
+        .unwrap();
+        assert!(headers.starts_with(b"HTTP/1.1 200"));
+        timeout(Duration::from_secs(5), read_started)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!server.is_finished());
+        std::fs::remove_file(path).unwrap();
+
+        // The client remains connected and stops reading. Advance the clock only after real
+        // file I/O has produced the headers, so it cannot auto-advance during file opening.
+        tokio::time::pause();
+        advance(Duration::from_secs(3600)).await;
+        timeout(Duration::from_secs(1), dropped)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!server.is_finished());
+
+        // Resuming reads exposes the aborted response, rather than a successful truncated body.
+        let mut received = Vec::new();
+        timeout(Duration::from_secs(5), client_io.read_to_end(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(received.len() < file_size as usize);
+        assert!(server.await.unwrap().is_err());
+    }
 
     #[test]
     fn test_rpc_new() {
@@ -1139,7 +1352,7 @@ mod tests {
         let bank_forks = create_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let rrm = RpcRequestMiddleware::new(
+        let mut rrm = RpcRequestMiddleware::new(
             ledger_path.path().to_path_buf(),
             None,
             bank_forks,
@@ -1167,6 +1380,12 @@ mod tests {
             let response = runtime.block_on(response);
             let response = response.unwrap();
             assert_eq!(response.status(), 200);
+            assert_eq!(
+                runtime
+                    .block_on(hyper::body::to_bytes(response.into_body()))
+                    .unwrap(),
+                "should be ok"
+            );
         } else {
             panic!("Unexpected RequestMiddlewareAction variant");
         }
@@ -1186,6 +1405,35 @@ mod tests {
             assert_ne!(response.status(), 200);
         } else {
             panic!("Unexpected RequestMiddlewareAction variant");
+        }
+
+        rrm.snapshot_config = Some(SnapshotConfig {
+            full_snapshot_archives_dir: ledger_path.path().to_path_buf(),
+            incremental_snapshot_archives_dir: ledger_path.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        });
+        for path in [
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst",
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst",
+        ] {
+            let contents = b"snapshot contents";
+            std::fs::write(ledger_path.path().join(&path[1..]), contents).unwrap();
+            let RequestMiddlewareAction::Respond { response, .. } = rrm.process_file_get(path)
+            else {
+                panic!("Unexpected RequestMiddlewareAction variant");
+            };
+            runtime.block_on(async {
+                let response = response.await.unwrap();
+                assert_eq!(response.status(), 200);
+                assert_eq!(
+                    response.headers()[hyper::header::CONTENT_LENGTH],
+                    contents.len().to_string()
+                );
+                assert_eq!(
+                    hyper::body::to_bytes(response.into_body()).await.unwrap(),
+                    &contents[..]
+                );
+            });
         }
     }
 }
