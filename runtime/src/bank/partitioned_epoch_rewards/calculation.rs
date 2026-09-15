@@ -39,12 +39,9 @@ use {
     solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::{vote_account::VoteAccounts, vote_state_view_mut::VoteStateViewMut},
-    std::{
-        collections::HashSet,
-        sync::{
-            Arc,
-            atomic::{AtomicU64, Ordering::Relaxed},
-        },
+    std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering::Relaxed},
     },
 };
 
@@ -1155,19 +1152,6 @@ impl Bank {
         let total_incinerator_lamports = AtomicU64::new(0);
         let total_block_reward_lamports = AtomicU64::new(0);
 
-        let commission_receiving_vote_accounts = reward_commissions
-            .iter()
-            .filter(
-                |(
-                    _,
-                    RewardCommission {
-                        is_vote_account, ..
-                    },
-                )| *is_vote_account,
-            )
-            .map(|(commission_pubkey, _)| *commission_pubkey)
-            .collect::<HashSet<Pubkey>>();
-
         let (accounts_with_rewards, swept_vote_accounts): (Vec<_>, Vec<_>) = thread_pool.join(
             || {
                 reward_commissions
@@ -1279,7 +1263,12 @@ impl Bank {
                         .par_iter()
                         .map(|(key, _)| key)
                         .filter_map(|vote_address| {
-                            if commission_receiving_vote_accounts.contains(vote_address) {
+                            // If it's a vote acount, it'll get processed in the
+                            // other loop, so skip it here
+                            if reward_commissions
+                                .get(vote_address)
+                                .is_some_and(|x| x.is_vote_account)
+                            {
                                 return None;
                             }
                             let mut account =
