@@ -512,7 +512,7 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=4
 solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-vote = { path = "vote", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
-solana-vote-interface = "6.1.0"
+solana-vote-interface = "7.0.0"
 solana-vote-program = { path = "programs/vote", version = "=4.4.0-alpha.4", default-features = false, features = ["agave-unstable-api"] }
 solana-wincode-varint = "1.1.0"
 solana-zk-elgamal-proof-interface = "0.1.3"
