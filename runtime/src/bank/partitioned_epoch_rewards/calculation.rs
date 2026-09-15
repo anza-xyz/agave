@@ -4449,6 +4449,7 @@ mod tests {
     #[test]
     fn test_begin_partitioned_rewards_sweeps_pending_delegator_rewards() {
         let stake_lamports = 1_000_000_000;
+        let vote_lamports = 10_000_000_000; // more than enough for VAT
         let pending_delegator_rewards = 1_000_000;
         let stores_per_block = 1; // doesn't matter since this test doesn't distribute
         let (
@@ -4461,6 +4462,7 @@ mod tests {
             cases,
         ) = create_reward_bank_for_block_revenue_sharing(
             stake_lamports,
+            vote_lamports,
             pending_delegator_rewards,
             stores_per_block,
         );
