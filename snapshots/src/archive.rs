@@ -21,7 +21,12 @@ use {
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::datapoint_info,
-    std::{fs, io::Write, path::Path, sync::Arc},
+    std::{
+        fs,
+        io::{self, Write},
+        path::Path,
+        sync::Arc,
+    },
 };
 
 // Balance large and small files order in snapshot tar with bias towards small (4 small + 1 large),
@@ -202,11 +207,11 @@ pub fn archive_snapshot(
                     header.set_path(path_in_archive).map_err(|err| {
                         E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
                     })?;
-                    header.set_size(reader.len() as u64);
+                    header.set_size(reader.len_for_archive() as u64);
                     header.set_cksum();
-                    archive.append(&header, reader).map_err(|err| {
-                        E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                    })?;
+                    append_entry(&mut archive, &header, |output| reader.write_to(output)).map_err(
+                        |err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()),
+                    )?;
                 }
 
                 buf_reader = chunk_reader
@@ -280,4 +285,201 @@ pub fn archive_snapshot(
         hash: snapshot_hash,
         archive_format,
     })
+}
+
+/// Appends entry with `header` to `archive` via `write_fn`.
+///
+/// This is similar to tar::Builder::append(), but without requiring
+/// the entry's source to implement `Read`.
+///
+/// The header bust have its path, size, and checksum set.
+/// `write_fn` writes data directly into the archive through the `Write` fn param.
+fn append_entry(
+    archive: &mut tar::Builder<impl Write>,
+    header: &tar::Header,
+    write_fn: impl FnOnce(&mut dyn Write) -> io::Result<()>,
+) -> io::Result<()> {
+    let size = header.size()?;
+    let archive_writer = archive.get_mut();
+    archive_writer.write_all(header.as_bytes())?;
+    let mut entry_writer = EntryWriter {
+        archive_writer,
+        remaining: size,
+    };
+    write_fn(&mut entry_writer)?;
+    if entry_writer.remaining != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "archive entry is shorter than its declared size",
+        ));
+    }
+
+    // given alignment A and size S, padding P is: P = (A − (S mod A)) mod A
+    // if alignment is a power of two: S mod A == S & (A − 1)
+    // thus: P = (−S) & (A − 1)
+    const TAR_BLOCK_SIZE: usize = 512;
+    const TAR_BLOCK_MASK: u64 = TAR_BLOCK_SIZE as u64 - 1;
+    let padding = (size.wrapping_neg() & TAR_BLOCK_MASK) as usize;
+    entry_writer
+        .archive_writer
+        .write_all(&[0; TAR_BLOCK_SIZE][..padding])
+}
+
+/// Helper struct for writing an entry to an archive that checks sizes.
+struct EntryWriter<'w, W> {
+    archive_writer: &'w mut W,
+    remaining: u64,
+}
+
+impl<W: Write> Write for EntryWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.len() as u64 > self.remaining {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "archive entry exceeds its declared size",
+            ));
+        }
+        let written = self.archive_writer.write(buf)?;
+        self.remaining = self.remaining.checked_sub(written as u64).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "archive writer exceeded its byte limit",
+            )
+        })?;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.archive_writer.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::{cmp, io::Read as _},
+    };
+
+    fn header(size: u64) -> tar::Header {
+        let mut header = tar::Header::new_gnu();
+        header.set_path("accounts/1.0").unwrap();
+        header.set_size(size);
+        header.set_cksum();
+        header
+    }
+
+    // Deliberately has no Seek implementation and accepts only partial writes.
+    #[derive(Default)]
+    struct ShortWriter(Vec<u8>);
+
+    impl Write for ShortWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let n = cmp::min(bytes.len(), 17);
+            self.0.extend_from_slice(&bytes[..n]);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_append_entry_good() {
+        let mut expected = tar::Builder::new(Vec::new());
+        let mut actual = tar::Builder::new(ShortWriter::default());
+        let sizes = [0, 1, 2, 3, 4, 5, 6, 7, 511, 512, 513, 8192, 20 * 1024 + 7];
+        for size in sizes {
+            let entry = vec![42; size];
+            let header = header(size as u64);
+            expected.append(&header, entry.as_slice()).unwrap();
+            append_entry(&mut actual, &header, |output| {
+                for chunk in entry.chunks(333) {
+                    output.write_all(chunk)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+        // ensure can still use regular `tar::Builder::append()` after our own `append_entry()`
+        expected.append(&header(4), &b"tail"[..]).unwrap();
+        actual.append(&header(4), &b"tail"[..]).unwrap();
+        let actual = actual.into_inner().unwrap().0;
+        assert_eq!(actual, expected.into_inner().unwrap());
+
+        let mut archive = tar::Archive::new(actual.as_slice());
+        let mut entries = archive.entries().unwrap();
+        for size in sizes {
+            let mut entry = Vec::new();
+            entries
+                .next()
+                .unwrap()
+                .unwrap()
+                .read_to_end(&mut entry)
+                .unwrap();
+            assert_eq!(entry, vec![42; size]);
+        }
+        let mut tail = Vec::new();
+        entries
+            .next()
+            .unwrap()
+            .unwrap()
+            .read_to_end(&mut tail)
+            .unwrap();
+        assert_eq!(tail, b"tail");
+        assert!(entries.next().is_none());
+    }
+
+    #[test]
+    fn test_append_entry_bad_entry_too_small() {
+        let mut archive = tar::Builder::new(Vec::new());
+        let value = b"abc";
+        let size = value.len();
+        let err = append_entry(&mut archive, &header(size as u64 + 1), |output| {
+            output.write_all(value)
+        })
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(archive.get_ref().len(), 512 + 3);
+    }
+
+    #[test]
+    fn test_append_entry_bad_entry_too_big() {
+        let mut archive = tar::Builder::new(Vec::new());
+        let value = b"abcde";
+        let size = value.len();
+        let err = append_entry(&mut archive, &header(size as u64 - 1), |output| {
+            output.write_all(&value[..size - 1])?;
+            output.write_all(&value[size - 1..])
+        })
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(archive.get_ref().len(), 512 + 4);
+    }
+
+    #[test]
+    fn test_append_entry_bad_callback() {
+        let mut archive = tar::Builder::new(Vec::new());
+        let err = append_entry(&mut archive, &header(4), |output| {
+            output.write_all(b"ab")?;
+            Err(io::Error::other("scan failed"))
+        })
+        .unwrap_err();
+        assert_eq!(err.to_string(), "scan failed");
+        assert_eq!(archive.get_ref().len(), 512 + 2);
+    }
+
+    #[test]
+    fn test_append_entry_bad_archive_writer() {
+        // A slice writer returns WriteZero when its capacity is exhausted.
+        // Exercise failures in the header, contents, and padding respectively.
+        for capacity in [511, 514, 1023] {
+            let mut bytes = vec![0; capacity];
+            let mut archive = tar::Builder::new(bytes.as_mut_slice());
+            let err = append_entry(&mut archive, &header(4), |output| output.write_all(b"abcd"))
+                .unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+        }
+    }
 }
