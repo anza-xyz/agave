@@ -342,7 +342,12 @@ impl Blockstore {
 
         match purge_type {
             PurgeType::Exact => self
-                .purge_special_columns_exact(write_batch, from_slot, to_slot)
+                .purge_special_columns_exact(
+                    write_batch,
+                    from_slot,
+                    to_slot,
+                    /*fail_on_slot_error:*/ false,
+                )
                 .map(|_| ()),
             PurgeType::CompactionFilter => {
                 // Relying on the compaction filter means there is no action
@@ -642,7 +647,12 @@ impl Blockstore {
     ) -> Result<TransactionHistoryPurgeStats> {
         let mut write_batch = self.get_write_batch();
         let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
-        let mut stats = self.purge_special_columns_exact(&mut write_batch, slot, slot)?;
+        let mut stats = self.purge_special_columns_exact(
+            &mut write_batch,
+            slot,
+            slot,
+            /*fail_on_slot_error:*/ true,
+        )?;
         prepare_deletions_timer.stop();
         stats.prepare_deletions_us = prepare_deletions_timer.as_us();
 
@@ -655,11 +665,60 @@ impl Blockstore {
         Ok(stats)
     }
 
+    /// Recovers the transaction-bearing portions of a malformed slot for an exact purge.
+    fn recover_slot_components_for_exact_purge(
+        &self,
+        slot: Slot,
+    ) -> Result<Vec<ParsedBlockComponent>> {
+        let (completed_ranges, slot_meta) = self.get_completed_ranges(slot, 0)?;
+        let slot_meta = slot_meta.ok_or(BlockstoreError::SlotUnavailable)?;
+        let mut accept_entry_batches = true;
+        let mut recovered_components = vec![];
+
+        for completed_range in completed_ranges {
+            match self.get_slot_component_views_in_block(
+                slot,
+                &vec![completed_range.clone()],
+                Some(&slot_meta),
+            ) {
+                Ok(slot_components) => {
+                    for component in slot_components {
+                        match &component {
+                            ParsedBlockComponent::BlockMarker(marker)
+                                if marker.is_update_parent() =>
+                            {
+                                accept_entry_batches = true;
+                                recovered_components.push(component);
+                            }
+                            ParsedBlockComponent::EntryBatch(_) if !accept_entry_batches => {}
+                            _ => recovered_components.push(component),
+                        }
+                    }
+                }
+                Err(
+                    error @ (BlockstoreError::InvalidShredData(_)
+                    | BlockstoreError::BlockAborted(_)),
+                ) => {
+                    warn!(
+                        "Skipping malformed transaction-history purge component for slot {slot} \
+                         at shred range {completed_range:?}: {error}"
+                    );
+                    accept_entry_batches = false;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(recovered_components)
+    }
+
     /// Purges special columns (using a non-Slot primary-index) exactly, by
     /// deserializing each slot being purged and iterating through all
     /// transactions to determine the keys of individual records.
     ///
     /// The purge range applies to \[`from_slot`, `to_slot`\].
+    ///
+    /// `fail_on_slot_error` makes an unreadable slot fatal.
     ///
     /// **This method is very slow.**
     fn purge_special_columns_exact(
@@ -667,6 +726,7 @@ impl Blockstore {
         batch: &mut WriteBatch,
         from_slot: Slot,
         to_slot: Slot,
+        fail_on_slot_error: bool,
     ) -> Result<TransactionHistoryPurgeStats> {
         let mut stats = TransactionHistoryPurgeStats::default();
         if self.special_columns_empty()? {
@@ -675,19 +735,30 @@ impl Blockstore {
 
         for slot in from_slot..=to_slot {
             let mut slot_components = self
-                .get_slot_component_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true);
-            if slot_components.is_err()
+                .get_slot_component_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
+                .map(|(components, _, _)| components);
+            if matches!(
+                &slot_components,
+                Err(BlockstoreError::InvalidShredData(_) | BlockstoreError::BlockAborted(_))
+            ) {
+                slot_components = self.recover_slot_components_for_exact_purge(slot);
+            } else if !fail_on_slot_error
+                && slot_components.is_err()
                 && let Ok(Some(slot_meta)) = self.meta(slot)
                 && slot_meta.has_update_parent()
             {
-                slot_components = self.get_slot_component_views_with_shred_info(
-                    slot,
-                    u64::from(slot_meta.replay_fec_set_index),
-                    /*allow_dead_slots:*/ true,
-                );
+                slot_components = self
+                    .get_slot_component_views_with_shred_info(
+                        slot,
+                        u64::from(slot_meta.replay_fec_set_index),
+                        /*allow_dead_slots:*/ true,
+                    )
+                    .map(|(components, _, _)| components);
             }
-            let Ok((slot_components, _, _)) = slot_components else {
-                continue;
+            let slot_components = match slot_components {
+                Ok(slot_components) => slot_components,
+                Err(error) if fail_on_slot_error => return Err(error),
+                Err(_) => continue,
             };
             let mut transaction_index = 0usize;
             for component in slot_components {
@@ -1467,6 +1538,31 @@ pub mod tests {
         );
     }
 
+    #[test]
+    fn test_purge_switch_bank_without_original_block() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let history_slot = 103;
+        let switch_slot = 104;
+        let entries = make_slot_entries_with_transactions(1);
+        let signature =
+            write_transaction_statuses_for_entries(&blockstore, history_slot, &entries)[0];
+
+        assert!(blockstore.meta(switch_slot).unwrap().is_none());
+        let stats = blockstore
+            .purge_transaction_history_for_switch_bank_slot_exact(switch_slot)
+            .unwrap();
+        assert_eq!(stats.transactions_processed, 0);
+        assert_eq!(stats.deletion_keys_staged, 0);
+        assert!(
+            blockstore
+                .read_transaction_status((signature, history_slot))
+                .unwrap()
+                .is_some()
+        );
+    }
+
     fn purge_exact(blockstore: &Blockstore, oldest_slot: Slot) {
         blockstore
             .purge_slots(0, oldest_slot - 1, PurgeType::Exact)
@@ -1543,7 +1639,12 @@ pub mod tests {
 
         let mut write_batch = blockstore.get_write_batch();
         blockstore
-            .purge_special_columns_exact(&mut write_batch, slot, slot + 1)
+            .purge_special_columns_exact(
+                &mut write_batch,
+                slot,
+                slot + 1,
+                /*fail_on_slot_error:*/ false,
+            )
             .unwrap();
     }
 

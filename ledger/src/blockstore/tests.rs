@@ -7520,6 +7520,75 @@ fn test_purge_transaction_history_before_malformed_component_and_update_parent(
     );
 }
 
+#[test_case(vec![1, 1, 1]; "invalid shred data")]
+#[test_case(0u64.to_le_bytes().to_vec(); "block aborted")]
+fn test_purge_switch_bank_transaction_history_before_malformed_component(
+    malformed_component: Vec<u8>,
+) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let parent_slot = 103;
+    let entries = make_slot_entries_with_transactions(1);
+    let address = entries[0].transactions[0].message.static_account_keys()[0];
+    let signature = write_transaction_statuses_for_entries(&blockstore, slot, &entries)[0];
+    blockstore
+        .write_transaction_memos(&signature, slot, "memo".to_string())
+        .unwrap();
+
+    let fec_set_size = u32::try_from(DATA_SHREDS_PER_FEC_BLOCK).unwrap();
+    let malformed_fec_set_index = fec_set_size * 2;
+    let mut shreds = create_block_header_shreds(slot, parent_slot, Hash::new_unique());
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        parent_slot,
+        entries,
+        fec_set_size,
+        false,
+    ));
+    shreds.extend(
+        Shredder::new(slot, parent_slot, 0, 0)
+            .unwrap()
+            .make_shreds_from_data_slice(
+                &Keypair::new(),
+                &malformed_component,
+                true,
+                Hash::new_unique(),
+                malformed_fec_set_index,
+                malformed_fec_set_index,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap(),
+    );
+    blockstore.insert_shreds(shreds, true).unwrap();
+
+    let stats = blockstore
+        .purge_transaction_history_for_switch_bank_slot_exact(slot)
+        .unwrap();
+    assert_eq!(stats.transactions_processed, 1);
+    assert!(
+        blockstore
+            .read_transaction_status((signature, slot))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        blockstore
+            .read_transaction_memos(signature, slot)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        blockstore
+            .address_signatures_cf
+            .get((address, slot, 0, signature))
+            .unwrap()
+            .is_none()
+    );
+}
+
 #[test]
 fn test_complete_block_skips_pre_update_parent_entries() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
