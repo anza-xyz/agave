@@ -161,6 +161,7 @@ impl PullRequestPipelineFlags {
         let trigger_all = changed_files.iter().any(|file| {
             file.starts_with("ci/xtask/")
                 || file.ends_with("ci/rust-version.sh")
+                || file.ends_with("ci/rust-nightly-version.toml")
                 || file.ends_with("rust-toolchain.toml")
                 || file.ends_with("ci/docker-run-default-image.sh")
                 || file.ends_with("ci/docker-run.sh")
@@ -664,6 +665,23 @@ mod tests {
         assert!(!f.shuttle);
         assert!(!f.coverage);
         assert!(!f.xdp_tests);
+    }
+
+    #[test]
+    fn test_rust_nightly_version_toml_triggers_all() {
+        let f = flags(&["ci/rust-nightly-version.toml"]);
+        assert!(f.checks);
+        assert!(f.feature_check);
+        assert!(f.miri);
+        assert!(f.frozen_abi);
+        assert!(f.stable);
+        assert!(f.local_cluster);
+        assert!(f.docs);
+        assert!(f.localnet);
+        assert!(f.stable_sbf);
+        assert!(f.shuttle);
+        assert!(f.coverage);
+        assert!(f.xdp_tests);
     }
 
     #[test]

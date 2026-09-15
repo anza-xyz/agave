@@ -15,21 +15,21 @@
 #   $ cargo +"$rust_nightly" build
 #
 
+# BASH_SOURCE is bash-only; fall back to $0 when sourced elsewhere.
+base="$(dirname "${BASH_SOURCE[0]:-$0}")"
+# shellcheck source=scripts/read-cargo-variable.sh
+source "$base/../scripts/read-cargo-variable.sh"
+
 if [[ -n ${RUST_STABLE_VERSION:-} ]]; then
   stable_version="$RUST_STABLE_VERSION"
 else
-  # read rust version from rust-toolchain.toml file
-  base="$(dirname "${BASH_SOURCE[0]}")"
-  # pacify shellcheck: cannot follow dynamic path
-  # shellcheck disable=SC1090,SC1091
-  source "$base/../scripts/read-cargo-variable.sh"
   stable_version=$(readCargoVariable channel "$base/../rust-toolchain.toml")
 fi
 
 if [[ -n ${RUST_NIGHTLY_VERSION:-} ]]; then
   nightly_version="$RUST_NIGHTLY_VERSION"
 else
-  nightly_version=2026-07-16
+  nightly_version=$(readCargoVariable nightly "$base/rust-nightly-version.toml")
 fi
 
 
