@@ -1555,7 +1555,6 @@ pub mod early_instruction_trace_overflow_detection {
 }
 
 pub mod enable_get_leader_syscall {
-    // placeholder!!!!
     solana_pubkey::declare_id!("CrFqZvFQLu4V7XEDNRxAgKJFChCVn5WDFbFfCLZe4Lxk");
 }
 
