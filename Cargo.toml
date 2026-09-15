@@ -344,7 +344,7 @@ solana-banks-client = { path = "banks-client", version = "=4.4.0-alpha.4", featu
 solana-banks-interface = { path = "banks-interface", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-banks-server = { path = "banks-server", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-big-mod-exp = "4.0.0"
-solana-bincode = "3.1.0"
+solana-bincode = "4.0.0"
 solana-blake3-hasher = "3.1.0"
 solana-bloom = { path = "bloom", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-bls-signatures = { version = "3.4.0", features = ["serde"] }
