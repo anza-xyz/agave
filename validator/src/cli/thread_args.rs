@@ -217,7 +217,7 @@ impl ThreadArg for AccountsDbBackgroundThreadsArg {
     const HELP: &'static str = "Number of threads to use for AccountsDb background tasks";
 
     fn default() -> usize {
-        accounts_db::quarter_thread_count()
+        accounts_db::DEFAULT_NUM_BACKGROUND_THREADS
     }
 }
 

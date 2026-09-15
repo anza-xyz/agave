@@ -887,9 +887,13 @@ pub struct AccountsDb {
     max_root: AtomicU64,
 }
 
-pub fn quarter_thread_count() -> usize {
+fn quarter_thread_count() -> usize {
     std::cmp::max(2, num_cpus::get() / 4)
 }
+
+/// Default size of `thread_pool_background`. Background threads are only used for cleaning
+/// and the scaling benefit is diminished after 4
+pub const DEFAULT_NUM_BACKGROUND_THREADS: usize = 4;
 
 impl AccountsDb {
     // The default high and low watermark sizes for the accounts read cache.
@@ -948,7 +952,7 @@ impl AccountsDb {
         let num_background_threads = accounts_db_config
             .num_background_threads
             .map(Into::into)
-            .unwrap_or_else(quarter_thread_count);
+            .unwrap_or(DEFAULT_NUM_BACKGROUND_THREADS);
         let thread_pool_background = rayon::ThreadPoolBuilder::new()
             .thread_name(|i| format!("solAcctsDbBg{i:02}"))
             .num_threads(num_background_threads)
@@ -1602,10 +1606,13 @@ impl AccountsDb {
             .active_stats
             .activate(ActiveStatItem::CleanScanCandidates);
         let mut accounts_scan = Measure::start("accounts_scan");
-        if is_startup {
-            do_clean_scan();
-        } else {
-            self.thread_pool_background.install(do_clean_scan);
+        // Skipped when there is nothing to scan
+        if num_candidates > 0 {
+            if is_startup {
+                do_clean_scan();
+            } else {
+                self.thread_pool_background.install(do_clean_scan);
+            }
         }
         accounts_scan.stop();
         drop(active_guard);
