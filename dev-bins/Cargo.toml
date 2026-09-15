@@ -110,6 +110,8 @@ solana-inflation = "3.1.1"
 solana-instruction = "3.4.0"
 solana-instruction-error = "2.4.0"
 solana-keypair = "3.1.2"
+solana-lattice-hash = { path = "../lattice-hash", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
+solana-leader-schedule = { path = "../leader-schedule", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-ledger = { path = "../ledger", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "7.0.0"
 solana-loader-v4-interface = "3.1.0"
@@ -139,6 +141,8 @@ solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.1"
 solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.2.0"
+solana-slot-history = "3.2.0"
+solana-stake-history = "1.1.0"
 solana-stake-interface = "4.3.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
@@ -151,6 +155,7 @@ solana-svm-transaction = "5.0.0"
 solana-syscalls = { path = "../syscalls", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-system-interface = "3.2"
 solana-system-program = { path = "../programs/system", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
+solana-sysvar = "4.3.0"
 solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "../test-validator", version = "=4.4.0-alpha.4" }
 solana-time-utils = "3.0.0"
@@ -162,6 +167,7 @@ solana-transaction-status = { path = "../transaction-status", version = "=4.4.0-
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-version = { path = "../version", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-vote = { path = "../vote", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
+solana-vote-interface = "6.1.0"
 solana-vote-program = { path = "../programs/vote", version = "=4.4.0-alpha.4", default-features = false, features = ["agave-unstable-api"] }
 tempfile = "3.23.0"
 thiserror = "2.0.17"

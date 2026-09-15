@@ -10026,8 +10026,6 @@ dependencies = [
  "num-derive 0.5.1",
  "num-traits",
  "proptest",
- "prost 0.14.4",
- "protosol",
  "qualifier_attr",
  "rand 0.9.4",
  "rayon",
