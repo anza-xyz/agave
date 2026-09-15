@@ -1531,7 +1531,6 @@ pub mod double_disinflation_rate {
 }
 
 pub mod enable_get_leader_syscall {
-    // placeholder!!!!
     solana_pubkey::declare_id!("CrFqZvFQLu4V7XEDNRxAgKJFChCVn5WDFbFfCLZe4Lxk");
 }
 
