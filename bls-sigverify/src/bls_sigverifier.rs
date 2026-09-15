@@ -9,6 +9,7 @@ use {
         rewards::{RewardInput, rewards_wants_vote},
         stats::SigVerifierStats,
         vote_pool::{VotePool, VotePoolError},
+        votes_to_verify_arena::VotesToVerifyArena,
     },
     agave_votor_messages::{
         VerifiedVotorSlotsMessage,
@@ -114,7 +115,7 @@ pub fn spawn_service(
     context: SigVerifierContext,
     channels: SigVerifierChannels,
 ) -> thread::JoinHandle<()> {
-    let verifier = SigVerifier::new(context, channels);
+    let mut verifier = SigVerifier::new(context, channels);
 
     Builder::new()
         .name("solSigVerBLS".to_string())
@@ -142,6 +143,7 @@ struct SigVerifier {
     generated_cert_types: Arc<GeneratedCertTypes>,
     vote_pool: VotePool,
     rank_map_cache: HashMap<Epoch, Arc<BLSPubkeyToRankMap>>,
+    votes_to_verify_arena: VotesToVerifyArena,
 }
 
 impl SigVerifier {
@@ -178,15 +180,21 @@ impl SigVerifier {
             thread_pool,
             generated_cert_types,
             rank_map_cache: HashMap::new(),
+            votes_to_verify_arena: VotesToVerifyArena::default(),
         }
     }
 
-    fn run(mut self, exit: Arc<AtomicBool>) {
+    fn run(&mut self, exit: Arc<AtomicBool>) {
         let mut datagrams_buffer = Vec::new();
         let mut votes_buffer = HashMap::new();
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
             datagrams_buffer.clear();
+            for (batch, _) in votes_buffer.values_mut() {
+                let mut batch_to_return = vec![];
+                std::mem::swap(batch, &mut batch_to_return);
+                self.votes_to_verify_arena.return_batch(batch_to_return);
+            }
             votes_buffer.clear();
             let Ok(certificates) = recv_inputs(
                 &self.channels.packet_receiver,
@@ -220,8 +228,9 @@ impl SigVerifier {
             self.stats.maybe_report(self.sharable_banks.root().slot());
         }
         let elapsed = self.stats.elapsed_since_last_report();
-        self.stats
-            .do_report(self.sharable_banks.root().slot(), elapsed);
+        let root_slot = self.sharable_banks.root().slot();
+        let stats = std::mem::replace(&mut self.stats, SigVerifierStats::new(root_slot));
+        stats.do_report(root_slot, elapsed);
     }
 
     #[cfg(test)]
@@ -504,7 +513,9 @@ impl SigVerifier {
                 };
                 match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
                     Some(payload) => {
-                        e.insert((vec![payload], rank_map));
+                        let mut batch = self.votes_to_verify_arena.alloc_batch();
+                        batch.push(payload);
+                        e.insert((batch, rank_map));
                     }
                     None => {
                         self.stats.num_keep_vote_failed += 1;
@@ -658,13 +669,13 @@ mod tests {
         verifier: SigVerifier,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
         ban_receiver: mpsc::Receiver<BanCommand>,
-        _packet_sender: Sender<Datagram>,
+        packet_sender: Sender<Datagram>,
         repair_receiver: Receiver<VerifiedVotorSlotsMessage>,
         _reward_receiver: Receiver<RewardInput>,
         pool_receiver: Receiver<SigVerifiedBatch>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
         generated_cert_types: Arc<GeneratedCertTypes>,
-        _certificate_sender: Sender<(Slot, UnverifiedCertificate)>,
+        certificate_sender: Sender<(Slot, UnverifiedCertificate)>,
         bank_forks: Arc<RwLock<BankForks>>,
     }
 
@@ -749,13 +760,13 @@ mod tests {
                 validator_keypairs,
                 verifier,
                 ban_receiver,
-                _packet_sender: packet_sender,
+                packet_sender,
                 repair_receiver,
                 _reward_receiver: reward_receiver,
                 pool_receiver,
                 _metrics_receiver: metrics_receiver,
                 generated_cert_types,
-                _certificate_sender: certificate_sender,
+                certificate_sender,
                 bank_forks,
             }
         }
@@ -823,6 +834,63 @@ mod tests {
             peer_address: SocketAddr::from((Ipv4Addr::LOCALHOST, 1)), // this does not bind
             message: message.into(),
         }
+    }
+
+    #[test]
+    fn test_run_returns_all_vote_batches_to_arena() {
+        let mut ctx = TestContext::new();
+        ctx.verifier.migration_status.enable_alpenglow_for_tests();
+        let shred_version = ctx.verifier.cluster_info.my_shred_version();
+        let num_batches = 3;
+        // Queue distinct payloads before starting run() so they allocate separate
+        // batches in the same iteration, each containing multiple votes.
+        for slot in 1..=num_batches {
+            for rank in 0..2 {
+                let vote = create_signed_vote_message(
+                    &ctx.verifier.sharable_banks.root(),
+                    &ctx.validator_keypairs,
+                    shred_version,
+                    Vote::new_finalization_vote(slot),
+                    rank,
+                );
+                ctx.packet_sender
+                    .send(message_to_datagram(
+                        &ConsensusMessage::Vote(vote),
+                        shred_version,
+                        ctx.validator_keypairs[rank].node_keypair.pubkey(),
+                    ))
+                    .unwrap();
+            }
+        }
+
+        let handle = std::thread::spawn(move || {
+            ctx.verifier.run(Arc::new(AtomicBool::new(false)));
+            ctx.verifier
+        });
+        for _ in 0..num_batches {
+            let SigVerifiedBatch::Votes(votes) = ctx
+                .pool_receiver
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+            else {
+                panic!("expected verified votes");
+            };
+            assert!(!votes.is_empty());
+        }
+        // Disconnect only after verification, allowing run() to recycle the
+        // batches at the start of its next iteration before exiting.
+        drop(ctx.packet_sender);
+        drop(ctx.certificate_sender);
+        let mut verifier = handle.join().unwrap();
+        for _ in 0..num_batches {
+            let batch = verifier.votes_to_verify_arena.alloc_batch();
+            assert!(batch.is_empty());
+            assert!(
+                batch.capacity() >= 2,
+                "allocated vote batch was not returned"
+            );
+        }
+        assert_eq!(verifier.votes_to_verify_arena.alloc_batch().capacity(), 0);
     }
 
     #[test]

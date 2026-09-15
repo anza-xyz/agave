@@ -9,3 +9,4 @@ pub mod rewards;
 pub mod stats;
 mod utils;
 mod vote_pool;
+mod votes_to_verify_arena;
