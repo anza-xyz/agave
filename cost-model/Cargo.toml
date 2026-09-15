@@ -27,12 +27,6 @@ dev-context-only-utils = [
     "dep:solana-transaction",
     "solana-compute-budget-interface/dev-context-only-utils",
 ]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-pubkey/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -40,8 +34,6 @@ ahash = { workspace = true }
 log = { workspace = true }
 solana-bincode = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-hash = { workspace = true, optional = true }
 solana-message = { workspace = true, optional = true }
 solana-packet = { workspace = true }

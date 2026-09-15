@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 use {
     ahash::{AHashMap, AHashSet},
@@ -184,7 +183,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
     active: AHashMap<Pubkey, u64>,

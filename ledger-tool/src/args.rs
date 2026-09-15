@@ -389,7 +389,6 @@ pub fn get_accounts_db_config(
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: None,
-        num_foreground_threads: None,
         accounts_file_provider: AccountsFileProvider::AppendVec,
     }
 }

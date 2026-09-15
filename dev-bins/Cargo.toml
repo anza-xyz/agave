@@ -77,6 +77,7 @@ signal-hook = "0.4.4"
 solana-account = "4.7.0"
 solana-account-decoder = { path = "../account-decoder", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
+solana-address-lookup-table-interface = "3.2.0"
 solana-bloom = { path = "../bloom", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-bls-signatures = { version = "3.3.0", features = ["serde"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
@@ -137,6 +138,7 @@ solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.1"
 solana-signer-store = "0.1.0"
+solana-slot-hashes = "3.2.0"
 solana-stake-interface = "4.3.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }

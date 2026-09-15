@@ -38,8 +38,7 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-fee-calculator/frozen-abi",
-    "solana-nonce/frozen-abi",
-    "solana-vote-program/frozen-abi",
+    "solana-hash/frozen-abi",
 ]
 
 [dependencies]

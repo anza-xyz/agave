@@ -81,7 +81,6 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
-    solana_rayon_threadlimit::get_thread_count,
     std::{
         borrow::Cow,
         boxed::Box,
@@ -103,7 +102,6 @@ use {
 // when the accounts write cache exceeds this many bytes, we will flush it
 // this can be specified on the command line, too (--accounts-db-write-cache-limit)
 const WRITE_CACHE_LIMIT_BYTES_DEFAULT: u64 = 15_000_000_000;
-const SCAN_SLOT_PAR_ITER_THRESHOLD: usize = 4000;
 
 const DEFAULT_NUM_DIRS: u32 = 4;
 
@@ -803,8 +801,6 @@ pub struct AccountsDb {
     #[allow(dead_code)]
     pub temp_paths: Option<Vec<TempDir>>,
 
-    /// Thread pool for foreground tasks, e.g. transaction processing
-    pub thread_pool_foreground: ThreadPool,
     /// Thread pool for background tasks, e.g. AccountsBackgroundService and flush/clean/shrink
     pub thread_pool_background: ThreadPool,
 
@@ -899,10 +895,6 @@ pub fn quarter_thread_count() -> usize {
     std::cmp::max(2, num_cpus::get() / 4)
 }
 
-pub fn default_num_foreground_threads() -> usize {
-    get_thread_count()
-}
-
 impl AccountsDb {
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
@@ -957,20 +949,6 @@ impl AccountsDb {
             .read_cache_num_shards
             .unwrap_or(Self::DEFAULT_READ_ONLY_CACHE_NUM_SHARDS);
 
-        // Increase the stack for foreground threads
-        // rayon needs a lot of stack
-        const ACCOUNTS_STACK_SIZE: usize = 8 * 1024 * 1024;
-        let num_foreground_threads = accounts_db_config
-            .num_foreground_threads
-            .map(Into::into)
-            .unwrap_or_else(default_num_foreground_threads);
-        let thread_pool_foreground = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_foreground_threads)
-            .thread_name(|i| format!("solAcctsDbFg{i:02}"))
-            .stack_size(ACCOUNTS_STACK_SIZE)
-            .build()
-            .expect("new rayon threadpool");
-
         let num_background_threads = accounts_db_config
             .num_background_threads
             .map(Into::into)
@@ -1010,7 +988,6 @@ impl AccountsDb {
             partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
             verify_index: accounts_db_config.verify_index,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
-            thread_pool_foreground,
             thread_pool_background,
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),
@@ -2740,29 +2717,16 @@ impl AccountsDb {
         if let Some(slot_cache) = self.accounts_cache.slot_cache(slot) {
             // If we see the slot in the cache, then all the account information
             // is in this cached slot
-            if slot_cache.len() > SCAN_SLOT_PAR_ITER_THRESHOLD {
-                ScanStorageResult::Cached(self.thread_pool_foreground.install(|| {
-                    slot_cache
-                        .par_iter()
-                        .filter_map(|cached_account| {
-                            cache_map_func(&LoadedAccount::Cached(Cow::Borrowed(
-                                cached_account.value(),
-                            )))
-                        })
-                        .collect()
-                }))
-            } else {
-                ScanStorageResult::Cached(
-                    slot_cache
-                        .iter()
-                        .filter_map(|cached_account| {
-                            cache_map_func(&LoadedAccount::Cached(Cow::Borrowed(
-                                cached_account.value(),
-                            )))
-                        })
-                        .collect(),
-                )
-            }
+            ScanStorageResult::Cached(
+                slot_cache
+                    .iter()
+                    .filter_map(|cached_account| {
+                        cache_map_func(&LoadedAccount::Cached(Cow::Borrowed(
+                            cached_account.value(),
+                        )))
+                    })
+                    .collect(),
+            )
         } else {
             let mut retval = B::default();
             // If the slot is not in the cache, then all the account information must have

@@ -1,111 +1,115 @@
 //! Transaction conformance harness.
 //!
-//! Split into two layers, mirroring the SVM harness convention:
+//! Decodes a `TxnContext`, builds a [`Bank`] from it, runs the transaction
+//! through `bank.load_and_execute_transactions`, and encodes the effects as a
+//! `TxnResult`. `sol_compat_txn_execute_v1` is the FFI entry point.
 //!
-//! * The **native** core ([`execute_txn`] + [`BankTxnProcessingResult`]) builds a
-//!   [`Bank`] via [`Bank::new_for_txn_tests`], runs
-//!   `bank.load_and_execute_transactions`, and returns the native execution
-//!   result. It depends only on `solana-runtime`/SVM types, so it is available
-//!   under `dev-context-only-utils` and is what the unit tests exercise.
-//! * The **conformance** layer (gated by the `conformance` feature) is the
-//!   protobuf glue: it decodes a `TxnContext`, converts it into native inputs,
-//!   calls [`execute_txn`], encodes the effects as a `TxnResult`, and exposes the
-//!   `sol_compat_txn_execute_v1` FFI entry point.
-//!
-//! Living inside `solana-runtime` lets the harness use the real `Bank` execution
-//! path (rather than driving the SVM directly), which keeps it at parity with
-//! SolFuzz-Agave.
+//! Driving the real [`Bank`] execution path, rather than the SVM directly,
+//! is what keeps this at parity with SolFuzz-Agave.
 
 use {
-    super::new_accounts_for_tests_single_threaded,
-    crate::{
+    agave_feature_set::virtual_address_space_adjustments,
+    agave_transaction_view::transaction_view::UnsanitizedTransactionView,
+    ahash::AHashSet,
+    bytes::Bytes,
+    protosol::protos::{
+        AcctState, BlockhashQueueEntry as ProtoBlockhashQueueEntry,
+        FeeRateGovernor as ProtoFeeRateGovernor, TxnContext as ProtoTxnContext,
+        TxnResult as ProtoTxnResult,
+    },
+    solana_account::{Account, AccountSharedData},
+    solana_accounts_db::{
+        accounts::Accounts,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
+        ancestors::Ancestors,
+        blockhash_queue::BlockhashQueue,
+    },
+    solana_clock::{BankId, Clock, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_PROCESSING_AGE},
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_hash::Hash,
+    solana_message::SanitizedMessage,
+    solana_pubkey::Pubkey,
+    solana_runtime::{
         bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
         stake_history::StakeHistory,
         stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
     },
-    agave_feature_set::FeatureSet,
-    agave_transaction_view::transaction_view::UnsanitizedTransactionView,
-    bytes::Bytes,
-    solana_account::AccountSharedData,
-    solana_accounts_db::{ancestors::Ancestors, blockhash_queue::BlockhashQueue},
-    solana_clock::{BankId, Clock, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_PROCESSING_AGE},
-    solana_epoch_schedule::EpochSchedule,
-    solana_fee_calculator::FeeRateGovernor,
-    solana_pubkey::Pubkey,
-    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk_ids::sysvar,
+    solana_signature::Signature,
     solana_stake_interface::state::Stake,
     solana_svm::{
-        conformance::setup::sysvar_from_accounts,
+        conformance::{
+            account_state::account_from_proto, direct_mapping::direct_mapping_handle_cu_exhaustion,
+            feature_set::feature_set_from_proto, setup::sysvar_from_accounts,
+            txn::effects::TxnEffects, versioned_transaction::versioned_transaction_from_proto,
+        },
+        rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_result::TransactionProcessingResult,
+        transaction_processing_result::ProcessedTransaction,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::{TransactionVerificationMode, versioned::VersionedTransaction},
+    solana_transaction::TransactionVerificationMode,
     solana_transaction_error::TransactionError,
     solana_vote::vote_account::VoteAccounts,
-    std::collections::HashMap,
+    std::{collections::HashMap, num::NonZeroUsize, sync::Arc},
 };
-#[cfg(feature = "conformance")]
-use {
-    super::{deserialize_accounts, fee_rate_governor_from_proto, restore_blockhash_queue},
-    agave_feature_set::virtual_address_space_adjustments,
-    ahash::AHashSet,
-    protosol::protos::{TxnContext as ProtoTxnContext, TxnResult as ProtoTxnResult},
-    solana_account::Account,
-    solana_message::SanitizedMessage,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_signature::Signature,
-    solana_svm::conformance::{
-        direct_mapping::direct_mapping_handle_cu_exhaustion, feature_set::feature_set_from_proto,
-        txn::effects::TxnEffects, versioned_transaction::versioned_transaction_from_proto,
-    },
-    solana_svm::rollback_accounts::RollbackAccounts,
-    solana_svm::transaction_processing_result::ProcessedTransaction,
-};
-// Imports used only by the FFI entry point, which is excluded from `test` builds.
-#[cfg(all(feature = "conformance", not(test)))]
+#[cfg(not(test))]
 use {prost::Message, std::ffi::c_int};
 
-/// Result of executing a single transaction through the [`Bank`].
-pub enum BankTxnProcessingResult {
-    /// The transaction failed verification before processing.
-    FailedVerification(TransactionError),
-    /// The transaction was processed (executed, fees-only, or no-op). Carries the
-    /// processing result and transaction for effect extraction.
-    Processed {
-        result: TransactionProcessingResult,
-        runtime_transaction: Box<ReplayTransaction>,
-    },
-}
+/// Decode a `TxnContext` proto, execute it against a [`Bank`], and encode the
+/// effects as a `TxnResult` proto.
+pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
+    let txn_bank = context.bank.as_ref().unwrap();
 
-/// Build a [`Bank`] from the supplied native inputs and execute `transaction`.
-///
-/// The clock and epoch-schedule sysvars are read out of `accounts` to derive the
-/// bank's slot/epoch.
-pub fn execute_txn(
-    accounts: &[(Pubkey, AccountSharedData)],
-    feature_set: FeatureSet,
-    blockhash_queue: BlockhashQueue,
-    fee_rate_governor: FeeRateGovernor,
-    total_epoch_stake: u64,
-    transaction: VersionedTransaction,
-) -> BankTxnProcessingResult {
+    let accounts = deserialize_accounts(&context.account_shared_data);
+    let blockhash_queue = restore_blockhash_queue(&txn_bank.blockhash_queue);
+
+    // On snapshot boot the fee rate governor's lamports_per_signature comes from
+    // the manifest, so use the provided value directly.
+    let input_fee_rate_governor = txn_bank.fee_rate_governor.as_ref().unwrap();
+    let fee_rate_governor = fee_rate_governor_from_proto(
+        input_fee_rate_governor,
+        u64::from(txn_bank.rbh_lamports_per_signature),
+    );
+
+    let feature_set = txn_bank
+        .features
+        .as_ref()
+        .map(feature_set_from_proto)
+        .unwrap();
+    let virtual_address_space_adjustments_active =
+        feature_set.is_active(&virtual_address_space_adjustments::id());
+
+    let tx = context.tx.as_ref().unwrap();
+    let proto_message = tx.message.as_ref().unwrap();
+    let mut transaction = versioned_transaction_from_proto(tx);
+    if transaction.signatures.is_empty() {
+        // Default: a single empty signature (keeps simple cases valid).
+        transaction.signatures.push(Signature::default());
+    }
+
     // Slot and parent slot come from the clock sysvar.
-    let clock: Clock = sysvar_from_accounts(accounts, &sysvar::clock::id());
+    let clock: Clock = sysvar_from_accounts(&accounts, &sysvar::clock::id());
     let slot = clock.slot;
     let parent_slot = slot.saturating_sub(1);
 
     let epoch_schedule: EpochSchedule =
-        sysvar_from_accounts(accounts, &sysvar::epoch_schedule::id());
+        sysvar_from_accounts(&accounts, &sysvar::epoch_schedule::id());
     let epoch = epoch_schedule.get_epoch(slot);
 
     // Populate the accounts DB with the input accounts at the parent slot.
     let bank_accounts = new_accounts_for_tests_single_threaded();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    bank_accounts.store_accounts((parent_slot, accounts), BankId::default(), None, &ancestors);
+    bank_accounts.store_accounts(
+        (parent_slot, &accounts[..]),
+        BankId::default(),
+        None,
+        &ancestors,
+    );
     bank_accounts.accounts_db.add_root(parent_slot);
     let bank_rc = BankRc::new(bank_accounts);
 
@@ -116,7 +120,7 @@ pub fn execute_txn(
             SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
             key,
         );
-        entry.set_total_stake(total_epoch_stake);
+        entry.set_total_stake(txn_bank.total_epoch_stake);
         epoch_stakes.insert(key, entry);
     }
 
@@ -152,7 +156,7 @@ pub fn execute_txn(
     let transaction_bytes = Bytes::from(wincode::serialize(&transaction).unwrap());
     let Ok(transaction_view) = UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
     else {
-        return BankTxnProcessingResult::FailedVerification(TransactionError::SanitizeFailure);
+        return failed_verification_result(TransactionError::SanitizeFailure);
     };
 
     let runtime_transaction = match bank.verify_transaction(
@@ -160,7 +164,7 @@ pub fn execute_txn(
         TransactionVerificationMode::HashAndVerifyPrecompiles,
     ) {
         Ok(tx) => tx,
-        Err(err) => return BankTxnProcessingResult::FailedVerification(err),
+        Err(err) => return failed_verification_result(err),
     };
 
     let recording_config = ExecutionRecordingConfig {
@@ -192,13 +196,119 @@ pub fn execute_txn(
         .expect("single transaction execution must return one result")
     };
 
-    BankTxnProcessingResult::Processed {
-        result,
-        runtime_transaction: Box::new(runtime_transaction),
+    let sanitized_transaction = runtime_transaction.as_sanitized_transaction();
+    let sanitized_message = sanitized_transaction.message();
+
+    let mut effects = match &result {
+        Ok(txn) => processed_transaction_effects(txn, sanitized_message),
+        Err(err) => return unprocessed_txn_result(err.clone()),
+    };
+    effects.zero_precompile_custom_error(sanitized_message);
+
+    // Only keep modified accounts that were passed in as account keys or were
+    // loaded via an address lookup table.
+    let mut loaded_account_keys = AHashSet::<Pubkey>::new();
+    loaded_account_keys.extend(
+        proto_message
+            .account_keys
+            .iter()
+            .map(|key| Pubkey::try_from(key.as_slice()).unwrap()),
+    );
+    if let SanitizedMessage::V0(message) = sanitized_message {
+        loaded_account_keys.extend(message.loaded_addresses.writable.iter().copied());
+        loaded_account_keys.extend(message.loaded_addresses.readonly.iter().copied());
+    }
+    effects
+        .resulting_accounts
+        .retain(|(pubkey, _)| loaded_account_keys.contains(pubkey));
+
+    let cu_avail = effects.cu_avail;
+    let has_err = effects.status.is_err();
+    let mut txn_result = ProtoTxnResult::from(effects);
+
+    direct_mapping_handle_cu_exhaustion(
+        virtual_address_space_adjustments_active,
+        cu_avail,
+        has_err,
+        txn_result
+            .modified_accounts
+            .iter_mut()
+            .map(|acc| &mut acc.data),
+    );
+
+    txn_result
+}
+
+/// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
+/// accounts (treated as nonexistent).
+fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
+    accounts
+        .iter()
+        .filter(|account| account.lamports > 0)
+        .map(|account| {
+            let (pubkey, account) = account_from_proto(account.clone());
+            (pubkey, account.into())
+        })
+        .collect()
+}
+
+fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> BlockhashQueue {
+    let mut blockhash_queue = BlockhashQueue::default();
+    for entry in entries {
+        let blockhash =
+            Hash::new_from_array(<[u8; 32]>::try_from(entry.blockhash.as_slice()).unwrap());
+        blockhash_queue.register_hash(&blockhash, entry.lamports_per_signature);
+    }
+    blockhash_queue
+}
+
+fn fee_rate_governor_from_proto(
+    value: &ProtoFeeRateGovernor,
+    lamports_per_signature: u64,
+) -> FeeRateGovernor {
+    FeeRateGovernor {
+        lamports_per_signature,
+        target_lamports_per_signature: value.target_lamports_per_signature,
+        target_signatures_per_slot: value.target_signatures_per_slot,
+        min_lamports_per_signature: value.min_lamports_per_signature,
+        max_lamports_per_signature: value.max_lamports_per_signature,
+        burn_percent: value.burn_percent as u8,
     }
 }
 
-#[cfg(feature = "conformance")]
+fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
+    let single_thread = NonZeroUsize::new(1).unwrap();
+    AccountsDbConfig {
+        num_background_threads: Some(single_thread),
+        read_cache_num_shards: Some(2),
+        skip_initial_hash_calc: true,
+        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+    }
+}
+
+fn new_accounts_for_tests_single_threaded() -> Accounts {
+    Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        new_accounts_db_config_for_tests_single_threaded(),
+    )))
+}
+
+/// Rejected before processing. Precompile error codes are not conformant, so
+/// the custom code is dropped.
+fn failed_verification_result(err: TransactionError) -> ProtoTxnResult {
+    ProtoTxnResult {
+        custom_error: 0,
+        ..unprocessed_txn_result(err)
+    }
+}
+
+fn unprocessed_txn_result(err: TransactionError) -> ProtoTxnResult {
+    ProtoTxnResult {
+        fee_details: None,
+        ..ProtoTxnResult::from(TxnEffects::from_unprocessed_error(err))
+    }
+}
+
 fn rollback_accounts_to_native(rollback_accounts: &RollbackAccounts) -> Vec<(Pubkey, Account)> {
     rollback_accounts
         .iter()
@@ -206,7 +316,6 @@ fn rollback_accounts_to_native(rollback_accounts: &RollbackAccounts) -> Vec<(Pub
         .collect()
 }
 
-#[cfg(feature = "conformance")]
 fn processed_transaction_effects(
     txn: &ProcessedTransaction,
     sanitized_message: &SanitizedMessage,
@@ -264,109 +373,6 @@ fn processed_transaction_effects(
     }
 }
 
-#[cfg(feature = "conformance")]
-fn unprocessed_txn_result(err: TransactionError) -> ProtoTxnResult {
-    ProtoTxnResult {
-        fee_details: None,
-        ..ProtoTxnResult::from(TxnEffects::from_unprocessed_error(err))
-    }
-}
-
-/// Decode a `TxnContext` proto, run it through [`execute_txn`], and encode the
-/// effects as a `TxnResult` proto.
-#[cfg(feature = "conformance")]
-pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
-    let txn_bank = context.bank.as_ref().unwrap();
-
-    let accounts = deserialize_accounts(&context.account_shared_data);
-    let blockhash_queue = restore_blockhash_queue(&txn_bank.blockhash_queue);
-
-    // On snapshot boot the fee rate governor's lamports_per_signature comes from
-    // the manifest, so use the provided value directly.
-    let input_fee_rate_governor = txn_bank.fee_rate_governor.as_ref().unwrap();
-    let fee_rate_governor = fee_rate_governor_from_proto(
-        input_fee_rate_governor,
-        u64::from(txn_bank.rbh_lamports_per_signature),
-    );
-
-    let feature_set = txn_bank
-        .features
-        .as_ref()
-        .map(feature_set_from_proto)
-        .unwrap();
-    let virtual_address_space_adjustments_active =
-        feature_set.is_active(&virtual_address_space_adjustments::id());
-
-    let tx = context.tx.as_ref().unwrap();
-    let proto_message = tx.message.as_ref().unwrap();
-    let mut transaction = versioned_transaction_from_proto(tx);
-    if transaction.signatures.is_empty() {
-        // Default: a single empty signature (keeps simple cases valid).
-        transaction.signatures.push(Signature::default());
-    }
-
-    let (result, runtime_transaction) = match execute_txn(
-        &accounts,
-        feature_set,
-        blockhash_queue,
-        fee_rate_governor,
-        txn_bank.total_epoch_stake,
-        transaction,
-    ) {
-        BankTxnProcessingResult::FailedVerification(err) => {
-            let mut txn_result = unprocessed_txn_result(err);
-            // Precompile error codes are not conformant, so they are ignored here.
-            txn_result.custom_error = 0;
-            return txn_result;
-        }
-        BankTxnProcessingResult::Processed {
-            result,
-            runtime_transaction,
-        } => (result, runtime_transaction),
-    };
-    let sanitized_transaction = runtime_transaction.as_sanitized_transaction();
-    let sanitized_message = sanitized_transaction.message();
-
-    let mut effects = match &result {
-        Ok(txn) => processed_transaction_effects(txn, sanitized_message),
-        Err(err) => return unprocessed_txn_result(err.clone()),
-    };
-    effects.zero_precompile_custom_error(sanitized_message);
-
-    // Only keep modified accounts that were passed in as account keys or were
-    // loaded via an address lookup table.
-    let mut loaded_account_keys = AHashSet::<Pubkey>::new();
-    loaded_account_keys.extend(
-        proto_message
-            .account_keys
-            .iter()
-            .map(|key| Pubkey::try_from(key.as_slice()).unwrap()),
-    );
-    if let SanitizedMessage::V0(message) = sanitized_message {
-        loaded_account_keys.extend(message.loaded_addresses.writable.iter().copied());
-        loaded_account_keys.extend(message.loaded_addresses.readonly.iter().copied());
-    }
-    effects
-        .resulting_accounts
-        .retain(|(pubkey, _)| loaded_account_keys.contains(pubkey));
-
-    let cu_avail = effects.cu_avail;
-    let has_err = effects.status.is_err();
-    let mut txn_result = ProtoTxnResult::from(effects);
-
-    direct_mapping_handle_cu_exhaustion(
-        virtual_address_space_adjustments_active,
-        cu_avail,
-        has_err,
-        txn_result
-            .modified_accounts
-            .iter_mut()
-            .map(|acc| &mut acc.data),
-    );
-
-    txn_result
-}
-
 /// # Safety
 ///
 /// `in_ptr` must point to `in_sz` initialized bytes. `out_ptr` must point to a
@@ -376,7 +382,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
 // Excluded from `test` builds: the symbol would otherwise be defined both here
 // and in the `path = "."` dev-dependency rlib, producing a duplicate-symbol link
 // error. Tests call the native `execute_txn` directly.
-#[cfg(all(feature = "conformance", not(test)))]
+#[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_txn_execute_v1(
     out_ptr: *mut u8,
@@ -410,17 +416,22 @@ pub unsafe extern "C" fn sol_compat_txn_execute_v1(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "conformance")]
-    use std::collections::HashSet;
     use {
-        super::{BankTxnProcessingResult, execute_txn},
-        agave_feature_set::{FeatureSet, disable_sbpf_v0_execution, set_exempt_rent_epoch_max},
-        solana_account::{AccountSharedData, ReadableAccount},
-        solana_accounts_db::blockhash_queue::BlockhashQueue,
+        super::{ProtoTxnResult, execute_txn_proto},
+        agave_feature_set::{FEATURE_NAMES, disable_sbpf_v0_execution},
+        protosol::protos::{
+            BlockhashQueueEntry as ProtoBlockhashQueueEntry,
+            CompiledInstruction as ProtoCompiledInstruction, FeatureSet as ProtoFeatureSet,
+            FeeRateGovernor as ProtoFeeRateGovernor,
+            MessageAddressTableLookup as ProtoMessageAddressTableLookup,
+            MessageHeader as ProtoMessageHeader, SanitizedTransaction as ProtoSanitizedTransaction,
+            TransactionMessage as ProtoTransactionMessage, TxnBank as ProtoTxnBank,
+            TxnContext as ProtoTxnContext,
+        },
+        solana_account::AccountSharedData,
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
-        solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_message::{
@@ -430,48 +441,150 @@ mod tests {
             v0::{self, MessageAddressTableLookup},
         },
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
         solana_sdk_ids::{bpf_loader_upgradeable, native_loader, sysvar},
         solana_signature::Signature,
         solana_slot_hashes::SlotHashes,
-        solana_svm::transaction_processing_result::{
-            ProcessedTransaction, TransactionProcessingResultExtensions,
+        solana_svm::{
+            conformance::account_state::account_to_proto,
+            transaction_processing_result::ProcessedTransaction,
         },
         solana_transaction::versioned::VersionedTransaction,
-        std::{borrow::Cow, env, fs, sync::Arc},
+        std::{borrow::Cow, collections::HashSet, env, fs, sync::Arc},
     };
 
-    /// All features enabled except `disable_sbpf_v0_execution`, so the v0
-    /// `complex-transfer` program loads. `set_exempt_rent_epoch_max` is forced on
-    /// to match the accounts' `u64::MAX` rent epoch.
-    fn feature_set() -> FeatureSet {
-        let mut feature_set = FeatureSet::all_enabled();
-        feature_set.activate(&set_exempt_rent_epoch_max::id(), 0);
-        feature_set.deactivate(&disable_sbpf_v0_execution::id());
-        feature_set
+    const LAMPORTS_PER_SIGNATURE: u64 = 5000;
+
+    /// A fixture addresses a feature by the first eight bytes of its pubkey.
+    fn feature_id(pubkey: &Pubkey) -> u64 {
+        u64::from_le_bytes(pubkey.to_bytes()[..8].try_into().unwrap())
     }
 
-    fn fee_rate_governor() -> FeeRateGovernor {
-        // Mirrors the proto path: only `lamports_per_signature` is set; the
-        // targets/burn are zeroed (unlike `FeeRateGovernor::default()`).
-        FeeRateGovernor {
-            lamports_per_signature: 5000,
-            target_lamports_per_signature: 0,
-            target_signatures_per_slot: 0,
-            min_lamports_per_signature: 0,
-            max_lamports_per_signature: 0,
-            burn_percent: 0,
+    /// Every feature except `disable_sbpf_v0_execution`, so the v0
+    /// `complex-transfer` program loads. `set_exempt_rent_epoch_max` is among
+    /// them, matching the accounts' `u64::MAX` rent epoch.
+    ///
+    /// Filtering happens in fixture-id space, not pubkey space:
+    /// `reenable_sbpf_v0_execution` shares its first eight bytes with
+    /// `disable_sbpf_v0_execution`, so leaving it in would re-add the same id
+    /// and `feature_set_from_proto` would resolve it to either feature.
+    fn proto_feature_set() -> ProtoFeatureSet {
+        let disabled = feature_id(&disable_sbpf_v0_execution::id());
+        ProtoFeatureSet {
+            features: FEATURE_NAMES
+                .keys()
+                .map(feature_id)
+                .filter(|id| *id != disabled)
+                .collect(),
         }
     }
 
     /// A blockhash queue with two registered hashes; returns the queue plus the
     /// most-recent blockhash to use as the message's `recent_blockhash`.
-    fn blockhash_queue() -> (BlockhashQueue, Hash) {
-        let mut queue = BlockhashQueue::default();
-        queue.register_hash(&Hash::new_unique(), 5000);
+    fn proto_blockhash_queue() -> (Vec<ProtoBlockhashQueueEntry>, Hash) {
         let recent = Hash::new_unique();
-        queue.register_hash(&recent, 5000);
-        (queue, recent)
+        let entries = [Hash::new_unique(), recent]
+            .iter()
+            .map(|blockhash| ProtoBlockhashQueueEntry {
+                blockhash: blockhash.to_bytes().to_vec(),
+                lamports_per_signature: LAMPORTS_PER_SIGNATURE,
+            })
+            .collect();
+        (entries, recent)
+    }
+
+    /// The protobuf form of a transaction, as a fixture would carry it.
+    fn proto_transaction(transaction: &VersionedTransaction) -> ProtoSanitizedTransaction {
+        let message = &transaction.message;
+        let header = message.header();
+        // The fixture format only distinguishes legacy from v0.
+        let (is_legacy, address_table_lookups) = match message {
+            VersionedMessage::Legacy(_) => (true, vec![]),
+            VersionedMessage::V0(message) => (
+                false,
+                message
+                    .address_table_lookups
+                    .iter()
+                    .map(|lookup| ProtoMessageAddressTableLookup {
+                        account_key: lookup.account_key.to_bytes().to_vec(),
+                        writable_indexes: lookup
+                            .writable_indexes
+                            .iter()
+                            .copied()
+                            .map(u32::from)
+                            .collect(),
+                        readonly_indexes: lookup
+                            .readonly_indexes
+                            .iter()
+                            .copied()
+                            .map(u32::from)
+                            .collect(),
+                    })
+                    .collect(),
+            ),
+            VersionedMessage::V1(_) => panic!("v1 messages have no fixture representation"),
+        };
+
+        ProtoSanitizedTransaction {
+            message: Some(ProtoTransactionMessage {
+                is_legacy,
+                header: Some(ProtoMessageHeader {
+                    num_required_signatures: u32::from(header.num_required_signatures),
+                    num_readonly_signed_accounts: u32::from(header.num_readonly_signed_accounts),
+                    num_readonly_unsigned_accounts: u32::from(
+                        header.num_readonly_unsigned_accounts,
+                    ),
+                }),
+                account_keys: message
+                    .static_account_keys()
+                    .iter()
+                    .map(|key| key.to_bytes().to_vec())
+                    .collect(),
+                recent_blockhash: message.recent_blockhash().to_bytes().to_vec(),
+                instructions: message
+                    .instructions()
+                    .iter()
+                    .map(|instruction| ProtoCompiledInstruction {
+                        program_id_index: u32::from(instruction.program_id_index),
+                        accounts: instruction
+                            .accounts
+                            .iter()
+                            .copied()
+                            .map(u32::from)
+                            .collect(),
+                        data: instruction.data.clone(),
+                    })
+                    .collect(),
+                address_table_lookups,
+            }),
+            message_hash: vec![0; 32],
+            signatures: transaction
+                .signatures
+                .iter()
+                .map(|signature| signature.as_ref().to_vec())
+                .collect(),
+        }
+    }
+
+    fn txn_context(
+        accounts: Vec<(Pubkey, AccountSharedData)>,
+        transaction: VersionedTransaction,
+        blockhash_queue: Vec<ProtoBlockhashQueueEntry>,
+    ) -> ProtoTxnContext {
+        ProtoTxnContext {
+            tx: Some(proto_transaction(&transaction)),
+            account_shared_data: accounts
+                .into_iter()
+                .map(|(pubkey, account)| account_to_proto((pubkey, account.into())))
+                .collect(),
+            bank: Some(ProtoTxnBank {
+                blockhash_queue,
+                rbh_lamports_per_signature: LAMPORTS_PER_SIGNATURE as u32,
+                // Only the per-signature fee matters here; targets and burn are zeroed.
+                fee_rate_governor: Some(ProtoFeeRateGovernor::default()),
+                total_epoch_stake: 0,
+                features: Some(proto_feature_set()),
+            }),
+        }
     }
 
     fn account(lamports: u64, data: Vec<u8>, owner: Pubkey, executable: bool) -> AccountSharedData {
@@ -592,59 +705,20 @@ mod tests {
         ]
     }
 
-    /// Lamports of the writable account `pubkey` after execution, if the
-    /// transaction executed successfully.
-    fn writable_account_lamports(
-        execution: &BankTxnProcessingResult,
-        pubkey: &Pubkey,
-    ) -> Option<u64> {
-        match execution {
-            BankTxnProcessingResult::Processed {
-                result: Ok(ProcessedTransaction::Executed(executed_tx)),
-                runtime_transaction,
-            } => {
-                let sanitized_transaction = runtime_transaction.as_sanitized_transaction();
-                let sanitized_message = sanitized_transaction.message();
-                executed_tx
-                    .loaded_transaction
-                    .accounts
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| sanitized_message.is_writable(*index))
-                    .find(|(_, (key, _))| key == pubkey)
-                    .map(|(_, (_, account))| account.lamports())
-            }
-            _ => None,
-        }
+    /// Lamports of the writable account `pubkey` after execution.
+    fn writable_account_lamports(result: &ProtoTxnResult, pubkey: &Pubkey) -> Option<u64> {
+        result
+            .modified_accounts
+            .iter()
+            .find(|account| account.address.as_slice() == pubkey.as_ref())
+            .map(|account| account.lamports)
     }
 
-    fn return_data(execution: &BankTxnProcessingResult) -> Vec<u8> {
-        match execution {
-            BankTxnProcessingResult::Processed {
-                result: Ok(ProcessedTransaction::Executed(executed_tx)),
-                ..
-            } => executed_tx
-                .execution_details
-                .return_data
-                .as_ref()
-                .map(|info| info.data.clone())
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        }
+    fn assert_executed_ok(result: &ProtoTxnResult) {
+        assert!(result.executed, "transaction was not processed");
+        assert_eq!(result.txn_error, 0, "transaction failed: {result:?}");
     }
 
-    fn assert_executed_ok(execution: &BankTxnProcessingResult) {
-        match execution {
-            BankTxnProcessingResult::Processed { result, .. } => {
-                assert!(result.was_processed_with_successful_result())
-            }
-            BankTxnProcessingResult::FailedVerification(err) => {
-                panic!("transaction failed verification: {err:?}")
-            }
-        }
-    }
-
-    #[cfg(feature = "conformance")]
     fn sanitized_message_with_program(program_id: Pubkey) -> solana_message::SanitizedMessage {
         solana_message::SanitizedMessage::try_from_legacy_message(
             legacy::Message {
@@ -666,7 +740,6 @@ mod tests {
         .unwrap()
     }
 
-    #[cfg(feature = "conformance")]
     #[test]
     fn noop_transaction_effects() {
         const COMPUTE_UNIT_LIMIT: u64 = 123_456;
@@ -716,7 +789,7 @@ mod tests {
         let [(program_id, program), (program_data_id, program_data)] =
             deploy_program("clock-sysvar");
         let fee_payer = Pubkey::new_unique();
-        let (blockhash_queue, recent_blockhash) = blockhash_queue();
+        let (blockhash_queue, recent_blockhash) = proto_blockhash_queue();
 
         let message = VersionedMessage::Legacy(legacy::Message {
             header: MessageHeader {
@@ -746,17 +819,10 @@ mod tests {
             rent_sysvar_account(),
         ];
 
-        let execution = execute_txn(
-            &accounts,
-            feature_set(),
-            blockhash_queue,
-            fee_rate_governor(),
-            0,
-            transaction,
-        );
+        let result = execute_txn_proto(&txn_context(accounts, transaction, blockhash_queue));
 
-        assert_executed_ok(&execution);
-        assert_eq!(return_data(&execution).len(), 8);
+        assert_executed_ok(&result);
+        assert_eq!(result.return_data.len(), 8);
     }
 
     #[test]
@@ -766,7 +832,7 @@ mod tests {
         let fee_payer = Pubkey::new_unique();
         let sender = Pubkey::new_unique();
         let recipient = Pubkey::new_unique();
-        let (blockhash_queue, recent_blockhash) = blockhash_queue();
+        let (blockhash_queue, recent_blockhash) = proto_blockhash_queue();
 
         let message = VersionedMessage::V0(v0::Message {
             header: MessageHeader {
@@ -801,21 +867,11 @@ mod tests {
             slot_hashes_sysvar_account(),
         ];
 
-        let execution = execute_txn(
-            &accounts,
-            feature_set(),
-            blockhash_queue,
-            fee_rate_governor(),
-            0,
-            transaction,
-        );
+        let result = execute_txn_proto(&txn_context(accounts, transaction, blockhash_queue));
 
-        assert_executed_ok(&execution);
-        assert_eq!(writable_account_lamports(&execution, &sender), Some(899990));
-        assert_eq!(
-            writable_account_lamports(&execution, &recipient),
-            Some(900010)
-        );
+        assert_executed_ok(&result);
+        assert_eq!(writable_account_lamports(&result, &sender), Some(899990));
+        assert_eq!(writable_account_lamports(&result, &recipient), Some(900010));
     }
 
     #[test]
@@ -826,7 +882,7 @@ mod tests {
         let sender = Pubkey::new_unique();
         let recipient = Pubkey::new_unique();
         let extra_account = Pubkey::new_unique();
-        let (blockhash_queue, recent_blockhash) = blockhash_queue();
+        let (blockhash_queue, recent_blockhash) = proto_blockhash_queue();
 
         // The program adds this account's little-endian amount to the transfer.
         let extra_data = account(2, vec![5, 0, 0, 0, 0, 0, 0, 0], Pubkey::default(), false);
@@ -884,20 +940,10 @@ mod tests {
             slot_hashes_sysvar_account(),
         ];
 
-        let execution = execute_txn(
-            &accounts,
-            feature_set(),
-            blockhash_queue,
-            fee_rate_governor(),
-            0,
-            transaction,
-        );
+        let result = execute_txn_proto(&txn_context(accounts, transaction, blockhash_queue));
 
-        assert_executed_ok(&execution);
-        assert_eq!(writable_account_lamports(&execution, &sender), Some(899985));
-        assert_eq!(
-            writable_account_lamports(&execution, &recipient),
-            Some(900015)
-        );
+        assert_executed_ok(&result);
+        assert_eq!(writable_account_lamports(&result, &sender), Some(899985));
+        assert_eq!(writable_account_lamports(&result, &recipient), Some(900015));
     }
 }
