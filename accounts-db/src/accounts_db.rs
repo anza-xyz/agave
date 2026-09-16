@@ -2181,7 +2181,9 @@ impl AccountsDb {
         if let Some(storage) = self
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
-            && let Some(new_storage) = storage.reopen_as_readonly()
+            && let Some(new_storage) = storage
+                .reopen_as_readonly()
+                .expect("reopen storage as readonly")
         {
             // consider here the race condition of tx processing having looked up something in the index,
             // which could return (slot, append vec id). We want the lookup for the storage to get a storage

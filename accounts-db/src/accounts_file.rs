@@ -62,10 +62,10 @@ impl AccountsFile {
     }
 
     /// if storage is not readonly, reopen another instance that is read only
-    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
-        match self {
-            Self::AppendVec(av) => av.reopen_as_readonly_file_io().map(Self::AppendVec),
-        }
+    pub(crate) fn reopen_as_readonly(&self) -> Result<Option<Self>> {
+        Ok(match self {
+            Self::AppendVec(av) => av.reopen_as_readonly_file_io()?.map(Self::AppendVec),
+        })
     }
 
     /// Detach the on-disk file from this storage's lifetime; see

@@ -75,8 +75,8 @@ impl AccountStorageEntry {
     }
 
     /// open a new instance of the storage that is readonly
-    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
-        self.accounts.reopen_as_readonly().map(|accounts| Self {
+    pub(crate) fn reopen_as_readonly(&self) -> Result<Option<Self>, AccountsFileError> {
+        Ok(self.accounts.reopen_as_readonly()?.map(|accounts| Self {
             id: self.id,
             slot: self.slot,
             num_alive_accounts: AtomicUsize::new(self.count()),
@@ -84,7 +84,7 @@ impl AccountStorageEntry {
             accounts,
             tombstone_offsets: RwLock::new(self.tombstone_offsets.read().unwrap().clone()),
             obsolete_accounts: RwLock::new(self.obsolete_accounts.read().unwrap().clone()),
-        })
+        }))
     }
 
     pub fn new_existing(

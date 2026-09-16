@@ -334,7 +334,7 @@ mod tests {
             .unwrap()
             .mark_accounts_obsolete(obsolete_offsets.iter().copied().zip(data_lens), 0);
 
-        let storage = storage.reopen_as_readonly().unwrap_or(storage);
+        let storage = storage.reopen_as_readonly().unwrap().unwrap_or(storage);
 
         // Create the reader and check the length
         let files = open_storage_files(iter::once(&storage), false)
