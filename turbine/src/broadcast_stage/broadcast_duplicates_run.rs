@@ -48,7 +48,7 @@ pub(super) struct BroadcastDuplicatesRun {
     config: BroadcastDuplicatesConfig,
     current_slot: Slot,
     chained_merkle_root: Hash,
-    carryover_entry: Option<WorkingBankEntryOrMarker>,
+    carryover_message: Option<WorkingBankMessage>,
     next_shred_index: u32,
     next_code_index: u32,
     shred_version: u16,
@@ -77,7 +77,7 @@ impl BroadcastDuplicatesRun {
         Self {
             config,
             chained_merkle_root: Hash::default(),
-            carryover_entry: None,
+            carryover_message: None,
             next_shred_index: u32::MAX,
             next_code_index: 0,
             shred_version,
@@ -102,14 +102,17 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         blockstore: &'db Blockstore,
         _pinnable_slice: &mut DBPinnableSlice<'db>,
         _write_batch: &mut WriteBatch,
-        receiver: &Receiver<WorkingBankEntryOrMarker>,
+        receiver: &Receiver<WorkingBankMessage>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
         let mut stats = ProcessShredsStats::default();
-        let mut receive_results =
-            broadcast_utils::recv_slot_components(receiver, &mut self.carryover_entry, &mut stats)?;
+        let mut receive_results = broadcast_utils::recv_slot_components(
+            receiver,
+            &mut self.carryover_message,
+            &mut stats,
+        )?;
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 

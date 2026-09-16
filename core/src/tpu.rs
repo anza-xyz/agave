@@ -33,7 +33,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
     solana_poh::{
-        poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankEntryOrMarker},
+        poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankMessage},
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
@@ -119,7 +119,7 @@ impl Tpu {
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
-        entry_receiver: Receiver<WorkingBankEntryOrMarker>,
+        entry_receiver: Receiver<WorkingBankMessage>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
         subscriptions: Option<Arc<RpcSubscriptions>>,
@@ -348,17 +348,17 @@ impl Tpu {
 
         let (entry_receiver, tpu_entry_notifier) =
             if let Some(entry_notification_sender) = entry_notification_sender {
-                // Preserve every entry while bounding memory. If BroadcastStage falls behind,
+                // Preserve every message while bounding memory. If BroadcastStage falls behind,
                 // the notifier blocks here and propagates backpressure to PohRecorder.
-                let (broadcast_entry_sender, broadcast_entry_receiver) =
+                let (broadcast_message_sender, broadcast_message_receiver) =
                     bounded(WORKING_BANK_CHANNEL_CAPACITY);
                 let tpu_entry_notifier = TpuEntryNotifier::new(
                     entry_receiver,
                     entry_notification_sender,
-                    broadcast_entry_sender,
+                    broadcast_message_sender,
                     exit.clone(),
                 );
-                (broadcast_entry_receiver, Some(tpu_entry_notifier))
+                (broadcast_message_receiver, Some(tpu_entry_notifier))
             } else {
                 (entry_receiver, None)
             };

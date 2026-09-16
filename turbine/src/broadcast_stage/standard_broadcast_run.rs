@@ -43,7 +43,7 @@ pub struct StandardBroadcastRun {
     // can change after an UpdateParent marker.
     parent_for_double_merkle: Block,
     chained_merkle_root: Hash,
-    carryover_entry: Option<WorkingBankEntryOrMarker>,
+    carryover_message: Option<WorkingBankMessage>,
     double_merkle_leaves: Vec<Hash>,
     next_shred_index: u32,
     next_code_index: u32,
@@ -93,7 +93,7 @@ impl StandardBroadcastRun {
             },
             chained_merkle_root: Hash::default(),
             double_merkle_leaves: vec![],
-            carryover_entry: None,
+            carryover_message: None,
             next_shred_index: 0,
             next_code_index: 0,
             completed: true,
@@ -650,14 +650,14 @@ impl BroadcastRun for StandardBroadcastRun {
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
-        receiver: &Receiver<WorkingBankEntryOrMarker>,
+        receiver: &Receiver<WorkingBankMessage>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         let mut process_stats = ProcessShredsStats::default();
         let receive_results = broadcast_utils::recv_slot_components(
             receiver,
-            &mut self.carryover_entry,
+            &mut self.carryover_message,
             &mut process_stats,
         )?;
         // TODO: Confirm that last chunk of coding shreds

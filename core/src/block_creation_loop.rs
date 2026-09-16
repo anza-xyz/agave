@@ -1463,12 +1463,12 @@ mod tests {
         agave_banking_stage_ingress_types::BankingPacketReceiver,
         crossbeam_channel::bounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_entry::{block_component::VersionedUpdateParent, entry_or_marker::EntryOrMarker},
+        solana_entry::{block_component::VersionedUpdateParent, recorder_message::RecorderMessage},
         solana_keypair::Keypair,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
         solana_poh::{
-            poh_recorder::{PohRecorder, Record, WorkingBankEntryOrMarker},
+            poh_recorder::{PohRecorder, Record, WorkingBankMessage},
             record_channels::record_channels,
         },
         solana_poh_config::PohConfig,
@@ -1581,9 +1581,7 @@ mod tests {
         assert_eq!(selected.parent_block.slot, 6);
     }
 
-    fn recv_update_parent_marker(
-        entry_receiver: &Receiver<WorkingBankEntryOrMarker>,
-    ) -> UpdateParentV1 {
+    fn recv_update_parent_marker(entry_receiver: &Receiver<WorkingBankMessage>) -> UpdateParentV1 {
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
             let timeout = deadline.saturating_duration_since(Instant::now());
@@ -1591,9 +1589,8 @@ mod tests {
                 !timeout.is_zero(),
                 "timed out waiting for UpdateParent marker"
             );
-            let (_bank, (entry_or_marker, _tick_height)) =
-                entry_receiver.recv_timeout(timeout).unwrap();
-            let EntryOrMarker::Marker(VersionedBlockMarker::V1(marker)) = entry_or_marker else {
+            let (_bank, (message, _tick_height)) = entry_receiver.recv_timeout(timeout).unwrap();
+            let RecorderMessage::Marker(VersionedBlockMarker::V1(marker)) = message else {
                 continue;
             };
             let Some(VersionedUpdateParent::V1(update_parent)) = marker.as_update_parent() else {

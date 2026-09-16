@@ -1,17 +1,17 @@
-//! Entry marker types for the PoH recording pipeline.
+//! Message types emitted by the PoH recording pipeline.
 //!
-//! This module defines `EntryOrMarker`, a wrapper type that allows regular entries, block markers,
+//! This module defines `RecorderMessage`, a wrapper type that allows regular entries, block markers,
 //! and slot lifecycle notifications to flow through the same PoH recording channel.
 use crate::{block_component::VersionedBlockMarker, entry::Entry};
 
-/// Wraps either a regular entry or a block metadata/control marker.
+/// A message emitted by the PoH recorder for an entry, block marker, or control notification.
 ///
 /// The PoH recorder uses this type to stream entries, block markers, and control notifications
 /// through a unified channel to downstream consumers, e.g., broadcast stage.
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum EntryOrMarker {
-    /// The working bank for a new slot has been installed tell broadcast to wake up
+pub enum RecorderMessage {
+    /// The working bank for a new slot has been installed; tell broadcast to wake up.
     SlotStart,
     /// A regular entry containing transactions and/or ticks
     Entry(Entry),
@@ -20,7 +20,7 @@ pub enum EntryOrMarker {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl EntryOrMarker {
+impl RecorderMessage {
     pub fn unwrap_entry(self) -> Entry {
         match self {
             Self::SlotStart => panic!("Attempting to unwrap slot start as entry"),
@@ -30,16 +30,16 @@ impl EntryOrMarker {
     }
 }
 
-/// Converts an Entry into an EntryOrMarker.
-impl From<Entry> for EntryOrMarker {
+/// Converts an Entry into a RecorderMessage.
+impl From<Entry> for RecorderMessage {
     fn from(entry: Entry) -> Self {
-        EntryOrMarker::Entry(entry)
+        RecorderMessage::Entry(entry)
     }
 }
 
-/// Converts a VersionedBlockMarker into an EntryOrMarker.
-impl From<VersionedBlockMarker> for EntryOrMarker {
+/// Converts a VersionedBlockMarker into a RecorderMessage.
+impl From<VersionedBlockMarker> for RecorderMessage {
     fn from(marker: VersionedBlockMarker) -> Self {
-        EntryOrMarker::Marker(marker)
+        RecorderMessage::Marker(marker)
     }
 }
