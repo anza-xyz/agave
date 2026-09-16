@@ -18,5 +18,14 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 
+[dependencies]
+agave-scheduler-bindings = { workspace = true }
+agave-scheduler-handshake = { workspace = true }
+rts-alloc = { workspace = true }
+shaq = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [lints]
 workspace = true
