@@ -261,7 +261,7 @@ of the Agave Unstable API and their symbols have been made private. Enable the
 `agave-unstable-api` crate feature to acknowledge use of an interface that may break
 without warning.
 * Linux Capability handling has been hardened wrt requirements for configuring XDP (#9133)
-  * It is now an explicit _*error*_ + exit(1) if the process has not been permitted a
+  * It is now an explicit **error** + exit(1) if the process has not been permitted a
     capability required by the current configuration
   * A warning is logged if the process has been permitted capabilities not required by
     any configuration supported by the binary
@@ -285,7 +285,7 @@ without warning.
         CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON
         ```
 
-    _*-- OR --*_
+    **-- OR --**
     * set xattr capabilities directly on the binary file. note that this step must be
       repeated every time that the binary file is replaced
 
@@ -296,7 +296,7 @@ without warning.
 * Interpretation of the `Version` struct fields in gossip `ContactInfo` has been
 [changed](https://github.com/anza-xyz/agave/pull/10286) to support communicating
 [semver prerelease notation](https://semver.org/#spec-item-9). Implementations lacking this
-support will observe a larger than expected _`min` version_ field from node publishing from a
+support will observe a larger than expected *`min` version* field from node publishing from a
 prerelease version. The new interpretation is as follows:
   * The top two bits (14 and 15) of the `minor` field are now reserved for prerelease status
   * Prerelease status bit values are;
@@ -352,7 +352,7 @@ prerelease version. The new interpretation is as follows:
 
 #### Changes
 
-* Account update notifications have their fields populated from the account values post transaction execution. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc manually zeroed out. Note that if the on-chain program _does_ zero out any fields itself, those will remain zeroed out in the notification.
+* Account update notifications have their fields populated from the account values post transaction execution. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc manually zeroed out. Note that if the on-chain program *does* zero out any fields itself, those will remain zeroed out in the notification.
 
 ### Test Validator
 
