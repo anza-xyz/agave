@@ -3,7 +3,6 @@ use {
         nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
         rpc_client::RpcClient as BlockingRpcClient,
     },
-    bincode::serialize,
     dashmap::DashMap,
     futures_util::future::join_all,
     solana_hash::Hash,
@@ -36,6 +35,7 @@ use {
         task::JoinHandle,
         time::sleep,
     },
+    wincode::serialize,
 };
 
 const BLOCKHASH_REFRESH_RATE: Duration = Duration::from_secs(5);
@@ -805,5 +805,35 @@ where
         Ok(transaction_errors)
     } else {
         Err(TpuSenderError::Custom("Max retries exceeded".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_keypair::Keypair,
+        solana_message::v1::{Message as V1Message, TransactionConfig},
+        solana_signer::Signer,
+    };
+
+    #[test]
+    fn test_v1_transaction_wire_serialization() {
+        let signer = Keypair::new();
+        let message = VersionedMessage::V1(
+            V1Message::try_compile_with_config(
+                &signer.pubkey(),
+                &[],
+                Hash::new_unique(),
+                TransactionConfig::empty()
+                    .with_compute_unit_limit(1)
+                    .with_loaded_accounts_data_size_limit(1),
+            )
+            .unwrap(),
+        );
+        let transaction = sign_versioned_message(message, &[&signer], false).unwrap();
+        let serialized = serialize(&transaction).unwrap();
+        let decoded: VersionedTransaction = wincode::deserialize(&serialized).unwrap();
+        assert_eq!(decoded, transaction);
     }
 }
