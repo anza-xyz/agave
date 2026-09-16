@@ -118,6 +118,9 @@ impl TransactionStatusService {
                             }
                         }
                     }
+                    if let Some(dependency_tracker) = depenency_tracker.as_ref() {
+                        dependency_tracker.close();
+                    }
                     info!("{} has stopped", Self::SERVICE_NAME);
                 }
             })
@@ -274,7 +277,7 @@ impl TransactionStatusService {
                 if let Some(dependency_tracker) = dependency_tracker.as_ref()
                     && let Some(work_id) = work_id
                 {
-                    dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
+                    dependency_tracker.mark_work_processed(work_id);
                 }
             }
             TransactionStatusMessage::Freeze(bank) => {
@@ -289,6 +292,7 @@ impl TransactionStatusService {
                 source,
                 purge_input,
                 requested_at,
+                dependency_work,
                 done_sender,
             } => {
                 if enable_rpc_transaction_history {
@@ -318,6 +322,12 @@ impl TransactionStatusService {
                         queue_wait_us,
                         requested_at.elapsed().as_micros(),
                     );
+                }
+
+                if let Some(dependency_tracker) = dependency_tracker.as_ref()
+                    && let Some(dependency_work) = dependency_work
+                {
+                    dependency_tracker.mark_work_processed(dependency_work);
                 }
 
                 if let Some(done_sender) = done_sender {
@@ -437,7 +447,11 @@ pub(crate) mod tests {
             TransactionStatusMeta, TransactionTokenBalance,
             token_balances::TransactionTokenBalancesSet,
         },
-        std::sync::{Arc, atomic::AtomicBool},
+        std::{
+            sync::{Arc, atomic::AtomicBool},
+            thread,
+            time::Duration,
+        },
     };
 
     #[derive(Eq, Hash, PartialEq)]
@@ -717,7 +731,7 @@ pub(crate) mod tests {
             Some(dependency_tracker.clone()),
             exit.clone(),
         );
-        let work_id = 345;
+        let work_id = dependency_tracker.declare_work();
         transaction_status_sender
             .send(TransactionStatusMessage::Batch((
                 transaction_status_batch,
@@ -765,11 +779,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_purge_transaction_history_for_switch_bank() {
+    fn test_purge_transaction_history_for_switch_bank_tracks_dependency() {
         let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
+        let dependency_tracker = Arc::new(DependencyTracker::default());
         let transaction_status_sender = TransactionStatusSender {
             sender: transaction_status_sender,
-            dependency_tracker: None,
+            dependency_tracker: Some(Arc::clone(&dependency_tracker)),
         };
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -807,39 +822,53 @@ pub(crate) mod tests {
             None,
             blockstore.clone(),
             false,
-            None,
+            Some(Arc::clone(&dependency_tracker)),
             exit.clone(),
         );
 
         transaction_status_sender
-            .send_purge_transaction_history_for_slot(
+            .enqueue_purge_transaction_history_for_slot(
                 slot,
                 TransactionHistoryPurgeSource::SwitchBank,
                 TransactionHistoryPurgeInput::SwitchBank,
             )
             .unwrap();
-        transaction_status_service.quiesce_and_join_for_tests(exit);
+        let dependency_work = dependency_tracker.get_current_declared_work();
+        assert_eq!(dependency_work, 1);
 
-        assert!(
-            blockstore
+        let (wait_done_sender, wait_done_receiver) = bounded(1);
+        let wait_blockstore = Arc::clone(&blockstore);
+        let wait_dependency_tracker = Arc::clone(&dependency_tracker);
+        let waiter = thread::spawn(move || {
+            assert!(wait_dependency_tracker.wait_for_dependency(dependency_work));
+            let transaction_status_deleted = wait_blockstore
                 .read_transaction_status((signature, slot))
                 .unwrap()
-                .is_none()
-        );
-        assert!(
-            blockstore
+                .is_none();
+            let transaction_memo_deleted = wait_blockstore
                 .read_transaction_memos(signature, slot)
                 .unwrap()
-                .is_none()
+                .is_none();
+            wait_done_sender
+                .send(transaction_status_deleted && transaction_memo_deleted)
+                .unwrap();
+        });
+        assert!(
+            wait_done_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
         );
+        waiter.join().unwrap();
+        transaction_status_service.quiesce_and_join_for_tests(exit);
     }
 
     #[test]
     fn test_purge_transaction_history_error_stops_service() {
         let (transaction_status_sender, transaction_status_receiver) = bounded(1);
+        let dependency_tracker = Arc::new(DependencyTracker::default());
         let transaction_status_sender = TransactionStatusSender {
             sender: transaction_status_sender,
-            dependency_tracker: None,
+            dependency_tracker: Some(Arc::clone(&dependency_tracker)),
         };
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -851,9 +880,10 @@ pub(crate) mod tests {
             None,
             blockstore,
             false,
-            None,
+            Some(Arc::clone(&dependency_tracker)),
             exit.clone(),
         );
+        let unfinished_work = dependency_tracker.declare_work();
 
         // With no UpdateParent marker, the purge must fail without acknowledging completion.
         assert!(
@@ -868,5 +898,6 @@ pub(crate) mod tests {
 
         transaction_status_service.join().unwrap();
         assert!(exit.load(Ordering::Relaxed));
+        assert!(!dependency_tracker.wait_for_dependency(unfinished_work));
     }
 }

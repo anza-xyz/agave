@@ -52,6 +52,7 @@ pub enum TransactionStatusMessage {
         source: TransactionHistoryPurgeSource,
         purge_input: TransactionHistoryPurgeInput,
         requested_at: Instant,
+        dependency_work: Option<WorkSequence>,
         done_sender: Option<crossbeam_channel::Sender<()>>,
     },
 }
@@ -309,6 +310,9 @@ impl TransactionStatusSender {
             work_sequence,
         ))) {
             trace!("Slot {slot} transaction_status send batch failed: {e:?}");
+            if let Some(dependency_tracker) = self.dependency_tracker.as_ref() {
+                dependency_tracker.close();
+            }
         }
     }
 
@@ -331,7 +335,13 @@ impl TransactionStatusSender {
         purge_input: TransactionHistoryPurgeInput,
     ) -> Result<(), String> {
         let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
-        self.send_purge_transaction_history_request(slot, source, purge_input, Some(done_sender))?;
+        self.send_purge_transaction_history_request(
+            slot,
+            source,
+            purge_input,
+            Some(done_sender),
+            None,
+        )?;
 
         done_receiver.recv().map_err(|err| err.to_string())
     }
@@ -344,7 +354,18 @@ impl TransactionStatusSender {
         source: TransactionHistoryPurgeSource,
         purge_input: TransactionHistoryPurgeInput,
     ) -> Result<(), String> {
-        self.send_purge_transaction_history_request(slot, source, purge_input, None)
+        let dependency_work = self
+            .dependency_tracker
+            .as_ref()
+            .map(|tracker| tracker.declare_work());
+
+        self.send_purge_transaction_history_request(
+            slot,
+            source,
+            purge_input,
+            None,
+            dependency_work,
+        )
     }
 
     fn send_purge_transaction_history_request(
@@ -353,16 +374,25 @@ impl TransactionStatusSender {
         source: TransactionHistoryPurgeSource,
         purge_input: TransactionHistoryPurgeInput,
         done_sender: Option<crossbeam_channel::Sender<()>>,
+        dependency_work: Option<WorkSequence>,
     ) -> Result<(), String> {
-        self.sender
+        let result = self
+            .sender
             .send(TransactionStatusMessage::PurgeTransactionHistory {
                 slot,
                 source,
                 purge_input,
                 requested_at: Instant::now(),
+                dependency_work,
                 done_sender,
             })
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string());
+        if result.is_err()
+            && let Some(dependency_tracker) = self.dependency_tracker.as_ref()
+        {
+            dependency_tracker.close();
+        }
+        result
     }
 }
 

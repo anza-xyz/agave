@@ -67,10 +67,17 @@ pub(crate) fn set_root(
         error!("failed to record optimistic slot in blockstore: slot={new_root_slot}: {e:?}");
     }
 
+    let dependency_work = rctx
+        .bank_notification_sender
+        .as_ref()
+        .and_then(|config| config.dependency_tracker.as_ref())
+        .map(|tracker| tracker.get_current_declared_work());
+
     update_commitment_cache(
         my_pubkey,
         CommitmentType::Rooted,
         new_root_slot,
+        dependency_work,
         &vctx.commitment_sender,
     );
 
@@ -78,12 +85,8 @@ pub(crate) fn set_root(
     // the RPC API. Additionally the PrioritizationFeeCache relies on this notification
     // in order to perform cleanup. In the future we will look to deprecate OC and remove
     // these code paths.
-    if let Some(config) = &rctx.bank_notification_sender {
-        let dependency_work = config
-            .dependency_tracker
-            .as_ref()
-            .map(|s| s.get_current_declared_work());
-        if let Err(chanel_name) = nonblocking_send(
+    if let Some(config) = &rctx.bank_notification_sender
+        && let Err(chanel_name) = nonblocking_send(
             my_pubkey,
             &config.sender,
             (
@@ -91,9 +94,9 @@ pub(crate) fn set_root(
                 dependency_work,
             ),
             "bank_notification_sender",
-        ) {
-            info!("{my_pubkey}: channel {chanel_name} disconnected");
-        }
+        )
+    {
+        info!("{my_pubkey}: channel {chanel_name} disconnected");
     }
 }
 
