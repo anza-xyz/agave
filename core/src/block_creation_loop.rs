@@ -1491,7 +1491,8 @@ mod tests {
         },
         solana_poh_config::PohConfig,
         solana_runtime::{
-            bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader,
+            bank::Bank, bank_forks::BankForks, bank_forks_controller::SetRootDependency,
+            genesis_utils::create_genesis_config_with_leader,
             installed_scheduler_pool::BankWithScheduler,
             transaction_execution::TransactionStatusMessage,
         },
@@ -1540,7 +1541,7 @@ mod tests {
             Ok(self.bank_forks.write().unwrap().insert(bank))
         }
 
-        fn enqueue_set_root(&self, new_root: Block) {
+        fn enqueue_set_root(&self, new_root: Block, _dependency: Option<SetRootDependency>) {
             let new_root = new_root.slot;
             // Test code only so we allow writing bank forks directly.
             self.bank_forks

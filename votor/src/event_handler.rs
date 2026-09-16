@@ -1047,7 +1047,9 @@ mod tests {
         solana_runtime::{
             bank::{Bank, BankTestConfig, SlotLeader},
             bank_forks::BankForks,
-            bank_forks_controller::{BankForksController, BankForksControllerError},
+            bank_forks_controller::{
+                BankForksController, BankForksControllerError, SetRootDependency,
+            },
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
@@ -1103,7 +1105,7 @@ mod tests {
             Ok(self.bank_forks.write().unwrap().insert(bank))
         }
 
-        fn enqueue_set_root(&self, new_root: Block) {
+        fn enqueue_set_root(&self, new_root: Block, _dependency: Option<SetRootDependency>) {
             let new_root = new_root.slot;
             root_utils::check_and_handle_new_root(
                 new_root,

@@ -1,5 +1,8 @@
 use {
-    crate::{bank::Bank, bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler},
+    crate::{
+        bank::Bank, bank_forks::BankForks, dependency_tracker::DependencyTracker,
+        installed_scheduler_pool::BankWithScheduler,
+    },
     agave_votor_messages::consensus_message::Block,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded},
     log::warn,
@@ -34,9 +37,16 @@ pub enum BankForksCommand {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
+pub struct SetRootDependency {
+    pub dependency_tracker: Arc<DependencyTracker>,
+    pub work_id: u64,
+}
+
+#[derive(Clone, Debug)]
 pub struct SetRootCommand {
     pub new_root: Block,
+    pub dependency: Option<SetRootDependency>,
 }
 
 impl SetRootCommand {
@@ -70,7 +80,7 @@ impl fmt::Display for BankForksCommand {
 pub trait BankForksController: Send + Sync {
     fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError>;
 
-    fn enqueue_set_root(&self, new_root: Block);
+    fn enqueue_set_root(&self, new_root: Block, dependency: Option<SetRootDependency>);
 
     fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError>;
 }
@@ -162,9 +172,12 @@ impl BankForksController for BankForksControllerHandle {
         bank.ok_or(BankForksControllerError::UnableToInsertStaleBank(slot))
     }
 
-    fn enqueue_set_root(&self, new_root: Block) {
+    fn enqueue_set_root(&self, new_root: Block, dependency: Option<SetRootDependency>) {
         let total_start = Instant::now();
-        let command = SetRootCommand { new_root };
+        let command = SetRootCommand {
+            new_root,
+            dependency,
+        };
 
         {
             let mut pending_set_root = self.pending_set_root.lock().unwrap();
@@ -234,21 +247,27 @@ mod tests {
         let (controller, receiver) = BankForksControllerHandle::new();
 
         let block_id_5 = Hash::new_unique();
-        controller.enqueue_set_root(Block {
-            slot: 5,
-            block_id: block_id_5,
-        });
-        controller.enqueue_set_root(Block::new_unique(3));
+        controller.enqueue_set_root(
+            Block {
+                slot: 5,
+                block_id: block_id_5,
+            },
+            None,
+        );
+        controller.enqueue_set_root(Block::new_unique(3), None);
         let command = receiver.take_set_root_command().unwrap();
         assert_eq!(command.new_root.slot, 5);
         assert_eq!(command.new_root.block_id, block_id_5);
         assert!(receiver.take_set_root_command().is_none());
 
-        controller.enqueue_set_root(Block::new_unique(3));
-        controller.enqueue_set_root(Block {
-            slot: 5,
-            block_id: block_id_5,
-        });
+        controller.enqueue_set_root(Block::new_unique(3), None);
+        controller.enqueue_set_root(
+            Block {
+                slot: 5,
+                block_id: block_id_5,
+            },
+            None,
+        );
         assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 5);
     }
 
@@ -256,15 +275,15 @@ mod tests {
     fn test_bank_forks_controller_signals_pending_set_root() {
         let (controller, receiver) = BankForksControllerHandle::new();
 
-        controller.enqueue_set_root(Block::new_unique(1));
+        controller.enqueue_set_root(Block::new_unique(1), None);
         receiver
             .set_root_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 1);
 
-        controller.enqueue_set_root(Block::new_unique(2));
-        controller.enqueue_set_root(Block::new_unique(3));
+        controller.enqueue_set_root(Block::new_unique(2), None);
+        controller.enqueue_set_root(Block::new_unique(3), None);
         receiver
             .set_root_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
@@ -288,6 +307,7 @@ mod tests {
             .clone_without_scheduler();
         let command = SetRootCommand {
             new_root: Block { slot: 1, block_id },
+            dependency: None,
         };
 
         assert!(!command.matches_frozen_bank(&bank_forks.read().unwrap()));
@@ -296,11 +316,13 @@ mod tests {
 
         let mismatched_command = SetRootCommand {
             new_root: Block::new_unique(command.new_root.slot),
+            dependency: None,
         };
         assert!(!mismatched_command.matches_frozen_bank(&bank_forks.read().unwrap()));
 
         let missing_command = SetRootCommand {
             new_root: Block::new_unique(2),
+            dependency: None,
         };
         assert!(!missing_command.matches_frozen_bank(&bank_forks.read().unwrap()));
 
@@ -370,7 +392,7 @@ mod tests {
         assert_eq!(inserted_bank.slot(), 1);
         assert!(bank_forks.read().unwrap().get(1).is_some());
 
-        controller.enqueue_set_root(Block { slot: 1, block_id });
+        controller.enqueue_set_root(Block { slot: 1, block_id }, None);
         assert_eq!(root_receiver.recv().unwrap(), 1);
         assert_eq!(bank_forks.read().unwrap().root(), 1);
 

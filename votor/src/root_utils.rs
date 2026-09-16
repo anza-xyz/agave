@@ -17,8 +17,10 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank_forks::BankForks, bank_forks_controller::BankForksController,
-        installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
+        bank_forks::BankForks,
+        bank_forks_controller::{BankForksController, SetRootDependency},
+        installed_scheduler_pool::BankWithScheduler,
+        snapshot_controller::SnapshotController,
     },
     solana_time_utils::timestamp,
     std::{
@@ -57,7 +59,18 @@ pub(crate) fn set_root(
     });
     *received_shred = received_shred.split_off(&new_root_slot);
 
-    rctx.bank_forks_controller.enqueue_set_root(new_root);
+    let dependency = rctx
+        .bank_notification_sender
+        .as_ref()
+        .and_then(|config| config.dependency_tracker.as_ref())
+        .map(|dependency_tracker| SetRootDependency {
+            work_id: dependency_tracker.get_current_declared_work(),
+            dependency_tracker: Arc::clone(dependency_tracker),
+        });
+    let dependency_work = dependency.as_ref().map(|dependency| dependency.work_id);
+
+    rctx.bank_forks_controller
+        .enqueue_set_root(new_root, dependency);
 
     if let Err(e) = ctx.blockstore.insert_optimistic_slot(
         new_root_slot,
@@ -66,12 +79,6 @@ pub(crate) fn set_root(
     ) {
         error!("failed to record optimistic slot in blockstore: slot={new_root_slot}: {e:?}");
     }
-
-    let dependency_work = rctx
-        .bank_notification_sender
-        .as_ref()
-        .and_then(|config| config.dependency_tracker.as_ref())
-        .map(|tracker| tracker.get_current_declared_work());
 
     update_commitment_cache(
         my_pubkey,

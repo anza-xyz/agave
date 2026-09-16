@@ -5258,6 +5258,18 @@ impl ReplayStage {
             return;
         }
 
+        if let Some(dependency) = &command.dependency
+            && !dependency
+                .dependency_tracker
+                .wait_for_dependency(dependency.work_id)
+        {
+            warn!(
+                "{my_pubkey}: transaction status service closed before root {} was safe to apply",
+                command.new_root.slot,
+            );
+            return;
+        }
+
         let new_root = command.new_root.slot;
         root_utils::check_and_handle_new_root(
             new_root,
