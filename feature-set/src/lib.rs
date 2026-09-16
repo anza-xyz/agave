@@ -1434,7 +1434,7 @@ pub mod limit_instruction_accounts {
 }
 
 pub mod block_revenue_sharing {
-    solana_pubkey::declare_id!("B1ockRevenueSharing111111111111111111111111");
+    solana_pubkey::declare_id!("7MYx95UBiJufqnumyN7HfskJ9vKdcGMmhreVguqrE97K");
 }
 
 pub mod vote_account_initialize_v2 {
