@@ -1389,10 +1389,15 @@ fn create_and_insert_leader_bank(
     let bank_id = tpu_bank.bank_id();
 
     // Tell broadcast to produce the header
-    ctx.poh_recorder
+    let send_result = ctx
+        .poh_recorder
         .write()
         .unwrap()
-        .set_bank_and_send_slot_start(tpu_bank)?;
+        .set_bank_and_send_slot_start(tpu_bank);
+    if let Err(err) = send_result {
+        abort_working_bank(ctx, slot)?;
+        return Err(StartLeaderError::PohRecorder(err));
+    }
 
     // If this is the first alpenglow block, emit the genesis certificate marker.
     // This happens before record intake restarts, so a send failure can be
@@ -1793,6 +1798,8 @@ mod tests {
             err,
             StartLeaderError::PohRecorder(PohRecorderError::SendError(_))
         ));
+        assert!(!ctx.poh_recorder.read().unwrap().has_bank());
+        assert!(ctx.bank_forks.read().unwrap().get(2).is_none());
         assert!(ctx.record_receiver.is_shutdown());
         assert!(ctx.record_receiver.is_safe_to_restart());
     }
