@@ -46,7 +46,7 @@ pub struct TransactionStatusBatch {
 #[derive(Debug)]
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
-    Freeze(Arc<Bank>),
+    Freeze(Arc<Bank>, Option<WorkSequence>),
     PurgeTransactionHistory {
         slot: Slot,
         source: TransactionHistoryPurgeSource,
@@ -317,12 +317,28 @@ impl TransactionStatusSender {
     }
 
     pub fn send_transaction_status_freeze_message(&self, bank: &Arc<Bank>) {
-        if let Err(e) = self
-            .sender
-            .send(TransactionStatusMessage::Freeze(bank.clone()))
-        {
+        let work_sequence = self
+            .dependency_tracker
+            .as_ref()
+            .map(|dependency_tracker| dependency_tracker.declare_work());
+
+        self.send_transaction_status_freeze_message_with_work(bank, work_sequence);
+    }
+
+    pub fn send_transaction_status_freeze_message_with_work(
+        &self,
+        bank: &Arc<Bank>,
+        work_sequence: Option<u64>,
+    ) {
+        if let Err(e) = self.sender.send(TransactionStatusMessage::Freeze(
+            bank.clone(),
+            work_sequence,
+        )) {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
+            if let Some(dependency_tracker) = self.dependency_tracker.as_ref() {
+                dependency_tracker.close();
+            }
         }
     }
 

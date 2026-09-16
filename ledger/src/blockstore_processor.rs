@@ -5231,7 +5231,7 @@ pub mod tests {
                     assert_eq!(batch.transactions.len(), batch.transaction_indexes.len());
                     indexes.extend_from_slice(&batch.transaction_indexes);
                 }
-                TransactionStatusMessage::Freeze(_) => {}
+                TransactionStatusMessage::Freeze(_, _) => {}
                 TransactionStatusMessage::PurgeTransactionHistory { .. } => unreachable!(),
             }
         }

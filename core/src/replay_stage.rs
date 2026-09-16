@@ -4078,6 +4078,13 @@ impl ReplayStage {
                     bank.set_block_id(block_id);
                 }
 
+                // BroadcastStage can notify Votor as soon as the bank is frozen.
+                let freeze_work = process_active_banks_context
+                    .transaction_status_sender
+                    .as_ref()
+                    .and_then(|sender| sender.dependency_tracker.as_ref())
+                    .map(|dependency_tracker| dependency_tracker.declare_work());
+
                 // Freeze the bank before sending to any auxiliary threads that may expect to be
                 // operating on a frozen bank.
                 // Also if we are not the leader, ensure that our computed hash matches the hash in
@@ -4100,6 +4107,15 @@ impl ReplayStage {
                 );
 
                 if let Err((expected_hash, computed_hash)) = verify_result {
+                    if let Some(dependency_tracker) = process_active_banks_context
+                        .transaction_status_sender
+                        .as_ref()
+                        .and_then(|sender| sender.dependency_tracker.as_ref())
+                        && let Some(freeze_work) = freeze_work
+                    {
+                        dependency_tracker.mark_work_processed(freeze_work);
+                    }
+
                     warn!(
                         "For slot {bank_slot} the leader said the bank hash should be: \
                          {expected_hash} however we computed: {computed_hash}",
@@ -4152,7 +4168,8 @@ impl ReplayStage {
                     .transaction_status_sender
                     .as_ref()
                 {
-                    transaction_status_sender.send_transaction_status_freeze_message(bank);
+                    transaction_status_sender
+                        .send_transaction_status_freeze_message_with_work(bank, freeze_work);
                 }
                 // report cost tracker stats
                 process_active_banks_context
