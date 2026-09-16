@@ -2354,7 +2354,7 @@ impl fmt::Display for CliAccountBalances {
                 f,
                 "{:<44}  {}",
                 account.address,
-                &format!(
+                format_args!(
                     "{} SOL",
                     build_balance_message(account.lamports, false, false)
                 ),
@@ -2678,7 +2678,7 @@ impl fmt::Display for CliProgramsV4 {
             writeln!(
                 f,
                 "{}",
-                &format!(
+                format_args!(
                     "{:<44} | {:<9} | {:<44} | {:<10}",
                     program.program_id, program.last_deploy_slot, program.authority, program.status,
                 )
@@ -2754,7 +2754,7 @@ impl fmt::Display for CliUpgradeablePrograms {
             writeln!(
                 f,
                 "{}",
-                &format!(
+                format_args!(
                     "{:<44} | {:<9} | {:<44} | {}",
                     program.program_id,
                     program.last_deploy_slot,
@@ -2867,7 +2867,7 @@ impl fmt::Display for CliUpgradeableBuffers {
             writeln!(
                 f,
                 "{}",
-                &format!(
+                format_args!(
                     "{:<44} | {:<44} | {}",
                     buffer.address,
                     buffer.authority,
