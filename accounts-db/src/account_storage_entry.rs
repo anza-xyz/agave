@@ -178,9 +178,8 @@ impl AccountStorageEntry {
     /// Return the "alive_bytes" minus the bytes of this storage's tombstones
     /// (zero-lamport accounts already purged from the index).
     pub(crate) fn alive_bytes_exclude_zero_lamport_accounts(&self) -> usize {
-        let zero_lamport_dead_bytes = self
-            .accounts
-            .dead_bytes_due_to_zero_lamport_accounts(self.num_tombstones());
+        let zero_lamport_dead_bytes =
+            self.num_tombstones() * self.accounts.calculate_stored_size(0);
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 

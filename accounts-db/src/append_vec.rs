@@ -272,10 +272,6 @@ impl AppendVec {
         }
     }
 
-    pub fn dead_bytes_due_to_zero_lamport_accounts(&self, count: usize) -> usize {
-        Self::calculate_stored_size(0) * count
-    }
-
     /// Flushes contents to disk
     pub fn flush(&self) -> Result<()> {
         // Check to see if we're actually dirty before flushing.
