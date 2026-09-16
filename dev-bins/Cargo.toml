@@ -42,7 +42,7 @@ agave-logger = { path = "../logger", version = "=4.4.0-alpha.4", features = ["ag
 agave-precompiles = { path = "../precompiles", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "../snapshots", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
-agave-transaction-view = "6.1.0"
+agave-transaction-view = "7.0.0"
 agave-votor = { path = "../votor", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "../votor-messages", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 ahash = "0.8.11"

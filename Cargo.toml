@@ -185,7 +185,7 @@ agave-scheduler-bindings = "6.0.0"
 agave-scheduler-handshake = "6.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
-agave-transaction-view = "6.1.0"
+agave-transaction-view = "7.0.0"
 agave-votor = { path = "votor", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 agave-votor-transport = { path = "votor-transport", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
