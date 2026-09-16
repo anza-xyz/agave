@@ -22,7 +22,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "autoApproveNewAccounts": bool::from(initialize_mint_data.auto_approve_new_accounts),
                 "auditorElGamalPubkey": Option::<PodElGamalPubkey>::from(initialize_mint_data.auditor_elgamal_pubkey).map(|k| k.to_string()),
             });
@@ -42,8 +42,8 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
-                "confidentialTransferMintAuthority": account_keys[account_indexes[1] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "confidentialTransferMintAuthority": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "autoApproveNewAccounts": bool::from(update_mint_data.auto_approve_new_accounts),
                 "auditorElGamalPubkey": Option::<PodElGamalPubkey>::from(update_mint_data.auditor_elgamal_pubkey).map(|k| k.to_string()),
             });
@@ -62,8 +62,8 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 .maximum_pending_balance_credit_counter
                 .into();
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "decryptableZeroBalance": format!("{}", configure_account_data.decryptable_zero_balance),
                 "maximumPendingBalanceCreditCounter": maximum_pending_balance_credit_counter,
                 "proofInstructionOffset": configure_account_data.proof_instruction_offset,
@@ -74,12 +74,12 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             if configure_account_data.proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[2] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string()),
                 );
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[2] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string()),
                 );
             }
 
@@ -101,9 +101,9 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             Ok(ParsedInstructionEnum {
                 instruction_type: "approveConfidentialTransferAccount".to_string(),
                 info: json!({
-                    "account": account_keys[account_indexes[0] as usize].to_string(),
-                    "mint": account_keys[account_indexes[1] as usize].to_string(),
-                    "confidentialTransferAuditorAuthority": account_keys[account_indexes[2] as usize].to_string(),
+                    "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                    "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
+                    "confidentialTransferAuditorAuthority": account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string(),
                 }),
             })
         }
@@ -115,7 +115,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 })?;
             let proof_instruction_offset: i8 = empty_account_data.proof_instruction_offset;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "proofInstructionOffset": proof_instruction_offset,
 
             });
@@ -124,12 +124,12 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[1] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string()),
                 );
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[1] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string()),
                 );
             }
 
@@ -154,8 +154,8 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             })?;
             let amount: u64 = deposit_data.amount.into();
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "amount": amount,
                 "decimals": deposit_data.decimals,
 
@@ -182,8 +182,8 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 })?;
             let amount: u64 = withdrawal_data.amount.into();
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "amount": amount,
                 "decimals": withdrawal_data.decimals,
                 "newDecryptableAvailableBalance": format!("{}", withdrawal_data.new_decryptable_available_balance),
@@ -200,7 +200,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -210,7 +210,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -220,7 +220,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -245,9 +245,9 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "source": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
-                "destination": account_keys[account_indexes[2] as usize].to_string(),
+                "source": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
+                "destination": account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string(),
                 "newSourceDecryptableAvailableBalance": format!("{}", transfer_data.new_source_decryptable_available_balance),
                 "equalityProofInstructionOffset": transfer_data.equality_proof_instruction_offset,
                 "ciphertextValidityProofInstructionOffset": transfer_data.ciphertext_validity_proof_instruction_offset,
@@ -263,7 +263,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -273,7 +273,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -283,7 +283,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "ciphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -293,7 +293,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -327,9 +327,9 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 transfer_data.fee_ciphertext_validity_proof_instruction_offset;
             let range_proof_instruction_offset: i8 = transfer_data.range_proof_instruction_offset;
             let mut value = json!({
-                "source": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
-                "destination": account_keys[account_indexes[2] as usize].to_string(),
+                "source": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
+                "destination": account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string(),
                 "newSourceDecryptableAvailableBalance": format!("{}", transfer_data.new_source_decryptable_available_balance),
                 "equalityProofInstructionOffset": equality_proof_instruction_offset,
                 "transferAmountCiphertextValidityProofInstructionOffset": transfer_amount_ciphertext_validity_proof_instruction_offset,
@@ -349,7 +349,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -359,7 +359,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -368,7 +368,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "transferAmountCiphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -377,7 +377,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "feeSigmaProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -386,7 +386,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "feeCiphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -395,7 +395,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -423,7 +423,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 .expected_pending_balance_credit_counter
                 .into();
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                 "newDecryptableAvailableBalance": format!("{}", apply_pending_balance_data.new_decryptable_available_balance),
                 "expectedPendingBalanceCreditCounter": expected_pending_balance_credit_counter,
 
@@ -445,7 +445,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
         ConfidentialTransferInstruction::EnableConfidentialCredits => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
 
             });
             let map = value.as_object_mut().unwrap();
@@ -465,7 +465,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
         ConfidentialTransferInstruction::DisableConfidentialCredits => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
 
             });
             let map = value.as_object_mut().unwrap();
@@ -485,7 +485,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
         ConfidentialTransferInstruction::EnableNonConfidentialCredits => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
 
             });
             let map = value.as_object_mut().unwrap();
@@ -505,7 +505,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
         ConfidentialTransferInstruction::DisableNonConfidentialCredits => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
 
             });
             let map = value.as_object_mut().unwrap();
@@ -525,9 +525,9 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
         ConfidentialTransferInstruction::ConfigureAccountWithRegistry => {
             check_num_token_accounts(account_indexes, 3)?;
             let value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
-                "registry": account_keys[account_indexes[2] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
+                "registry": account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string(),
             });
             Ok(ParsedInstructionEnum {
                 instruction_type: "configureConfidentialAccountWithRegistry".to_string(),
