@@ -3,7 +3,8 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
-            MAX_DATA_SHREDS_PER_SLOT, ShredFlags, max_ticks_per_n_shreds,
+            DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, PROOF_ENTRIES_FOR_32_32_BATCH,
+            ShredData, ShredFlags, max_ticks_per_n_shreds,
             merkle::finish_erasure_batch_for_tests,
             merkle_tree::{
                 SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
@@ -609,6 +610,31 @@ fn test_get_slot_entries3() {
         blockstore
             .insert_shreds(shreds, false)
             .expect("Expected successful write of shreds");
+        assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), entries);
+    }
+}
+
+#[test]
+fn test_get_slot_entries_last_fec_set_capacity_boundary() {
+    // A last-in-slot component whose serialized size lands between the capacity
+    // of the final, resigned, FEC set and that of a full unsigned one is
+    // shredded into two resigned FEC sets. Verify the entries round trip
+    // through the blockstore across that boundary.
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let entry_size = wincode::serialized_size(&create_ticks(2, 0, Hash::default())).unwrap()
+        - wincode::serialized_size(&create_ticks(1, 0, Hash::default())).unwrap();
+    let fec_set_capacity = |resigned| {
+        DATA_SHREDS_PER_FEC_BLOCK as u64
+            * ShredData::capacity(PROOF_ENTRIES_FOR_32_32_BATCH, resigned).unwrap() as u64
+    };
+    let num_entries = (fec_set_capacity(true) - entry_size) / entry_size
+        ..=(fec_set_capacity(false) + entry_size) / entry_size;
+    for (slot, num_entries) in num_entries.enumerate() {
+        let slot = slot as u64 + 1;
+        let entries = create_ticks(num_entries, 0, Hash::default());
+        let shreds = entries_to_test_shreds(&entries, slot, slot - 1, true, 0);
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), entries);
     }
 }
