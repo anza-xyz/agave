@@ -48,7 +48,7 @@ impl SlotSupporters {
 
     #[inline]
     pub(crate) fn set_support_by_index(&self, index: usize, stake: Stake) {
-        let old = self.supporting_stakes[index].swap(stake, Ordering::Relaxed);
+        let old = self.supporting_stakes[index].fetch_max(stake, Ordering::Relaxed);
         if stake > old {
             self.total_support.fetch_add(stake - old, Ordering::Relaxed);
         }

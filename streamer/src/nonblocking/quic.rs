@@ -27,6 +27,7 @@ use {
         array, fmt,
         iter::repeat_with,
         net::{IpAddr, SocketAddr},
+        ops::RangeInclusive,
         pin::Pin,
         sync::{
             Arc, RwLock,
@@ -46,7 +47,7 @@ use {
         // introduce any other awaits while holding the RwLock.
         select,
         task::JoinHandle,
-        time::timeout,
+        time::{sleep, timeout},
     },
     tokio_util::{sync::CancellationToken, task::TaskTracker},
 };
@@ -93,6 +94,12 @@ pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 /// extraordinary has occured (congestion control or flow control blocking)
 const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 
+// With the previous 1232-byte transaction limit, transactions were empirically
+// observed to use at most 4 chunks.
+// With the new 4096-byte limit, a max-sized transaction normally spans 3 or 4
+// full datagrams. Use 8 to allow headroom for partially filled datagrams.
+const MAX_EXPECTED_TRANSACTION_CHUNKS: usize = 8;
+
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
 // packet metadata. We use this accumulator to avoid
@@ -101,9 +108,9 @@ const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 #[derive(Clone)]
 struct PacketAccumulator {
     pub meta: Meta,
-    // the capacity here should match or exceed the capacity of the chunks
-    // array used by handle_connection()
-    pub chunks: SmallVec<[Bytes; 4]>,
+    // The capacity here should match or exceed the capacity of the chunks array used
+    // by handle_connection().
+    pub chunks: SmallVec<[Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS]>,
     pub start_time: Instant,
 }
 
@@ -419,12 +426,25 @@ pub fn get_connection_stake(
 ) -> Option<(Pubkey, u64, u64)> {
     let pubkey = get_remote_pubkey(connection)?;
     debug!("Peer public key is {pubkey:?}");
+    let (stake, total_stake) = get_pubkey_stake(&pubkey, staked_nodes)?;
+    Some((pubkey, stake, total_stake))
+}
+
+pub(crate) fn get_pubkey_stake(
+    pubkey: &Pubkey,
+    staked_nodes: &RwLock<StakedNodes>,
+) -> Option<(u64, u64)> {
     let staked_nodes = staked_nodes.read().unwrap();
     Some((
-        pubkey,
-        staked_nodes.get_node_stake(&pubkey)?,
+        staked_nodes.get_node_stake(pubkey)?,
         staked_nodes.total_stake(),
     ))
+}
+
+fn stake_revalidation_interval(range: &RangeInclusive<Duration>) -> Duration {
+    Duration::from_millis(
+        rng().random_range(range.start().as_millis() as u64..=range.end().as_millis() as u64),
+    )
 }
 
 #[derive(Debug)]
@@ -523,8 +543,7 @@ async fn setup_connection<Q, C>(
                         from,
                         new_connection,
                         stats,
-                        server_params.wait_for_chunk_timeout,
-                        server_params.max_stream_data_bytes,
+                        server_params.clone(),
                         conn_context.clone(),
                         qos,
                         cancel_connection,
@@ -585,8 +604,7 @@ async fn handle_connection<Q, C>(
     remote_address: SocketAddr,
     connection: Connection,
     stats: Arc<StreamerStats>,
-    wait_for_chunk_timeout: Duration,
-    max_stream_data_bytes: u32,
+    server_params: Arc<QuicStreamerConfig>,
     context: C,
     qos: Arc<Q>,
     cancel: CancellationToken,
@@ -607,6 +625,10 @@ async fn handle_connection<Q, C>(
     // we only use that for some stats here, so if it gets stale during connection lifetime
     // it is not the end of the world.
     let rtt = connection.rtt();
+    let stake_revalidation_timer = sleep(stake_revalidation_interval(
+        &server_params.stake_revalidation_interval,
+    ));
+    tokio::pin!(stake_revalidation_timer);
     'conn: loop {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
@@ -619,6 +641,17 @@ async fn handle_connection<Q, C>(
                 }
             },
             _ = cancel.cancelled() => break,
+            _ = &mut stake_revalidation_timer, if peer_type.is_staked() => {
+                if !qos.has_sufficient_stake(&context) {
+                    debug!("Closing connection from {remote_address}: peer stake dropped");
+                    break;
+                }
+                stake_revalidation_timer.as_mut().reset(
+                    tokio::time::Instant::now()
+                        + stake_revalidation_interval(&server_params.stake_revalidation_interval),
+                );
+                continue;
+            },
         };
 
         qos.on_new_stream(&context).await;
@@ -634,15 +667,10 @@ async fn handle_connection<Q, C>(
         }
 
         let mut accum = PacketAccumulator::new(meta);
-        // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
-        // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
-        // transaction will have other protocol frames inserted in the middle. Empirically it's been
-        // observed that 4 is the maximum number of chunks txs get split into.
-        //
-        // Bytes values are small, so overall the array takes only 128 bytes, and the "cost" of
+        // Bytes values are small, so overall the array takes 256 bytes, and the "cost" of
         // overallocating a few bytes is negligible compared to the cost of having to do multiple
         // read_chunks() calls.
-        let mut chunks: [Bytes; 4] = array::from_fn(|_| Bytes::new());
+        let mut chunks: [Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS] = array::from_fn(|_| Bytes::new());
 
         loop {
             // Read the next chunks, waiting up to `wait_for_chunk_timeout`. If we don't get chunks
@@ -650,7 +678,7 @@ async fn handle_connection<Q, C>(
             // packet loss or the peer stops sending for whatever reason.
             let n_chunks = match tokio::select! {
                 chunk = tokio::time::timeout(
-                    wait_for_chunk_timeout,
+                    server_params.wait_for_chunk_timeout,
                     stream.read_chunks(&mut chunks)) => chunk,
 
                 // If the peer gets disconnected stop the task right away.
@@ -684,7 +712,7 @@ async fn handle_connection<Q, C>(
                 &packet_sender,
                 &stats,
                 peer_type,
-                max_stream_data_bytes,
+                server_params.max_stream_data_bytes,
             ) {
                 // The stream is finished, break out of the loop and close the stream.
                 Ok(StreamState::Finished) => {
@@ -776,6 +804,12 @@ fn handle_chunks(
             .total_packet_batches_none
             .fetch_add(1, Ordering::Relaxed);
         return Err(());
+    }
+
+    if accum.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
+        stats
+            .total_packets_at_or_above_chunk_capacity
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     // done receiving chunks
@@ -1135,14 +1169,16 @@ pub mod test {
             qos::NullStreamerCounter,
             swqos::SwQosConfig,
             testing_utilities::{
-                SpawnTestServerResult, check_multiple_streams, get_client_config,
-                make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+                SpawnTestServerResult, check_multiple_streams, create_quic_server_sockets,
+                get_client_config, make_client_endpoint, setup_quic_server,
+                spawn_stake_weighted_qos_server,
             },
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, bounded},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
+        solana_message::v1::MAX_TRANSACTION_SIZE,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
@@ -1527,6 +1563,85 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_quic_server_evicts_destaked_connection() {
+        agave_logger::setup();
+
+        let client_keypair = Keypair::new();
+        let initial_stake = 100_000;
+        let set_stake = |staked_nodes: &RwLock<StakedNodes>, stake: u64| {
+            *staked_nodes.write().unwrap() = StakedNodes::new(
+                Arc::new(HashMap::from([(client_keypair.pubkey(), stake)])),
+                HashMap::default(),
+            );
+        };
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        set_stake(&staked_nodes, initial_stake);
+
+        let sockets = create_quic_server_sockets();
+        let server_address = sockets[0].local_addr().unwrap();
+        let (sender, receiver) = bounded(1024);
+        let cancel = CancellationToken::new();
+        let SpawnNonBlockingServerResult {
+            endpoints: _,
+            stats,
+            thread,
+            max_concurrent_connections: _,
+        } = spawn_stake_weighted_qos_server(
+            "quic_streamer_test",
+            sockets,
+            &Keypair::new(),
+            sender,
+            staked_nodes.clone(),
+            QuicStreamerConfig {
+                stake_revalidation_interval: Duration::from_millis(50)..=Duration::from_millis(100),
+                ..QuicStreamerConfig::default_for_tests()
+            },
+            SwQosConfig::default(),
+            cancel.clone(),
+        )
+        .unwrap();
+
+        let connection = make_client_endpoint(&server_address, Some(&client_keypair)).await;
+        // Send one packet to make sure the connection is fully established.
+        let mut stream = connection.open_uni().await.unwrap();
+        stream.write_all(&[0u8]).await.unwrap();
+        stream.finish().unwrap();
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("packet from the staked client should be received");
+        assert_eq!(
+            stats
+                .connection_added_from_staked_peer
+                .load(Ordering::Relaxed),
+            1
+        );
+
+        // A reduction down to half of the stake cached at handshake is tolerated.
+        set_stake(&staked_nodes, initial_stake / 2);
+        assert!(
+            timeout(Duration::from_millis(500), connection.closed())
+                .await
+                .is_err(),
+            "connection should survive a reduction to half of the cached stake"
+        );
+
+        // A reduction below half of the cached stake evicts the connection.
+        set_stake(&staked_nodes, initial_stake / 2 - 1);
+        let reason = timeout(Duration::from_secs(5), connection.closed())
+            .await
+            .expect("connection should be closed after the stake dropped");
+        assert_matches!(
+            reason,
+            ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
+                if error_code == CONNECTION_CLOSE_CODE_DROPPED_ENTRY.into()
+        );
+        assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
+
+        cancel.cancel();
+        thread.await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2070,6 +2185,53 @@ pub mod test {
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
+    #[test]
+    fn test_packets_at_or_above_chunk_capacity_metric() {
+        let (sender, receiver) = bounded(1);
+        let stats = StreamerStats::default();
+        let mut accum = PacketAccumulator::new(Meta::default());
+        let chunks = (0..MAX_EXPECTED_TRANSACTION_CHUNKS)
+            .map(|byte| Bytes::from(vec![byte as u8]))
+            .collect::<Vec<_>>();
+
+        let state = handle_chunks(
+            chunks.into_iter(),
+            &mut accum,
+            Duration::from_millis(50),
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            MAX_TRANSACTION_SIZE as u32,
+        )
+        .unwrap();
+        assert!(matches!(state, StreamState::Receiving));
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            0
+        );
+
+        let state = handle_chunks(
+            std::iter::empty(),
+            &mut accum,
+            Duration::from_millis(50),
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            MAX_TRANSACTION_SIZE as u32,
+        )
+        .unwrap();
+        assert!(matches!(state, StreamState::Finished));
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert!(receiver.try_recv().is_ok());
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_client_connection_close_invalid_stream() {
         let SpawnTestServerResult {
@@ -2105,7 +2267,7 @@ pub mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_client_connection_accepts_packet_up_to_configured_max_stream_data_bytes() {
-        let max_stream_data_bytes = PACKET_DATA_SIZE as u32 * 2;
+        let max_stream_data_bytes = MAX_TRANSACTION_SIZE as u32;
         let SpawnTestServerResult {
             join_handle,
             receiver,

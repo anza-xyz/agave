@@ -1,9 +1,5 @@
 use {
-    crate::{
-        error::{LedgerToolError, Result},
-        ledger_utils::get_program_ids,
-    },
-    agave_votor::consensus_pool::certificate_builder::MAXIMUM_VALIDATORS,
+    crate::error::{LedgerToolError, Result},
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
@@ -41,14 +37,18 @@ use {
     },
     std::{
         cell::RefCell,
-        cmp,
-        collections::HashMap,
         fmt::{self, Display, Formatter},
         io::{Write, stdout},
         rc::Rc,
         sync::Arc,
     },
 };
+
+/// Maximum number of validators in a certificate.
+///
+/// There are around 1500 validators currently. For a clean power-of-two
+/// implementation, we should choose either 2048 or 4096.
+const MAXIMUM_VALIDATORS: usize = 4096;
 
 #[derive(Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -767,7 +767,7 @@ pub(crate) fn encode_confirmed_block(
         BlockEncodingOptions {
             transaction_details: TransactionDetails::Full,
             show_rewards: true,
-            max_supported_transaction_version: Some(0),
+            max_supported_transaction_version: Some(1),
         },
     )?;
 
@@ -844,7 +844,6 @@ pub fn output_slot(
     allow_dead_slots: bool,
     output_format: &OutputFormat,
     verbose_level: u64,
-    all_program_ids: &mut HashMap<Pubkey, u64>,
 ) -> Result<()> {
     let is_root = blockstore.is_root(slot);
     let is_dead = blockstore.is_dead(slot);
@@ -885,7 +884,7 @@ pub fn output_slot(
             // entries and leave the metadata fields empty
             let (components, _, _) = blockstore.get_slot_components_with_shred_info(
                 slot,
-                /*shred_start_index:*/ 0,
+                u64::from(meta.replay_fec_set_index),
                 allow_dead_slots,
             )?;
 
@@ -950,7 +949,7 @@ pub fn output_slot(
 
     if verbose_level == 0 {
         if *output_format == OutputFormat::Display {
-            // Given that Blockstore::get_complete_block_with_entries() returned Ok(_), we know
+            // Given that Blockstore::get_complete_block_with_components() returned Ok(_), we know
             // that we have a full block so meta.consumed is the number of shreds in the block
             println!(
                 "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, is_full: \
@@ -976,23 +975,10 @@ pub fn output_slot(
                 .map(|entry| entry.hash)
                 .unwrap_or_default();
 
-            let mut num_transactions = 0;
-            let mut program_ids = HashMap::new();
-
-            for transaction in block_contents.transactions() {
-                num_transactions += 1;
-                for program_id in get_program_ids(transaction) {
-                    *program_ids.entry(*program_id).or_insert(0) += 1;
-                }
-            }
+            let num_transactions = block_contents.transactions().count();
             println!(
                 "  Transactions: {num_transactions}, hashes: {num_hashes}, block_hash: {blockhash}",
             );
-            for (pubkey, count) in program_ids.iter() {
-                *all_program_ids.entry(*pubkey).or_insert(0) += count;
-            }
-            println!("  Programs:");
-            output_sorted_program_ids(program_ids);
         }
     } else if verbose_level == 2 {
         let encoded_block = EncodedConfirmedBlock::try_from(block_contents)?;
@@ -1039,7 +1025,6 @@ pub fn output_ledger(
 
     let num_slots = num_slots.unwrap_or(Slot::MAX);
     let mut num_printed = 0;
-    let mut all_program_ids = HashMap::new();
     for (slot, _slot_meta) in slot_iterator {
         if only_rooted && !blockstore.is_root(slot) {
             continue;
@@ -1054,7 +1039,6 @@ pub fn output_ledger(
             allow_dead_slots,
             &output_format,
             verbose_level,
-            &mut all_program_ids,
         ) {
             eprintln!("{err}");
         }
@@ -1066,20 +1050,8 @@ pub fn output_ledger(
 
     if output_format == OutputFormat::Json {
         stdout().write_all(b"\n]}\n")?;
-    } else {
-        println!("Summary of Programs:");
-        output_sorted_program_ids(all_program_ids);
     }
     Ok(())
-}
-
-pub fn output_sorted_program_ids(program_ids: HashMap<Pubkey, u64>) {
-    let mut program_ids_array: Vec<_> = program_ids.into_iter().collect();
-    // Sort descending by count of program id
-    program_ids_array.sort_by_key(|b| cmp::Reverse(b.1));
-    for (program_id, count) in program_ids_array.iter() {
-        println!("{:<44}: {}", program_id.to_string(), count);
-    }
 }
 
 /// A type to facilitate streaming account information to an output destination

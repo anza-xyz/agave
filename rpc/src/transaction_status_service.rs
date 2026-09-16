@@ -141,7 +141,7 @@ impl TransactionStatusService {
                 work_id,
             )) => {
                 let mut status_and_memos_batch = if enable_rpc_transaction_history {
-                    Some(blockstore.get_write_batch()?)
+                    Some(blockstore.get_write_batch())
                 } else {
                     None
                 };
@@ -351,7 +351,7 @@ pub(crate) mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::bounded,
         dashmap::DashMap,
-        solana_account::state_traits::StateMut,
+        solana_account::state_traits::StateMutWincode as _,
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },

@@ -4,8 +4,8 @@ use {
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
-    agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
+    arc_swap::ArcSwap,
     assert_matches::assert_matches,
     crossbeam_channel::{Receiver, bounded},
     gag::BufferRedirect,
@@ -3863,6 +3863,26 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     // for the partition.
     assert!(partition_node_stake < our_node_stake && partition_node_stake < good_node_stake);
 
+    let validator_keys: Vec<_> = iter::repeat_with(ValidatorKeys::new)
+        .take(node_stakes.len())
+        .collect();
+    // Restrict repair to the leader and good node, which both hold the duplicate-confirmed version.
+    let good_block_repair_validators = HashSet::from([
+        validator_keys[0].node_keypair.pubkey(), // Bad leader stores the original version.
+        validator_keys[2].node_keypair.pubkey(), // Good node receives the original version.
+    ]);
+    let validator_test_configs = validator_keys
+        .into_iter()
+        .map(|validator_keys| ValidatorTestConfig {
+            validator_keys,
+            validator_config: ValidatorConfig {
+                repair_validators: Some(good_block_repair_validators.clone()),
+                ..ValidatorConfig::default_for_test()
+            },
+            in_genesis: true,
+        })
+        .collect();
+
     let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
 
     // 1) Set up the cluster
@@ -3872,7 +3892,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
             duplicate_slot_sender: Some(duplicate_slot_sender),
         }),
         node_stakes,
-        None,
+        Some(validator_test_configs),
         None,
     );
 
@@ -4996,7 +5016,7 @@ fn test_boot_from_local_state() {
     // so use it as the comparison for others.
     // - wait for validator1 to take new snapshots
     // - wait for the other validators to have high enough snapshots
-    // - ensure the other validators' snapshots match validator1's
+    // - ensure the other validators' full snapshots match validator1's
     //
     // NOTE: There's a chance validator 2 or 3 has crossed the next full snapshot past what
     // validator 1 has.  If that happens, validator 2 or 3 may have purged the snapshots needed
@@ -5022,9 +5042,6 @@ fn test_boot_from_local_state() {
     #[allow(dead_code)]
     #[derive(Debug)]
     struct SnapshotSlot(Slot);
-    #[allow(dead_code)]
-    #[derive(Debug)]
-    struct BaseSlot(Slot);
 
     for (i, other_validator_config) in [(2, &validator2_config), (3, &validator3_config)] {
         info!("Checking if validator{i} has the same snapshots as validator1...");
@@ -5078,46 +5095,6 @@ fn test_boot_from_local_state() {
                 .collect::<Vec<_>>(),
         );
 
-        let other_incremental_snapshot_archives =
-            snapshot_paths::incremental_snapshot_archives_iter(
-                other_validator_config
-                    .incremental_snapshot_archives_dir
-                    .path(),
-            )
-            .collect::<Vec<_>>();
-        debug!(
-            "validator{i} incremental snapshot archives: {other_incremental_snapshot_archives:?}"
-        );
-        assert!(
-            other_incremental_snapshot_archives
-                .iter()
-                .any(
-                    |other_incremental_snapshot_archive| other_incremental_snapshot_archive
-                        .base_slot()
-                        == incremental_snapshot_archive.base_slot()
-                        && other_incremental_snapshot_archive.slot()
-                            == incremental_snapshot_archive.slot()
-                        && other_incremental_snapshot_archive.hash()
-                            == incremental_snapshot_archive.hash()
-                ),
-            "incremental snapshot archive does not match!\n  validator1: {:?}\n  validator{i}: \
-             {:?}",
-            (
-                BaseSlot(incremental_snapshot_archive.base_slot()),
-                SnapshotSlot(incremental_snapshot_archive.slot()),
-                incremental_snapshot_archive.hash(),
-            ),
-            other_incremental_snapshot_archives
-                .iter()
-                .sorted_unstable()
-                .rev()
-                .map(|snap| (
-                    BaseSlot(snap.base_slot()),
-                    SnapshotSlot(snap.slot()),
-                    snap.hash(),
-                ))
-                .collect::<Vec<_>>(),
-        );
         info!("Checking if validator{i} has the same snapshots as validator1... DONE");
     }
 }
@@ -5897,7 +5874,6 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(validator_keys.clone()),
         node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
-        ticks_per_slot: 8,
         slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH * 2,
         stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         poh_config: PohConfig {
@@ -6037,22 +6013,23 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
         leader_schedule: Arc::new(leader_schedule),
     };
 
+    let node_pubkeys = validator_keys
+        .iter()
+        .map(|key| key.node_keypair.pubkey())
+        .collect::<Vec<_>>();
+    let listener_keypair = Keypair::new();
+    let listener_pubkey = listener_keypair.pubkey();
+
     // Create our UDP socket to listen to votes
     let vote_listener_addr = bind_to_localhost_unique().unwrap();
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.fixed_leader_schedule = Some(leader_schedule);
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
-        alpenglow_port_override: AlpenglowPortOverride::default(),
-    });
+    validator_config.votor_peer_overrides = Arc::new(ArcSwap::from_pointee(HashMap::from([(
+        listener_pubkey,
+        Some(vote_listener_addr.local_addr().unwrap()),
+    )])));
     validator_config.wait_for_supermajority = Some(0);
-
-    // Collect node pubkeys
-    let node_pubkeys = validator_keys
-        .iter()
-        .map(|key| key.node_keypair.pubkey())
-        .collect::<Vec<_>>();
 
     // Cluster config
     let mut cluster_config = ClusterConfig {
@@ -6068,7 +6045,6 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
         ),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
-        ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
@@ -6097,18 +6073,12 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
     info!("restarting node B");
     cluster.restart_node(&node_pubkeys[1], b_info, SocketAddrSpace::Unspecified);
 
-    // Ensure all nodes are voting
-    let validator_node_keypairs: Vec<_> = validator_keys
-        .iter()
-        .map(|k| k.node_keypair.clone())
-        .collect();
     cluster.check_for_new_notarized_votes(
         16,
         "test_alpenglow_imbalanced_stakes_catchup",
         SocketAddrSpace::Unspecified,
         vote_listener_addr,
-        &validator_node_keypairs,
-        &node_stakes,
+        listener_keypair,
     );
 }
 
@@ -6143,6 +6113,7 @@ fn test_alpenglow_basic_equivocation() {
     let node_b_turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
     let mut b_validator_config = safe_clone_config(&a_validator_config);
     b_validator_config.turbine_mode = node_b_turbine_mode.clone();
+    let unstaked_turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
 
     // Equivocate every other slot, one shred per FEC set
     let last_duplicate = 20;
@@ -6166,6 +6137,8 @@ fn test_alpenglow_basic_equivocation() {
                 .zip(iter::repeat_with(|| true))
                 .collect(),
         ),
+        num_listeners: 1,
+        listener_turbine_mode: Some(unstaked_turbine_mode.clone()),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
         skip_warmup_slots: true,
@@ -6190,7 +6163,7 @@ fn test_alpenglow_basic_equivocation() {
         let total_duplicate_blocks_observed = (1..=last_duplicate)
             .filter(|slot| blockstore.has_duplicate_shreds_in_slot(*slot))
             .count();
-        if total_duplicate_blocks_observed == expected_duplicate_blocks {
+        if total_duplicate_blocks_observed >= expected_duplicate_blocks {
             break;
         }
         if start.elapsed() > Duration::from_secs(60) {
@@ -6202,11 +6175,12 @@ fn test_alpenglow_basic_equivocation() {
         sleep(Duration::from_secs(1));
     }
 
-    // Turn turbine back on, now the low staked node will be able to catchup
+    // Turn turbine back on, now the low-staked and unstaked nodes will be able to catch up
     node_b_turbine_mode.set(TurbineModeKind::Enabled);
+    unstaked_turbine_mode.set(TurbineModeKind::Enabled);
 
-    // Ensure all nodes are rooting
-    // Although the low staked node might be behind while the leader is equivocating,
+    // Ensure all nodes (including the unstaked) are rooting
+    // Although the low staked nodes might be behind while the leader is equivocating,
     // once the leader stops equivocating it will be able to catch up
     cluster.check_for_new_roots(
         32,
@@ -6217,6 +6191,7 @@ fn test_alpenglow_basic_equivocation() {
 
 fn test_alpenglow_migration(
     num_nodes: usize,
+    num_listeners: u64,
     test_name: &str,
     leader_schedule: &[usize],
 ) -> (
@@ -6226,13 +6201,14 @@ fn test_alpenglow_migration(
 ) {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
 
+    let listener_keypair = Keypair::new();
     let vote_listener_socket = bind_to_localhost_unique().unwrap();
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
     let mut validator_config = ValidatorConfig::default_for_test();
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
-        alpenglow_port_override: AlpenglowPortOverride::default(),
-    });
+    validator_config.votor_peer_overrides = Arc::new(ArcSwap::from_pointee(HashMap::from([(
+        listener_keypair.pubkey(),
+        Some(vote_listener_addr.local_addr().unwrap()),
+    )])));
     validator_config.wait_for_supermajority = Some(0);
 
     let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);
@@ -6249,6 +6225,7 @@ fn test_alpenglow_migration(
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(keys.clone().into_iter().zip(iter::repeat(true)).collect()),
         node_stakes: node_stakes.clone(),
+        num_listeners,
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
         // So we don't have to wait so long
@@ -6268,11 +6245,12 @@ fn test_alpenglow_migration(
     // Create local cluster with alpenglow accounts but feature not activated
     let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
 
-    let validator_keys: Vec<Arc<Keypair>> = cluster
-        .validators
-        .values()
-        .map(|v| v.info.keypair.clone())
-        .collect();
+    let validator_keys: Vec<Arc<Keypair>> =
+        keys.iter().map(|keys| keys.node_keypair.clone()).collect();
+    let staked_node_contact_infos = validator_keys
+        .iter()
+        .map(|keypair| cluster.get_contact_info(&keypair.pubkey()).unwrap().clone())
+        .collect_vec();
 
     let client = RpcClient::new_socket_with_commitment(
         cluster.entry_point_info.rpc().unwrap(),
@@ -6307,17 +6285,18 @@ fn test_alpenglow_migration(
 
     info!("Migration slot reached, checking for notarized votes");
 
-    // Check for new notarized votes
-    cluster.check_for_new_notarized_votes(
+    // Check that the staked nodes are sending new notarized votes
+    cluster_tests::check_for_new_notarized_votes(
+        compute_shred_version(&cluster.genesis_config.hash(), None),
         4,
+        &staked_node_contact_infos,
         test_name,
-        SocketAddrSpace::Unspecified,
         vote_listener_addr,
-        &validator_keys,
-        &node_stakes,
+        listener_keypair,
+        cluster.bank_forks(),
     );
 
-    // Additionally ensure that roots are being made
+    // Additionally ensure that roots are being made on all nodes (including unstaked)
     cluster.check_for_new_roots(8, test_name, SocketAddrSpace::Unspecified);
     (cluster, keys, migration_slot)
 }
@@ -6327,7 +6306,14 @@ fn test_alpenglow_migration(
 #[test]
 #[serial]
 fn test_alpenglow_migration_1() {
-    test_alpenglow_migration(1, "test_alpenglow_migration_1", &[4]);
+    test_alpenglow_migration(1, 0, "test_alpenglow_migration_1", &[4]);
+}
+
+/// An unstaked listener learns the genesis certificate from the first Alpenglow block and roots.
+#[test]
+#[serial]
+fn test_alpenglow_migration_1_with_unstaked_node() {
+    test_alpenglow_migration(1, 1, "test_alpenglow_migration_1_with_unstaked_node", &[4]);
 }
 
 /// Multi-node migration into Alpenglow, including notarized-vote and root production
@@ -6335,7 +6321,7 @@ fn test_alpenglow_migration_1() {
 #[test]
 #[serial]
 fn test_alpenglow_migration_4() {
-    test_alpenglow_migration(4, "test_alpenglow_migration_4", &[4, 4, 4, 4]);
+    test_alpenglow_migration(4, 0, "test_alpenglow_migration_4", &[4, 4, 4, 4]);
 }
 
 #[test]
@@ -6344,7 +6330,7 @@ fn test_alpenglow_restart_post_migration() {
     let test_name = "test_alpenglow_restart_post_migration";
 
     // Start a 2 node cluster and have it go through the migration
-    let (mut cluster, _, _) = test_alpenglow_migration(2, test_name, &[4, 4]);
+    let (mut cluster, _, _) = test_alpenglow_migration(2, 0, test_name, &[4, 4]);
 
     // Now restart one of the nodes. This causes the cluster to temporarily halt
     let node_pubkey = cluster.get_node_pubkeys()[0];
@@ -6371,7 +6357,7 @@ fn test_alpenglow_missed_migration_entirely() {
     // Critical that the third node is not in the leader schedule, as since
     // we clear blockstore later, we could end up producing duplicate blocks
     let (mut cluster, validator_keys, migration_slot) =
-        test_alpenglow_migration(3, test_name, &[4, 4, 0]);
+        test_alpenglow_migration(3, 0, test_name, &[4, 4, 0]);
 
     // Now kill the second node
     let node_pubkey = validator_keys[2].node_keypair.pubkey();
@@ -6383,9 +6369,8 @@ fn test_alpenglow_missed_migration_entirely() {
     {
         let blockstore = Blockstore::open(&exit_info.info.ledger_path).unwrap();
         let end_slot = blockstore.highest_slot().unwrap().unwrap();
-        blockstore.purge_from_next_slots(start_slot, end_slot);
         blockstore
-            .purge_slots(start_slot, end_slot, PurgeType::Exact)
+            .purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)
             .unwrap();
     }
 

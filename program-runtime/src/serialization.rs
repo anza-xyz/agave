@@ -24,18 +24,30 @@ pub fn modify_memory_region_of_account(
     account: &mut BorrowedInstructionAccount<'_, '_>,
     region: &mut MemoryRegion,
 ) {
+    let data_ptr = region.host_buffer().ptr() as *mut u8;
+    let new_buffer = std::ptr::slice_from_raw_parts_mut(data_ptr, account.get_data().len());
     if account.can_data_be_changed().is_ok() {
         unsafe {
             // SAFETY:
-            // Contract from `HostBuffer::mutable`: This host buffer must have been initially
-            // constructed with a mutable pointer.
-            // Evidence: this region must be pointing to a serialized data buffer which is known to
-            // be mutable.
-            region.redirect(region.host_buffer().mutable());
+            // Contract from `MemoryRegion::redirect`: The memory pointed to by the MemoryRegions
+            // must point to a valid object live for the duration of this MemoryMapping.
+            //
+            // TODO(nagisa): Local reasoning for this contract is infeasible. In particular for the
+            // `serialization.rs` code it is pretty easy to see that the regions passed in will
+            // always be larger than `account.get_data().len()`. However for `cpi.rs` callsite this
+            // is not as easy to prove and relies on careful coordination between any code that
+            // might increase the account data buffer length.
+            region.redirect(new_buffer);
         }
         region.access_violation_handler_payload = Some(account.get_index_in_transaction());
     } else {
-        region.make_immutable();
+        unsafe {
+            // SAFETY:
+            //
+            // Contract from `MemoryRegion::redirect`: same as for the call above.
+            // Evidence: same as for the call above.
+            region.redirect(new_buffer.cast_const());
+        }
         region.access_violation_handler_payload = None;
     }
 }
@@ -696,7 +708,7 @@ mod tests {
         solana_program_entrypoint::deserialize,
         solana_rent::Rent,
         solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
-        solana_sdk_ids::bpf_loader,
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
             MAX_ACCOUNTS_PER_TRANSACTION, instruction_accounts::InstructionAccount,
@@ -799,6 +811,8 @@ mod tests {
                     instruction_accounts.push(instruction_accounts.last().cloned().unwrap());
                 }
                 let instruction_data = vec![];
+                let num_transaction_accounts =
+                    transaction_accounts.len().min(MAX_ACCOUNTS_PER_TRANSACTION);
 
                 with_mock_invoke_context!(
                     invoke_context,
@@ -809,7 +823,7 @@ mod tests {
                     // Special case implementation of configure_next_instruction_for_tests()
                     // which avoids the overflow when constructing the dedup_map
                     // by simply not filling it.
-                    let dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+                    let dedup_map = vec![u16::MAX; num_transaction_accounts];
                     invoke_context
                         .transaction_context
                         .configure_instruction_at_index(
@@ -1695,5 +1709,58 @@ mod tests {
                 .len(),
             remaining_allowed_growth,
         );
+    }
+
+    #[test]
+    fn test_regression_initial_serialized_account_region_does_not_include_resize_affordance() {
+        let program_id = Pubkey::new_unique();
+        let transaction_accounts = vec![
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(0, 4, &program_id),
+            ),
+            (
+                solana_pubkey::new_rand(),
+                AccountSharedData::from(Account {
+                    lamports: 0,
+                    data: b"agave".into(),
+                    owner: bpf_loader_upgradeable::id(),
+                    executable: false,
+                    rent_epoch: 0,
+                }),
+            ),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        invoke_context.push().unwrap();
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let (_serialized, regions, accounts_metadata, _instruction_data_offset) =
+            crate::serialization::serialize_parameters(
+                &instruction_context,
+                true,  // virtual_address_space_adjustments
+                false, // account_data_direct_mapping
+                false, // direct_account_pointers_in_program_input
+            )
+            .unwrap();
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping =
+            unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+        let account_metadata = &accounts_metadata[0];
+        let vm_data_addr = account_metadata.vm_data_addr;
+        let (_region_index, region) = memory_mapping.find_region(vm_data_addr).unwrap();
+        assert_eq!(region.len(), 5);
     }
 }

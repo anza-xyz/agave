@@ -68,26 +68,34 @@ for at least one full minor version before removal.
 
 ### Create the new branch
 
-#### Cutting a branch without promoting channels
+#### How channels are resolved
 
-By default, pushing a new `vX.Y` head auto-promotes it to `BETA_CHANNEL` and
-demotes the prior beta to stable, because `ci/channel-info.sh` picks the top-2
-`vX.Y` heads. To cut a branch without that promotion (e.g. to begin backports
-while keeping the current beta in place), set the pins in
-`ci/channel-overrides` on master *before* pushing the new branch:
+`cargo xtask channel-info` derives the channels from each `vX.Y` branch's
+`workspace.package.version`. Heads are sorted descending, and the release stage
+of the top head decides the promotion:
+
+* top head is `-alpha` — it is not yet a channel; beta and stable stay at the
+  prior pair
+* otherwise — the top head is beta and the one below it is stable
+
+So cutting a branch does not promote it. A freshly-cut `vX.Y` is at
+`X.Y.0-alpha.K`, which means backports can begin while the current beta is held
+in place, with no manual step. Promotion happens when the release engineer bumps
+that branch to `-beta`.
+
+#### Channel pin overrides
+
+`ci/channel-overrides` forces the channels regardless of the versions on the
+branches. It is an emergency escape hatch, for when auto-resolution has to be
+overridden; the normal branch-cut flow above does not need it.
 
 ```
-# current beta, to be held
 PINNED_BETA_CHANNEL=vX.Y
-# current stable, to be held
 PINNED_STABLE_CHANNEL=vX.Y-1
 ```
 
 Only the file that lives on master is used; every branch's CI fetches it from there, so no
-backport is needed.
-
-When ready to promote, open a PR on master that clears or updates the pins.
-Then proceed with the usual "Miscellaneous Clean up" steps below.
+backport is needed. To release the override, open a PR on master that clears the pins.
 
 #### Steps
 
@@ -102,9 +110,11 @@ Then proceed with the usual "Miscellaneous Clean up" steps below.
     git checkout -b <branchname> <the last commit right before the version bump commit>
     git push -u upstream <branchname>
     ```
-1. Confirm that your freshly cut release branch is shown as `BETA_CHANNEL` and the previous release branch as `STABLE_CHANNEL`:
+1. Confirm the resolved channels. The freshly cut branch is at `-alpha`, so
+   `BETA_CHANNEL` and `STABLE_CHANNEL` should both be unchanged from before the
+   cut; the new branch becomes beta once its version is bumped to `-beta`:
     ```
-    ci/channel-info.sh
+    cargo xtask channel-info
     ```
    Note: if `ci/channel-overrides` on master has `PINNED_BETA_CHANNEL` /
    `PINNED_STABLE_CHANNEL` set, those values override auto-detect everywhere.

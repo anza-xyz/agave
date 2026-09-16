@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_notify_account_restore_from_snapshot() {
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn test_notify_account_at_accounts_update() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -190,7 +190,7 @@ mod tests {
         let slot0 = 0;
         let bank_id0 = 100;
         let mut ancestors = Ancestors::from(vec![slot0]);
-        accounts.store_accounts_seq(
+        accounts.store_accounts(
             (slot0, &[(&key1, &account1)][..]),
             bank_id0,
             None,
@@ -201,7 +201,7 @@ mod tests {
         let account2_lamports: u64 = 200;
         let account2 =
             AccountSharedData::new(account2_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_accounts_seq(
+        accounts.store_accounts(
             (slot0, &[(&key2, &account2)][..]),
             bank_id0,
             None,
@@ -213,7 +213,7 @@ mod tests {
         let bank_id1 = 101;
         ancestors.insert(slot1);
         let account1 = AccountSharedData::new(account1_lamports2, 1, account1.owner());
-        accounts.store_accounts_seq(
+        accounts.store_accounts(
             (slot1, &[(&key1, &account1)][..]),
             bank_id1,
             None,
@@ -224,7 +224,7 @@ mod tests {
         let account3_lamports: u64 = 300;
         let account3 =
             AccountSharedData::new(account3_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_accounts_seq(
+        accounts.store_accounts(
             (slot1, &[(&key3, &account3)][..]),
             bank_id1,
             None,
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_notify_closed_account() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -281,13 +281,13 @@ mod tests {
 
         let slot_open = 6;
         let slot_close = slot_open + 1;
-        accounts.store_accounts_seq(
+        accounts.store_accounts(
             (slot_open, [(&address, &account_open)].as_slice()),
             106,
             None,
             &Ancestors::from(vec![slot_open]),
         );
-        accounts.store_accounts_seq(
+        accounts.store_accounts(
             (slot_close, [(&address, &account_close)].as_slice()),
             107,
             None,

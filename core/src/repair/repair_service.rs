@@ -17,7 +17,7 @@ use {
             },
         },
     },
-    agave_votor_messages::{VerifiedVoterSlotsReceiver, migration::MigrationStatus},
+    agave_votor_messages::{VerifiedVotorSlotsMessage, migration::MigrationStatus},
     ahash::AHashMap,
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
@@ -30,6 +30,7 @@ use {
     solana_keypair::Signer,
     solana_ledger::{
         blockstore::Blockstore,
+        blockstore_db::DBPinnableSlice,
         blockstore_meta::{BlockLocation, SlotMetaRepair},
         shred,
     },
@@ -557,7 +558,7 @@ impl Default for RepairSlotRange {
 }
 
 struct RepairChannels {
-    verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
+    verified_voter_slots_receiver: CrossbeamReceiver<VerifiedVotorSlotsMessage>,
     dumped_slots_receiver: DumpedSlotsReceiver,
     popular_pruned_forks_sender: PopularPrunedForksSender,
 }
@@ -569,7 +570,7 @@ pub struct RepairServiceChannels {
 
 impl RepairServiceChannels {
     pub fn new(
-        verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
+        verified_voter_slots_receiver: CrossbeamReceiver<VerifiedVotorSlotsMessage>,
         dumped_slots_receiver: DumpedSlotsReceiver,
         popular_pruned_forks_sender: PopularPrunedForksSender,
         ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
@@ -655,7 +656,7 @@ impl RepairService {
         repair_weight: &mut RepairWeight,
         popular_pruned_forks_requests: &mut HashSet<Slot>,
         dumped_slots_receiver: &DumpedSlotsReceiver,
-        verified_voter_slots_receiver: &VerifiedVoterSlotsReceiver,
+        verified_voter_slots_receiver: &CrossbeamReceiver<VerifiedVotorSlotsMessage>,
         migration_status: &MigrationStatus,
         repair_metrics: &mut RepairMetrics,
     ) {
@@ -703,17 +704,19 @@ impl RepairService {
 
         // Add new votes to the weighting heuristic
         let mut get_votes_us = Measure::start("get_votes_us");
-        let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
-        verified_voter_slots_receiver
-            .try_iter()
-            .for_each(|(vote_pubkey, vote_slots)| {
-                for slot in vote_slots {
-                    slot_to_vote_pubkeys
-                        .entry(slot)
-                        .or_default()
-                        .push(vote_pubkey);
+        let mut slot_to_vote_pubkeys = HashMap::new();
+        verified_voter_slots_receiver.try_iter().for_each(|map| {
+            for (slot, mut pubkeys) in map {
+                match slot_to_vote_pubkeys.entry(slot) {
+                    Entry::Vacant(e) => {
+                        e.insert(pubkeys);
+                    }
+                    Entry::Occupied(e) => {
+                        e.into_mut().append(&mut pubkeys);
+                    }
                 }
-            });
+            }
+        });
         get_votes_us.stop();
 
         let mut add_voters_us = Measure::start("add_voters_us");
@@ -731,8 +734,9 @@ impl RepairService {
         repair_metrics.timing.add_voters_us += add_voters_us.as_us();
     }
 
-    fn identify_repairs(
-        blockstore: &Blockstore,
+    fn identify_repairs<'db>(
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         root_bank: Arc<Bank>,
         _repair_info: &RepairInfo,
         repair_weight: &mut RepairWeight,
@@ -751,6 +755,7 @@ impl RepairService {
 
         repair_weight.get_best_weighted_repairs(
             blockstore,
+            pinnable_slice,
             root_bank.epoch_stakes_map(),
             root_bank.epoch_schedule(),
             MAX_ORPHANS,
@@ -838,15 +843,11 @@ impl RepairService {
                 }
             } else {
                 let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
-                match batch_send(repair_socket, batch) {
-                    Ok(()) => (),
-                    Err(SendPktsError::IoError(err, num_failed)) => {
-                        error!(
-                            "{} batch_send failed to send {num_failed}/{num_pkts} packets first \
-                             error {err:?}",
-                            repair_info.cluster_info.id()
-                        );
-                    }
+                if let Err(SendPktsError::IoError(err)) = batch_send(repair_socket, batch) {
+                    error!(
+                        "{} batch_send failed to send a batch of {num_pkts} packets: {err:?}",
+                        repair_info.cluster_info.id()
+                    );
                 }
             }
         }
@@ -856,8 +857,9 @@ impl RepairService {
         repair_metrics.timing.send_batch_us += send_batch_us.as_us();
     }
 
-    fn run_repair_iteration(
-        blockstore: &Blockstore,
+    fn run_repair_iteration<'db>(
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         repair_channels: &RepairChannels,
         repair_info: &RepairInfo,
         repair_tracker: &mut RepairTracker,
@@ -896,6 +898,7 @@ impl RepairService {
 
         let repairs = Self::identify_repairs(
             blockstore,
+            pinnable_slice,
             root_bank.clone(),
             repair_info,
             repair_weight,
@@ -962,9 +965,11 @@ impl RepairService {
             repair_eligibility: RepairEligibility::default(),
         };
 
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
         while !exit.load(Ordering::Relaxed) {
             Self::run_repair_iteration(
                 blockstore.as_ref(),
+                &mut pinnable_slice,
                 &repair_channels,
                 &repair_info,
                 &mut repair_tracker,
@@ -1028,8 +1033,9 @@ impl RepairService {
     }
 
     /// Repairs any fork starting at the input slot (uses blockstore for fork info)
-    pub fn generate_repairs_for_fork(
-        blockstore: &Blockstore,
+    pub fn generate_repairs_for_fork<'db>(
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         repairs: &mut Vec<ShredRepairType>,
         max_repairs: usize,
         slot: Slot,
@@ -1039,7 +1045,7 @@ impl RepairService {
         let mut pending_slots = vec![slot];
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
             let slot = pending_slots.pop().unwrap();
-            if let Some(slot_meta) = blockstore.meta_repair(slot).unwrap() {
+            if let Some(slot_meta) = blockstore.meta_repair_into(slot, pinnable_slice).unwrap() {
                 let new_repairs = Self::generate_repairs_for_slot(
                     blockstore,
                     slot,
@@ -1074,7 +1080,9 @@ impl RepairService {
             .filter_map(|(pubkey, stake)| {
                 let peer_repair_addr = cluster_info
                     .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
-                if let Some(Some(peer_repair_addr)) = peer_repair_addr {
+                if let Some(Some(peer_repair_addr)) = peer_repair_addr
+                    && cluster_info.socket_addr_space().check(&peer_repair_addr)
+                {
                     trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
                     Some((
                         *pubkey,
@@ -1120,7 +1128,9 @@ impl RepairService {
         if let Some(pubkey) = pubkey {
             let peer_repair_addr =
                 cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
-            if let Some(Some(peer_repair_addr)) = peer_repair_addr {
+            if let Some(Some(peer_repair_addr)) = peer_repair_addr
+                && cluster_info.socket_addr_space().check(&peer_repair_addr)
+            {
                 trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
                 repair_peers.push((pubkey, peer_repair_addr));
             }
@@ -1182,10 +1192,10 @@ impl RepairService {
 
         // Send packet batch
         match batch_send(repair_socket, reqs) {
-            Ok(()) => {
+            Ok(_) => {
                 debug!("successfully sent repair request to {pubkey} / {address}!");
             }
-            Err(SendPktsError::IoError(err, _num_failed)) => {
+            Err(SendPktsError::IoError(err)) => {
                 error!("batch_send failed to send packet - error = {err:?}");
             }
         }
@@ -1421,7 +1431,7 @@ mod test {
             shred::max_ticks_per_n_shreds,
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_perf::packet::PacketRef,
+        solana_perf::packet::{BytesPacket, PACKET_DATA_SIZE},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -1458,11 +1468,12 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_packet::Packet::default(); 1];
-        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
-        let packet = &packets[0];
-
-        let remote_request = PacketRef::from(packet).to_bytes_packet();
+        let mut buffer = vec![0u8; PACKET_DATA_SIZE];
+        let (nrecv, from) = reader
+            .recv_from(&mut buffer)
+            .expect("should receive the request");
+        buffer.truncate(nrecv);
+        let remote_request = BytesPacket::from_bytes(Some(&from), buffer);
         // Deserialize and check the request
         let deserialized =
             serve_repair::deserialize_request::<RepairProtocol>(&remote_request).unwrap();
@@ -1483,6 +1494,7 @@ mod test {
     pub fn test_repair_orphan() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
 
         // Create some orphan slots
         let (mut shreds, _) = make_slot_entries(1, 0, 1);
@@ -1493,6 +1505,7 @@ mod test {
         assert_eq!(
             repair_weight.get_best_weighted_repairs(
                 &blockstore,
+                &mut pinnable_slice,
                 &HashMap::new(),
                 &EpochSchedule::default(),
                 MAX_ORPHANS,
@@ -1514,6 +1527,7 @@ mod test {
     pub fn test_repair_empty_slot() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
 
         let (shreds, _) = make_slot_entries(2, 0, 1);
 
@@ -1526,6 +1540,7 @@ mod test {
         assert_eq!(
             repair_weight.get_best_weighted_repairs(
                 &blockstore,
+                &mut pinnable_slice,
                 &HashMap::new(),
                 &EpochSchedule::default(),
                 MAX_ORPHANS,
@@ -1544,6 +1559,7 @@ mod test {
     pub fn test_generate_repairs() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
 
         let nth = 3;
         let num_slots = 2;
@@ -1582,6 +1598,7 @@ mod test {
         assert_eq!(
             repair_weight.get_best_weighted_repairs(
                 &blockstore,
+                &mut pinnable_slice,
                 &HashMap::new(),
                 &EpochSchedule::default(),
                 MAX_ORPHANS,
@@ -1599,6 +1616,7 @@ mod test {
         assert_eq!(
             repair_weight.get_best_weighted_repairs(
                 &blockstore,
+                &mut pinnable_slice,
                 &HashMap::new(),
                 &EpochSchedule::default(),
                 MAX_ORPHANS,
@@ -1615,6 +1633,7 @@ mod test {
         assert_eq!(
             repair_weight.get_best_weighted_repairs(
                 &blockstore,
+                &mut pinnable_slice,
                 &HashMap::new(),
                 &EpochSchedule::default(),
                 MAX_ORPHANS,
@@ -1730,6 +1749,7 @@ mod test {
     pub fn test_generate_highest_repair() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
 
         let num_entries_per_slot = 100;
 
@@ -1755,6 +1775,7 @@ mod test {
         assert_eq!(
             repair_weight.get_best_weighted_repairs(
                 &blockstore,
+                &mut pinnable_slice,
                 &HashMap::new(),
                 &EpochSchedule::default(),
                 MAX_ORPHANS,
@@ -1772,6 +1793,7 @@ mod test {
         assert_eq!(
             repair_weight.get_best_weighted_repairs(
                 &blockstore,
+                &mut pinnable_slice,
                 &HashMap::new(),
                 &EpochSchedule::default(),
                 MAX_ORPHANS,

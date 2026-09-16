@@ -2,11 +2,7 @@
 
 use {
     crate::{
-        consensus_message::Block,
-        fraction::Fraction,
-        migration::GENESIS_VOTE_THRESHOLD,
-        vote::{Vote, VoteType},
-        wire::get_vote_payload_to_sign,
+        consensus_message::Block, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD, vote::Vote,
     },
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
@@ -89,6 +85,18 @@ pub enum CertificateType {
 }
 
 impl CertificateType {
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Returns a notar certificate type with the given slot and unique block id for test purposes.
+    pub fn new_unique_notar(slot: Slot) -> Self {
+        Self::Notarize(Block::new_unique(slot))
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Returns a notar fallback certificate type with the given slot and unique block id for test purposes.
+    pub fn new_unique_notar_fallback(slot: Slot) -> Self {
+        Self::NotarizeFallback(Block::new_unique(slot))
+    }
+
     /// Get the slot of the certificate
     pub fn slot(&self) -> Slot {
         match self {
@@ -101,37 +109,15 @@ impl CertificateType {
         }
     }
 
-    /// Returns the serialized vote payloads needed to verify signature on the cert
-    pub fn get_vote_payload(&self, shred_version: u16) -> (Vec<u8>, Option<Vec<u8>>) {
+    /// Returns the threshold needed to complete the cert of this type.
+    pub const fn threshold(&self) -> Fraction {
         match self {
-            Self::Notarize(block) | Self::FinalizeFast(block) => {
-                let vote = Vote::new_notarization_vote(*block);
-                (get_vote_payload_to_sign(vote, shred_version), None)
-            }
-            Self::Genesis(block) => {
-                let vote = Vote::new_genesis_vote(*block);
-                (get_vote_payload_to_sign(vote, shred_version), None)
-            }
-            Self::Finalize(slot) => {
-                let vote = Vote::new_finalization_vote(*slot);
-                (get_vote_payload_to_sign(vote, shred_version), None)
-            }
-            Self::Skip(slot) => {
-                let skip_vote = Vote::new_skip_vote(*slot);
-                let skip_fallback_vote = Vote::new_skip_fallback_vote(*slot);
-                (
-                    get_vote_payload_to_sign(skip_vote, shred_version),
-                    Some(get_vote_payload_to_sign(skip_fallback_vote, shred_version)),
-                )
-            }
-            Self::NotarizeFallback(block) => {
-                let notar_vote = Vote::new_notarization_vote(*block);
-                let notar_fallback_vote = Vote::new_notarization_fallback_vote(*block);
-                (
-                    get_vote_payload_to_sign(notar_vote, shred_version),
-                    Some(get_vote_payload_to_sign(notar_fallback_vote, shred_version)),
-                )
-            }
+            Self::Finalize(_) => Fraction::from_percentage(60),
+            Self::Skip(_) => Fraction::from_percentage(60),
+            Self::Notarize(_) => Fraction::from_percentage(60),
+            Self::NotarizeFallback(_) => Fraction::from_percentage(60),
+            Self::FinalizeFast(_) => Fraction::from_percentage(80),
+            Self::Genesis(_) => GENESIS_VOTE_THRESHOLD,
         }
     }
 
@@ -226,29 +212,6 @@ impl CertificateType {
             }
             // Other certificate types do not use Base3 encoding.
             _ => None,
-        }
-    }
-
-    /// Returns the stake fraction required for certificate completion and the
-    /// `VoteType`s that contribute to this certificate.
-    ///
-    /// Must be in sync with `Vote::to_cert_types`
-    pub const fn limits_and_vote_types(&self) -> (Fraction, &'static [VoteType]) {
-        match self {
-            CertificateType::Notarize(_) => (Fraction::from_percentage(60), &[VoteType::Notarize]),
-            CertificateType::NotarizeFallback(_) => (
-                Fraction::from_percentage(60),
-                &[VoteType::Notarize, VoteType::NotarizeFallback],
-            ),
-            CertificateType::FinalizeFast(_) => {
-                (Fraction::from_percentage(80), &[VoteType::Notarize])
-            }
-            CertificateType::Finalize(_) => (Fraction::from_percentage(60), &[VoteType::Finalize]),
-            CertificateType::Skip(_) => (
-                Fraction::from_percentage(60),
-                &[VoteType::Skip, VoteType::SkipFallback],
-            ),
-            CertificateType::Genesis(_) => (GENESIS_VOTE_THRESHOLD, &[VoteType::Genesis]),
         }
     }
 }

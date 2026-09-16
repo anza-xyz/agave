@@ -1,9 +1,12 @@
 use {
-    super::resolve::BranchVersion,
+    super::resolve::{BranchVersion, ChannelPins},
     anyhow::{Result, anyhow, bail},
     semver::Version,
     serde::Deserialize,
-    std::process::Command,
+    std::{
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    },
 };
 
 const REMOTE: &str = "https://github.com/anza-xyz/agave.git";
@@ -67,6 +70,30 @@ struct WorkspaceSection {
 #[derive(Deserialize)]
 struct PackageSection {
     version: Version,
+}
+
+/// Fetch pin overrides from `master` (single source of truth for all
+/// branches). Cache-busted so a pin change takes effect at once; transport
+/// errors hard-fail rather than silently falling back to auto-resolution.
+pub async fn channel_pins(client: &reqwest::Client) -> Result<ChannelPins> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let url = format!("{RAW_BASE}/master/ci/channel-overrides");
+    let resp = client
+        .get(&url)
+        .query(&[("ts", ts)])
+        .send()
+        .await
+        .map_err(|e| anyhow!("GET {url}: {e}"))?
+        .error_for_status()
+        .map_err(|e| anyhow!("GET {url}: {e}"))?;
+    let raw = resp
+        .text()
+        .await
+        .map_err(|e| anyhow!("read body for {url}: {e}"))?;
+    ChannelPins::parse(&raw)
 }
 
 pub async fn workspace_version(client: &reqwest::Client, bv: BranchVersion) -> Result<Version> {

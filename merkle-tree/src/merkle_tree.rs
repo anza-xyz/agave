@@ -68,6 +68,24 @@ impl MerkleTree {
         }
     }
 
+    /// Approximate `log2` of a positive normal `f32`. Vendored verbatim from the `fast_math`
+    /// crate (v0.1.1, `log2_raw`, itself derived from rust-lang/rust#83349) to drop the
+    /// dependency while keeping byte-identical output. Only valid for normal positive floats,
+    /// which is guaranteed by the `leaf_count > 0` guard at the sole call site.
+    fn log2_raw(x: f32) -> f32 {
+        let bits = x.to_bits();
+        let sign = (bits >> 31) & 1;
+        let exp = (bits >> 23) & 0xFF;
+        let signif = bits & 0x007F_FFFF;
+        debug_assert!(sign == 0 && (1..=254).contains(&exp));
+        let high_bit = (signif >> 22) & 1;
+        let add_exp = (exp + high_bit) as i32 - 127;
+        let normalised = f32::from_bits(((0x7F ^ high_bit) << 23) | signif) - 1.0;
+        const A: f32 = -0.6296735;
+        const B: f32 = 1.466967;
+        add_exp as f32 + normalised * (B + A * normalised)
+    }
+
     fn calculate_vec_capacity(leaf_count: usize) -> usize {
         // the most nodes consuming case is when n-1 is full balanced binary tree
         // then n will cause the previous tree add a left only path to the root
@@ -83,9 +101,9 @@ impl MerkleTree {
         // computed cap is 16398, actually using is 16383
         // 8193 leaf nodes:(full balanced plus 1 leaf):
         // computed cap is 16400, actually using is 16398
-        // about performance: current used fast_math log2 code is constant algo time
+        // about performance: log2 is constant algo time
         if leaf_count > 0 {
-            fast_math::log2_raw(leaf_count as f32) as usize + 2 * leaf_count + 1
+            Self::log2_raw(leaf_count as f32) as usize + 2 * leaf_count + 1
         } else {
             0
         }

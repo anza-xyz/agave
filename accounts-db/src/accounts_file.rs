@@ -12,7 +12,9 @@ use {
     solana_pubkey::Pubkey,
     std::{
         fs::File,
-        io, mem,
+        io,
+        iter::ExactSizeIterator,
+        mem,
         path::{Path, PathBuf},
     },
     thiserror::Error,
@@ -49,16 +51,6 @@ pub enum AccountsFile {
 }
 
 impl AccountsFile {
-    /// Create an AccountsFile instance from the specified path.
-    ///
-    /// The second element of the returned tuple is the number of accounts in the
-    /// accounts file.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
-        let (av, num_accounts) = AppendVec::new_from_file(path, current_len)?;
-        Ok((Self::AppendVec(av), num_accounts))
-    }
-
     /// Creates a new AccountsFile for the underlying storage at `file_info`
     ///
     /// This version of `new()` may only be called when reconstructing storages as part of startup.
@@ -84,11 +76,11 @@ impl AccountsFile {
         }
     }
 
-    /// Return the total number of bytes of the zero lamport single ref accounts in the storage.
+    /// Return the total number of bytes of the zero lamport accounts in the storage.
     /// Those bytes are "dead" and can be shrunk away.
-    pub(crate) fn dead_bytes_due_to_zero_lamport_single_ref(&self, count: usize) -> usize {
+    pub(crate) fn dead_bytes_due_to_zero_lamport_accounts(&self, count: usize) -> usize {
         match self {
-            Self::AppendVec(av) => av.dead_bytes_due_to_zero_lamport_single_ref(count),
+            Self::AppendVec(av) => av.dead_bytes_due_to_zero_lamport_accounts(count),
         }
     }
 
@@ -126,7 +118,7 @@ impl AccountsFile {
     /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
     pub fn get_stored_account_without_data_callback<Ret>(
         &self,
-        offset: usize,
+        offset: Offset,
         callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
     ) -> Option<Ret> {
         match self {
@@ -143,7 +135,7 @@ impl AccountsFile {
     /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
-        offset: usize,
+        offset: Offset,
         callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> Option<Ret> {
         match self {
@@ -152,7 +144,7 @@ impl AccountsFile {
     }
 
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
-    pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
+    pub(crate) fn get_account_shared_data(&self, offset: Offset) -> Option<AccountSharedData> {
         match self {
             Self::AppendVec(av) => av.get_account_shared_data(offset),
         }
@@ -209,10 +201,13 @@ impl AccountsFile {
         }
     }
 
-    /// for each offset in `sorted_offsets`, get the data size
-    pub(crate) fn get_account_data_lens(&self, sorted_offsets: &[usize]) -> Vec<usize> {
+    /// Returns the account data size for each account in `offsets`.
+    pub(crate) fn get_account_data_lens<'a>(
+        &self,
+        offsets: impl IntoIterator<Item = &'a Offset, IntoIter: ExactSizeIterator>,
+    ) -> Vec<usize> {
         match self {
-            Self::AppendVec(av) => av.get_account_data_lens(sorted_offsets),
+            Self::AppendVec(av) => av.get_account_data_lens(offsets),
         }
     }
 
@@ -292,7 +287,7 @@ impl AsRef<File> for OpenFileForArchive<'_> {
 #[derive(Debug)]
 pub struct StoredAccountsInfo {
     /// offset in the storage where each account was stored
-    pub offsets: Vec<usize>,
+    pub offsets: Vec<Offset>,
     /// total size of all the stored accounts
     pub size: usize,
 }

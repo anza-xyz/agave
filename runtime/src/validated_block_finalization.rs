@@ -421,7 +421,6 @@ mod tests {
         rand::Rng,
         solana_bls_signatures::SignatureProjective,
         solana_entry::block_component::VotesAggregate,
-        solana_hash::Hash,
         solana_signer_store::encode_base2,
         std::sync::Arc,
     };
@@ -505,10 +504,7 @@ mod tests {
         let (bank, validator_keypairs) = create_bank_with_bls_validators(num_validators, stakes);
         let shred_version = rand::rng().random();
 
-        let block = Block {
-            slot: bank.slot(),
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(bank.slot());
 
         // Test 1: Fast finalize (requires 80% stake = 4400)
         // Top 6 validators = 1000+900+800+700+600+500 = 4500 (>= 80%)
@@ -599,10 +595,7 @@ mod tests {
         let (bank, validator_keypairs) = create_bank_with_bls_validators(stakes.len(), stakes);
         let shred_version = rand::rng().random();
 
-        let block = Block {
-            slot: bank.slot(),
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(bank.slot());
 
         let notarize_vote = Vote::new_notarization_vote(block);
         let notarize_signing_ranks = vec![0, 1, 3];
@@ -665,10 +658,7 @@ mod tests {
         let (bank, validator_keypairs) = create_bank_with_bls_validators(num_validators, stakes);
         let shred_version = rand::rng().random();
 
-        let block = Block {
-            slot: bank.slot(),
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(bank.slot());
 
         // Fast finalize with insufficient stake (requires 80% = 4400)
         // Top 5 validators = 1000+900+800+700+600 = 4000 (< 80%)

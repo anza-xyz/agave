@@ -17,14 +17,14 @@ use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{CRDS_SHARDS_BITS, Crds, Cursor, GossipRoute},
+        crds::{Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
-            self, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsFilter, CrdsTimeouts, ProcessPullStats,
-            PullRequest, get_max_bloom_filter_bytes,
+            self, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CRDS_GOSSIP_PURGE_DURATION, CrdsFilter,
+            CrdsTimeouts, ProcessPullStats, PullRequest, get_max_bloom_filter_bytes,
         },
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
@@ -47,7 +47,7 @@ use {
     itertools::{Either, Itertools},
     rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
-    solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH, Slot},
+    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
     solana_ledger::shred::Shred,
@@ -96,8 +96,6 @@ use {
     thiserror::Error,
 };
 
-const DEFAULT_EPOCH_DURATION: Duration =
-    Duration::from_millis(DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT);
 /// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// Interval between pull requests (in gossip rounds)
@@ -133,13 +131,9 @@ const GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC: u64 =
     4 * crds_gossip_pull::MIN_NUM_BLOOM_ITEMS as u64;
 const GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT: usize = 64;
 
-/// Estimated CRDS shard scan work for a pull request filter.
 #[inline]
-fn pull_request_scan_cost(crds_len: usize, mask_bits: u32, bloom_hash_count: usize) -> u64 {
-    // Extra mask bits still require one full shard scan.
-    let shift = mask_bits.min(CRDS_SHARDS_BITS);
-    let scan_entries = (crds_len >> shift).max(1) as u64;
-
+fn pull_request_scan_cost(scan_entries: usize, bloom_hash_count: usize) -> u64 {
+    let scan_entries = u64::try_from(scan_entries).unwrap_or(u64::MAX).max(1);
     let bloom_hash_count = u64::try_from(bloom_hash_count)
         .unwrap_or(u64::MAX)
         .max(crds_gossip_pull::KEYS as u64);
@@ -156,6 +150,9 @@ pub const MINIMUM_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).u
 pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = MINIMUM_NUM_TVU_RECEIVE_SOCKETS;
 pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
+
+/// Number of QUIC endpoints for the votor datagram transport.
+pub const DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 
 // Contact-info save/restore handles trusted local data, so disable wincode's
 // default 4 MiB preallocation limit (which defends untrusted wire input).
@@ -546,6 +543,20 @@ impl ClusterInfo {
         gossip_crds.get(*id).map(query)
     }
 
+    /// Resolve `query` on ContactInfo for `peers`.
+    /// Yields one entry per pubkey in `peers`, or `None` when peer is absent.
+    pub fn query_contact_infos<'a, R>(
+        &self,
+        peers: impl IntoIterator<Item = &'a Pubkey>,
+        query: impl ContactInfoQuery<R>,
+    ) -> Vec<(Pubkey, Option<R>)> {
+        let read_guard = self.gossip.crds.read().unwrap();
+        peers
+            .into_iter()
+            .map(|id| (*id, read_guard.get(*id).map(|ci: &ContactInfo| query(ci))))
+            .collect()
+    }
+
     pub fn lookup_contact_info_by_gossip_addr(
         &self,
         gossip_addr: &SocketAddr,
@@ -832,7 +843,7 @@ impl ClusterInfo {
                 let entry = CrdsValue::new(epoch_slots, &self_keypair);
                 entries.push(entry);
             }
-            epoch_slot_index = epoch_slot_index.wrapping_add(1);
+            epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
             reset = true;
         }
         let mut gossip_crds = self.gossip.crds.write().unwrap();
@@ -950,7 +961,13 @@ impl ClusterInfo {
             // to push an old vote. This could be a slashable offense so better to panic here.
             let (_, vote, hash, _) = vote_parser::parse_vote_transaction(&vote).unwrap();
             panic!(
-                "Submitting old vote, switch: {}, vote slots: {:?}, tower: {:?}",
+                "Submitting old vote, switch: {}, vote slots: {:?}, tower: {:?}. The local \
+                 tower.bin was out of date or missing, and we are attempting to submit slashable \
+                 votes. Another possibility is that the node was not correctly started with wait \
+                 for supermajority during a cluster restart, and then later started with wait for \
+                 supermajority, causing the tower.bin to be pruned. To progress, either download \
+                 a newer snapshot or set --wait-to-vote-slot higher than the last vote present in \
+                 gossip",
                 hash.is_some(),
                 vote.slots(),
                 tower
@@ -1450,16 +1467,11 @@ impl ClusterInfo {
             .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
     }
 
-    fn handle_purge(
-        &self,
-        thread_pool: &ThreadPool,
-        epoch_duration: Duration,
-        stakes: &HashMap<Pubkey, u64>,
-    ) {
+    fn handle_purge(&self, thread_pool: &ThreadPool, stakes: &HashMap<Pubkey, u64>) {
         let self_pubkey = self.id();
         let timeouts = self
             .gossip
-            .make_timeouts(self_pubkey, stakes, epoch_duration);
+            .make_timeouts(self_pubkey, stakes, CRDS_GOSSIP_PURGE_DURATION);
         let num_purged = {
             let _st = ScopedTimer::from(&self.stats.purge);
             self.gossip
@@ -1551,11 +1563,7 @@ impl ClusterInfo {
                         // Make pull requests every PULL_REQUEST_PERIOD rounds
                         gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
-                    let epoch_duration = epoch_specs
-                        .as_mut()
-                        .map(|es| es.epoch_duration())
-                        .unwrap_or(DEFAULT_EPOCH_DURATION);
-                    self.handle_purge(&thread_pool, epoch_duration, &stakes);
+                    self.handle_purge(&thread_pool, &stakes);
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
@@ -1700,12 +1708,12 @@ impl ClusterInfo {
         }
     }
 
-    fn try_consume_pull_request_scan_budget(&self, request: &PullRequest, crds_len: usize) -> bool {
-        let cost = pull_request_scan_cost(
-            crds_len,
-            request.filter.get_mask_bits(),
-            request.filter.bloom_hash_count(),
-        );
+    fn try_consume_pull_request_scan_budget(
+        &self,
+        request: &PullRequest,
+        scan_entries: usize,
+    ) -> bool {
+        let cost = pull_request_scan_cost(scan_entries, request.filter.bloom_hash_count());
         if self
             .pull_request_budget
             .consume_tokens(request.addr.ip(), cost)
@@ -1726,7 +1734,6 @@ impl ClusterInfo {
         mut requests: Vec<PullRequest>,
         stakes: &HashMap<Pubkey, u64>,
     ) -> RecycledPacketBatch {
-        const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
         let output_size_limit =
             self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
         let mut packet_batch =
@@ -1753,7 +1760,9 @@ impl ClusterInfo {
                         is_full_alpenglow_epoch,
                     )
                 },
-                |request, crds_len| self.try_consume_pull_request_scan_budget(request, crds_len),
+                |request, scan_entries| {
+                    self.try_consume_pull_request_scan_budget(request, scan_entries)
+                },
                 &self.stats,
             )
         };
@@ -1761,7 +1770,7 @@ impl ClusterInfo {
         let get_score = |value: &CrdsValue| -> u64 {
             let age = now.saturating_sub(value.wallclock());
             // score CrdsValue: 2x score if staked; 2x score if ContactInfo
-            let score = DEFAULT_EPOCH_DURATION_MS
+            let score = (CRDS_GOSSIP_PURGE_DURATION.as_millis() as u64)
                 .saturating_sub(age)
                 .div(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS)
                 .max(1);
@@ -1824,14 +1833,13 @@ impl ClusterInfo {
         &self,
         responses: Vec<CrdsValue>,
         stakes: &HashMap<Pubkey, u64>,
-        epoch_duration: Duration,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_responses_time);
         if !responses.is_empty() {
             let self_pubkey = self.id();
-            let timeouts = self
-                .gossip
-                .make_timeouts(self_pubkey, stakes, epoch_duration);
+            let timeouts =
+                self.gossip
+                    .make_timeouts(self_pubkey, stakes, CRDS_GOSSIP_PURGE_DURATION);
             self.handle_pull_response(responses, &timeouts);
         }
     }
@@ -2015,7 +2023,6 @@ impl ClusterInfo {
         recycler: &PacketBatchRecycler,
         response_sender: &impl ChannelSend<PacketBatch>,
         stakes: &HashMap<Pubkey, u64>,
-        epoch_duration: Duration,
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.process_gossip_packets_time);
@@ -2136,7 +2143,7 @@ impl ClusterInfo {
             stakes,
             response_sender,
         );
-        self.handle_batch_pull_responses(pull_responses, stakes, epoch_duration);
+        self.handle_batch_pull_responses(pull_responses, stakes);
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
         self.handle_batch_pong_messages(pong_messages, Instant::now());
         self.handle_batch_pull_requests(pull_requests, recycler, stakes, response_sender);
@@ -2276,17 +2283,12 @@ impl ClusterInfo {
             .as_deref_mut()
             .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
-        let epoch_duration = epoch_specs
-            .as_deref_mut()
-            .map(|es| es.epoch_duration())
-            .unwrap_or(DEFAULT_EPOCH_DURATION);
         self.process_packets(
             packet_buf,
             thread_pool,
             recycler,
             response_sender,
             &stakes,
-            epoch_duration,
             should_check_duplicate_instance,
         )?;
         packet_buf.clear();
@@ -2448,12 +2450,12 @@ pub struct Sockets {
     pub tpu_vote_forwarding_client: UdpSocket, // udp write only
     /// Client-side socket for ForwardingStage non-vote transactions
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
-    /// Socket for alpenglow consensus logic
-    pub alpenglow: UdpSocket, // quic read/write
+    /// UDP sockets for the alpenglow votor QUIC server endpoints.
+    pub votor_server: Vec<UdpSocket>, // quic read only
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket, // quic write only
-    /// Connection cache endpoint for QUIC-based Alpenglow messages
-    pub quic_alpenglow_client: UdpSocket, // quic write only
+    /// Client-side socket for the alpenglow votor QUIC endpoint.
+    pub quic_votor_client: UdpSocket, // quic write only
     /// Client-side socket for RPC/SendTransactionService.
     pub rpc_sts_client: UdpSocket, // quic write only
 }
@@ -2476,6 +2478,8 @@ pub struct NodeConfig {
     pub num_tvu_retransmit_sockets: NonZeroUsize,
     /// The number of QUIC tpu endpoints
     pub num_quic_endpoints: NonZeroUsize,
+    /// The number of QUIC endpoints for the votor transport.
+    pub num_votor_quic_endpoints: NonZeroUsize,
 }
 
 pub fn push_messages_to_peer_for_tests(
@@ -2659,6 +2663,7 @@ mod tests {
             socketaddr,
         },
         itertools::izip,
+        rand::{SeedableRng, rngs::StdRng},
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
@@ -2705,14 +2710,10 @@ mod tests {
 
     #[test]
     fn test_pull_request_scan_cost() {
-        assert_eq!(pull_request_scan_cost(0, 0, 0), 8);
-        assert_eq!(pull_request_scan_cost(1_024, 6, 8), 128);
-        assert_eq!(pull_request_scan_cost(1_024, 6, 12), 192);
-        let crds_len = 1usize << (CRDS_SHARDS_BITS + 1);
-        assert_eq!(
-            pull_request_scan_cost(crds_len, CRDS_SHARDS_BITS + 1, 8),
-            16,
-        );
+        assert_eq!(pull_request_scan_cost(0, 0), 8);
+        assert_eq!(pull_request_scan_cost(16, 8), 128);
+        assert_eq!(pull_request_scan_cost(16, 12), 192);
+        assert_eq!(pull_request_scan_cost(2, 8), 16);
     }
 
     #[test]
@@ -2754,11 +2755,7 @@ mod tests {
         };
         request.filter.sanitize().unwrap();
         let crds_len = crds_gossip_pull::MIN_NUM_BLOOM_ITEMS;
-        let cost = pull_request_scan_cost(
-            crds_len,
-            request.filter.get_mask_bits(),
-            request.filter.bloom_hash_count(),
-        );
+        let cost = pull_request_scan_cost(crds_len, request.filter.bloom_hash_count());
         let successful_requests = GOSSIP_PULL_SCAN_BUDGET_CAPACITY / cost;
 
         assert!(cost <= GOSSIP_PULL_SCAN_BUDGET_CAPACITY);
@@ -2811,7 +2808,7 @@ mod tests {
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),
             CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, // default_timeout
-            Duration::from_secs(48 * 3600),   // epoch_duration
+            CRDS_GOSSIP_PURGE_DURATION,
             &stakes,
         );
 
@@ -2935,11 +2932,9 @@ mod tests {
         ) {
             assert_eq!(packet.meta().socket_addr(), socket);
             let bytes = wincode::serialize(&pong).unwrap();
-            assert_eq!(bytes, bincode::serialize(&pong).unwrap());
             match deserialize_protocol(packet.data(..).unwrap_or_default()).unwrap() {
                 Protocol::PongMessage(pong) => {
                     let pong_bytes = wincode::serialize(&pong).unwrap();
-                    assert_eq!(pong_bytes, bincode::serialize(&pong).unwrap());
                     assert_eq!(pong_bytes, bytes);
                 }
                 _ => panic!("invalid packet!"),
@@ -3074,7 +3069,7 @@ mod tests {
 
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
         check_socket(&node.sockets.repair, ip, range);
-        check_socket(&node.sockets.alpenglow, ip, range);
+        check_sockets(&node.sockets.votor_server, ip, range);
         check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
         check_sockets(&node.sockets.tpu_quic, ip, range);
@@ -3095,6 +3090,7 @@ mod tests {
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
+            num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
         };
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
@@ -3120,6 +3116,7 @@ mod tests {
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
+            num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
         };
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
@@ -3486,6 +3483,52 @@ mod tests {
 
         let slots = cluster_info.get_epoch_slots(&mut cursor);
         assert!(slots.is_empty());
+    }
+
+    #[test]
+    fn test_push_epoch_slots_wraps() {
+        let keypair = Arc::new(Keypair::new());
+        let pubkey = keypair.pubkey();
+        let contact_info = ContactInfo::new_localhost(&pubkey, 0);
+        let cluster_info =
+            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
+        let mut rng = StdRng::seed_from_u64(0);
+        let slots: Vec<Slot> = repeat_with(|| rng.random_range(1..32))
+            .scan(0, |slot, step| {
+                *slot += step;
+                Some(*slot)
+            })
+            .take(32_000)
+            .collect();
+        let mut epoch_slots = EpochSlots::new(pubkey, timestamp());
+        let num_slots = epoch_slots.fill(&slots, timestamp());
+        assert!(num_slots < slots.len());
+        let next_slot = slots[num_slots];
+        assert_eq!(epoch_slots.clone().fill(&[next_slot], timestamp()), 0);
+
+        let value = CrdsValue::new(
+            CrdsData::EpochSlots(crds_data::MAX_EPOCH_SLOTS - 1, epoch_slots),
+            keypair.as_ref(),
+        );
+        cluster_info
+            .gossip
+            .crds
+            .write()
+            .unwrap()
+            .insert(value, timestamp(), GossipRoute::LocalMessage)
+            .unwrap();
+        cluster_info.push_epoch_slots(&[next_slot]);
+
+        let crds = cluster_info.gossip.crds.read().unwrap();
+        let label = CrdsValueLabel::EpochSlots(0, pubkey);
+        let value = crds.get::<&CrdsValue>(&label).unwrap();
+        assert!(value.sanitize().is_ok());
+        assert_eq!(
+            value.epoch_slots().unwrap().to_slots(next_slot).next(),
+            Some(next_slot)
+        );
+        let invalid_label = CrdsValueLabel::EpochSlots(crds_data::MAX_EPOCH_SLOTS, pubkey);
+        assert!(crds.get::<&CrdsValue>(&invalid_label).is_none());
     }
 
     #[test]

@@ -14,7 +14,7 @@ pub enum ConsensusMetricsEvent {
     /// A vote was received from the node with `id`.
     Vote {
         /// The validator that voted.
-        id: Pubkey,
+        ids: Vec<Pubkey>,
         /// The type of vote.
         vote: Vote,
     },

@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -49,6 +50,7 @@ protobuf-src = { workspace = true }
 
 [dev-dependencies]
 enum-iterator = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }
 test-case = { workspace = true }
 
 [lints]

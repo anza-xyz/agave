@@ -1,6 +1,5 @@
 use {
     crate::{event::VotorEvent, timer_manager::stats::TimerManagerStats},
-    crossbeam_channel::Sender,
     solana_clock::Slot,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
@@ -178,19 +177,16 @@ pub(super) struct Timers {
     timers: HashMap<Slot, TimerState>,
     /// A min heap based on the time the next timer state might be ready.
     heap: BinaryHeap<Reverse<(Instant, Slot)>>,
-    /// Channel to send events on.
-    event_sender: Sender<VotorEvent>,
     /// Stats for the timer manager.
     stats: TimerManagerStats,
 }
 
 impl Timers {
-    pub(super) fn new(delta_timeout: Duration, event_sender: Sender<VotorEvent>) -> Self {
+    pub(super) fn new(delta_timeout: Duration) -> Self {
         Self {
             delta_timeout,
             timers: HashMap::new(),
             heap: BinaryHeap::new(),
-            event_sender,
             stats: TimerManagerStats::new(),
         }
     }
@@ -230,8 +226,9 @@ impl Timers {
 
     /// Call to make progress on the timer states.  If there are still active
     /// timer states, returns when the earliest one might become ready.
-    pub(super) fn progress(&mut self, now: Instant) -> Option<Instant> {
+    pub(super) fn progress(&mut self, now: Instant) -> (Option<Instant>, Vec<VotorEvent>) {
         assert_eq!(self.heap.len(), self.timers.len());
+        let mut ret_events = vec![];
         let mut ret_timeout = None;
         loop {
             assert_eq!(self.heap.len(), self.timers.len());
@@ -247,7 +244,7 @@ impl Timers {
 
                     let mut timer = self.timers.remove(&slot).unwrap();
                     if let Some(event) = timer.progress(now) {
-                        self.event_sender.send(event).unwrap();
+                        ret_events.push(event);
                     }
                     if let Some(next_fire) = timer.next_fire() {
                         self.heap.push(Reverse((next_fire, slot)));
@@ -258,7 +255,7 @@ impl Timers {
                 }
             }
         }
-        ret_timeout
+        (ret_timeout, ret_events)
     }
 
     #[cfg(test)]
@@ -274,10 +271,7 @@ impl Timers {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*, crate::common::DELTA_TIMEOUT, crossbeam_channel::bounded,
-        solana_clock::DEFAULT_MS_PER_SLOT,
-    };
+    use {super::*, crate::common::DELTA_TIMEOUT, solana_clock::DEFAULT_MS_PER_SLOT};
 
     #[test]
     fn timer_state_machine() {
@@ -331,27 +325,32 @@ mod tests {
     fn timers_progress() {
         let one_micro = Duration::from_micros(1);
         let mut now = Instant::now();
-        let (sender, receiver) = bounded(1024);
-        let mut timers = Timers::new(one_micro, sender);
-        assert!(timers.progress(now).is_none());
-        assert!(receiver.try_recv().unwrap_err().is_empty());
+        let mut timers = Timers::new(one_micro);
+        let (duration, events) = timers.progress(now);
+        assert!(duration.is_none());
+        assert!(events.is_empty());
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
 
         timers.set_timeouts(0, now, None, delta_block, delta_block);
-        while timers.progress(now).is_some() {
-            now = now.checked_add(one_micro).unwrap();
-        }
-        let mut events = receiver.try_iter().collect::<Vec<_>>();
 
+        let mut all_events = vec![];
+        loop {
+            let (duration, mut events) = timers.progress(now);
+            all_events.append(&mut events);
+            now = now.checked_add(one_micro).unwrap();
+            if duration.is_none() {
+                break;
+            }
+        }
         assert!(matches!(
-            events.remove(0),
+            all_events.remove(0),
             VotorEvent::TimeoutCrashedLeader(0)
         ));
-        assert!(matches!(events.remove(0), VotorEvent::Timeout(0)));
-        assert!(matches!(events.remove(0), VotorEvent::Timeout(1)));
-        assert!(matches!(events.remove(0), VotorEvent::Timeout(2)));
-        assert!(matches!(events.remove(0), VotorEvent::Timeout(3)));
-        assert!(events.is_empty());
+        assert!(matches!(all_events.remove(0), VotorEvent::Timeout(0)));
+        assert!(matches!(all_events.remove(0), VotorEvent::Timeout(1)));
+        assert!(matches!(all_events.remove(0), VotorEvent::Timeout(2)));
+        assert!(matches!(all_events.remove(0), VotorEvent::Timeout(3)));
+        assert!(all_events.is_empty());
         let stats = timers.stats();
         assert_eq!(stats.set_timeout_count(), 1);
         assert_eq!(stats.set_timeout_succeed_count(), 1);

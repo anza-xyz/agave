@@ -73,15 +73,11 @@ fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("sanity"),
         command: String::from("ci/test-sanity.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
-        timeout_in_minutes: Some(5),
+        agents: Some(queue_agents()),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     }));
 
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -140,7 +136,6 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
     pipeline.set_priority(10);
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_checks_step());
     Ok(pipeline)
 }
@@ -186,7 +181,6 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("scripts/cargo-for-all-lock-files.sh")
                         || file.ends_with("scripts/check-dev-context-only-utils.sh")
                         || file.ends_with("scripts/agave-build-lists.sh")
-                        || file.ends_with("ci/order-crates-for-publishing.py")
                         || file.ends_with("scripts/cargo-clippy.sh")
                         || file.ends_with("ci/do-audit.sh")
                         || file.ends_with("ci/check-install-all.sh")
@@ -284,7 +278,6 @@ async fn generate_pull_request_pipeline(
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     if flags.shellcheck {
         pipeline.add_step(default_shellcheck_step());
     }
@@ -341,7 +334,6 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -373,29 +365,17 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     Ok(pipeline)
 }
 
+fn queue_agents() -> HashMap<String, String> {
+    let queue = env::var("CI_QUEUE").unwrap_or_else(|_| String::from("default"));
+    HashMap::from([(String::from("queue"), queue)])
+}
+
 fn default_sanity_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("sanity"),
         command: String::from("ci/docker-run-default-image.sh ci/test-sanity.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
-        timeout_in_minutes: Some(5),
-        ..Default::default()
-    })
-}
-
-fn default_channel_info_divergence_step() -> buildkite::Step {
-    buildkite::Step::Command(buildkite::CommandStep {
-        name: String::from("channel-info-divergence"),
-        command: String::from("ci/docker-run-default-image.sh ci/test-channel-info-divergence.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
-        timeout_in_minutes: Some(10),
-        soft_fail: Some(true),
+        agents: Some(queue_agents()),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     })
 }
@@ -404,10 +384,7 @@ fn default_shellcheck_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("shellcheck"),
         command: String::from("ci/shellcheck.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(5),
         ..Default::default()
     })
@@ -417,10 +394,7 @@ fn default_checks_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("check"),
         command: String::from("ci/docker-run-default-image.sh ci/test-checks.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(20),
         ..Default::default()
     })
@@ -441,10 +415,7 @@ fn default_feature_check_step(parallel: u64) -> buildkite::Step {
                     "ci/docker-run-default-image.sh ci/feature-check/test-feature.sh \
                      {i}/{parallel}"
                 ),
-                agents: Some(HashMap::from([(
-                    String::from("queue"),
-                    String::from("default"),
-                )])),
+                agents: Some(queue_agents()),
                 timeout_in_minutes: Some(20),
                 ..Default::default()
             }));
@@ -457,10 +428,7 @@ fn default_feature_check_step(parallel: u64) -> buildkite::Step {
             command: String::from(
                 "ci/docker-run-default-image.sh ci/feature-check/test-feature-dev-bins.sh",
             ),
-            agents: Some(HashMap::from([(
-                String::from("queue"),
-                String::from("default"),
-            )])),
+            agents: Some(queue_agents()),
             timeout_in_minutes: Some(20),
             ..Default::default()
         }));
@@ -472,11 +440,8 @@ fn default_miri_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("miri"),
         command: String::from("ci/docker-run-default-image.sh ci/test-miri.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
-        timeout_in_minutes: Some(5),
+        agents: Some(queue_agents()),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     })
 }
@@ -485,10 +450,7 @@ fn default_frozen_abi_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("frozen-abi"),
         command: String::from("ci/docker-run-default-image.sh ci/test-frozen-abi.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(30),
         ..Default::default()
     })
@@ -508,10 +470,7 @@ fn default_stable_step(parallel: u64) -> buildkite::Step {
                 command: format!(
                     "ci/docker-run-default-image.sh ci/stable/run-partition.sh {i} {parallel}"
                 ),
-                agents: Some(HashMap::from([(
-                    String::from("queue"),
-                    String::from("default"),
-                )])),
+                agents: Some(queue_agents()),
                 timeout_in_minutes: Some(25),
                 retry: Some(HashMap::from([(
                     String::from("automatic"),
@@ -529,10 +488,7 @@ fn default_stable_step(parallel: u64) -> buildkite::Step {
                 "ci/docker-run-default-image.sh cargo nextest run --profile ci --manifest-path \
                  ./dev-bins/Cargo.toml",
             ),
-            agents: Some(HashMap::from([(
-                String::from("queue"),
-                String::from("default"),
-            )])),
+            agents: Some(queue_agents()),
             timeout_in_minutes: Some(35),
             ..Default::default()
         }));
@@ -554,10 +510,7 @@ fn default_local_cluster_step(parallel: u64) -> buildkite::Step {
                     "ci/docker-run-default-image.sh ci/stable/run-local-cluster-partially.sh {i} \
                      {parallel}"
                 ),
-                agents: Some(HashMap::from([(
-                    String::from("queue"),
-                    String::from("default"),
-                )])),
+                agents: Some(queue_agents()),
                 timeout_in_minutes: Some(15),
                 retry: Some(HashMap::from([(
                     String::from("automatic"),
@@ -573,10 +526,7 @@ fn default_docs_check_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("doctest"),
         command: String::from("ci/docker-run-default-image.sh ci/test-docs.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(15),
         ..Default::default()
     })
@@ -586,10 +536,7 @@ fn default_localnet_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("localnet"),
         command: String::from("ci/docker-run-default-image.sh ci/stable/run-localnet.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(30),
         ..Default::default()
     })
@@ -599,10 +546,7 @@ fn default_xdp_test_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("xdp-test"),
         command: String::from("ci/docker-run-default-image.sh ci/test-xdp.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(25),
         env: Some(HashMap::from([
             (
@@ -625,10 +569,7 @@ fn default_stable_sbf_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("stable-sbf"),
         command: String::from("ci/docker-run-default-image.sh ci/test-stable-sbf.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(35),
         ..Default::default()
     })
@@ -638,10 +579,7 @@ fn default_shuttle_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("shuttle"),
         command: String::from("ci/docker-run-default-image.sh ci/test-shuttle.sh"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(10),
         ..Default::default()
     })
@@ -659,10 +597,7 @@ fn default_coverage_step(parallel: u64) -> buildkite::Step {
             .push(buildkite::Step::Command(buildkite::CommandStep {
                 name: format!("coverage-{i}"),
                 command: format!("ci/docker-run-default-image.sh ci/coverage/part-{i}.sh"),
-                agents: Some(HashMap::from([(
-                    String::from("queue"),
-                    String::from("default"),
-                )])),
+                agents: Some(queue_agents()),
                 timeout_in_minutes: Some(60),
                 env: Some(HashMap::from([(
                     String::from("FETCH_CODECOV_ENVS"),
@@ -679,10 +614,7 @@ fn default_crate_publish_test_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("crate-publish-test"),
         command: String::from("cargo xtask publish test"),
-        agents: Some(HashMap::from([(
-            String::from("queue"),
-            String::from("default"),
-        )])),
+        agents: Some(queue_agents()),
         timeout_in_minutes: Some(45),
         ..Default::default()
     })

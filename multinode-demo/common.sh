@@ -107,3 +107,27 @@ replace_arg() {
     fi
   done
 }
+
+retry_command() {
+  declare max_attempts=$1
+  declare delay_seconds=$2
+  shift 2
+
+  declare attempt=1
+  declare status
+  while true; do
+    if "$@"; then
+      return 0
+    else
+      status=$?
+    fi
+
+    if ((attempt >= max_attempts)); then
+      return "$status"
+    fi
+
+    echo "Command failed; retrying in $delay_seconds seconds ($attempt/$max_attempts)" >&2
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
+}

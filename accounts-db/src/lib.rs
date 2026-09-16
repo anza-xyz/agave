@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod account_info;
@@ -34,7 +33,7 @@ pub mod read_only_accounts_cache;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod read_only_accounts_cache;
 mod rolling_bit_field;
-pub mod sorted_storages;
+mod split_file;
 pub mod stake_rewards;
 pub mod storable_accounts;
 pub mod utils;

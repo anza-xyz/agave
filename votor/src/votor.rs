@@ -47,28 +47,32 @@ use {
     crate::{
         commitment::CommitmentAggregationData,
         consensus_metrics::ConsensusMetrics,
-        consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
+        consensus_pool_service::{
+            ConsensusPoolContext, ConsensusPoolService, staked_status::StakedStatus,
+        },
         event::{
             LatestSwitchRequest, LeaderWindowInfo, RepairEventSender, VotorEventReceiver,
             VotorEventSender,
         },
         event_handler::{EventHandler, EventHandlerContext},
         root_utils::RootContext,
+        slot_clock::SharedAlpenglowSlotClock,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
+    agave_bls_sigverify::{generated_cert_types::GeneratedCertTypes, rewards::RewardInput},
     agave_votor_messages::{
-        consensus_message::Block,
+        certificate::Certificate,
+        consensus_message::{Block, VoteMessage},
         metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
-        reward_certificate::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
     },
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
+    smallvec::SmallVec,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -79,6 +83,8 @@ use {
         bank_forks::BankForks, bank_forks_controller::BankForksController,
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
+    solana_streamer::evicting_sender::EvictingSender,
+    solana_validator_exit::Exit,
     std::{
         collections::HashMap,
         sync::{Arc, RwLock, atomic::AtomicBool},
@@ -87,9 +93,29 @@ use {
     },
 };
 
+/// Brings the whole validator down when a votor thread stops.
+pub(crate) struct ExitOnDrop {
+    validator_exit: Arc<RwLock<Exit>>,
+}
+
+impl ExitOnDrop {
+    pub(crate) fn new(validator_exit: Arc<RwLock<Exit>>) -> Self {
+        Self { validator_exit }
+    }
+}
+
+impl Drop for ExitOnDrop {
+    fn drop(&mut self) {
+        if let Ok(mut validator_exit) = self.validator_exit.write() {
+            validator_exit.exit();
+        }
+    }
+}
+
 /// Inputs to Votor
 pub struct VotorConfig {
     pub exit: Arc<AtomicBool>,
+    pub validator_exit: Arc<RwLock<Exit>>,
     // Validator config
     pub vote_account: Pubkey,
     pub wait_to_vote_slot: Option<Slot>,
@@ -103,6 +129,7 @@ pub struct VotorConfig {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub cluster_info: Arc<ClusterInfo>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
+    pub alpenglow_slot_clock: SharedAlpenglowSlotClock,
     pub consensus_metrics_sender: ConsensusMetricsEventSender,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     pub bank_forks_controller: Arc<dyn BankForksController>,
@@ -114,15 +141,16 @@ pub struct VotorConfig {
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub event_sender: VotorEventSender,
-    pub own_vote_sender: Sender<SigVerifiedBatch>,
-    pub reward_votes_sender: Sender<AddVoteMessage>,
+    pub own_vote_sender: EvictingSender<VoteMessage>,
+    pub own_reward_aggregates_sender: Sender<RewardInput>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
     pub consensus_message_receiver: Receiver<SigVerifiedBatch>,
-    pub own_message_receiver: Receiver<SigVerifiedBatch>,
+    pub own_votes_receiver: Receiver<VoteMessage>,
+    pub footer_certs_receiver: Receiver<SmallVec<[Certificate; 2]>>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
 }
 
@@ -131,6 +159,7 @@ pub(crate) struct SharedContext {
     pub(crate) blockstore: Arc<Blockstore>,
     pub(crate) bank_forks: Arc<RwLock<BankForks>>,
     pub(crate) cluster_info: Arc<ClusterInfo>,
+    pub(crate) alpenglow_slot_clock: SharedAlpenglowSlotClock,
     pub(crate) leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub(crate) highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
@@ -149,6 +178,7 @@ impl Votor {
     pub fn new(config: VotorConfig) -> Self {
         let VotorConfig {
             exit,
+            validator_exit,
             vote_account,
             wait_to_vote_slot,
             vote_history,
@@ -158,6 +188,7 @@ impl Votor {
             bank_forks,
             cluster_info,
             leader_schedule_cache,
+            alpenglow_slot_clock,
             bls_sender,
             commitment_sender,
             bank_notification_sender,
@@ -165,17 +196,18 @@ impl Votor {
             highest_parent_ready,
             event_sender,
             own_vote_sender,
-            reward_votes_sender,
+            own_reward_aggregates_sender,
             repair_event_sender,
             latest_switch_request,
             event_receiver,
             consensus_message_receiver,
-            own_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
             generated_cert_types,
             highest_finalized,
             bank_forks_controller,
+            own_votes_receiver,
+            footer_certs_receiver,
         } = config;
 
         let migration_status = bank_forks.read().unwrap().migration_status();
@@ -189,6 +221,7 @@ impl Votor {
             blockstore: blockstore.clone(),
             bank_forks,
             cluster_info: cluster_info.clone(),
+            alpenglow_slot_clock,
             highest_parent_ready,
             leader_window_info_sender,
             vote_history_storage: vote_history_storage.clone(),
@@ -198,6 +231,7 @@ impl Votor {
 
         let voting_context = VotingContext {
             cluster_info: cluster_info.clone(),
+            leader_schedule: leader_schedule_cache.clone(),
             vote_history,
             vote_account_pubkey: vote_account,
             identity_keypair,
@@ -205,7 +239,7 @@ impl Votor {
             vote_history_storage,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
-            reward_votes_sender,
+            own_reward_sender: own_reward_aggregates_sender,
             bls_sender: bls_sender.clone(),
             commitment_sender: commitment_sender.clone(),
             wait_to_vote_slot,
@@ -219,13 +253,16 @@ impl Votor {
         };
 
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
+            cluster_info.clone(),
             event_sender.clone(),
             exit.clone(),
+            validator_exit.clone(),
             migration_status.clone(),
         )));
 
         let event_handler_context = EventHandlerContext {
             exit: exit.clone(),
+            validator_exit: validator_exit.clone(),
             migration_status: migration_status.clone(),
             event_receiver,
             timer_manager: Arc::clone(&timer_manager),
@@ -234,24 +271,27 @@ impl Votor {
             root_context,
         };
 
-        let epoch_schedule = sharable_banks.root().epoch_schedule().clone();
+        let root_bank = sharable_banks.root();
+        let epoch_schedule = root_bank.epoch_schedule().clone();
 
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
+            validator_exit,
             migration_status,
             generated_cert_types,
             cluster_info: cluster_info.clone(),
-            my_vote_pubkey: vote_account,
             blockstore,
             sharable_banks: sharable_banks.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
             vote_history_highest_parent_ready,
             consensus_message_receiver,
-            own_message_receiver,
+            footer_certs_receiver,
+            own_votes_receiver,
             bls_sender,
             event_sender,
             repair_event_sender,
             highest_finalized,
+            staked_status: StakedStatus::new(&root_bank, &cluster_info),
         };
 
         let metrics = ConsensusMetrics::start_metrics_loop(

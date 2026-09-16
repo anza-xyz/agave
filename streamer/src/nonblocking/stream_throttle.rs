@@ -175,9 +175,10 @@ impl StakedStreamLoadEMA {
                 if self.staked_throttling_enabled.load(Ordering::Relaxed) {
                     // 1 is added to `max_unstaked_load_in_throttling_window` to guarantee that staked
                     // clients get at least 1 more number of streams than unstaked connections.
-                    self.max_staked_load_in_throttling_window
-                        .saturating_mul(stake)
-                        .checked_div(total_stake)
+                    u128::from(self.max_staked_load_in_throttling_window)
+                        .saturating_mul(u128::from(stake))
+                        .checked_div(u128::from(total_stake))
+                        .and_then(|capacity| u64::try_from(capacity).ok())
                         .unwrap_or(self.max_unstaked_load_in_throttling_window + 1)
                         .max(self.max_unstaked_load_in_throttling_window + 1)
                 } else {
@@ -280,6 +281,25 @@ pub mod test {
         std::sync::{Arc, atomic::Ordering},
     };
 
+    const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+    const TEST_TOTAL_STAKE: u64 = 400_000_000 * LAMPORTS_PER_SOL;
+    // Matches the production default, deriving a staked window of
+    // (500 - 0.2 * 500) * 100 = 40_000 streams (50_000 with unstaked
+    // connections disabled) and an unstaked window of 200 * 100 / 1000 = 20.
+    const TEST_MAX_STREAMS_PER_MS: u64 = 500;
+
+    fn new_throttled_load_ema(allow_unstaked_connections: bool) -> StakedStreamLoadEMA {
+        let load_ema = StakedStreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            usize::from(allow_unstaked_connections),
+            TEST_MAX_STREAMS_PER_MS,
+        );
+        load_ema
+            .staked_throttling_enabled
+            .store(true, Ordering::Relaxed);
+        load_ema
+    }
+
     #[test]
     fn test_max_streams_for_unstaked_connection() {
         let load_ema = Arc::new(StakedStreamLoadEMA::new(
@@ -320,32 +340,81 @@ pub mod test {
     }
 
     #[test]
-    fn test_staked_capacity_shares_when_throttled() {
-        let mut load_ema = StakedStreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        );
-
-        load_ema
-            .staked_throttling_enabled
-            .store(true, Ordering::Relaxed);
-        load_ema.max_staked_load_in_throttling_window = 100;
-        load_ema.max_unstaked_load_in_throttling_window = 20;
+    fn test_staked_capacity_shares_with_large_stakes() {
+        let load_ema = new_throttled_load_ema(true);
+        // Stake divisors below assume these window values.
+        let full_staked_capacity = load_ema.max_staked_load_in_throttling_window;
+        assert_eq!(full_staked_capacity, 40_000);
+        assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 20);
 
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(10),
-                100
+                ConnectionPeerType::Staked(1),
+                TEST_TOTAL_STAKE,
             ),
-            load_ema.max_unstaked_load_in_throttling_window + 1
+            load_ema.max_unstaked_load_in_throttling_window + 1,
+            "any staked client gets more than unstaked",
         );
+
+        for stake_divisor in [
+            // 1_000 and 800 represent below and above the u64 multiplication-overflow boundary.
+            1_500, 1_000, 800, 400, 100, 20, 1,
+        ] {
+            assert_eq!(
+                load_ema.available_load_capacity_in_throttling_duration(
+                    ConnectionPeerType::Staked(TEST_TOTAL_STAKE / stake_divisor),
+                    TEST_TOTAL_STAKE,
+                ),
+                full_staked_capacity / stake_divisor,
+                "incorrect capacity for {} SOL of stake",
+                TEST_TOTAL_STAKE / stake_divisor / LAMPORTS_PER_SOL,
+            );
+        }
+    }
+
+    #[test]
+    fn test_staked_capacity_shares_with_large_stakes_and_no_unstaked_connections() {
+        let load_ema = new_throttled_load_ema(false);
+        // Stake divisors below assume these window values.
+        let full_staked_capacity = load_ema.max_staked_load_in_throttling_window;
+        assert_eq!(full_staked_capacity, 50_000);
+        assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 0);
+
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(50),
-                100
+                ConnectionPeerType::Staked(100),
+                TEST_TOTAL_STAKE,
             ),
-            50
+            load_ema.max_unstaked_load_in_throttling_window + 1,
+            "any staked client gets more than unstaked",
+        );
+
+        for stake_divisor in [
+            // 1_100 and 1_000 represent below and above the u64 multiplication-overflow boundary.
+            1_500, 1_100, 1_000, 400, 50, 20, 1,
+        ] {
+            assert_eq!(
+                load_ema.available_load_capacity_in_throttling_duration(
+                    ConnectionPeerType::Staked(TEST_TOTAL_STAKE / stake_divisor),
+                    TEST_TOTAL_STAKE,
+                ),
+                full_staked_capacity / stake_divisor,
+                "incorrect capacity for {} SOL of stake",
+                TEST_TOTAL_STAKE / stake_divisor / LAMPORTS_PER_SOL,
+            );
+        }
+    }
+
+    #[test]
+    fn test_staked_capacity_with_maximum_stake_values() {
+        let load_ema = new_throttled_load_ema(true);
+
+        assert_eq!(
+            load_ema.available_load_capacity_in_throttling_duration(
+                ConnectionPeerType::Staked(u64::MAX),
+                u64::MAX,
+            ),
+            load_ema.max_staked_load_in_throttling_window,
         );
     }
 
@@ -399,14 +468,7 @@ pub mod test {
 
     #[test]
     fn test_total_stake_zero_safety() {
-        let load_ema = StakedStreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        );
-        load_ema
-            .staked_throttling_enabled
-            .store(true, Ordering::Relaxed);
+        let load_ema = new_throttled_load_ema(true);
 
         assert_eq!(
             load_ema

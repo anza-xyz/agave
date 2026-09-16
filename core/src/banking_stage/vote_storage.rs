@@ -1,12 +1,12 @@
 use {
     super::latest_validator_vote_packet::{LatestValidatorVote, VoteSource},
-    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     ahash::HashMap,
     itertools::Itertools,
     rand::{Rng, rng},
     solana_account::ReadableAccount as _,
     solana_clock::Epoch,
+    solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
@@ -108,7 +108,7 @@ impl VoteStorage {
     pub(crate) fn insert_packet(
         &mut self,
         vote_source: VoteSource,
-        packet: SanitizedTransactionView<SharedBytes>,
+        packet: SanitizedTransactionView<Bytes>,
     ) -> VoteInsertionMetrics {
         let Ok(vote) =
             LatestValidatorVote::new_from_view(packet, vote_source, self.deprecate_legacy_vote_ixs)
@@ -122,7 +122,7 @@ impl VoteStorage {
     // Re-insert re-tryable packets.
     pub(crate) fn reinsert_packets(
         &mut self,
-        packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
+        packets: impl Iterator<Item = SanitizedTransactionView<Bytes>>,
     ) {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         for vote in packets.filter_map(|packet| {
@@ -137,7 +137,7 @@ impl VoteStorage {
         }
     }
 
-    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<SharedBytes>> {
+    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<Bytes>> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
             .and_then(|account| wincode::deserialize::<SlotHashes>(account.data()).ok());
@@ -387,7 +387,6 @@ pub(crate) mod tests {
         solana_signer::Signer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
-        std::sync::Arc,
     };
 
     /// Create a VoteAccount with a specific authorized voter for the given epoch
@@ -511,18 +510,15 @@ pub(crate) mod tests {
         packet
     }
 
-    fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<SharedBytes> {
-        SanitizedTransactionView::try_new_sanitized(
-            Arc::new(packet.buffer().to_vec()),
-            &sanitize_config(),
-        )
-        .unwrap()
+    fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<Bytes> {
+        SanitizedTransactionView::try_new_sanitized(packet.buffer().clone(), &sanitize_config())
+            .unwrap()
     }
 
     fn insert_packets(
         vote_storage: &mut VoteStorage,
         vote_source: VoteSource,
-        packets: impl IntoIterator<Item = SanitizedTransactionView<SharedBytes>>,
+        packets: impl IntoIterator<Item = SanitizedTransactionView<Bytes>>,
     ) {
         for packet in packets {
             vote_storage.insert_packet(vote_source, packet);

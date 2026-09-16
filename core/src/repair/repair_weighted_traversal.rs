@@ -9,7 +9,9 @@ use {
     ahash::{AHashMap, AHashSet},
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMetaRepair},
+    solana_ledger::{
+        blockstore::Blockstore, blockstore_db::DBPinnableSlice, blockstore_meta::SlotMetaRepair,
+    },
     std::collections::HashMap,
 };
 
@@ -83,9 +85,10 @@ impl Iterator for RepairWeightTraversal<'_> {
 /// Generate shred repairs for `tree` starting at `tree.root`.
 /// Prioritized by stake weight, additionally considers children not present in `tree` but in
 /// blockstore.
-pub fn get_best_repair_shreds(
+pub fn get_best_repair_shreds<'db>(
     tree: &HeaviestSubtreeForkChoice,
-    blockstore: &Blockstore,
+    blockstore: &'db Blockstore,
+    pinnable_slice: &mut DBPinnableSlice<'db>,
     slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
     repairs: &mut Vec<ShredRepairType>,
     max_new_shreds: usize,
@@ -104,9 +107,11 @@ pub fn get_best_repair_shreds(
             break;
         }
 
-        let slot_meta = slot_meta_cache
-            .entry(next.slot())
-            .or_insert_with(|| blockstore.meta_repair(next.slot()).unwrap());
+        let slot_meta = slot_meta_cache.entry(next.slot()).or_insert_with(|| {
+            blockstore
+                .meta_repair_into(next.slot(), pinnable_slice)
+                .unwrap()
+        });
 
         // May not exist if blockstore purged the SlotMeta due to something
         // like duplicate slots. TODO: Account for duplicate slot may be in orphans, especially
@@ -137,6 +142,7 @@ pub fn get_best_repair_shreds(
                             // Generate repairs for entire subtree rooted at `new_child_slot`
                             RepairService::generate_repairs_for_fork(
                                 blockstore,
+                                pinnable_slice,
                                 repairs,
                                 max_repairs,
                                 *new_child_slot,
@@ -235,6 +241,7 @@ pub mod test {
     #[test]
     fn test_get_best_repair_shreds() {
         let (blockstore, heaviest_subtree_fork_choice) = setup_forks();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
 
         // `blockstore` and `heaviest_subtree_fork_choice` match exactly, so should
         // return repairs for all slots (none are completed) in order of traversal
@@ -248,6 +255,7 @@ pub mod test {
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut repairs,
             6,
@@ -282,6 +290,7 @@ pub mod test {
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut repairs,
             6,
@@ -327,6 +336,7 @@ pub mod test {
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut repairs,
             4,
@@ -353,6 +363,7 @@ pub mod test {
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut repairs,
             5,
@@ -370,6 +381,7 @@ pub mod test {
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut repairs,
             1,
@@ -383,6 +395,7 @@ pub mod test {
     #[test]
     fn test_get_best_repair_shreds_no_duplicates() {
         let (blockstore, heaviest_subtree_fork_choice) = setup_forks();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
         // Add a branch to slot 2, make sure it doesn't repair child
         // 4 again when the Unvisited(2) event happens
         blockstore.add_tree(tr(2) / (tr(6) / tr(7)), true, false, 2, Hash::default());
@@ -395,6 +408,7 @@ pub mod test {
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut repairs,
             usize::MAX,
@@ -415,6 +429,7 @@ pub mod test {
     #[test]
     fn test_get_best_repair_shreds_stops_at_limit() {
         let (blockstore, heaviest_subtree_fork_choice) = setup_forks();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
         let mut repairs = vec![];
         let mut outstanding_repairs = HashMap::new();
         let mut slot_meta_cache = AHashMap::default();
@@ -424,6 +439,7 @@ pub mod test {
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut repairs,
             1,

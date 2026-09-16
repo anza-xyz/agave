@@ -272,11 +272,12 @@ impl SigVerifyWorkerPool {
         sharable_banks: &SharableBanks,
         state: &SigVerifyWorkerState,
     ) -> bool {
+        let batch_len = batch.len();
         state.stats.total_batches.fetch_add(1, Ordering::Relaxed);
         state
             .stats
             .total_packets
-            .fetch_add(batch.len(), Ordering::Relaxed);
+            .fetch_add(batch_len, Ordering::Relaxed);
 
         let (discard_or_dedup_fail, dedup_time_us) =
             measure_us!(deduper::dedup_packets_and_count_discards(
@@ -291,6 +292,10 @@ impl SigVerifyWorkerPool {
             .stats
             .total_dedup_time_us
             .fetch_add(dedup_time_us as usize, Ordering::Relaxed);
+
+        if discard_or_dedup_fail as usize == batch_len {
+            return true;
+        }
 
         let working_bank = sharable_banks.working();
 
@@ -333,6 +338,10 @@ impl SigVerifyWorkerPool {
             .stats
             .total_verify_time_us
             .fetch_add(verify_time_us as usize, Ordering::Relaxed);
+
+        if num_valid_packets == 0 {
+            return true;
+        }
 
         let banking_packet_batch = BankingPacketBatch::new(batch);
         // Sample backlog before the push: measures consumer health without

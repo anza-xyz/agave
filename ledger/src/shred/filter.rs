@@ -7,8 +7,6 @@ use {
         ShredFlags, ShredType, ShredVariant, layout, merkle,
     },
     crate::blockstore,
-    agave_feature_set::discard_unexpected_data_complete_shreds,
-    assert_matches::debug_assert_matches,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::PacketRef,
@@ -163,7 +161,6 @@ pub struct ShredFilterContext {
     // Fields for slot range filtering updated via the root bank
     root: Slot,
     max_slot: Slot,
-    epoch_schedule: EpochSchedule,
 
     // Static from startup, filter out shreds of invalid version
     shred_version: u16,
@@ -173,10 +170,6 @@ pub struct ShredFilterContext {
     // Cache of above filter so that we don't have to incur an
     // atomic load for each packet. This is recached during `maybe_update`
     cached_turbine_mode: TurbineModeKind,
-
-    // Whether to discard shreds that are not end of FEC set
-    // but specify DATA_COMPLETE
-    discard_unexpected_data_complete_shreds_feature_slot: Option<Slot>,
 
     // The shred limits per slot, derived from the root bank for each shred slot.
     shred_limit_context: ShredLimitContext,
@@ -196,9 +189,6 @@ impl ShredFilterContext {
     ) -> Self {
         let root = root_bank.slot();
         let max_slot = max_shred_slot(root, root_bank.get_slots_in_epoch(root_bank.epoch()));
-        let discard_unexpected_data_complete_shreds_feature_slot = root_bank
-            .feature_set
-            .activated_slot(&discard_unexpected_data_complete_shreds::id());
         let cached_turbine_mode = turbine_mode
             .as_ref()
             .map(TurbineMode::get)
@@ -208,11 +198,9 @@ impl ShredFilterContext {
             last_updated: Instant::now(),
             root,
             max_slot,
-            epoch_schedule: root_bank.epoch_schedule().clone(),
             shred_version,
             turbine_mode,
             cached_turbine_mode,
-            discard_unexpected_data_complete_shreds_feature_slot,
             shred_limit_context: ShredLimitContext::new(root_bank),
             stats: ShredFetchStats::default(),
         }
@@ -233,10 +221,6 @@ impl ShredFilterContext {
                 max_shred_slot(self.root, root_bank.get_slots_in_epoch(root_bank.epoch()));
             debug_assert!(self.root < self.max_slot);
 
-            self.epoch_schedule = root_bank.epoch_schedule().clone();
-            self.discard_unexpected_data_complete_shreds_feature_slot = root_bank
-                .feature_set
-                .activated_slot(&discard_unexpected_data_complete_shreds::id());
             self.shred_limit_context = ShredLimitContext::new(root_bank);
         }
     }
@@ -365,14 +349,7 @@ impl ShredFilterContext {
                     && (expected_data_complete_index != Some(index))
                 {
                     self.stats.unexpected_data_complete_shred += 1;
-
-                    if check_feature_activation(
-                        self.discard_unexpected_data_complete_shreds_feature_slot,
-                        slot,
-                        &self.epoch_schedule,
-                    ) {
-                        return true;
-                    }
+                    return true;
                 }
 
                 if shred_flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
@@ -516,17 +493,10 @@ impl ShredRecoveryContext {
         recovered_shreds: &mut Vec<Payload>,
         recovered_data_shreds: &mut Vec<Shred>,
     ) -> Result<(), Error> {
-        let shreds = shreds
+        let shreds: Vec<_> = shreds
             .into_iter()
             .filter(|shred| !self.shred_filter_ctx.should_discard_shred(shred.payload()))
-            .map(|shred| {
-                debug_assert_matches!(
-                    shred.common_header().shred_variant,
-                    ShredVariant::MerkleCode { .. } | ShredVariant::MerkleData { .. }
-                );
-                merkle::Shred::try_from(shred)
-            })
-            .collect::<Result<_, _>>()?;
+            .collect();
 
         // With Merkle shreds, leader signs the Merkle root of the erasure batch
         // and all shreds within the same erasure batch have the same signature.
@@ -537,7 +507,7 @@ impl ShredRecoveryContext {
         // same Merkle root.
         let shreds = merkle::recover(shreds, &self.reed_solomon_cache)?;
         shreds
-            .filter_map(|shred| shred.ok().map(Shred::from))
+            .filter_map(|shred| shred.ok())
             .filter(|shred| !self.should_discard_shred(shred))
             .for_each(|shred| {
                 // All shreds should be retransmitted, but because there are no
@@ -564,18 +534,8 @@ impl ShredRecoveryContext {
         }
     }
 
-    /// If SIMD-0337 is active, apply filtering rules to recovered shreds
+    /// Apply filtering rules to recovered shreds.
     pub fn should_discard_shred(&mut self, shred: &Shred) -> bool {
-        if !check_feature_activation(
-            self.shred_filter_ctx
-                .discard_unexpected_data_complete_shreds_feature_slot,
-            shred.slot(),
-            &self.shred_filter_ctx.epoch_schedule,
-        ) {
-            // Only apply filtering rules to recovered shreds when SIMD-0337 is active
-            return false;
-        }
-
         self.shred_filter_ctx.should_discard_shred(shred.payload())
     }
 }
@@ -607,14 +567,9 @@ mod tests {
         test_case::test_case,
     };
 
-    fn new_test_bank(slot: Slot, discard_unexpected_data_complete_shreds: bool) -> Arc<Bank> {
+    fn new_test_bank(slot: Slot) -> Arc<Bank> {
         let genesis_config = create_genesis_config(1).genesis_config;
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_id = agave_feature_set::discard_unexpected_data_complete_shreds::id();
-        bank.deactivate_feature(&feature_id);
-        if discard_unexpected_data_complete_shreds {
-            bank.activate_feature(&feature_id);
-        }
+        let bank = Bank::new_for_tests(&genesis_config);
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         if slot == 0 {
             bank
@@ -656,16 +611,15 @@ mod tests {
             is_last_in_slot,
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
 
         assert_matches!(shreds[0].shred_type(), ShredType::Data);
         let parent_slot = shreds[0].parent().unwrap();
         let shred_version = shreds[0].common_header().version;
 
-        let root_bank = new_test_bank(0, false);
-        let parent_exceeded_root_bank = new_test_bank(parent_slot + 1, false);
-        let slot_root_bank = new_test_bank(slot, false);
+        let root_bank = new_test_bank(0);
+        let parent_exceeded_root_bank = new_test_bank(parent_slot + 1);
+        let slot_root_bank = new_test_bank(slot);
         let mut packet = Packet::default();
 
         {
@@ -809,7 +763,6 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         let coding_shreds: Vec<_> = shreds
             .into_iter()
             .filter(|shred| shred.shred_type() == ShredType::Code)
@@ -823,7 +776,7 @@ mod tests {
         let mut shred_recovery_context = ShredRecoveryContext::new(
             ReedSolomonCache::default(),
             dummy_retransmit_sender,
-            new_test_bank(0, false),
+            new_test_bank(0),
             shred_version,
         );
         shred_recovery_context
@@ -856,7 +809,7 @@ mod tests {
     fn test_should_discard_packet_with_turbine_mode() {
         agave_logger::setup();
         let mut rng = rand::rng();
-        let root_bank = new_test_bank(0, false);
+        let root_bank = new_test_bank(0);
         let shreds = make_merkle_shreds_for_tests(
             &mut rng,
             42,
@@ -864,7 +817,7 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shred = Shred::from(shreds[0].clone());
+        let shred = shreds[0].clone();
         let shred_version = shred.common_header().version;
         let turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
         let mut packet = Packet::default();
@@ -904,12 +857,11 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
 
         assert_matches!(shreds[0].shred_type(), ShredType::Data);
         let shred_version = shreds[0].common_header().version;
-        let root_bank = new_test_bank(0, false);
+        let root_bank = new_test_bank(0);
 
         {
             let mut packet = Packet::default();
@@ -984,7 +936,6 @@ mod tests {
             true,     // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         let shred_version = shreds[0].common_header().version;
         let data_shreds: Vec<_> = shreds
             .iter()
@@ -995,8 +946,9 @@ mod tests {
         let mut packet = Packet::default();
         last_data_shred.copy_to_packet(&mut packet);
 
-        let bad_last_index = 30u32;
-        let fec_set_index = 0u32;
+        // Keep DATA_COMPLETE placement valid so this isolates LAST_SHRED_IN_SLOT alignment.
+        let fec_set_index = 1u32;
+        let bad_last_index = fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32 - 1;
         {
             let mut cursor = Cursor::new(packet.buffer_mut());
             cursor
@@ -1026,9 +978,8 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         let shred_version = shreds[0].common_header().version;
-        let root_bank = new_test_bank(0, false);
+        let root_bank = new_test_bank(0);
 
         for shred_type in [ShredType::Data, ShredType::Code] {
             let shred = shreds
@@ -1103,7 +1054,7 @@ mod tests {
     fn test_data_complete_shred_index_validation() {
         agave_logger::setup();
         let mut rng = rand::rng();
-        let root_bank = new_test_bank(0, true);
+        let root_bank = new_test_bank(0);
         let slot = root_bank.get_slots_in_epoch(root_bank.epoch());
         let shreds = make_merkle_shreds_for_tests(
             &mut rng,
@@ -1112,7 +1063,6 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
 
         let data_shred = shreds
             .iter()

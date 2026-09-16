@@ -14,64 +14,10 @@ use {
         InnerInstructions, Reward, RewardType, TransactionStatusMeta, TransactionTokenBalance,
     },
     std::str::FromStr,
-    wincode::ReadError,
+    wincode::{ReadError, adapter::DefaultOnEmptyRead},
 };
 
 pub mod convert;
-
-mod wincode_compat {
-    use {
-        std::{marker::PhantomData, mem::MaybeUninit},
-        wincode::{
-            ReadError, ReadResult, SchemaRead, SchemaWrite, WriteResult,
-            config::Config,
-            io::{ReadError as IoReadError, Reader, Writer},
-        },
-    };
-
-    /// Deserializes using `T` normally, but returns `T::Dst::default()` if the reader is
-    /// exhausted (EOF), for backward compatibility when new fields are appended
-    /// to a struct. Equivalent to `#[serde(deserialize_with = "default_on_eof")]`.
-    pub(super) struct DefaultOnEmptyRead<T>(PhantomData<T>);
-
-    // Note: TYPE_META is left dynamic, since during reading both 0-size or non-0-size reads are
-    // allowed, so trusted readers can't rely on encoding to be static sized.
-    unsafe impl<'de, C: Config, T> SchemaRead<'de, C> for DefaultOnEmptyRead<T>
-    where
-        T: SchemaRead<'de, C>,
-        T::Dst: Default,
-    {
-        type Dst = T::Dst;
-
-        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            match <T as SchemaRead<'de, C>>::read(reader, dst) {
-                Ok(()) => Ok(()),
-                Err(ReadError::Io(IoReadError::ReadSizeLimit(_))) => {
-                    dst.write(Self::Dst::default());
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        }
-    }
-
-    unsafe impl<C: Config, T> SchemaWrite<C> for DefaultOnEmptyRead<T>
-    where
-        T: SchemaWrite<C>,
-    {
-        type Src = T::Src;
-
-        const TYPE_META: wincode::TypeMeta = T::TYPE_META;
-
-        fn size_of(src: &Self::Src) -> WriteResult<usize> {
-            <T as SchemaWrite<C>>::size_of(src)
-        }
-
-        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-            <T as SchemaWrite<C>>::write(writer, src)
-        }
-    }
-}
 
 pub type StoredExtendedRewards = Vec<StoredExtendedReward>;
 
@@ -80,16 +26,16 @@ pub struct StoredExtendedReward {
     pubkey: String,
     lamports: i64,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<u64>")]
+    #[wincode(with = "DefaultOnEmptyRead<u64>")]
     post_balance: u64,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<RewardType>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<RewardType>>")]
     reward_type: Option<RewardType>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<u8>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u8>>")]
     commission: Option<u8>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<u16>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u16>>")]
     commission_bps: Option<u16>,
 }
 
@@ -198,10 +144,10 @@ pub struct StoredTransactionTokenBalance {
     pub mint: String,
     pub ui_token_amount: StoredTokenAmount,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<String>")]
+    #[wincode(with = "DefaultOnEmptyRead<String>")]
     pub owner: String,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<String>")]
+    #[wincode(with = "DefaultOnEmptyRead<String>")]
     pub program_id: String,
 }
 
@@ -250,32 +196,28 @@ pub struct StoredTransactionStatusMeta {
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<Vec<InnerInstructions>>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<InnerInstructions>>>")]
     pub inner_instructions: Option<Vec<InnerInstructions>>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<Vec<String>>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<String>>>")]
     pub log_messages: Option<Vec<String>>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(
-        with = "wincode_compat::DefaultOnEmptyRead<Option<Vec<StoredTransactionTokenBalance>>>"
-    )]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<StoredTransactionTokenBalance>>>")]
     pub pre_token_balances: Option<Vec<StoredTransactionTokenBalance>>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(
-        with = "wincode_compat::DefaultOnEmptyRead<Option<Vec<StoredTransactionTokenBalance>>>"
-    )]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<StoredTransactionTokenBalance>>>")]
     pub post_token_balances: Option<Vec<StoredTransactionTokenBalance>>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<Vec<StoredExtendedReward>>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<StoredExtendedReward>>>")]
     pub rewards: Option<Vec<StoredExtendedReward>>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<TransactionReturnData>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<TransactionReturnData>>")]
     pub return_data: Option<TransactionReturnData>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<u64>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u64>>")]
     pub compute_units_consumed: Option<u64>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<u64>>")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u64>>")]
     pub cost_units: Option<u64>,
 }
 

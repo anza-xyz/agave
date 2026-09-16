@@ -5,14 +5,20 @@ mod stats;
 mod timers;
 
 use {
-    crate::{common::DELTA_TIMEOUT, event::VotorEvent},
+    crate::{
+        common::{DELTA_TIMEOUT, blocking_send},
+        event::VotorEvent,
+        votor::ExitOnDrop,
+    },
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
+    solana_gossip::cluster_info::ClusterInfo,
+    solana_validator_exit::Exit,
     std::{
         sync::{
-            Arc,
+            Arc, RwLock,
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, JoinHandle},
@@ -30,17 +36,32 @@ pub(crate) struct TimerManager {
 
 impl TimerManager {
     pub(crate) fn new(
+        cluster_info: Arc<ClusterInfo>,
         event_sender: Sender<VotorEvent>,
         exit: Arc<AtomicBool>,
+        validator_exit: Arc<RwLock<Exit>>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
-        let timers = Arc::new(PlRwLock::new(Timers::new(DELTA_TIMEOUT, event_sender)));
+        let timers = Arc::new(PlRwLock::new(Timers::new(DELTA_TIMEOUT)));
         let handle = {
             let timers = Arc::clone(&timers);
             thread::spawn(move || {
+                // Dropped before `event_sender`, so the shutdown runs while the
+                // event channel is still open.
+                let _exit_on_drop = ExitOnDrop::new(validator_exit);
                 let _ = migration_status.wait_for_migration_or_exit(exit.as_ref());
                 while !exit.load(Ordering::Relaxed) {
-                    let duration = match timers.write().progress(Instant::now()) {
+                    let (duration, events) = timers.write().progress(Instant::now());
+                    let my_pubkey = &cluster_info.id();
+                    for event in events {
+                        if let Err(channel_name) =
+                            blocking_send(my_pubkey, &event_sender, event, "votor_event_sender")
+                        {
+                            warn!("{my_pubkey}: {channel_name} disconnected. Exiting");
+                            return;
+                        }
+                    }
+                    let duration = match duration {
                         None => {
                             // No active timers, sleep for an arbitrary amount.
                             // This should be smaller than the minimum amount
@@ -92,19 +113,23 @@ impl TimerManager {
 mod tests {
     use {
         super::*,
-        crate::event::VotorEvent,
+        crate::{event::VotorEvent, tests::get_cluster_info},
         crossbeam_channel::bounded,
         solana_clock::DEFAULT_MS_PER_SLOT,
+        solana_keypair::Keypair,
         std::{assert_matches, time::Duration},
     };
 
     #[test]
     fn test_timer_manager() {
+        let cluster_info = get_cluster_info(Keypair::new());
         let (event_sender, event_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let timer_manager = TimerManager::new(
+            cluster_info,
             event_sender,
             exit.clone(),
+            Arc::default(),
             Arc::new(MigrationStatus::post_migration_status()),
         );
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
@@ -149,11 +174,14 @@ mod tests {
 
     #[test]
     fn test_new_earlier_timer_wakes_sleeping_worker() {
+        let cluster_info = get_cluster_info(Keypair::new());
         let (event_sender, event_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let timer_manager = TimerManager::new(
+            cluster_info,
             event_sender,
             exit.clone(),
+            Arc::default(),
             Arc::new(MigrationStatus::post_migration_status()),
         );
 

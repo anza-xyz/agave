@@ -10,7 +10,9 @@ use {
     agave_votor::vote_history_storage::FileVoteHistoryStorage,
     itertools::izip,
     log::*,
-    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
+    },
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_clock::{DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_cluster_type::ClusterType,
@@ -28,7 +30,10 @@ use {
         node::Node,
     },
     solana_keypair::Keypair,
-    solana_ledger::{create_new_tmp_ledger, shred::Shred},
+    solana_ledger::{
+        create_new_tmp_ledger,
+        shred::{Shred, filter::TurbineMode},
+    },
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -37,9 +42,12 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::genesis_utils::{
-        GenesisConfigInfo, ValidatorVoteKeypairs,
-        create_genesis_config_with_vote_accounts_and_cluster_type,
+    solana_runtime::{
+        bank_forks::BankForks,
+        genesis_utils::{
+            GenesisConfigInfo, ValidatorVoteKeypairs,
+            create_genesis_config_with_vote_accounts_and_cluster_type,
+        },
     },
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
@@ -48,7 +56,7 @@ use {
         state::{Authorized, Lockup, StakeStateV2},
     },
     solana_system_transaction as system_transaction,
-    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+    solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     solana_vote_program::{
@@ -62,7 +70,7 @@ use {
         collections::HashMap,
         io::{Error, Result},
         iter,
-        net::SocketAddr,
+        net::{SocketAddr, UdpSocket},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
         time::Duration,
@@ -85,6 +93,9 @@ pub struct ClusterConfig {
     pub validator_configs: Vec<ValidatorConfig>,
     /// Number of nodes that are unstaked and not voting (a.k.a listening)
     pub num_listeners: u64,
+    /// Optional turbine mode shared by all listener nodes. When unset, listeners inherit the
+    /// bootstrap validator's turbine mode.
+    pub listener_turbine_mode: Option<TurbineMode>,
     /// List of tuples (pubkeys, in_genesis) of each node if specified. If
     /// `in_genesis` == true, the validator's vote and stake accounts
     //  will be inserted into the genesis block instead of warming up through
@@ -102,7 +113,6 @@ pub struct ClusterConfig {
     pub cluster_type: ClusterType,
     pub poh_config: PohConfig,
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
-    pub tpu_connection_pool_size: usize,
     pub vote_use_quic: bool,
 }
 
@@ -129,6 +139,7 @@ impl Default for ClusterConfig {
         ClusterConfig {
             validator_configs: vec![],
             num_listeners: 0,
+            listener_turbine_mode: None,
             validator_keys: None,
             node_stakes: vec![],
             mint_lamports: DEFAULT_MINT_LAMPORTS,
@@ -139,7 +150,6 @@ impl Default for ClusterConfig {
             poh_config: PohConfig::default(),
             skip_warmup_slots: false,
             additional_accounts: vec![],
-            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
         }
     }
@@ -467,6 +477,10 @@ impl LocalCluster {
 
         let mut listener_config = safe_clone_config(&config.validator_configs[0]);
         listener_config.voting_disabled = true;
+        listener_config.wait_for_supermajority = None;
+        if let Some(turbine_mode) = &config.listener_turbine_mode {
+            listener_config.turbine_mode = turbine_mode.clone();
+        }
         (0..config.num_listeners).for_each(|_| {
             cluster.add_validator_listener(
                 &listener_config,
@@ -895,22 +909,34 @@ impl LocalCluster {
         num_new_notarized_votes: usize,
         test_name: &str,
         socket_addr_space: SocketAddrSpace,
-        vote_listener_addr: std::net::UdpSocket,
-        validator_keys: &[Arc<Keypair>],
-        node_stakes: &[u64],
+        vote_listener_socket: UdpSocket,
+        listener_keypair: Keypair,
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        let bank_forks = self.bank_forks();
         info!("{test_name} looking for new notarized votes on all nodes");
         cluster_tests::check_for_new_notarized_votes(
             compute_shred_version(&self.genesis_config.hash(), None),
             num_new_notarized_votes,
             &alive_node_contact_infos,
             test_name,
-            vote_listener_addr,
-            validator_keys,
-            node_stakes,
+            vote_listener_socket,
+            listener_keypair,
+            bank_forks,
         );
         info!("{test_name} done waiting for notarized votes");
+    }
+
+    pub fn bank_forks(&self) -> Arc<RwLock<BankForks>> {
+        self.validators
+            .values()
+            .find_map(|validator_info| {
+                validator_info
+                    .validator
+                    .as_ref()
+                    .map(|validator| Arc::clone(&validator.bank_forks))
+            })
+            .expect("cluster must contain a running validator")
     }
 
     pub fn check_no_new_roots(
@@ -1141,9 +1167,9 @@ impl LocalCluster {
                     (Some(stake_account), Some(vote_account)) => {
                         match (
                             stake_account
-                                .deserialize_data::<StakeStateV2>()
+                                .state()
                                 .ok()
-                                .and_then(|state| state.stake()),
+                                .and_then(|state: StakeStateV2| state.stake()),
                             VoteStateV4::deserialize(vote_account.data(), &vote_account_pubkey)
                                 .ok(),
                         ) {

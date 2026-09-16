@@ -2,7 +2,7 @@ use {
     super::{
         malicious_repair_handler::{MaliciousRepairConfig, MaliciousRepairHandler},
         repair_response::repair_response_packet_from_bytes,
-        serve_repair::ServeRepair,
+        serve_repair::{FecSetRoot, ServeRepair},
         standard_repair_handler::StandardRepairHandler,
     },
     crate::repair::{
@@ -46,7 +46,7 @@ where
     let serialized_response = serialize(response).ok()?;
     let packet =
         repair_response::repair_response_packet_from_bytes(serialized_response, from_addr, nonce)?;
-    Some(RecycledPacketBatch::new_with_recycler_data(recycler, debug_label, vec![packet]).into())
+    Some(RecycledPacketBatch::new_with_recycler_data(recycler, debug_label, [packet]).into())
 }
 
 pub trait RepairHandler {
@@ -71,12 +71,8 @@ pub trait RepairHandler {
         // Try to find the requested index in one of the slots
         let packet = self.repair_response_packet(slot, shred_index, from_addr, nonce)?;
         Some(
-            RecycledPacketBatch::new_with_recycler_data(
-                recycler,
-                "run_window_request",
-                vec![packet],
-            )
-            .into(),
+            RecycledPacketBatch::new_with_recycler_data(recycler, "run_window_request", [packet])
+                .into(),
         )
     }
 
@@ -98,7 +94,7 @@ pub trait RepairHandler {
             RecycledPacketBatch::new_with_recycler_data(
                 recycler,
                 "run_window_request_for_block_id",
-                vec![packet],
+                [packet],
             )
             .into(),
         )
@@ -114,14 +110,14 @@ pub trait RepairHandler {
     ) -> Option<PacketBatch> {
         // Try to find the requested index in one of the slots
         let meta = self.blockstore().meta(slot).ok()??;
-        if meta.received > highest_index {
-            // meta.received must be at least 1 by this point
-            let packet = self.repair_response_packet(slot, meta.received - 1, from_addr, nonce)?;
+        let shred_index = meta.received.checked_sub(1)?;
+        if shred_index >= highest_index || meta.last_index == Some(shred_index) {
+            let packet = self.repair_response_packet(slot, shred_index, from_addr, nonce)?;
             return Some(
                 RecycledPacketBatch::new_with_recycler_data(
                     recycler,
                     "run_highest_window_request",
-                    vec![packet],
+                    [packet],
                 )
                 .into(),
             );
@@ -208,7 +204,7 @@ pub trait RepairHandler {
         let fec_set_proof = double_merkle_meta.get_fec_set_proof(proof_index)?.to_vec();
 
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root,
+            fec_set_root: FecSetRoot::from(fec_set_root),
             fec_set_proof,
         };
         create_response_packet_batch(recycler, &response, from_addr, nonce, "run_fec_set_root")
@@ -420,7 +416,8 @@ mod tests {
                     fec_set_proof,
                 } => {
                     assert_eq!(
-                        fec_set_root, *expected_root,
+                        fec_set_root,
+                        FecSetRoot::from(*expected_root),
                         "FEC set root should match for index {fec_set_index}"
                     );
                     assert!(

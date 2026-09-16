@@ -1,4 +1,4 @@
-use crate::banking_stage::scheduler_messages::MaxAge;
+use {crate::banking_stage::scheduler_messages::MaxAge, solana_pubkey::Pubkey};
 
 /// TransactionState is used to track the state of a transaction in the transaction scheduler
 /// and banking stage as a whole.
@@ -18,8 +18,12 @@ pub(crate) struct TransactionState<Tx> {
     max_age: MaxAge,
     /// Priority of the transaction.
     priority: u64,
+    /// Order in which the transaction entered the scheduler's container.
+    arrival_order: u64,
     /// Estimated cost of the transaction.
     cost: u64,
+    /// Nonce address, if this is a validated nonce transaction.
+    nonce_address: Option<Pubkey>,
 }
 
 impl<Tx> TransactionState<Tx> {
@@ -29,7 +33,9 @@ impl<Tx> TransactionState<Tx> {
             transaction: Some(transaction),
             max_age,
             priority,
+            arrival_order: 0,
             cost,
+            nonce_address: None,
         }
     }
 
@@ -40,9 +46,22 @@ impl<Tx> TransactionState<Tx> {
         self.priority
     }
 
+    pub(crate) fn arrival_order(&self) -> u64 {
+        self.arrival_order
+    }
+
+    pub(crate) fn set_arrival_order(&mut self, arrival_order: u64) {
+        self.arrival_order = arrival_order;
+    }
+
     /// Return the cost of the transaction.
     pub(crate) fn cost(&self) -> u64 {
         self.cost
+    }
+
+    /// Return the nonce address of the transaction, if one exists.
+    pub(crate) fn nonce_address(&self) -> Option<&Pubkey> {
+        self.nonce_address.as_ref()
     }
 
     /// Intended to be called when a transaction is scheduled. This method
@@ -78,6 +97,12 @@ impl<Tx> TransactionState<Tx> {
         self.transaction
             .as_ref()
             .expect("transaction is not pending")
+    }
+
+    /// Set the nonce address, used in `set_nonce_transaction_priority_id()` after
+    /// the nonce transaction is fully validated.
+    pub(crate) fn set_nonce_address(&mut self, nonce_address: Option<Pubkey>) {
+        self.nonce_address = nonce_address;
     }
 }
 

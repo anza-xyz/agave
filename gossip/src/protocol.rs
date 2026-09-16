@@ -1,4 +1,6 @@
 //! Definitions for the base of all Gossip protocol messages
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         crds_data::{CrdsData, MAX_WALLCLOCK},
@@ -7,7 +9,6 @@ use {
         ping_pong::{self, Pong},
         sigverify_cache::SigVerifyCache,
     },
-    serde::{Deserialize, Serialize},
     solana_keypair::signable::Signable,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
@@ -61,14 +62,15 @@ type GossipProtocolWincodeConfig =
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
         test_roundtrip = "wire_only",
     )
 )]
-#[derive(Serialize, Deserialize, Debug, SchemaRead, SchemaWrite)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 #[allow(clippy::large_enum_variant)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) enum Protocol {
     PullRequest(CrdsFilter, CrdsValue),
     PullResponse(Pubkey, Vec<CrdsValue>),
@@ -85,13 +87,15 @@ pub(crate) enum Protocol {
     feature = "frozen-abi",
     frozen_abi(
         abi_digest = "Gab1D5ug6ZAB5sRNmBpoM8JyxsixccLLaWxYZwmueVYA",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
 pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn deserialize_protocol(input: &[u8]) -> wincode::ReadResult<Protocol> {
     wincode::config::deserialize_exact::<Protocol, GossipProtocolWincodeConfig>(
         input,
@@ -101,14 +105,25 @@ pub(crate) fn deserialize_protocol(input: &[u8]) -> wincode::ReadResult<Protocol
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "GomZf5rFL743zPKH71UShh64JfNvrDBBEC2o2VehinsT",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, Default, PartialEq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(
+        pubkey(pub),
+        prunes(pub),
+        signature(pub),
+        destination(pub),
+        wallclock(pub)
+    )
+)]
 pub(crate) struct PruneData {
     /// Pubkey of the node that sent this prune data
     pub(crate) pubkey: Pubkey,
@@ -148,7 +163,7 @@ impl Protocol {
 
 impl PruneData {
     fn signable_data_without_prefix(&self) -> Cow<'static, [u8]> {
-        #[derive(Serialize, SchemaWrite)]
+        #[derive(SchemaWrite)]
         struct SignData<'a> {
             pubkey: &'a Pubkey,
             prunes: &'a [Pubkey],
@@ -165,7 +180,7 @@ impl PruneData {
     }
 
     fn signable_data_with_prefix(&self) -> Cow<'static, [u8]> {
-        #[derive(Serialize, SchemaWrite)]
+        #[derive(SchemaWrite)]
         struct SignDataWithPrefix<'a> {
             prefix: &'a [u8],
             pubkey: &'a Pubkey,
@@ -269,7 +284,7 @@ impl Signable for PruneData {
 /// Note: some messages cannot be contained within that size so in the worst case this returns
 /// N nested Vecs with 1 item each.
 pub(crate) fn split_gossip_messages<
-    T: Serialize + Debug + SchemaWrite<wincode::config::DefaultConfig, Src = T>,
+    T: Debug + SchemaWrite<wincode::config::DefaultConfig, Src = T>,
 >(
     max_chunk_size: usize,
     data_feed: impl IntoIterator<Item = T>,
@@ -302,275 +317,6 @@ pub(crate) fn split_gossip_messages<
     })
 }
 
-#[cfg(feature = "conformance")]
-pub fn gossip_decode_to_effects(input: &[u8]) -> protosol::protos::GossipEffects {
-    use {
-        crate::{
-            crds_data::CrdsData, crds_gossip_pull::CrdsFilter as NativeCrdsFilter,
-            crds_value::CrdsValue as NativeCrdsValue, ping_pong::Pong,
-        },
-        bv::Bits,
-        protosol::protos::{
-            GossipBloom, GossipCompressedSlots, GossipContactInfo, GossipCrdsData,
-            GossipCrdsFilter, GossipCrdsValue, GossipDuplicateShred, GossipEffects,
-            GossipEpochSlots, GossipIncrementalHash, GossipIpAddr, GossipIpv6Addr,
-            GossipLowestSlot, GossipMsg, GossipPing, GossipPong, GossipPruneData,
-            GossipPruneMessage, GossipPullRequest, GossipPullResponse, GossipPushMessage,
-            GossipSnapshotHashes, GossipSocketEntry, GossipVote, gossip_compressed_slots,
-            gossip_crds_data, gossip_ip_addr, gossip_msg,
-        },
-        solana_sanitize::Sanitize,
-    };
-
-    fn convert_ping(ping: &Ping) -> gossip_msg::Msg {
-        gossip_msg::Msg::Ping(GossipPing {
-            from: ping.pubkey().to_bytes().to_vec(),
-            token: ping.signable_data().to_vec(),
-            signature: ping.get_signature().as_ref().to_vec(),
-        })
-    }
-
-    fn convert_pong(pong: &Pong) -> gossip_msg::Msg {
-        gossip_msg::Msg::Pong(GossipPong {
-            from: pong.from().to_bytes().to_vec(),
-            hash: pong.signable_data().to_vec(),
-            signature: pong.signature().as_ref().to_vec(),
-        })
-    }
-
-    fn convert_bloom(bloom: &solana_bloom::bloom::Bloom<solana_hash::Hash>) -> GossipBloom {
-        let mut bits_bytes = Vec::new();
-        for i in 0..bloom.bits.block_len() {
-            bits_bytes.extend_from_slice(&bloom.bits.get_block(i).to_le_bytes());
-        }
-        GossipBloom {
-            keys: bloom.keys.clone(),
-            bits: bits_bytes,
-            num_bits_set: bloom.num_bits_set(),
-        }
-    }
-
-    fn convert_crds_filter(filter: &NativeCrdsFilter) -> GossipCrdsFilter {
-        let mask_bits = filter.get_mask_bits();
-        GossipCrdsFilter {
-            filter: Some(convert_bloom(&filter.filter)),
-            mask: NativeCrdsFilter::canonical_mask(filter.mask(), mask_bits),
-            mask_bits,
-        }
-    }
-
-    fn convert_crds_data(data: &CrdsData) -> GossipCrdsData {
-        let converted = match data {
-            CrdsData::ContactInfo(ci) => {
-                let v = ci.version();
-                Some(gossip_crds_data::Data::ContactInfo(GossipContactInfo {
-                    pubkey: ci.pubkey().to_bytes().to_vec(),
-                    wallclock: ci.wallclock(),
-                    outset: ci.outset(),
-                    shred_version: ci.shred_version() as u32,
-                    version_major: v.major() as u32,
-                    version_minor: v.minor() as u32,
-                    version_patch: v.patch() as u32,
-                    version_commit: v.commit(),
-                    version_feature_set: v.feature_set(),
-                    version_client: u16::try_from(v.client().clone()).expect("valid client id")
-                        as u32,
-                    addrs: ci
-                        .addrs()
-                        .iter()
-                        .map(|a| GossipIpAddr {
-                            addr: Some(match a {
-                                std::net::IpAddr::V4(v4) => {
-                                    gossip_ip_addr::Addr::Ipv4(u32::from(*v4))
-                                }
-                                std::net::IpAddr::V6(v6) => {
-                                    let octets = v6.octets();
-                                    gossip_ip_addr::Addr::Ipv6(GossipIpv6Addr {
-                                        hi: u64::from_be_bytes(octets[..8].try_into().unwrap()),
-                                        lo: u64::from_be_bytes(octets[8..].try_into().unwrap()),
-                                    })
-                                }
-                            }),
-                        })
-                        .collect(),
-                    sockets: ci
-                        .sockets()
-                        .iter()
-                        .map(|s| GossipSocketEntry {
-                            key: s.key as u32,
-                            index: s.index as u32,
-                            offset: s.offset as u32,
-                        })
-                        .collect(),
-                    extensions: vec![],
-                }))
-            }
-            CrdsData::Vote(idx, vote) => {
-                let tx_bytes =
-                    wincode::serialize(vote.transaction()).expect("vote transaction serialization");
-                Some(gossip_crds_data::Data::Vote(GossipVote {
-                    index: *idx as u32,
-                    from: vote.from().to_bytes().to_vec(),
-                    wallclock: vote.wallclock(),
-                    transaction: tx_bytes,
-                }))
-            }
-            CrdsData::LowestSlot(_, ls) => {
-                Some(gossip_crds_data::Data::LowestSlot(GossipLowestSlot {
-                    index: 0,
-                    from: ls.from().to_bytes().to_vec(),
-                    lowest: ls.lowest,
-                    wallclock: ls.wallclock(),
-                }))
-            }
-            CrdsData::EpochSlots(idx, es) => {
-                use crate::epoch_slots::CompressedSlots;
-                let slots = es
-                    .slots
-                    .iter()
-                    .map(|cs| match cs {
-                        CompressedSlots::Uncompressed(u) => {
-                            let mut bits = Vec::new();
-                            for i in 0..u.slots.block_len() {
-                                bits.extend_from_slice(&u.slots.get_block(i).to_le_bytes());
-                            }
-                            GossipCompressedSlots {
-                                first_slot: u.first_slot,
-                                num: u.num as u64,
-                                data: Some(gossip_compressed_slots::Data::Uncompressed(bits)),
-                            }
-                        }
-                        CompressedSlots::Flate2(f) => GossipCompressedSlots {
-                            first_slot: f.first_slot,
-                            num: f.num as u64,
-                            data: Some(gossip_compressed_slots::Data::Flate2(
-                                f.compressed.to_vec(),
-                            )),
-                        },
-                    })
-                    .collect();
-                Some(gossip_crds_data::Data::EpochSlots(GossipEpochSlots {
-                    index: *idx as u32,
-                    from: es.from.to_bytes().to_vec(),
-                    wallclock: es.wallclock,
-                    slots,
-                }))
-            }
-            CrdsData::SnapshotHashes(sh) => Some(gossip_crds_data::Data::SnapshotHashes(
-                GossipSnapshotHashes {
-                    from: sh.from.to_bytes().to_vec(),
-                    full_slot: sh.full.0,
-                    full_hash: sh.full.1.to_bytes().to_vec(),
-                    incremental: sh
-                        .incremental
-                        .iter()
-                        .map(|(slot, hash)| GossipIncrementalHash {
-                            slot: *slot,
-                            hash: hash.to_bytes().to_vec(),
-                        })
-                        .collect(),
-                    wallclock: sh.wallclock,
-                },
-            )),
-            CrdsData::DuplicateShred(idx, ds) => Some(gossip_crds_data::Data::DuplicateShred(
-                GossipDuplicateShred {
-                    index: *idx as u32,
-                    from: ds.from().to_bytes().to_vec(),
-                    wallclock: ds.wallclock(),
-                    slot: ds.slot(),
-                    shred_index: 0,
-                    shred_type: 0,
-                    num_chunks: ds.num_chunks() as u32,
-                    chunk_index: ds.chunk_index() as u32,
-                    chunk: ds.chunk().to_vec(),
-                },
-            )),
-            CrdsData::LegacyContactInfo(..)
-            | CrdsData::LegacySnapshotHashes(..)
-            | CrdsData::AccountsHashes(..)
-            | CrdsData::LegacyVersion(..)
-            | CrdsData::Version(..)
-            | CrdsData::NodeInstance(..)
-            | CrdsData::RestartLastVotedForkSlots(..)
-            | CrdsData::RestartHeaviestFork(..) => None,
-        };
-        GossipCrdsData { data: converted }
-    }
-
-    fn convert_crds_value(value: &NativeCrdsValue) -> GossipCrdsValue {
-        GossipCrdsValue {
-            signature: value.get_signature().as_ref().to_vec(),
-            data: Some(convert_crds_data(value.data())),
-        }
-    }
-
-    fn convert_prune_data(pd: &PruneData) -> GossipPruneData {
-        GossipPruneData {
-            pubkey: pd.pubkey.to_bytes().to_vec(),
-            prunes: pd.prunes.iter().map(|p| p.to_bytes().to_vec()).collect(),
-            signature: pd.signature.as_ref().to_vec(),
-            destination: pd.destination.to_bytes().to_vec(),
-            wallclock: pd.wallclock,
-        }
-    }
-
-    fn convert_protocol(proto: &Protocol) -> gossip_msg::Msg {
-        match proto {
-            Protocol::PingMessage(ping) => convert_ping(ping),
-            Protocol::PongMessage(pong) => convert_pong(pong),
-            Protocol::PullRequest(filter, value) => {
-                gossip_msg::Msg::PullRequest(GossipPullRequest {
-                    filter: Some(convert_crds_filter(filter)),
-                    value: Some(convert_crds_value(value)),
-                })
-            }
-            Protocol::PullResponse(pubkey, values) => {
-                gossip_msg::Msg::PullResponse(GossipPullResponse {
-                    pubkey: pubkey.to_bytes().to_vec(),
-                    values: values.iter().map(convert_crds_value).collect(),
-                })
-            }
-            Protocol::PushMessage(pubkey, values) => {
-                gossip_msg::Msg::PushMessage(GossipPushMessage {
-                    pubkey: pubkey.to_bytes().to_vec(),
-                    values: values.iter().map(convert_crds_value).collect(),
-                })
-            }
-            Protocol::PruneMessage(pubkey, data) => {
-                gossip_msg::Msg::PruneMessage(GossipPruneMessage {
-                    pubkey: pubkey.to_bytes().to_vec(),
-                    data: Some(convert_prune_data(data)),
-                })
-            }
-        }
-    }
-
-    // Reject over-long inputs upfront so an over-long input whose prefix
-    // encodes a valid Protocol can't slip through; deserialize_exact rejects
-    // any trailing bytes that remain within the packet window.
-    if input.len() > PACKET_DATA_SIZE {
-        return GossipEffects {
-            valid: false,
-            msg: None,
-        };
-    }
-    let result = deserialize_protocol(input);
-
-    match result {
-        Ok(proto) if proto.sanitize().is_ok() => {
-            let msg = convert_protocol(&proto);
-            GossipEffects {
-                valid: true,
-                msg: Some(GossipMsg { msg: Some(msg) }),
-            }
-        }
-        _ => GossipEffects {
-            valid: false,
-            msg: None,
-        },
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use {
@@ -587,17 +333,23 @@ pub(crate) mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
-        solana_perf::{packet::Packet, test_tx::new_test_vote_tx},
+        solana_perf::test_tx::new_test_vote_tx,
         solana_signer::Signer,
         solana_time_utils::timestamp,
         solana_transaction::Transaction,
         solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
             iter::repeat_with,
-            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
+            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
             sync::Arc,
         },
     };
+
+    // Asserts the message fits into a single gossip packet, the check that
+    // `Packet::from_data` used to perform implicitly.
+    fn fits_in_packet(message: &Protocol) -> bool {
+        message.serialized_size() <= PACKET_DATA_SIZE
+    }
 
     fn new_rand_socket_addr<R: Rng>(rng: &mut R) -> SocketAddr {
         let addr = if rng.random_bool(0.5) {
@@ -668,7 +420,6 @@ pub(crate) mod tests {
 
     #[test]
     fn test_max_snapshot_hashes_with_push_messages() {
-        let mut rng = rand::rng();
         let snapshot_hashes = SnapshotHashes {
             from: Pubkey::new_unique(),
             full: (Slot::default(), Hash::default()),
@@ -677,13 +428,11 @@ pub(crate) mod tests {
         };
         let crds_value = CrdsValue::new(CrdsData::SnapshotHashes(snapshot_hashes), &Keypair::new());
         let message = Protocol::PushMessage(Pubkey::new_unique(), vec![crds_value]);
-        let socket = new_rand_socket_addr(&mut rng);
-        assert!(Packet::from_data(Some(&socket), message).is_ok());
+        assert!(fits_in_packet(&message));
     }
 
     #[test]
     fn test_max_snapshot_hashes_with_pull_responses() {
-        let mut rng = rand::rng();
         let snapshot_hashes = SnapshotHashes {
             from: Pubkey::new_unique(),
             full: (Slot::default(), Hash::default()),
@@ -692,8 +441,7 @@ pub(crate) mod tests {
         };
         let crds_value = CrdsValue::new(CrdsData::SnapshotHashes(snapshot_hashes), &Keypair::new());
         let response = Protocol::PullResponse(Pubkey::new_unique(), vec![crds_value]);
-        let socket = new_rand_socket_addr(&mut rng);
-        assert!(Packet::from_data(Some(&socket), response).is_ok());
+        assert!(fits_in_packet(&response));
     }
 
     #[test]
@@ -704,16 +452,14 @@ pub(crate) mod tests {
             let prune_data =
                 new_rand_prune_data(&mut rng, &self_keypair, Some(MAX_PRUNE_DATA_NODES));
             let prune_message = Protocol::PruneMessage(self_keypair.pubkey(), prune_data);
-            let socket = new_rand_socket_addr(&mut rng);
-            assert!(Packet::from_data(Some(&socket), prune_message).is_ok());
+            assert!(fits_in_packet(&prune_message));
         }
         // Assert that MAX_PRUNE_DATA_NODES is highest possible.
         let self_keypair = Keypair::new();
         let prune_data =
             new_rand_prune_data(&mut rng, &self_keypair, Some(MAX_PRUNE_DATA_NODES + 1));
         let prune_message = Protocol::PruneMessage(self_keypair.pubkey(), prune_data);
-        let socket = new_rand_socket_addr(&mut rng);
-        assert!(Packet::from_data(Some(&socket), prune_message).is_err());
+        assert!(!fits_in_packet(&prune_message));
     }
 
     #[test]
@@ -902,10 +648,6 @@ pub(crate) mod tests {
             .flat_map(|s| s.iter())
             .zip(values)
             .for_each(|(a, b)| assert_eq!(*a, b));
-        let socket = SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
-            rng.random(),
-        ));
         let header_size = PACKET_DATA_SIZE - PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
         for values in splits {
             // Assert that sum of parts equals the whole.
@@ -913,7 +655,7 @@ pub(crate) mod tests {
             let message = Protocol::PushMessage(self_pubkey, values);
             assert_eq!(message.serialized_size(), size);
             // Assert that the message fits into a packet.
-            assert!(Packet::from_data(Some(&socket), message).is_ok());
+            assert!(fits_in_packet(&message));
         }
     }
 
@@ -935,10 +677,6 @@ pub(crate) mod tests {
             .flat_map(|s| s.iter())
             .zip(values)
             .for_each(|(a, b)| assert_eq!(*a, b));
-        let socket = SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
-            rng.random(),
-        ));
         // check message fits into PullResponse
         let header_size = PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE;
         for values in splits {
@@ -947,7 +685,7 @@ pub(crate) mod tests {
             let message = Protocol::PullResponse(self_pubkey, values);
             assert_eq!(message.serialized_size(), size);
             // Assert that the message fits into a packet.
-            assert!(Packet::from_data(Some(&socket), message).is_ok());
+            assert!(fits_in_packet(&message));
         }
     }
 
@@ -1070,170 +808,41 @@ pub(crate) mod tests {
         assert!(is_valid, "Signature should be valid with prefix");
     }
 
+    // The signable bytes of PruneData are a field subset (plus, in one case, a
+    // prefix) rather than PruneData's own encoding, so no abi digest covers
+    // them. Any drift here silently breaks signature verification between
+    // versions, so pin the exact layout.
     #[test]
-    fn test_wincode_compatibility_prune_data() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let keypair = Keypair::new();
-            let prune_data = new_rand_prune_data(&mut rng, &keypair, None);
+    fn test_prune_data_signable_bytes_are_fixed() {
+        let prune_data = PruneData {
+            pubkey: Pubkey::from([1u8; 32]),
+            prunes: vec![Pubkey::from([2u8; 32]), Pubkey::from([3u8; 32])],
+            // Not part of the signable data.
+            signature: Signature::from([4u8; 64]),
+            destination: Pubkey::from([5u8; 32]),
+            wallclock: 0x0102_0304_0506_0708,
+        };
 
-            let bincode_bytes = bincode::serialize(&prune_data).unwrap();
-            let wincode_decoded: PruneData = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(prune_data, wincode_decoded);
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&[1u8; 32]); // pubkey
+        expected.extend_from_slice(&2u64.to_le_bytes()); // prunes.len()
+        expected.extend_from_slice(&[2u8; 32]); // prunes[0]
+        expected.extend_from_slice(&[3u8; 32]); // prunes[1]
+        expected.extend_from_slice(&[5u8; 32]); // destination
+        expected.extend_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes()); // wallclock
+        assert_eq!(
+            prune_data.signable_data_without_prefix().as_ref(),
+            expected.as_slice()
+        );
 
-            let wincode_bytes = wincode::serialize(&prune_data).unwrap();
-            let bincode_decoded: PruneData = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(prune_data, bincode_decoded);
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_vote_transaction() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let keypair = Keypair::new();
-            let slots = (0..rng.random_range(1..32)).map(|_| rng.random()).collect();
-            let vote = Vote::new(slots, Hash::new_unique());
-            let vote_ix = vote_instruction::vote_switch(
-                &keypair.pubkey(),
-                &keypair.pubkey(),
-                vote,
-                Hash::new_unique(),
-            );
-            let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
-            vote_tx.partial_sign(&[&keypair], Hash::new_unique());
-
-            let bincode_bytes = bincode::serialize(&vote_tx).unwrap();
-            let wincode_bytes = wincode::serialize(&vote_tx).unwrap();
-            assert_eq!(bincode_bytes, wincode_bytes);
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_prune_signable_data() {
-        // Signed/verified bytes — any divergence would silently break signatures.
-        #[derive(Serialize)]
-        struct SignDataMirror<'a> {
-            pubkey: &'a Pubkey,
-            prunes: &'a [Pubkey],
-            destination: &'a Pubkey,
-            wallclock: u64,
-        }
-        #[derive(Serialize)]
-        struct SignDataWithPrefixMirror<'a> {
-            prefix: &'a [u8],
-            pubkey: &'a Pubkey,
-            prunes: &'a [Pubkey],
-            destination: &'a Pubkey,
-            wallclock: u64,
-        }
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let keypair = Keypair::new();
-            let prune_data = new_rand_prune_data(&mut rng, &keypair, None);
-
-            let wincode_no_prefix = prune_data.signable_data_without_prefix();
-            let bincode_no_prefix = bincode::serialize(&SignDataMirror {
-                pubkey: &prune_data.pubkey,
-                prunes: &prune_data.prunes,
-                destination: &prune_data.destination,
-                wallclock: prune_data.wallclock,
-            })
-            .unwrap();
-            assert_eq!(wincode_no_prefix.as_ref(), bincode_no_prefix.as_slice());
-
-            let wincode_with_prefix = prune_data.signable_data_with_prefix();
-            let bincode_with_prefix = bincode::serialize(&SignDataWithPrefixMirror {
-                prefix: PRUNE_DATA_PREFIX,
-                pubkey: &prune_data.pubkey,
-                prunes: &prune_data.prunes,
-                destination: &prune_data.destination,
-                wallclock: prune_data.wallclock,
-            })
-            .unwrap();
-            assert_eq!(wincode_with_prefix.as_ref(), bincode_with_prefix.as_slice());
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_protocol_prune_message() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let keypair = Keypair::new();
-            let prune_data = new_rand_prune_data(&mut rng, &keypair, None);
-            let protocol = Protocol::PruneMessage(keypair.pubkey(), prune_data);
-
-            let bincode_bytes = bincode::serialize(&protocol).unwrap();
-            let wincode_bytes = wincode::serialize(&protocol).unwrap();
-            assert_eq!(bincode_bytes, wincode_bytes);
-
-            let wincode_decoded: Protocol = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(wincode::serialize(&wincode_decoded).unwrap(), bincode_bytes);
-
-            let bincode_decoded: Protocol = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(bincode::serialize(&bincode_decoded).unwrap(), wincode_bytes);
-        }
-    }
-
-    fn new_rand_contact_info_crds_value<R: Rng>(rng: &mut R) -> CrdsValue {
-        let keypair = Keypair::new();
-        let ci = ContactInfo::new_rand(rng, Some(keypair.pubkey()));
-        CrdsValue::new(CrdsData::ContactInfo(ci), &keypair)
-    }
-
-    fn assert_protocol_wincode_compat(protocol: &Protocol) {
-        let bincode_bytes = bincode::serialize(protocol).unwrap();
-        let wincode_bytes = wincode::serialize(protocol).unwrap();
-        assert_eq!(bincode_bytes, wincode_bytes);
-        let wincode_decoded: Protocol = wincode::deserialize(&bincode_bytes).unwrap();
-        assert_eq!(wincode::serialize(&wincode_decoded).unwrap(), bincode_bytes);
-        let bincode_decoded: Protocol = bincode::deserialize(&wincode_bytes).unwrap();
-        assert_eq!(bincode::serialize(&bincode_decoded).unwrap(), wincode_bytes);
-    }
-
-    #[test]
-    fn test_wincode_compatibility_protocol_pull_request() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let filter = CrdsFilter::new_rand(rng.random_range(0..1000), rng.random_range(32..512));
-            let crds_value = new_rand_contact_info_crds_value(&mut rng);
-            assert_protocol_wincode_compat(&Protocol::PullRequest(filter, crds_value));
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_protocol_pull_response() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let values: Vec<_> = (0..rng.random_range(1usize..8))
-                .map(|_| new_rand_contact_info_crds_value(&mut rng))
-                .collect();
-            assert_protocol_wincode_compat(&Protocol::PullResponse(Pubkey::new_unique(), values));
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_protocol_push_message() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let values: Vec<_> = (0..rng.random_range(1usize..8))
-                .map(|_| new_rand_contact_info_crds_value(&mut rng))
-                .collect();
-            assert_protocol_wincode_compat(&Protocol::PushMessage(Pubkey::new_unique(), values));
-        }
-    }
-
-    #[test]
-    fn test_wincode_compatibility_protocol_ping_pong() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let keypair = Keypair::new();
-            let token: [u8; GOSSIP_PING_TOKEN_SIZE] = rng.random();
-            let ping = Ping::new(token, &keypair);
-            let pong = Pong::new(&ping, &keypair);
-            assert_protocol_wincode_compat(&Protocol::PingMessage(ping));
-            assert_protocol_wincode_compat(&Protocol::PongMessage(pong));
-        }
+        let mut expected_with_prefix = Vec::new();
+        expected_with_prefix.extend_from_slice(&(PRUNE_DATA_PREFIX.len() as u64).to_le_bytes());
+        expected_with_prefix.extend_from_slice(PRUNE_DATA_PREFIX);
+        expected_with_prefix.extend_from_slice(&expected);
+        assert_eq!(
+            prune_data.signable_data_with_prefix().as_ref(),
+            expected_with_prefix.as_slice()
+        );
     }
 
     #[test]

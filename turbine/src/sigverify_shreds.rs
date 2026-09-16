@@ -18,7 +18,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{LruCache, SlotPubkeys, verify_shreds},
+        sigverify_shreds::{LruCache, SlotPubkeys, par_verify_shreds},
     },
     solana_perf::{
         self,
@@ -202,14 +202,15 @@ fn run_shred_sigverify<const K: usize>(
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.working_bank(), bank_forks.root_bank())
     };
-    verify_packets(
-        thread_pool,
-        &keypair.pubkey(),
-        &working_bank,
-        leader_schedule_cache,
-        shred_buffer,
-        cache,
-    );
+    thread_pool.install(|| {
+        par_verify_packets(
+            &keypair.pubkey(),
+            &working_bank,
+            leader_schedule_cache,
+            shred_buffer,
+            cache,
+        )
+    });
     stats.num_discards_post += count_discards(shred_buffer);
     // Verify retransmitter's signature, and resign shreds
     // Merkle root as the retransmitter node.
@@ -414,8 +415,7 @@ fn verify_retransmitter_signature(
     }
 }
 
-fn verify_packets(
-    thread_pool: &ThreadPool,
+fn par_verify_packets(
     self_pubkey: &Pubkey,
     working_bank: &Bank,
     leader_schedule_cache: &LeaderScheduleCache,
@@ -427,8 +427,7 @@ fn verify_packets(
             .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
             .chain(std::iter::once((Slot::MAX, Pubkey::default())))
             .collect();
-    let out = verify_shreds(thread_pool, packets, &leader_slots, cache);
-    solana_perf::sigverify::mark_disabled(packets, &out);
+    par_verify_shreds(packets, &leader_slots, cache);
 }
 
 // Returns pubkey of leaders for shred slots referenced in the packets.
@@ -664,14 +663,15 @@ mod tests {
             .into_iter()
             .map(PacketBatch::from)
             .collect::<Vec<_>>();
-        verify_packets(
-            &thread_pool,
-            &Pubkey::new_unique(), // self_pubkey
-            &working_bank,
-            &leader_schedule_cache,
-            &mut batches,
-            &cache,
-        );
+        thread_pool.install(|| {
+            par_verify_packets(
+                &Pubkey::new_unique(), // self_pubkey
+                &working_bank,
+                &leader_schedule_cache,
+                &mut batches,
+                &cache,
+            )
+        });
         assert!(!batches[0].get(0).unwrap().meta().discard());
         assert!(batches[0].get(1).unwrap().meta().discard());
     }
@@ -698,18 +698,16 @@ mod tests {
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
-        let mut shreds: Vec<_> = shredder
-            .make_merkle_shreds_from_entries(
-                &leader_keypair,
-                &entries,
-                is_last_in_slot,
-                chained_merkle_root,
-                0,
-                0,
-                &ReedSolomonCache::default(),
-                &mut ProcessShredsStats::default(),
-            )
-            .collect();
+        let mut shreds = shredder.make_merkle_shreds_from_entries(
+            &leader_keypair,
+            &entries,
+            is_last_in_slot,
+            chained_merkle_root,
+            0,
+            0,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
 
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&leader_pubkey, timestamp()),

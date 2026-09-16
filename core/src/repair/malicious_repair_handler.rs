@@ -116,18 +116,16 @@ impl MaliciousRepairHandler {
         let chained_merkle_root = original_shred.chained_merkle_root().ok()?;
         let is_last_in_slot = original_shred.last_in_slot();
 
-        let shreds: Vec<Shred> = shredder
-            .make_merkle_shreds_from_entries(
-                &self.keypair,
-                &fake_entries,
-                is_last_in_slot,
-                chained_merkle_root,
-                shred_index as u32, // next_shred_index
-                0,                  // next_code_index
-                &self.reed_solomon_cache,
-                &mut ProcessShredsStats::default(),
-            )
-            .collect();
+        let shreds = shredder.make_merkle_shreds_from_entries(
+            &self.keypair,
+            &fake_entries,
+            is_last_in_slot,
+            chained_merkle_root,
+            shred_index as u32, // next_shred_index
+            0,                  // next_code_index
+            &self.reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
 
         // Return the first data shred's payload
         shreds

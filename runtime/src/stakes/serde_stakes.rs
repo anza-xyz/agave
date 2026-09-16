@@ -1,5 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(feature = "frozen-abi")]
+use wincode::SchemaWrite;
 use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
@@ -10,6 +12,7 @@ use {
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
+    wincode::SchemaRead,
 };
 
 /// Wrapper struct with custom serialization to support serializing
@@ -184,8 +187,11 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 /// Its bincode serializaiton format is identical as Stakes<T>, but allows faster
 /// deserialization without creating imbl::HashMap (such conversion is deferred until
 /// data is actually needed).
-#[cfg_attr(feature = "frozen-abi", derive(Serialize, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(Serialize, SchemaWrite, StableAbi, StableAbiSample)
+)]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableDelegationStakes {
     pub vote_accounts: VoteAccounts,
@@ -217,7 +223,7 @@ fn stable_abi_sample_stake_delegations(
 mod tests {
     use {
         super::*,
-        crate::{stake_utils, stakes::StakesCache},
+        crate::{serde_snapshot::deserialize_wincode_from, stake_utils, stakes::StakesCache},
         rand::Rng,
         serde::Deserialize,
         solana_rent::Rent,
@@ -235,7 +241,7 @@ mod tests {
             tail: String,
         }
 
-        #[derive(Debug, Deserialize)]
+        #[derive(Debug, Deserialize, SchemaRead)]
         struct DeserializableDummy {
             head: String,
             stakes: DeserializableDelegationStakes,
@@ -264,7 +270,7 @@ mod tests {
                 &node_pubkey,
                 rng.random_range(0..1_000_000), // lamports
             );
-            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
+            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
             for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
                 let rent = Rent::free();
@@ -275,7 +281,7 @@ mod tests {
                     &rent,
                     rng.random_range(0..1_000_000), // lamports
                 );
-                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
+                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
             }
         }
         let stakes: Stakes<StakeAccount> = stakes_cache.stakes().clone();
@@ -288,7 +294,8 @@ mod tests {
         };
         assert!(dummy.stakes.vote_accounts().as_ref().len() >= 5);
         let data = bincode::serialize(&dummy).unwrap();
-        let other: DeserializableDummy = bincode::deserialize(&data).unwrap();
+        let other: DeserializableDummy =
+            deserialize_wincode_from(std::io::Cursor::new(&data)).unwrap();
         assert_eq!(other.head, dummy.head);
         assert_eq!(other.tail, dummy.tail);
 

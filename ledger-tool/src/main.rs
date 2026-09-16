@@ -25,7 +25,9 @@ use {
     dashmap::DashMap,
     log::*,
     serde::Serialize,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_clap_utils::{
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
@@ -38,6 +40,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
+        cost_update_service::report_cost_tracker_stats,
         resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
@@ -52,6 +55,7 @@ use {
         blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
         blockstore_processor::ProcessSlotCallback,
+        leader_schedule_cache::LeaderScheduleCache,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
@@ -72,7 +76,9 @@ use {
         stake_utils,
         transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::writable_accounts,
+    },
     solana_shred_version::compute_shred_version,
     solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::program as system_program,
@@ -442,8 +448,13 @@ fn compute_slot_cost(
     slot: Slot,
     allow_dead_slots: bool,
 ) -> Result<(), String> {
+    let replay_fec_set_index = blockstore
+        .meta(slot)
+        .map_err(|err| format!("Slot: {slot}, Failed to load slot meta, err {err:?}"))?
+        .map_or(0, |slot_meta| u64::from(slot_meta.replay_fec_set_index));
+
     let (entries, _num_shreds, _is_full) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, allow_dead_slots)
+        .get_slot_entries_with_shred_info(slot, replay_fec_set_index, allow_dead_slots)
         .map_err(|err| format!("Slot: {slot}, Failed to load entries, err {err:?}"))?;
 
     let num_entries = entries.len();
@@ -478,7 +489,7 @@ fn compute_slot_cost(
                 num_programs += transaction.message().instructions().len();
 
                 let tx_cost = CostModel::calculate_cost(&transaction, &feature_set);
-                let result = cost_tracker.try_add(&tx_cost);
+                let result = cost_tracker.try_add(&tx_cost, writable_accounts(&transaction));
                 if result.is_err() {
                     println!(
                         "Slot: {slot}, CostModel rejected transaction {transaction:?}, reason \
@@ -632,7 +643,8 @@ fn setup_slot_recording(
                 let cost_tracker = bank.read_cost_tracker().unwrap();
                 let slot = bank.slot();
                 let is_leader_block = false;
-                cost_tracker.report_stats(
+                report_cost_tracker_stats(
+                    &cost_tracker.stats(),
                     slot,
                     is_leader_block,
                     total_transaction_fee,
@@ -2199,8 +2211,17 @@ fn main() {
                         || bootstrap_validator_pubkeys.is_some();
 
                     if child_bank_required {
-                        let mut child_bank =
-                            Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
+                        let child_slot = bank.slot() + 1;
+                        let child_leader = LeaderScheduleCache::new_from_bank(&bank)
+                            .slot_leader_at(child_slot, Some(&bank))
+                            .unwrap_or_else(|| {
+                                eprintln!(
+                                    "Error: Unable to determine the leader of child slot \
+                                     {child_slot}"
+                                );
+                                exit(1);
+                            });
+                        let mut child_bank = Bank::new_from_parent(bank, child_leader, child_slot);
 
                         if let Ok(rent_burn_percentage) = rent_burn_percentage {
                             child_bank.set_rent_burn_percentage(rent_burn_percentage);
@@ -2348,7 +2369,7 @@ fn main() {
                                 identity_pubkey,
                                 10000,
                                 vote_pubkey,
-                                0,
+                                10_000,
                                 identity_pubkey,
                                 rent.minimum_balance(VoteStateV4::size_of()).max(1),
                             );
@@ -2388,7 +2409,7 @@ fn main() {
                         }
                     }
 
-                    let new_shred_verison =
+                    let new_shred_version =
                         compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
                     if child_bank_required {
                         let num_ticks_per_slot = bank.ticks_per_slot();
@@ -2438,15 +2459,21 @@ fn main() {
                                 arg_matches,
                                 AccessType::PrimaryForMaintenance,
                             ));
+                            let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
+                            let mut write_batch = backup_blockstore.get_write_batch();
                             let _ = backup_blockstore
-                                .insert_cow_shreds(shreds.into_iter().map(Cow::Owned), true)
+                                .insert_cow_shreds(
+                                    shreds.into_iter().map(Cow::Owned),
+                                    true,
+                                    &mut pinnable_slice,
+                                    &mut write_batch,
+                                )
                                 .expect("Blockstore operation must succeed");
 
                             // Purge modifies state so use rw_blockstore
                             info!("Purging slot {slot} from Blockstore");
-                            rw_blockstore.purge_from_next_slots(slot, slot);
                             rw_blockstore
-                                .purge_slots(slot, slot, PurgeType::Exact)
+                                .purge_slots_cleanup_chaining(slot, slot, PurgeType::Exact)
                                 .expect("Blockstore operation must succeed");
                         }
 
@@ -2463,7 +2490,7 @@ fn main() {
                             slot,
                             bank.parent_slot(),
                             /*reference_tick:*/ 0,
-                            new_shred_verison,
+                            new_shred_version,
                         )
                         .expect("Shredder creation must succeed");
                         let shreds: Vec<_> = shredder
@@ -2477,11 +2504,14 @@ fn main() {
                                 &ReedSolomonCache::default(),
                                 &mut ProcessShredsStats::default(),
                             )
+                            .into_iter()
                             .filter(Shred::is_data)
                             .map(Cow::Owned)
                             .collect();
+                        let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
+                        let mut write_batch = rw_blockstore.get_write_batch();
                         rw_blockstore
-                            .insert_cow_shreds(shreds, true)
+                            .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
                             .expect("Blockstore operation must succeed");
                     }
 
@@ -2641,7 +2671,7 @@ fn main() {
                     if let Some(msg) = capitalization_message {
                         println!("{msg}");
                     }
-                    println!("Shred version: {new_shred_verison}",);
+                    println!("Shred version: {new_shred_version}",);
 
                     if let Some(system_monitor_service) = system_monitor_service {
                         exit_signal.store(true, Ordering::Relaxed);

@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod cluster_info;
@@ -48,10 +47,7 @@ extern crate solana_frozen_abi_macro;
 #[macro_use]
 extern crate solana_metrics;
 
-#[cfg(feature = "conformance")]
-pub use protocol::gossip_decode_to_effects;
-
-#[cfg(feature = "conformance")]
-pub mod harness;
+#[cfg(feature = "dev-context-only-utils")]
+pub use protocol::{Ping, Protocol, PruneData, deserialize_protocol};
 
 mod wire_format_tests;

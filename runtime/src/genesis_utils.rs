@@ -16,7 +16,9 @@ use {
     bincode::serialize,
     bitvec::vec::BitVec,
     log::*,
-    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
+    },
     solana_bls_signatures::{
         BLS_SIGNATURE_AFFINE_SIZE, Pubkey as BLSPubkey, Signature as BLSSignature,
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
@@ -38,10 +40,7 @@ use {
     solana_signer_store::encode_base2,
     solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
-    solana_sysvar::{
-        SysvarSerialize,
-        epoch_rewards::{self, EpochRewards},
-    },
+    solana_sysvar::epoch_rewards,
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     solana_vote_program::vote_state,
     std::{borrow::Borrow, sync::Arc},
@@ -49,6 +48,14 @@ use {
 
 // Default amount received by the validator
 const VALIDATOR_LAMPORTS: u64 = 890_880;
+const MINT_KEYPAIR_SEED: [u8; 32] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31,
+];
+const VALIDATOR_STAKE_KEYPAIR_SEED: [u8; 32] = [
+    64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87,
+    88, 89, 90, 91, 92, 93, 94, 95,
+];
 
 // Default minimum vote account balance used by tests/genesis helpers. This is
 // conservative once shorter slot-time regimes lower the live bank VAT burn.
@@ -177,7 +184,8 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     assert!(!voting_keypairs.is_empty());
     assert_eq!(voting_keypairs.len(), stakes.len());
 
-    let mint_keypair = Keypair::new();
+    // Use deterministic keypair so we don't get confused by randomness in tests
+    let mint_keypair = Keypair::from_seed(&MINT_KEYPAIR_SEED).unwrap();
     let voting_keypair = voting_keypairs[0].borrow().vote_keypair.insecure_clone();
 
     let validator_pubkey = voting_keypairs[0].borrow().node_keypair.pubkey();
@@ -265,11 +273,7 @@ pub fn create_genesis_config_with_leader(
     validator_stake_lamports: u64,
 ) -> GenesisConfigInfo {
     // Use deterministic keypair so we don't get confused by randomness in tests
-    let mint_keypair = Keypair::from_seed(&[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28, 29, 30, 31,
-    ])
-    .unwrap();
+    let mint_keypair = Keypair::from_seed(&MINT_KEYPAIR_SEED).unwrap();
 
     create_genesis_config_with_leader_with_mint_keypair(
         mint_keypair,
@@ -295,13 +299,16 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     let bls_keypair =
         BLSKeypair::derive_from_signer(&voting_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
     let validator_bls_pubkey = Some(bls_keypair.public.to_bytes_compressed());
+    let stake_pubkey = Keypair::from_seed(&VALIDATOR_STAKE_KEYPAIR_SEED)
+        .unwrap()
+        .pubkey();
 
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         validator_pubkey,
         &voting_keypair.pubkey(),
-        &Pubkey::new_unique(),
+        &stake_pubkey,
         validator_bls_pubkey,
         validator_stake_lamports,
         VALIDATOR_LAMPORTS,
@@ -422,7 +429,7 @@ pub(crate) fn create_validator(
         &vote_pubkey,
         0,
         &vote_pubkey,
-        0,
+        10_000,
         &node_pubkey,
         vote_lamports,
     );
@@ -582,7 +589,7 @@ pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u
 }
 
 pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> u64 {
-    let data = vec![0; EpochRewards::size_of()];
+    let data = vec![0; epoch_rewards::SIZE];
     let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
 
     let account = AccountSharedData::create_from_existing_shared_data(

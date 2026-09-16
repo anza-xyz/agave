@@ -12,6 +12,7 @@ use {
         banking_stage::{
             TOTAL_BUFFERED_PACKETS,
             consume_worker::ConsumeWorkerMetrics,
+            consumer::Consumer,
             decision_maker::{BufferedPacketsDecision, DecisionMaker},
             transaction_scheduler::{
                 receive_and_buffer::ReceivingStats, transaction_priority_id::TransactionPriorityId,
@@ -21,7 +22,7 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    solana_clock::DEFAULT_MS_PER_SLOT,
+    solana_clock::{BankId, DEFAULT_MS_PER_SLOT},
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::bank_forks::SharableBanks,
@@ -44,6 +45,32 @@ const CHECK_CHUNK: usize = 128;
 const SATURATION_BUFFER_PCT: u8 = 99;
 /// Clear the priority floor once the retained buffer drains below this watermark.
 const DESATURATION_BUFFER_PCT: u8 = 95;
+
+#[derive(Debug, PartialEq, Eq)]
+enum BankTransitionStatus {
+    Ready,
+    Transitioned,
+    WaitingForInFlight,
+}
+
+// bank_id is globally unique (monotonically assigned per bank, regardless of
+// slot), so it alone is sufficient to detect a transition: a bank replaced
+// mid-slot (e.g. during a sad leader handover) gets a new bank_id even though
+// the slot is unchanged.
+fn update_scheduling_bank(
+    scheduling_bank_id: &mut Option<BankId>,
+    decision_bank_id: Option<BankId>,
+    has_in_flight_transactions: bool,
+) -> BankTransitionStatus {
+    if *scheduling_bank_id == decision_bank_id {
+        BankTransitionStatus::Ready
+    } else if has_in_flight_transactions {
+        BankTransitionStatus::WaitingForInFlight
+    } else {
+        *scheduling_bank_id = decision_bank_id;
+        BankTransitionStatus::Transitioned
+    }
+}
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
@@ -187,7 +214,8 @@ where
     }
 
     pub fn run(&mut self) -> Result<(), SchedulerError> {
-        let mut most_recent_leader_slot = None;
+        let mut scheduling_bank_id = None;
+        let mut scheduling_blocked_at = None;
         let mut cost_pacer = None;
 
         while !self.exit.load(Ordering::Relaxed) {
@@ -208,14 +236,35 @@ where
                 timing_metrics.decision_time_us += decision_time_us;
             });
             let new_leader_slot = decision.bank().map(|b| b.slot());
+            let new_leader_bank_id = decision.bank().map(|b| b.bank_id());
             self.count_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
-            if most_recent_leader_slot != new_leader_slot {
+            self.receive_completed()?;
+            // bank_id alone (not slot) detects the transition: it's globally unique,
+            // so a bank replaced mid-slot during a sad leader handover still yields
+            // a new bank_id and correctly triggers a transition here.
+            let bank_transition_status = update_scheduling_bank(
+                &mut scheduling_bank_id,
+                new_leader_bank_id,
+                self.scheduler.has_in_flight_transactions(),
+            );
+            let scheduling_enabled =
+                bank_transition_status != BankTransitionStatus::WaitingForInFlight;
+            let scheduling_blocked =
+                !scheduling_enabled && matches!(decision, BufferedPacketsDecision::Consume(_));
+            if scheduling_blocked {
+                scheduling_blocked_at.get_or_insert_with(Instant::now);
+            } else if let Some(blocked_at) = scheduling_blocked_at.take() {
+                self.timing_metrics.update(|timing_metrics| {
+                    timing_metrics.scheduling_slot_transition_blocked_time_us +=
+                        blocked_at.elapsed().as_micros() as u64;
+                });
+            }
+            if bank_transition_status == BankTransitionStatus::Transitioned {
                 self.container.flush_held_transactions();
-                most_recent_leader_slot = new_leader_slot;
                 cost_pacer = decision.bank().map(|b| {
                     let cost_tracker = b.read_cost_tracker().unwrap();
                     let block_limit = cost_tracker.get_block_limit();
@@ -251,17 +300,32 @@ where
                 });
             }
 
-            self.receive_completed()?;
-            let scheduled = self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
-            if scheduled == 0 {
+            let mut receiving_stats = self.drain_check_results(&decision);
+            // A slot transition gates only new scheduling. Check-result processing,
+            // ingestion, buffering, and maintenance below continue while old work returns.
+            let _scheduled =
+                if scheduling_enabled || !matches!(decision, BufferedPacketsDecision::Consume(_)) {
+                    self.process_transactions(&decision, cost_pacer.as_ref(), &now)?
+                } else {
+                    0
+                };
+            if decision.bank().is_none() {
                 let (_, clean_time_us) = measure_us!(self.incremental_recheck());
                 self.timing_metrics.update(|timing_metrics| {
                     timing_metrics.clean_time_us += clean_time_us;
                 });
             }
-            let receiving_stats = self.receive_and_buffer_packets(&decision).map_err(|_| {
-                SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
-            })?;
+            receiving_stats.accumulate(self.receive_and_buffer_packets(&decision).map_err(
+                |err| match err {
+                    DisconnectedError::Receiver => {
+                        SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
+                    }
+                    DisconnectedError::CheckWorker => {
+                        SchedulerError::DisconnectedSendChannel("check worker disconnected")
+                    }
+                },
+            )?);
+            self.update_receiving_metrics(&receiving_stats);
             // Report metrics only if there is data.
             // Reset intervals when appropriate, regardless of report.
             let should_report = self.count_metrics.interval_has_data();
@@ -291,14 +355,15 @@ where
         now: &Instant,
     ) -> Result<usize, SchedulerError> {
         let scheduled = match decision {
-            BufferedPacketsDecision::Consume(_bank) => {
+            BufferedPacketsDecision::Consume(bank) => {
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(
-                    self.scheduler
-                        .schedule(&mut self.container, scheduling_budget,)?
-                );
+                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
+                    &mut self.container,
+                    bank.slot(),
+                    scheduling_budget,
+                )?);
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
@@ -410,11 +475,11 @@ where
         };
         let lock_results = [const { Ok(()) }; CHECK_CHUNK];
         let mut error_counters = TransactionErrorMetrics::default();
-        let results = bank.check_transactions::<R::Transaction>(
+        let results = Consumer::check_transactions_for_scheduling::<R::Transaction>(
+            &bank,
             &txs,
             &lock_results[..txs.len()],
             bank.max_processing_age(),
-            true,
             &mut error_counters,
         );
 
@@ -452,10 +517,16 @@ where
         &mut self,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        let receiving_stats = self
-            .receive_and_buffer
-            .receive_and_buffer_packets(&mut self.container, decision)?;
+        self.receive_and_buffer
+            .receive_and_buffer_packets(&mut self.container, decision)
+    }
 
+    fn drain_check_results(&mut self, decision: &BufferedPacketsDecision) -> ReceivingStats {
+        self.receive_and_buffer
+            .drain_check_results(&mut self.container, decision)
+    }
+
+    fn update_receiving_metrics(&mut self, receiving_stats: &ReceivingStats) {
         self.count_metrics.update(|count_metrics| {
             let ReceivingStats {
                 num_received,
@@ -467,8 +538,11 @@ where
                 num_dropped_on_already_processed,
                 num_dropped_on_fee_payer,
                 num_dropped_on_filter_key,
+                num_dropped_on_check_work_queue_full,
                 num_dropped_on_capacity,
+                num_dropped_on_nonce_dedup,
                 num_buffered,
+                num_evicted_on_nonce_dedup,
                 receive_time_us: _,
                 buffer_time_us: _,
             } = &receiving_stats;
@@ -484,16 +558,18 @@ where
                 *num_dropped_on_already_processed;
             count_metrics.num_dropped_on_receive_fee_payer += *num_dropped_on_fee_payer;
             count_metrics.num_dropped_on_filter_key += *num_dropped_on_filter_key;
+            count_metrics.num_dropped_on_check_work_queue_full +=
+                *num_dropped_on_check_work_queue_full;
             count_metrics.num_dropped_on_capacity += *num_dropped_on_capacity;
+            count_metrics.num_dropped_on_nonce_dedup += *num_dropped_on_nonce_dedup;
             count_metrics.num_buffered += *num_buffered;
+            count_metrics.num_evicted_on_nonce_dedup += *num_evicted_on_nonce_dedup;
         });
 
         self.timing_metrics.update(|timing_metrics| {
             timing_metrics.receive_time_us += receiving_stats.receive_time_us;
             timing_metrics.buffer_time_us += receiving_stats.buffer_time_us;
         });
-
-        Ok(receiving_stats)
     }
 }
 
@@ -533,28 +609,68 @@ mod tests {
             consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
-            transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
+            transaction_scheduler::{
+                check_worker::spawn_check_workers,
+                greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
+            },
         },
         agave_banking_stage_ingress_types::{
             BankingPacketBatch, BankingPacketReceiver, to_banking_packet_batch,
         },
         crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
+        solana_account::AccountSharedData,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
+        solana_nonce::{self as nonce, state::DurableNonce},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_runtime_transaction::transaction_meta::TransactionMeta,
+        solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
-        std::sync::{Arc, RwLock},
+        std::{
+            num::NonZeroUsize,
+            sync::{Arc, RwLock},
+        },
     };
+
+    #[test]
+    fn test_scheduling_bank_waits_for_in_flight_and_adopts_latest_bank() {
+        // bank_id is globally unique regardless of slot, so tracking it alone
+        // also correctly handles a sad leader handover: a new bank for the same
+        // slot still carries a new bank_id and is treated as a transition below.
+        let mut scheduling_bank_id = Some(100);
+
+        assert_eq!(
+            update_scheduling_bank(&mut scheduling_bank_id, Some(101), true),
+            BankTransitionStatus::WaitingForInFlight
+        );
+        assert_eq!(scheduling_bank_id, Some(100));
+
+        // Ingestion may observe a newer bank while old work is still in flight.
+        assert_eq!(
+            update_scheduling_bank(&mut scheduling_bank_id, Some(102), true),
+            BankTransitionStatus::WaitingForInFlight
+        );
+        assert_eq!(scheduling_bank_id, Some(100));
+
+        assert_eq!(
+            update_scheduling_bank(&mut scheduling_bank_id, Some(102), false),
+            BankTransitionStatus::Transitioned
+        );
+        assert_eq!(scheduling_bank_id, Some(102));
+        assert_eq!(
+            update_scheduling_bank(&mut scheduling_bank_id, Some(102), true),
+            BankTransitionStatus::Ready
+        );
+    }
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
         (0..num).map(|_| bounded(1024)).unzip()
@@ -577,11 +693,16 @@ mod tests {
         receiver: BankingPacketReceiver,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> TransactionViewReceiveAndBuffer {
-        TransactionViewReceiveAndBuffer {
-            receiver,
-            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
-            filter_keys: Arc::default(),
-        }
+        let (check_work_sender, check_work_receiver) = bounded(10_000);
+        let (check_result_sender, check_result_receiver) = bounded(10_000);
+        let _check_worker_handles = spawn_check_workers(
+            NonZeroUsize::new(1).unwrap(),
+            check_work_receiver,
+            check_result_sender,
+            bank_forks.read().unwrap().sharable_banks(),
+            Arc::default(),
+        );
+        TransactionViewReceiveAndBuffer::new(receiver, check_work_sender, check_result_receiver)
     }
 
     #[allow(clippy::type_complexity)]
@@ -667,6 +788,150 @@ mod tests {
         Transaction::new(&vec![from_keypair], message, recent_blockhash)
     }
 
+    fn create_nonce_account_and_transaction(
+        bank: &Bank,
+        mint_keypair: &Keypair,
+    ) -> (Transaction, Pubkey) {
+        let nonce_pubkey = Pubkey::new_unique();
+        let nonce_data = nonce::state::Data::new(
+            mint_keypair.pubkey(),
+            DurableNonce::from_blockhash(&Hash::new_unique()),
+            5000,
+        );
+        let nonce_account = AccountSharedData::new_data(
+            bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size()),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
+            &system_program::id(),
+        )
+        .unwrap();
+        bank.store_account(&nonce_pubkey, &nonce_account);
+
+        let ixs = [
+            system_instruction::advance_nonce_account(&nonce_pubkey, &mint_keypair.pubkey()),
+            system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 1),
+        ];
+        let message = Message::new(&ixs, Some(&mint_keypair.pubkey()));
+        let transaction = Transaction::new(&[mint_keypair], message, nonce_data.blockhash());
+        (transaction, nonce_pubkey)
+    }
+
+    // `clear_container()` removes nonce map entries with nonce transactions
+    #[test]
+    fn test_clear_container_clears_nonce_entry() {
+        let (mut test_frame, mut scheduler_controller) =
+            create_test_frame(1, test_create_transaction_view_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            banking_packet_sender,
+            ..
+        } = &mut test_frame;
+
+        let (transaction, nonce_pubkey) = create_nonce_account_and_transaction(bank, mint_keypair);
+        banking_packet_sender
+            .send(to_banking_packet_batch(&[transaction]))
+            .unwrap();
+        test_receive_all(&mut scheduler_controller, &BufferedPacketsDecision::Hold);
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        scheduler_controller.clear_container();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
+    }
+
+    // `incremental_recheck()` removes nonce map entries with nonce transactions
+    #[test]
+    fn test_incremental_recheck_clears_nonce_entry() {
+        let (mut test_frame, mut scheduler_controller) =
+            create_test_frame(1, test_create_transaction_view_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            banking_packet_sender,
+            ..
+        } = &mut test_frame;
+
+        let (transaction, nonce_pubkey) = create_nonce_account_and_transaction(bank, mint_keypair);
+        banking_packet_sender
+            .send(to_banking_packet_batch(std::slice::from_ref(&transaction)))
+            .unwrap();
+        test_receive_all(&mut scheduler_controller, &BufferedPacketsDecision::Hold);
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        bank.process_transaction(&transaction).unwrap();
+        scheduler_controller.incremental_recheck();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
+    }
+
+    fn test_receive_all<R: ReceiveAndBuffer>(
+        scheduler_controller: &mut SchedulerController<R, impl Scheduler<R::Transaction>>,
+        decision: &BufferedPacketsDecision,
+    ) {
+        fn count_check_results(stats: &ReceivingStats) -> usize {
+            stats.num_dropped_without_parsing
+                + stats.num_dropped_on_parsing_and_sanitization
+                + stats.num_dropped_on_lock_validation
+                + stats.num_dropped_on_compute_budget
+                + stats.num_dropped_on_age
+                + stats.num_dropped_on_already_processed
+                + stats.num_dropped_on_fee_payer
+                + stats.num_dropped_on_filter_key
+                + stats.num_dropped_on_nonce_dedup
+                + stats.num_buffered
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut num_received = 0;
+        let mut num_check_results = 0;
+        loop {
+            let check_result_stats = scheduler_controller.drain_check_results(decision);
+            let stats = scheduler_controller
+                .receive_and_buffer_packets(decision)
+                .unwrap();
+            if num_received == 0
+                && num_check_results == 0
+                && stats.num_received == 0
+                && count_check_results(&check_result_stats) == 0
+            {
+                return;
+            }
+            num_received += stats.num_received;
+            num_check_results += count_check_results(&check_result_stats);
+            if num_received > 0 && num_check_results == num_received {
+                return;
+            }
+
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for check-worker results"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     // Helper function to let test receive and then schedule packets.
     // The order of operations here is convenient for testing, but does not
     // match the order of operations in the actual scheduler.
@@ -683,15 +948,7 @@ mod tests {
         assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
         assert!(scheduler_controller.receive_completed().is_ok());
 
-        // Time is not a reliable way for deterministic testing.
-        // Loop here until no more packets are received, this avoids parallel
-        // tests from inconsistently timing out and not receiving
-        // from the channel.
-        while scheduler_controller
-            .receive_and_buffer_packets(&decision)
-            .map(|n| n.num_received > 0)
-            .unwrap_or_default()
-        {}
+        test_receive_all(scheduler_controller, &decision);
         let now = Instant::now();
         let slot_time = decision
             .bank()
@@ -728,6 +985,7 @@ mod tests {
         finished_consume_work_sender
             .send(FinishedConsumeWork {
                 work: ConsumeWork {
+                    target_slot: 0,
                     batch_id: TransactionBatchId::new(0),
                     ids: vec![],
                     transactions: vec![],
@@ -789,6 +1047,7 @@ mod tests {
 
         test_receive_then_schedule(&mut scheduler_controller);
         let consume_work = consume_work_receivers[0].try_recv().unwrap();
+        assert_eq!(consume_work.target_slot, bank.slot());
         assert_eq!(consume_work.ids.len(), 2);
         assert_eq!(consume_work.transactions.len(), 2);
         let message_hashes = consume_work
@@ -968,10 +1227,10 @@ mod tests {
             .send(to_banking_packet_batch(&txs))
             .unwrap();
 
-        // Priority Expectation:
-        // Thread 0: [3, 1]
+        // Transactions 1, 2, and 3 have equal priority and are scheduled FIFO.
+        // Thread 0: [1, 3]
         // Thread 1: [2, 0]
-        let t0_expected = [3, 1]
+        let t0_expected = [1, 3]
             .into_iter()
             .map(|i| txs[i].message().hash())
             .collect_vec();

@@ -25,9 +25,8 @@ use {
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::OrderedTaskId,
     std::{
@@ -96,53 +95,7 @@ impl Debug for TimeoutListener {
     }
 }
 
-#[cfg_attr(doc, aquamarine::aquamarine)]
 /// Schedules, executes, and commits transactions under encapsulated implementation
-///
-/// The following chart illustrates the ownership/reference interaction between inter-dependent
-/// objects across crates:
-///
-/// ```mermaid
-/// graph TD
-///     Bank["Arc#lt;Bank#gt;"]
-///
-///     subgraph solana-runtime[<span style="font-size: 70%">solana-runtime</span>]
-///         BankForks;
-///         BankWithScheduler;
-///         Bank;
-///         LoadExecuteAndCommitTransactions([<span style="font-size: 67%">load_execute_and_commit_transactions#lpar;#rpar;</span>]);
-///         SchedulingContext;
-///         InstalledSchedulerPool{{InstalledSchedulerPool}};
-///         InstalledScheduler{{InstalledScheduler}};
-///     end
-///
-///     subgraph solana-unified-scheduler-pool[<span style="font-size: 70%">solana-unified-scheduler-pool</span>]
-///         SchedulerPool;
-///         PooledScheduler;
-///         ScheduleExecution(["schedule_execution()"]);
-///     end
-///
-///     subgraph solana-ledger[<span style="font-size: 60%">solana-ledger</span>]
-///         ExecuteBatch(["execute_batch()"]);
-///     end
-///
-///     ScheduleExecution -. calls .-> ExecuteBatch;
-///     BankWithScheduler -. dyn-calls .-> ScheduleExecution;
-///     ExecuteBatch -. calls .-> LoadExecuteAndCommitTransactions;
-///     linkStyle 0,1,2 stroke:gray,color:gray;
-///
-///     BankForks -- owns --> BankWithScheduler;
-///     BankForks -- owns --> InstalledSchedulerPool;
-///     BankWithScheduler -- refs --> Bank;
-///     BankWithScheduler -- owns --> InstalledScheduler;
-///     SchedulingContext -- refs --> Bank;
-///     InstalledScheduler -- owns --> SchedulingContext;
-///
-///     SchedulerPool -- owns --> PooledScheduler;
-///     SchedulerPool -. impls .-> InstalledSchedulerPool;
-///     PooledScheduler -. impls .-> InstalledScheduler;
-///     PooledScheduler -- refs --> SchedulerPool;
-/// ```
 #[cfg_attr(feature = "dev-context-only-utils", automock)]
 // suppress false clippy complaints arising from mockall-derive:
 //   warning: `#[must_use]` has no effect when applied to a struct field
@@ -175,7 +128,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// having &mut.
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
     ) -> ScheduleResult;
 
@@ -483,9 +436,7 @@ impl BankWithScheduler {
     /// wait_for_termination()-ed or the unified scheduler is disabled in the first place).
     pub fn schedule_transaction_executions(
         &self,
-        transaction_with_task_ids: impl ExactSizeIterator<
-            Item = (RuntimeTransaction<SanitizedTransaction>, OrderedTaskId),
-        >,
+        transaction_with_task_ids: impl ExactSizeIterator<Item = (ReplayTransaction, OrderedTaskId)>,
     ) -> Result<()> {
         trace!(
             "schedule_transaction_executions(): {} txs",
@@ -899,7 +850,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx0 = ReplayTransaction::from(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,

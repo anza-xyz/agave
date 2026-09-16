@@ -1,7 +1,6 @@
 //! Defines aggregates used for vote rewards.
 
 use {
-    crate::consensus_message::VoteMessage,
     solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -69,6 +68,19 @@ impl SkipRewardCertificate {
     pub fn into_bitmap(self) -> Vec<u8> {
         self.bitmap
     }
+
+    /// Returns every field of the certificate. Callers that must not
+    /// silently ignore new fields (e.g. the geyser boundary conversion)
+    /// bind this tuple exhaustively, so growing it breaks them at compile
+    /// time.
+    pub fn as_parts(&self) -> (Slot, &BLSSignatureCompressed, &[u8]) {
+        let Self {
+            slot,
+            signature,
+            bitmap,
+        } = self;
+        (*slot, signature, bitmap)
+    }
 }
 
 /// Reward certificate for the validators that voted notar.
@@ -110,6 +122,20 @@ impl NotarRewardCertificate {
         &self.bitmap
     }
 
+    /// Returns every field of the certificate. Callers that must not
+    /// silently ignore new fields (e.g. the geyser boundary conversion)
+    /// bind this tuple exhaustively, so growing it breaks them at compile
+    /// time.
+    pub fn as_parts(&self) -> (Slot, &Hash, &BLSSignatureCompressed, &[u8]) {
+        let Self {
+            slot,
+            block_id,
+            signature,
+            bitmap,
+        } = self;
+        (*slot, block_id, signature, bitmap)
+    }
+
     /// Returns the bitmap consuming self.
     pub fn into_bitmap(self) -> Vec<u8> {
         self.bitmap
@@ -122,14 +148,7 @@ pub enum BuildRewardCertsRespError {
     /// Building either the skip or the notar reward cert failed.
     #[error("try_new() on skip or notar cert failed with {0}")]
     RewardCertTryNew(#[from] RewardCertError),
-    /// Experienced failure with encoding.
-    #[error("encode error {0:?}")]
-    Encode(EncodeError),
-}
-
-/// Message to add votes to the rewards container.
-#[derive(Debug)]
-pub struct AddVoteMessage {
-    /// List of [`VoteMessage`]s.
-    pub votes: Vec<VoteMessage>,
+    /// Encoding failed
+    #[error("encoding failed with {0:?}")]
+    Encoding(EncodeError),
 }

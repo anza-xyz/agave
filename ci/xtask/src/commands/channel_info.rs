@@ -35,9 +35,16 @@ pub async fn run(args: CommandArgs) -> Result<()> {
     .await?;
     let versions: BTreeMap<BranchVersion, Version> = heads.into_iter().zip(fetched).collect();
 
+    let pins = fetch::channel_pins(&client).await?;
     let branch = pick_env("CI_BASE_BRANCH").or_else(|| pick_env("CI_BRANCH"));
     let channel = pick_env("CHANNEL");
-    let info = derive_channels(&versions, &tags, branch.as_deref(), channel.as_deref())?;
+    let info = derive_channels(
+        &versions,
+        &tags,
+        branch.as_deref(),
+        channel.as_deref(),
+        &pins,
+    )?;
 
     if args.json {
         print_channel_info_json(&info)?;

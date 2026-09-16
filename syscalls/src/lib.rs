@@ -13,6 +13,10 @@ pub use self::{
 };
 use {
     crate::mem_ops::is_nonoverlapping,
+    solana_big_mod_exp::{
+        BIG_MOD_EXP_MAX_BYTES, BIG_MOD_EXP_MIN_EXPONENT_LENGTH,
+        BIG_MOD_EXP_MOD_REDUCTION_COMPLEXITY_FACTOR, BigModExpParams, big_mod_exp,
+    },
     solana_blake3_hasher as blake3,
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
@@ -30,7 +34,6 @@ use {
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
-        declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
         program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
         vm::Config,
@@ -43,7 +46,6 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_type_overrides::sync::Arc,
-    solana_sysvar::SysvarSerialize,
     solana_transaction_context::vm_slice::VmSlice,
     std::{
         alloc::Layout,
@@ -170,7 +172,7 @@ impl From<CpiError> for SyscallError {
 
 type Error = Box<dyn std::error::Error>;
 
-trait HasherImpl {
+pub trait HasherImpl {
     const NAME: &'static str;
     type Output: AsRef<[u8]>;
 
@@ -182,10 +184,10 @@ trait HasherImpl {
     fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64;
 }
 
-struct Sha256Hasher(Hasher);
-struct Blake3Hasher(blake3::Hasher);
-struct Keccak256Hasher(keccak::Hasher);
-struct Sha512Hasher(sha512::Hasher);
+pub struct Sha256Hasher(Hasher);
+pub struct Blake3Hasher(blake3::Hasher);
+pub struct Keccak256Hasher(keccak::Hasher);
+pub struct Sha512Hasher(sha512::Hasher);
 
 impl HasherImpl for Sha256Hasher {
     const NAME: &'static str = "Sha256";
@@ -295,22 +297,6 @@ impl HasherImpl for Sha512Hasher {
     }
 }
 
-// NOTE: These constants are temporarily defined here and will be
-// moved to a dedicated crate in the future.
-mod bls12_381_curve_id {
-    /// Curve ID for BLS12-381 pairing operations
-    pub(crate) const BLS12_381_LE: u64 = 4;
-    pub(crate) const BLS12_381_BE: u64 = 4 | 0x80;
-
-    /// Curve ID for BLS12-381 G1 group operations
-    pub(crate) const BLS12_381_G1_LE: u64 = 5;
-    pub(crate) const BLS12_381_G1_BE: u64 = 5 | 0x80;
-
-    /// Curve ID for BLS12-381 G2 group operations
-    pub(crate) const BLS12_381_G2_LE: u64 = 6;
-    pub(crate) const BLS12_381_G2_BE: u64 = 6 | 0x80;
-}
-
 // NOTE: This macro name is checked by gen-syscall-list to create the list of
 // syscalls. If this macro name is changed, or if a new one is added, then
 // gen-syscall-list/build.rs must also be updated.
@@ -368,7 +354,6 @@ pub fn create_program_runtime_environment(
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.virtual_address_space_adjustments,
-        allow_memory_region_zero: true,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 
@@ -726,35 +711,37 @@ macro_rules! translate_mut {
     };
 }
 
-declare_builtin_function!(
-    /// Abort syscall functions, called when the SBF program calls `abort()`
-    /// LLVM will insert calls to `abort()` if it detects an untenable situation,
-    /// `abort()` is not intended to be called explicitly by the program.
-    /// Causes the SBF program to be halted immediately
-    SyscallAbort,
+/// Abort syscall functions, called when the SBF program calls `abort()`
+/// LLVM will insert calls to `abort()` if it detects an untenable situation,
+/// `abort()` is not intended to be called explicitly by the program.
+/// Causes the SBF program to be halted immediately
+pub struct SyscallAbort {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAbort {
+    type Error = Error;
     fn rust(
-        _invoke_context: &mut InvokeContext<'_, '_>,
-        _arg1: u64,
-        _arg2: u64,
-        _arg3: u64,
-        _arg4: u64,
-        _arg5: u64,
-    ) -> Result<u64, Error> {
+        _: &mut InvokeContext<'_, '_>,
+        _: u64,
+        _: u64,
+        _: u64,
+        _: u64,
+        _: u64,
+    ) -> Result<u64, Self::Error> {
         Err(SyscallError::Abort.into())
     }
-);
+}
 
-declare_builtin_function!(
-    /// Panic syscall function, called when the SBF program calls 'sol_panic_()`
-    /// Causes the SBF program to be halted immediately
-    SyscallPanic,
+/// Panic syscall function, called when the SBF program calls 'sol_panic_()`
+/// Causes the SBF program to be halted immediately
+pub struct SyscallPanic {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPanic {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         file: u64,
         len: u64,
         line: u64,
         column: u64,
-        _arg5: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         invoke_context.compute_meter.consume_checked(len)?;
 
@@ -767,23 +754,24 @@ declare_builtin_function!(
             &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Dynamic memory allocation syscall called when the SBF program calls
-    /// `sol_alloc_free_()`.  The allocator is expected to allocate/free
-    /// from/to a given chunk of memory and enforce size restrictions.  The
-    /// memory chunk is given to the allocator during allocator creation and
-    /// information about that memory (start address and size) is passed
-    /// to the VM to use for enforcement.
-    SyscallAllocFree,
+/// Dynamic memory allocation syscall called when the SBF program calls
+/// `sol_alloc_free_()`.  The allocator is expected to allocate/free
+/// from/to a given chunk of memory and enforce size restrictions.  The
+/// memory chunk is given to the allocator during allocator creation and
+/// information about that memory (start address and size) is passed
+/// to the VM to use for enforcement.
+pub struct SyscallAllocFree {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAllocFree {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         size: u64,
         free_addr: u64,
-        _arg3: u64,
-        _arg4: u64,
-        _arg5: u64,
+        _: u64,
+        _: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         let align = if invoke_context.get_check_aligned() {
             BPF_ALIGN_OF_U128
@@ -793,7 +781,10 @@ declare_builtin_function!(
         let Ok(layout) = Layout::from_size_align(size as usize, align) else {
             return Ok(0);
         };
-        let allocator = &mut invoke_context.memory_contexts.memory_context_mut_abi_v1()?.allocator;
+        let allocator = &mut invoke_context
+            .memory_contexts
+            .memory_context_mut_abi_v1()?
+            .allocator;
         if free_addr == 0 {
             match allocator.alloc(layout) {
                 Ok(addr) => Ok(addr),
@@ -804,7 +795,7 @@ declare_builtin_function!(
             Ok(0)
         }
     }
-);
+}
 
 fn translate_and_check_program_address_inputs(
     seeds_addr: u64,
@@ -831,16 +822,17 @@ fn translate_and_check_program_address_inputs(
     Ok((seeds, program_id))
 }
 
-declare_builtin_function!(
-    /// Create a program address
-    SyscallCreateProgramAddress,
+/// Create a program address
+pub struct SyscallCreateProgramAddress {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCreateProgramAddress {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         seeds_addr: u64,
         seeds_len: u64,
         program_id_addr: u64,
         address_addr: u64,
-        _arg5: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         let cost = invoke_context
             .get_execution_cost()
@@ -868,11 +860,12 @@ declare_builtin_function!(
         address.write_copy_of_slice(new_address.as_ref());
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Create a program address
-    SyscallTryFindProgramAddress,
+/// Find a program address
+pub struct SyscallTryFindProgramAddress {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallTryFindProgramAddress {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         seeds_addr: u64,
@@ -921,18 +914,19 @@ declare_builtin_function!(
         }
         Ok(1)
     }
-);
+}
 
-declare_builtin_function!(
-    /// secp256k1_recover
-    SyscallSecp256k1Recover,
+/// secp256k1_recover
+pub struct SyscallSecp256k1Recover {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSecp256k1Recover {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         hash_addr: u64,
         recovery_id_val: u64,
         signature_addr: u64,
         result_addr: u64,
-        _arg5: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         let cost = invoke_context.get_execution_cost().secp256k1_recover_cost;
         invoke_context.compute_meter.consume_checked(cost)?;
@@ -990,26 +984,27 @@ declare_builtin_function!(
         result.write_copy_of_slice(&public_key[1..65]);
         Ok(SUCCESS)
     }
-);
+}
 
-declare_builtin_function!(
-    // Elliptic Curve Point Validation
-    //
-    // Currently, the following curves are supported:
-    // - Curve25519 Edwards and Ristretto representations
-    // - BLS12-381
-    SyscallCurvePointValidation,
+/// Elliptic Curve Point Validation
+///
+/// Currently, the following curves are supported:
+/// - Curve25519 Edwards and Ristretto representations
+/// - BLS12-381
+pub struct SyscallCurvePointValidation {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValidation {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         point_addr: u64,
-        _arg3: u64,
-        _arg4: u64,
-        _arg5: u64,
+        _: u64,
+        _: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         use {
-            crate::bls12_381_curve_id::*,
-            solana_curve25519::{curve_syscall_traits::*, edwards, ristretto},
+            solana_curve25519::{edwards, ristretto},
+            solana_define_syscall::curve_constants::*,
         };
 
         // SIMD-0388: BLS12-381 syscalls
@@ -1126,28 +1121,29 @@ declare_builtin_function!(
             }
         }
     }
-);
+}
 
-declare_builtin_function!(
-    // Elliptic Curve Point Decompression
-    //
-    // Currently, the following curves are supported:
-    // - BLS12-381
-    SyscallCurveDecompress,
+/// Elliptic Curve Point Decompression
+///
+/// Currently, the following curves are supported:
+/// - BLS12-381
+pub struct SyscallCurveDecompress {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         point_addr: u64,
         result_addr: u64,
-        _arg4: u64,
-        _arg5: u64,
+        _: u64,
+        _: u64,
     ) -> Result<u64, Error> {
         use {
-            crate::bls12_381_curve_id::*,
             solana_bls12_381_syscall::{
                 PodG1Compressed as PodBLSG1Compressed, PodG1Point as PodBLSG1Point,
                 PodG2Compressed as PodBLSG2Compressed, PodG2Point as PodBLSG2Point,
             },
+            solana_define_syscall::curve_constants::*,
         };
 
         let check_aligned = invoke_context.get_check_aligned();
@@ -1225,15 +1221,16 @@ declare_builtin_function!(
             _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
-);
+}
 
-declare_builtin_function!(
-    // Elliptic Curve Group Operations
-    //
-    // Currently, the following curves are supported:
-    // - Curve25519 Edwards and Ristretto representations
-    // - BLS12-381
-    SyscallCurveGroupOps,
+/// Elliptic Curve Group Operations
+///
+/// Currently, the following curves are supported:
+/// - Curve25519 Edwards and Ristretto representations
+/// - BLS12-381
+pub struct SyscallCurveGroupOps {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
@@ -1243,16 +1240,15 @@ declare_builtin_function!(
         result_point_addr: u64,
     ) -> Result<u64, Error> {
         use {
-            crate::bls12_381_curve_id::*,
             solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point, PodScalar as PodBLSScalar,
             },
             solana_curve25519::{
-                curve_syscall_traits::*,
                 edwards::{self, PodEdwardsPoint},
                 ristretto::{self, PodRistrettoPoint},
                 scalar,
             },
+            solana_define_syscall::curve_constants::*,
         };
 
         if !invoke_context.get_feature_set().enable_bls12_381_syscall
@@ -1267,7 +1263,7 @@ declare_builtin_function!(
         let check_aligned = invoke_context.get_check_aligned();
         match curve_id {
             CURVE25519_EDWARDS => match group_op {
-                ADD => {
+                GROUP_OP_ADD => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_add_cost;
@@ -1297,7 +1293,7 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                SUB => {
+                GROUP_OP_SUB => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_subtract_cost;
@@ -1327,7 +1323,7 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                MUL => {
+                GROUP_OP_MUL => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_multiply_cost;
@@ -1367,7 +1363,7 @@ declare_builtin_function!(
             },
 
             CURVE25519_RISTRETTO => match group_op {
-                ADD => {
+                GROUP_OP_ADD => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_add_cost;
@@ -1397,7 +1393,7 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                SUB => {
+                GROUP_OP_SUB => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_subtract_cost;
@@ -1429,7 +1425,7 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                MUL => {
+                GROUP_OP_MUL => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_multiply_cost;
@@ -1476,7 +1472,7 @@ declare_builtin_function!(
                 };
 
                 match group_op {
-                    ADD => {
+                    GROUP_OP_ADD => {
                         let cost = invoke_context.get_execution_cost().bls12_381_g1_add_cost;
                         invoke_context.compute_meter.consume_checked(cost)?;
 
@@ -1511,7 +1507,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    SUB => {
+                    GROUP_OP_SUB => {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g1_subtract_cost;
@@ -1548,7 +1544,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    MUL => {
+                    GROUP_OP_MUL => {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g1_multiply_cost;
@@ -1598,7 +1594,7 @@ declare_builtin_function!(
                 };
 
                 match group_op {
-                    ADD => {
+                    GROUP_OP_ADD => {
                         let cost = invoke_context.get_execution_cost().bls12_381_g2_add_cost;
                         invoke_context.compute_meter.consume_checked(cost)?;
 
@@ -1633,7 +1629,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    SUB => {
+                    GROUP_OP_SUB => {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g2_subtract_cost;
@@ -1670,7 +1666,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    MUL => {
+                    GROUP_OP_MUL => {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g2_multiply_cost;
@@ -1720,14 +1716,15 @@ declare_builtin_function!(
             }
         }
     }
-);
+}
 
-declare_builtin_function!(
-    // Elliptic Curve Multiscalar Multiplication
-    //
-    // Currently, the following curves are supported:
-    // - Curve25519 Edwards and Ristretto representations
-    SyscallCurveMultiscalarMultiplication,
+/// Elliptic Curve Multiscalar Multiplication
+///
+/// Currently, the following curves are supported:
+/// - Curve25519 Edwards and Ristretto representations
+pub struct SyscallCurveMultiscalarMultiplication {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscalarMultiplication {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
@@ -1736,11 +1733,13 @@ declare_builtin_function!(
         points_len: u64,
         result_point_addr: u64,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{
-            curve_syscall_traits::*,
-            edwards::{self, PodEdwardsPoint},
-            ristretto::{self, PodRistrettoPoint},
-            scalar,
+        use {
+            solana_curve25519::{
+                edwards::{self, PodEdwardsPoint},
+                ristretto::{self, PodRistrettoPoint},
+                scalar,
+            },
+            solana_define_syscall::curve_constants::*,
         };
 
         if points_len > 512 {
@@ -1840,14 +1839,15 @@ declare_builtin_function!(
             }
         }
     }
-);
+}
 
-declare_builtin_function!(
-    /// Elliptic Curve Pairing Map
-    ///
-    // Currently, the following curves are supported:
-    // - BLS12-381
-    SyscallCurvePairingMap,
+/// Elliptic Curve Pairing Map
+///
+/// Currently, the following curves are supported:
+/// - BLS12-381
+pub struct SyscallCurvePairingMap {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePairingMap {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
@@ -1857,24 +1857,22 @@ declare_builtin_function!(
         result_addr: u64,
     ) -> Result<u64, Error> {
         use {
-            crate::bls12_381_curve_id::*,
             solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point,
                 PodGtElement as PodBLSGtElement,
             },
+            solana_define_syscall::curve_constants::*,
         };
 
         let check_aligned = invoke_context.get_check_aligned();
         match curve_id {
             BLS12_381_LE | BLS12_381_BE => {
                 let execution_cost = invoke_context.get_execution_cost();
-                let cost = execution_cost
-                    .bls12_381_one_pair_cost
-                    .saturating_add(
-                        execution_cost
-                            .bls12_381_additional_pair_cost
-                            .saturating_mul(num_pairs.saturating_sub(1)),
-                    );
+                let cost = execution_cost.bls12_381_one_pair_cost.saturating_add(
+                    execution_cost
+                        .bls12_381_additional_pair_cost
+                        .saturating_mul(num_pairs.saturating_sub(1)),
+                );
                 invoke_context.compute_meter.consume_checked(cost)?;
 
                 let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -1915,16 +1913,15 @@ declare_builtin_function!(
                     Ok(1)
                 }
             }
-            _ => {
-                Err(SyscallError::InvalidAttribute.into())
-            }
+            _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
-);
+}
 
-declare_builtin_function!(
-    /// Set return data
-    SyscallSetReturnData,
+/// Set return data
+pub struct SyscallSetReturnData {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSetReturnData {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         addr: u64,
@@ -1950,30 +1947,23 @@ declare_builtin_function!(
         } else {
             let check_aligned = invoke_context.get_check_aligned();
             let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-            translate_slice::<u8>(
-                memory_mapping,
-                addr,
-                len,
-                check_aligned,
-            )?
-            .to_vec()
+            translate_slice::<u8>(memory_mapping, addr, len, check_aligned)?.to_vec()
         };
         let transaction_context = &mut invoke_context.transaction_context;
         let program_id = *transaction_context
             .get_current_instruction_context()
-            .and_then(|instruction_context| {
-                instruction_context.get_program_key()
-            })?;
+            .and_then(|instruction_context| instruction_context.get_program_key())?;
 
         transaction_context.set_return_data(program_id, return_data)?;
 
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get return data
-    SyscallGetReturnData,
+/// Get return data
+pub struct SyscallGetReturnData {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         return_data_addr: u64,
@@ -1984,7 +1974,9 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
         let length = length.min(return_data.len() as u64);
@@ -2016,11 +2008,12 @@ declare_builtin_function!(
         // Return the actual length, rather the length returned
         Ok(return_data.len() as u64)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a processed sigling instruction
-    SyscallGetProcessedSiblingInstruction,
+/// Get a processed sigling instruction
+pub struct SyscallGetProcessedSiblingInstruction {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSiblingInstruction {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         index: u64,
@@ -2031,19 +2024,29 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         let stack_height = invoke_context.get_stack_height();
         let mut reverse_index_at_stack_height = 0;
         let mut found_instruction_context = None;
-        let current_ix_caller = invoke_context.transaction_context.get_current_instruction_context()?.get_index_of_caller();
+        let current_ix_caller = invoke_context
+            .transaction_context
+            .get_current_instruction_context()?
+            .get_index_of_caller();
 
         // Either we only search for top level instructions or CPIs, depending on the stack height.
         let range = if stack_height == 1 {
-            0..invoke_context.transaction_context.next_top_level_instruction_index()
+            0..invoke_context
+                .transaction_context
+                .next_top_level_instruction_index()
         } else {
-            let end = invoke_context.transaction_context.get_instruction_trace_length();
-            let start = end.saturating_sub(invoke_context.transaction_context.number_of_cpis_in_trace());
+            let end = invoke_context
+                .transaction_context
+                .get_instruction_trace_length();
+            let start =
+                end.saturating_sub(invoke_context.transaction_context.number_of_cpis_in_trace());
             start..end
         };
 
@@ -2098,7 +2101,8 @@ declare_builtin_function!(
                 let account_metas = (0..instruction_context.get_number_of_instruction_accounts())
                     .map(|instruction_account_index| {
                         Ok(AccountMeta {
-                            pubkey: *instruction_context.get_key_of_instruction_account(instruction_account_index)?,
+                            pubkey: *instruction_context
+                                .get_key_of_instruction_account(instruction_account_index)?,
                             is_signer: instruction_context
                                 .is_instruction_account_signer(instruction_account_index)?,
                             is_writable: instruction_context
@@ -2116,11 +2120,12 @@ declare_builtin_function!(
         }
         Ok(false as u64)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get current call stack height
-    SyscallGetStackHeight,
+/// Get current call stack height
+pub struct SyscallGetStackHeight {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetStackHeight {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
@@ -2131,15 +2136,18 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         Ok(invoke_context.get_stack_height() as u64)
     }
-);
+}
 
-declare_builtin_function!(
-    /// alt_bn128 group operations
-    SyscallAltBn128,
+/// alt_bn128 group operations
+pub struct SyscallAltBn128 {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         group_op: u64,
@@ -2149,32 +2157,31 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         use solana_bn254::versioned::{
-            alt_bn128_versioned_g1_addition, alt_bn128_versioned_g1_multiplication,
-            alt_bn128_versioned_g2_addition, alt_bn128_versioned_g2_multiplication,
-            alt_bn128_versioned_pairing, Endianness, VersionedG1Addition,
-            VersionedG1Multiplication, VersionedG2Addition, VersionedG2Multiplication,
-            VersionedPairing, ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE,
-            ALT_BN128_G1_ADD_BE, ALT_BN128_G1_MUL_BE, ALT_BN128_PAIRING_BE,
-            ALT_BN128_PAIRING_ELEMENT_SIZE, ALT_BN128_PAIRING_OUTPUT_SIZE, ALT_BN128_G1_ADD_LE,
-            ALT_BN128_G1_MUL_LE, ALT_BN128_PAIRING_LE, ALT_BN128_G2_ADD_BE, ALT_BN128_G2_ADD_LE,
-            ALT_BN128_G2_MUL_BE, ALT_BN128_G2_MUL_LE,
+            ALT_BN128_G1_ADD_BE, ALT_BN128_G1_ADD_LE, ALT_BN128_G1_MUL_BE, ALT_BN128_G1_MUL_LE,
+            ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_ADD_BE, ALT_BN128_G2_ADD_LE, ALT_BN128_G2_MUL_BE,
+            ALT_BN128_G2_MUL_LE, ALT_BN128_G2_POINT_SIZE, ALT_BN128_PAIRING_BE,
+            ALT_BN128_PAIRING_ELEMENT_SIZE, ALT_BN128_PAIRING_LE, ALT_BN128_PAIRING_OUTPUT_SIZE,
+            Endianness, VersionedG1Addition, VersionedG1Multiplication, VersionedG2Addition,
+            VersionedG2Multiplication, VersionedPairing, alt_bn128_versioned_g1_addition,
+            alt_bn128_versioned_g1_multiplication, alt_bn128_versioned_g2_addition,
+            alt_bn128_versioned_g2_multiplication, alt_bn128_versioned_pairing,
         };
 
         // SIMD-0284: Block LE ops if the feature is not active.
-        if !invoke_context.get_feature_set().alt_bn128_little_endian &&
-            matches!(
+        if !invoke_context.get_feature_set().alt_bn128_little_endian
+            && matches!(
                 group_op,
-                ALT_BN128_G1_ADD_LE
-                    | ALT_BN128_G1_MUL_LE
-                    | ALT_BN128_PAIRING_LE
+                ALT_BN128_G1_ADD_LE | ALT_BN128_G1_MUL_LE | ALT_BN128_PAIRING_LE
             )
         {
             return Err(SyscallError::InvalidAttribute.into());
         }
 
         // SIMD-0302: Block G2 ops if the feature is not active.
-        if !invoke_context.get_feature_set().enable_alt_bn128_g2_syscalls &&
-            matches!(
+        if !invoke_context
+            .get_feature_set()
+            .enable_alt_bn128_g2_syscalls
+            && matches!(
                 group_op,
                 ALT_BN128_G2_ADD_BE
                     | ALT_BN128_G2_ADD_LE
@@ -2236,12 +2243,7 @@ declare_builtin_function!(
                 let _result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
             );
         }
-        let input = translate_slice::<u8>(
-            memory_mapping,
-            input_addr,
-            input_size,
-            check_aligned,
-        )?;
+        let input = translate_slice::<u8>(memory_mapping, input_addr, input_size, check_aligned)?;
 
         let result_point = match group_op {
             ALT_BN128_G1_ADD_BE => {
@@ -2256,34 +2258,26 @@ declare_builtin_function!(
             ALT_BN128_G2_ADD_LE => {
                 alt_bn128_versioned_g2_addition(VersionedG2Addition::V0, input, Endianness::LE)
             }
-            ALT_BN128_G1_MUL_BE => {
-                alt_bn128_versioned_g1_multiplication(
-                    VersionedG1Multiplication::V1,
-                    input,
-                    Endianness::BE
-                )
-            }
-            ALT_BN128_G1_MUL_LE => {
-                alt_bn128_versioned_g1_multiplication(
-                    VersionedG1Multiplication::V1,
-                    input,
-                    Endianness::LE
-                )
-            }
-            ALT_BN128_G2_MUL_BE => {
-                alt_bn128_versioned_g2_multiplication(
-                    VersionedG2Multiplication::V0,
-                    input,
-                    Endianness::BE
-                )
-            }
-            ALT_BN128_G2_MUL_LE => {
-                alt_bn128_versioned_g2_multiplication(
-                    VersionedG2Multiplication::V0,
-                    input,
-                    Endianness::LE
-                )
-            }
+            ALT_BN128_G1_MUL_BE => alt_bn128_versioned_g1_multiplication(
+                VersionedG1Multiplication::V1,
+                input,
+                Endianness::BE,
+            ),
+            ALT_BN128_G1_MUL_LE => alt_bn128_versioned_g1_multiplication(
+                VersionedG1Multiplication::V1,
+                input,
+                Endianness::LE,
+            ),
+            ALT_BN128_G2_MUL_BE => alt_bn128_versioned_g2_multiplication(
+                VersionedG2Multiplication::V0,
+                input,
+                Endianness::BE,
+            ),
+            ALT_BN128_G2_MUL_LE => alt_bn128_versioned_g2_multiplication(
+                VersionedG2Multiplication::V0,
+                input,
+                Endianness::LE,
+            ),
             ALT_BN128_PAIRING_BE => {
                 alt_bn128_versioned_pairing(VersionedPairing::V1, input, Endianness::BE)
             }
@@ -2305,34 +2299,162 @@ declare_builtin_function!(
                 result.write_copy_of_slice(&point);
                 Ok(SUCCESS)
             }
-            Err(_) => {
-                Ok(1)
-            }
+            Err(_) => Ok(1),
         }
     }
-);
+}
 
-declare_builtin_function!(
-    /// Big integer modular exponentiation
-    SyscallBigModExp,
+fn big_mod_exp_mult_complexity(input_len: u64) -> Option<u128> {
+    let input_len = input_len as u128;
+    let input_len_squared = input_len.checked_mul(input_len)?;
+    if input_len <= 64 {
+        Some(input_len_squared)
+    } else if input_len <= 1024 {
+        input_len_squared
+            .checked_div(4)?
+            .checked_add(96_u128.checked_mul(input_len)?)?
+            .checked_sub(3_072)
+    } else {
+        input_len_squared
+            .checked_div(16)?
+            .checked_add(480_u128.checked_mul(input_len)?)?
+            .checked_sub(199_680)
+    }
+}
+
+fn big_mod_exp_highest_set_bit_index_le(bytes: &[u8]) -> Option<u64> {
+    bytes.iter().enumerate().rev().find_map(|(index, byte)| {
+        (*byte != 0).then(|| {
+            (index as u64)
+                .saturating_mul(u64::from(u8::BITS))
+                .saturating_add(u64::from(7_u32.saturating_sub(byte.leading_zeros())))
+        })
+    })
+}
+
+fn big_mod_exp_adjusted_exponent_length(exponent: &[u8]) -> u64 {
+    if exponent.len() <= 32 {
+        big_mod_exp_highest_set_bit_index_le(exponent).unwrap_or(0)
+    } else {
+        let trailing_bytes = exponent.len().saturating_sub(32);
+        let most_significant_32_bytes = &exponent[trailing_bytes..];
+        (trailing_bytes as u64)
+            .saturating_mul(u64::from(u8::BITS))
+            .saturating_add(
+                big_mod_exp_highest_set_bit_index_le(most_significant_32_bytes).unwrap_or(0),
+            )
+    }
+}
+
+fn big_mod_exp_is_one_le(bytes: &[u8]) -> bool {
+    matches!(bytes.first(), Some(1)) && bytes[1..].iter().all(|byte| *byte == 0)
+}
+
+/// Compute the operation cost of a big integer modular exponentiation, i.e. the
+/// cost charged on top of the flat `big_modular_exponentiation_base_cost`.
+fn big_mod_exp_operation_cost(
+    cost_divisor: u64,
+    params: &BigModExpParams,
+    exponent: &[u8],
+) -> Option<u64> {
+    let input_len = params.base_len.max(params.modulus_len);
+    let mult_complexity = big_mod_exp_mult_complexity(input_len)?;
+    let operation_complexity = if big_mod_exp_is_one_le(exponent) {
+        mult_complexity.checked_mul(u128::from(BIG_MOD_EXP_MOD_REDUCTION_COMPLEXITY_FACTOR))?
+    } else {
+        let adjusted_exponent_length =
+            big_mod_exp_adjusted_exponent_length(exponent).max(BIG_MOD_EXP_MIN_EXPONENT_LENGTH);
+        mult_complexity.checked_mul(u128::from(adjusted_exponent_length))?
+    };
+    let divisor = u128::from(cost_divisor);
+    if divisor == 0 {
+        return None;
+    }
+
+    let operation_cost = operation_complexity
+        .checked_add(divisor.checked_sub(1)?)?
+        .checked_div(divisor)?;
+    u64::try_from(operation_cost).ok()
+}
+
+/// Big integer modular exponentiation
+pub struct SyscallBigModExp {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallBigModExp {
+    type Error = Error;
     fn rust(
-        _invoke_context: &mut InvokeContext<'_, '_>,
-        _params: u64,
-        _return_value: u64,
+        invoke_context: &mut InvokeContext<'_, '_>,
+        params_addr: u64,
+        result_addr: u64,
         _arg3: u64,
         _arg4: u64,
         _arg5: u64,
     ) -> Result<u64, Error> {
-        // The big integer modular exponentiation to be implemented once
-        // SIMD-529 is approved.
+        let check_aligned = invoke_context.get_check_aligned();
 
-        Ok(1)
+        // Charge the flat base cost of the syscall up front, before doing any
+        // translation or work that could fail without being paid for.
+        let execution_cost = invoke_context.get_execution_cost();
+        let base_cost = execution_cost.big_modular_exponentiation_base_cost;
+        let cost_divisor = execution_cost.big_modular_exponentiation_cost_divisor;
+        invoke_context.compute_meter.consume_checked(base_cost)?;
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
+        let params =
+            *translate_type::<BigModExpParams>(memory_mapping, params_addr, check_aligned)?;
+
+        if params.base_len > BIG_MOD_EXP_MAX_BYTES
+            || params.exponent_len > BIG_MOD_EXP_MAX_BYTES
+            || params.modulus_len > BIG_MOD_EXP_MAX_BYTES
+        {
+            return Err(SyscallError::InvalidLength.into());
+        }
+
+        // Only the exponent (and the lengths in `params`) is needed to compute
+        // the operation cost, so translate it and charge before translating the
+        // base and modulus.
+        let exponent = translate_slice::<u8>(
+            memory_mapping,
+            params.exponent,
+            params.exponent_len,
+            check_aligned,
+        )?;
+        let Some(cost) = big_mod_exp_operation_cost(cost_divisor, &params, exponent) else {
+            // The operation cost cannot be represented as a `u64`, so it can
+            // never be paid for; drain the remaining budget and fail.
+            invoke_context.compute_meter.consume_checked(u64::MAX)?;
+            return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
+        };
+        invoke_context.compute_meter.consume_checked(cost)?;
+
+        let base =
+            translate_slice::<u8>(memory_mapping, params.base, params.base_len, check_aligned)?;
+        let modulus = translate_slice::<u8>(
+            memory_mapping,
+            params.modulus,
+            params.modulus_len,
+            check_aligned,
+        )?;
+
+        let Some(value) = big_mod_exp(base, exponent, modulus) else {
+            return Err(SyscallError::InvalidAttribute.into());
+        };
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+        translate_mut!(
+            memory_mapping,
+            check_aligned,
+            let result_ref_mut: (&mut [MaybeUninit<u8>]) = map(result_addr, params.modulus_len)?;
+        );
+        result_ref_mut.write_copy_of_slice(value.as_slice());
+
+        Ok(SUCCESS)
     }
-);
+}
 
-declare_builtin_function!(
-    // Poseidon
-    SyscallPoseidon,
+/// Poseidon
+pub struct SyscallPoseidon {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPoseidon {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         parameters: u64,
@@ -2366,7 +2488,6 @@ declare_builtin_function!(
             .consume_checked(cost.to_owned())?;
 
         let check_aligned = invoke_context.get_check_aligned();
-        let poseidon_enforce_padding = invoke_context.get_feature_set().poseidon_enforce_padding;
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         {
             // Just a check that this will map later for error compatibility with old code.
@@ -2384,11 +2505,7 @@ declare_builtin_function!(
             .map(|input| translate_vm_slice(input, memory_mapping, check_aligned))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let result = if poseidon_enforce_padding {
-            poseidon::hashv(parameters, endianness, inputs.as_slice())
-        } else {
-            poseidon::legacy::hashv(parameters, endianness, inputs.as_slice())
-        };
+        let result = poseidon::hashv(parameters, endianness, inputs.as_slice());
         let Ok(hash) = result else {
             return Ok(1);
         };
@@ -2403,11 +2520,12 @@ declare_builtin_function!(
 
         Ok(SUCCESS)
     }
-);
+}
 
-declare_builtin_function!(
-    /// Read remaining compute units
-    SyscallRemainingComputeUnits,
+/// Read remaining compute units
+pub struct SyscallRemainingComputeUnits {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallRemainingComputeUnits {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
@@ -2417,16 +2535,19 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
-        invoke_context.compute_meter.consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(execution_cost.syscall_base_cost)?;
 
         use solana_sbpf::vm::ContextObject;
         Ok(invoke_context.get_remaining())
     }
-);
+}
 
-declare_builtin_function!(
-    /// alt_bn128 g1 and g2 compression and decompression
-    SyscallAltBn128Compression,
+/// alt_bn128 g1 and g2 compression and decompression
+pub struct SyscallAltBn128Compression {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compression {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         op: u64,
@@ -2436,23 +2557,21 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         use solana_bn254::{
-            prelude::{ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE},
             compression::prelude::{
-                alt_bn128_g1_compress_be, alt_bn128_g1_decompress_be,
-                alt_bn128_g2_compress_be, alt_bn128_g2_decompress_be,
-                alt_bn128_g1_compress_le, alt_bn128_g1_decompress_le,
-                alt_bn128_g2_compress_le, alt_bn128_g2_decompress_le,
-                ALT_BN128_G1_COMPRESS_BE, ALT_BN128_G1_DECOMPRESS_BE,
-                ALT_BN128_G2_COMPRESS_BE, ALT_BN128_G2_DECOMPRESS_BE,
-                ALT_BN128_G1_COMPRESSED_POINT_SIZE, ALT_BN128_G2_COMPRESSED_POINT_SIZE,
-                ALT_BN128_G1_COMPRESS_LE, ALT_BN128_G2_COMPRESS_LE,
-                ALT_BN128_G1_DECOMPRESS_LE, ALT_BN128_G2_DECOMPRESS_LE,
-            }
+                ALT_BN128_G1_COMPRESS_BE, ALT_BN128_G1_COMPRESS_LE,
+                ALT_BN128_G1_COMPRESSED_POINT_SIZE, ALT_BN128_G1_DECOMPRESS_BE,
+                ALT_BN128_G1_DECOMPRESS_LE, ALT_BN128_G2_COMPRESS_BE, ALT_BN128_G2_COMPRESS_LE,
+                ALT_BN128_G2_COMPRESSED_POINT_SIZE, ALT_BN128_G2_DECOMPRESS_BE,
+                ALT_BN128_G2_DECOMPRESS_LE, alt_bn128_g1_compress_be, alt_bn128_g1_compress_le,
+                alt_bn128_g1_decompress_be, alt_bn128_g1_decompress_le, alt_bn128_g2_compress_be,
+                alt_bn128_g2_compress_le, alt_bn128_g2_decompress_be, alt_bn128_g2_decompress_le,
+            },
+            prelude::{ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE},
         };
 
         // SIMD-0284: Block LE ops if the feature is not active.
-        if !invoke_context.get_feature_set().alt_bn128_little_endian &&
-            matches!(
+        if !invoke_context.get_feature_set().alt_bn128_little_endian
+            && matches!(
                 op,
                 ALT_BN128_G1_COMPRESS_LE
                     | ALT_BN128_G2_COMPRESS_LE
@@ -2470,16 +2589,18 @@ declare_builtin_function!(
                 base_cost.saturating_add(execution_cost.alt_bn128_g1_compress),
                 ALT_BN128_G1_COMPRESSED_POINT_SIZE,
             ),
-            ALT_BN128_G1_DECOMPRESS_BE | ALT_BN128_G1_DECOMPRESS_LE => {
-                (base_cost.saturating_add(execution_cost.alt_bn128_g1_decompress), ALT_BN128_G1_POINT_SIZE)
-            }
+            ALT_BN128_G1_DECOMPRESS_BE | ALT_BN128_G1_DECOMPRESS_LE => (
+                base_cost.saturating_add(execution_cost.alt_bn128_g1_decompress),
+                ALT_BN128_G1_POINT_SIZE,
+            ),
             ALT_BN128_G2_COMPRESS_BE | ALT_BN128_G2_COMPRESS_LE => (
                 base_cost.saturating_add(execution_cost.alt_bn128_g2_compress),
                 ALT_BN128_G2_COMPRESSED_POINT_SIZE,
             ),
-            ALT_BN128_G2_DECOMPRESS_BE | ALT_BN128_G2_DECOMPRESS_LE => {
-                (base_cost.saturating_add(execution_cost.alt_bn128_g2_decompress), ALT_BN128_G2_POINT_SIZE)
-            }
+            ALT_BN128_G2_DECOMPRESS_BE | ALT_BN128_G2_DECOMPRESS_LE => (
+                base_cost.saturating_add(execution_cost.alt_bn128_g2_decompress),
+                ALT_BN128_G2_POINT_SIZE,
+            ),
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
             }
@@ -2497,12 +2618,7 @@ declare_builtin_function!(
                 let _result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
             );
         }
-        let input = translate_slice::<u8>(
-            memory_mapping,
-            input_addr,
-            input_size,
-            check_aligned,
-        )?;
+        let input = translate_slice::<u8>(memory_mapping, input_addr, input_size, check_aligned)?;
 
         match op {
             ALT_BN128_G1_COMPRESS_BE => {
@@ -2598,11 +2714,14 @@ declare_builtin_function!(
 
         Ok(SUCCESS)
     }
-);
+}
 
-declare_builtin_function!(
-    // Generic Hashing Syscall
-    SyscallHash<H: HasherImpl>,
+/// Generic Hashing Syscall
+pub struct SyscallHash<H: HasherImpl> {
+    hasher: std::marker::PhantomData<H>,
+}
+impl<H: HasherImpl> BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallHash<H> {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         vals_addr: u64,
@@ -2627,7 +2746,9 @@ declare_builtin_function!(
             return Err(SyscallError::TooManySlices.into());
         }
 
-        invoke_context.compute_meter.consume_checked(hash_base_cost)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(hash_base_cost)?;
         let check_aligned = invoke_context.get_check_aligned();
         let mem_op_base_cost = compute_cost.mem_op_base_cost;
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -2642,22 +2763,15 @@ declare_builtin_function!(
         }
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice::<VmSlice<u8>>(
-                memory_mapping,
-                vals_addr,
-                vals_len,
-                check_aligned,
-            )?;
+            let vals =
+                translate_slice::<VmSlice<u8>>(memory_mapping, vals_addr, vals_len, check_aligned)?;
 
             for val in vals.iter() {
                 let bytes = translate_vm_slice(val, memory_mapping, check_aligned)?;
-                let cost = mem_op_base_cost.max(
-                    hash_byte_cost.saturating_mul(
-                        val.len()
-                            .checked_div(2)
-                            .expect("div by non-zero literal"),
-                    ),
-                );
+                let cost = mem_op_base_cost
+                    .max(hash_byte_cost.saturating_mul(
+                        val.len().checked_div(2).expect("div by non-zero literal"),
+                    ));
                 invoke_context.compute_meter.consume_checked(cost)?;
                 hasher.hash(bytes);
             }
@@ -2671,11 +2785,12 @@ declare_builtin_function!(
         result.write_copy_of_slice(hasher.result().as_ref());
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    // Get Epoch Stake Syscall
-    SyscallGetEpochStake,
+/// Get Epoch Stake Syscall
+pub struct SyscallGetEpochStake {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochStake {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -2743,7 +2858,7 @@ declare_builtin_function!(
             Ok(invoke_context.get_epoch_stake_for_vote_account(vote_address))
         }
     }
-);
+}
 
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
@@ -2755,7 +2870,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         core::slice,
-        solana_account::{AccountSharedData, create_account_shared_data_for_test},
+        solana_account::{AccountSharedData, WritableAccount},
         solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
@@ -2798,11 +2913,14 @@ mod tests {
         test_case::test_case,
     };
 
-    fn create_stake_history_account_for_test(stake_history: &StakeHistory) -> AccountSharedData {
-        let data_len = STAKE_HISTORY_ACCOUNT_SIZE
-            .max(bincode::serialized_size(stake_history).unwrap() as usize);
+    fn create_account_shared_data_for_test<T>(value: &T, data_len: usize) -> AccountSharedData
+    where
+        T: wincode::Serialize<Src = T>,
+    {
+        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+        let data_len = data_len.max(serialized_len);
         let mut account = AccountSharedData::new(1, data_len, &sysvar::id());
-        account.serialize_data(stake_history).unwrap();
+        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
         account
     }
 
@@ -4240,27 +4358,30 @@ mod tests {
         let transaction_accounts = vec![
             (
                 sysvar::clock::id(),
-                create_account_shared_data_for_test(&src_clock),
+                create_account_shared_data_for_test(&src_clock, solana_clock::SIZE),
             ),
             (
                 sysvar::epoch_schedule::id(),
-                create_account_shared_data_for_test(&src_epochschedule),
+                create_account_shared_data_for_test(
+                    &src_epochschedule,
+                    solana_epoch_schedule::SIZE,
+                ),
             ),
             (
                 sysvar::fees::id(),
-                create_account_shared_data_for_test(&src_fees),
+                create_account_shared_data_for_test(&src_fees, solana_sysvar::fees::SIZE),
             ),
             (
                 sysvar::rent::id(),
-                create_account_shared_data_for_test(&src_rent),
+                create_account_shared_data_for_test(&src_rent, solana_sysvar::rent::SIZE),
             ),
             (
                 sysvar::epoch_rewards::id(),
-                create_account_shared_data_for_test(&src_rewards),
+                create_account_shared_data_for_test(&src_rewards, solana_epoch_rewards::SIZE),
             ),
             (
                 sysvar::last_restart_slot::id(),
-                create_account_shared_data_for_test(&src_restart),
+                create_account_shared_data_for_test(&src_restart, solana_last_restart_slot::SIZE),
             ),
         ];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
@@ -4270,7 +4391,7 @@ mod tests {
             let mut got_clock_obj = Clock::default();
             let got_clock_obj_va = 0x100000000;
 
-            let mut got_clock_buf = vec![0; Clock::size_of()];
+            let mut got_clock_buf = vec![0; solana_clock::SIZE];
             let got_clock_buf_va = 0x200000000;
             let clock_id_va = 0x300000000;
             let clock_id = Clock::id().to_bytes();
@@ -4309,7 +4430,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4325,7 +4446,7 @@ mod tests {
             let mut got_epochschedule_obj = EpochSchedule::default();
             let got_epochschedule_obj_va = 0x100000000;
 
-            let mut got_epochschedule_buf = vec![0; EpochSchedule::size_of()];
+            let mut got_epochschedule_buf = vec![0; solana_epoch_schedule::SIZE];
             let got_epochschedule_buf_va = 0x200000000;
             let epochschedule_id_va = 0x300000000;
             let epochschedule_id = EpochSchedule::id().to_bytes();
@@ -4380,7 +4501,7 @@ mod tests {
                 epochschedule_id_va,
                 got_epochschedule_buf_va,
                 0,
-                EpochSchedule::size_of() as u64,
+                solana_epoch_schedule::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4430,7 +4551,7 @@ mod tests {
             let mut got_rent_obj = create_filled_type::<Rent>(true);
             let got_rent_obj_va = 0x100000000;
 
-            let mut got_rent_buf = vec![0; Rent::size_of()];
+            let mut got_rent_buf = vec![0; solana_sysvar::rent::SIZE];
             let got_rent_buf_va = 0x200000000;
             let rent_id_va = 0x300000000;
             let rent_id = Rent::id().to_bytes();
@@ -4467,7 +4588,7 @@ mod tests {
                 rent_id_va,
                 got_rent_buf_va,
                 0,
-                Rent::size_of() as u64,
+                solana_sysvar::rent::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4485,7 +4606,7 @@ mod tests {
             let mut got_rewards_obj = create_filled_type::<EpochRewards>(true);
             let got_rewards_obj_va = 0x100000000;
 
-            let mut got_rewards_buf = vec![0; EpochRewards::size_of()];
+            let mut got_rewards_buf = vec![0; solana_epoch_rewards::SIZE];
             let got_rewards_buf_va = 0x200000000;
             let rewards_id_va = 0x300000000;
             let rewards_id = EpochRewards::id().to_bytes();
@@ -4533,7 +4654,7 @@ mod tests {
                 rewards_id_va,
                 got_rewards_buf_va,
                 0,
-                EpochRewards::size_of() as u64,
+                solana_epoch_rewards::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4551,7 +4672,7 @@ mod tests {
             let mut got_restart_obj = LastRestartSlot::default();
             let got_restart_obj_va = 0x100000000;
 
-            let mut got_restart_buf = vec![0; LastRestartSlot::size_of()];
+            let mut got_restart_buf = vec![0; solana_last_restart_slot::SIZE];
             let got_restart_buf_va = 0x200000000;
             let restart_id_va = 0x300000000;
             let restart_id = LastRestartSlot::id().to_bytes();
@@ -4592,7 +4713,7 @@ mod tests {
                 restart_id_va,
                 got_restart_buf_va,
                 0,
-                LastRestartSlot::size_of() as u64,
+                solana_last_restart_slot::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4636,7 +4757,7 @@ mod tests {
 
         let transaction_accounts = vec![(
             sysvar::stake_history::id(),
-            create_stake_history_account_for_test(&src_history),
+            create_account_shared_data_for_test(&src_history, STAKE_HISTORY_ACCOUNT_SIZE),
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
@@ -4695,17 +4816,17 @@ mod tests {
 
         let src_hashes = src_hashes;
 
-        let mut src_hashes_buf = vec![0; SlotHashes::size_of()];
+        let mut src_hashes_buf = vec![0; solana_slot_hashes::SIZE];
         wincode::serialize_into(&mut src_hashes_buf, &src_hashes).unwrap();
 
         let transaction_accounts = vec![(
             sysvar::slot_hashes::id(),
-            create_account_shared_data_for_test(&src_hashes),
+            create_account_shared_data_for_test(&src_hashes, solana_slot_hashes::SIZE),
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
         {
-            let mut got_hashes_buf = vec![0; SlotHashes::size_of()];
+            let mut got_hashes_buf = vec![0; solana_slot_hashes::SIZE];
             let got_hashes_buf_va = 0x100000000;
             let hashes_id_va = 0x200000000;
             let hashes_id = SlotHashes::id().to_bytes();
@@ -4730,7 +4851,7 @@ mod tests {
                 hashes_id_va,
                 got_hashes_buf_va,
                 0,
-                SlotHashes::size_of() as u64,
+                solana_slot_hashes::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4754,16 +4875,16 @@ mod tests {
         let clock_id_va = 0x300000000;
         let clock_id = Clock::id().to_bytes();
 
-        let mut got_clock_buf_rw = vec![0; Clock::size_of()];
-        let got_clock_buf_rw_va = 0x400000000;
+        let mut got_clock_buf_rw = vec![0; solana_clock::SIZE];
+        let got_clock_buf_rw_va = 0x300000100;
 
-        let got_clock_buf_ro = vec![0; Clock::size_of()];
-        let got_clock_buf_ro_va = 0x500000000;
+        let got_clock_buf_ro = [0; solana_clock::SIZE];
+        let got_clock_buf_ro_va = 0x300000200;
 
         let access_violation_err =
             std::mem::discriminant(&EbpfError::AccessViolation(AccessType::Load, 0, 0, ""));
 
-        let got_clock_empty = vec![0; Clock::size_of()];
+        let got_clock_empty = vec![0; solana_clock::SIZE];
 
         {
             // start without the clock sysvar because we expect to hit specific errors before loading it
@@ -4790,7 +4911,7 @@ mod tests {
                 clock_id_va + 1,
                 got_clock_buf_rw_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap_err();
@@ -4807,7 +4928,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_rw_va + 1,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap_err();
@@ -4823,7 +4944,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_ro_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap_err();
@@ -4839,8 +4960,8 @@ mod tests {
                 &mut invoke_context,
                 clock_id_va,
                 got_clock_buf_rw_va,
-                u64::MAX - Clock::size_of() as u64 / 2,
-                Clock::size_of() as u64,
+                u64::MAX - solana_clock::SIZE as u64 / 2,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap_err();
@@ -4860,7 +4981,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_rw_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap();
@@ -4872,7 +4993,7 @@ mod tests {
         {
             let transaction_accounts = vec![(
                 sysvar::clock::id(),
-                create_account_shared_data_for_test(&src_clock),
+                create_account_shared_data_for_test(&src_clock, solana_clock::SIZE),
             )];
             let memory_mapping = unsafe {
                 MemoryMapping::new(
@@ -4897,7 +5018,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_rw_va,
                 1,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap();
@@ -4911,7 +5032,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_rw_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap();
@@ -6052,6 +6173,233 @@ mod tests {
     }
 
     #[test]
+    fn test_syscall_big_mod_exp() {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+
+        const VADDR_PARAMS: u64 = 0x100000000;
+        const VADDR_BASE: u64 = 0x200000000;
+        const VADDR_EXPONENT: u64 = 0x300000000;
+        const VADDR_MODULUS: u64 = 0x400000000;
+        const VADDR_OUT: u64 = 0x500000000;
+
+        let base = [0x03];
+        let exponent = [
+            0x2e, 0xfc, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff,
+        ];
+        let modulus = [
+            0x2f, 0xfc, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff,
+        ];
+        let mut data_out = [0u8; 32];
+        let mut expected = [0u8; 32];
+        expected[0] = 1;
+        assert_eq!(
+            big_mod_exp(&base, &exponent, &modulus),
+            Some(expected.to_vec())
+        );
+        let params = BigModExpParams {
+            base: VADDR_BASE,
+            base_len: base.len() as u64,
+            exponent: VADDR_EXPONENT,
+            exponent_len: exponent.len() as u64,
+            modulus: VADDR_MODULUS,
+            modulus_len: modulus.len() as u64,
+        };
+
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                vec![
+                    MemoryRegion::new(bytes_of(&params), VADDR_PARAMS),
+                    MemoryRegion::new(bytes_of_slice(&base), VADDR_BASE),
+                    MemoryRegion::new(bytes_of_slice(&exponent), VADDR_EXPONENT),
+                    MemoryRegion::new(bytes_of_slice(&modulus), VADDR_MODULUS),
+                    MemoryRegion::new(bytes_of_slice_mut(&mut data_out), VADDR_OUT),
+                ],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v1(memory_mapping);
+        let budget = invoke_context.get_execution_cost();
+        let cost = budget.big_modular_exponentiation_base_cost
+            + big_mod_exp_operation_cost(
+                budget.big_modular_exponentiation_cost_divisor,
+                &params,
+                &exponent,
+            )
+            .unwrap();
+        invoke_context.compute_meter.mock_set_remaining(cost);
+
+        let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
+
+        assert_eq!(result.unwrap(), SUCCESS);
+        assert_eq!(data_out, expected);
+    }
+
+    #[test]
+    fn test_syscall_big_mod_exp_invalid_modulus() {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+
+        const VADDR_PARAMS: u64 = 0x100000000;
+        const VADDR_BASE: u64 = 0x200000000;
+        const VADDR_EXPONENT: u64 = 0x300000000;
+        const VADDR_MODULUS: u64 = 0x400000000;
+        const VADDR_OUT: u64 = 0x500000000;
+
+        let base = [0x05];
+        let exponent = [0x02];
+        let modulus = [0x02];
+        let mut data_out = [0u8; 1];
+        let params = BigModExpParams {
+            base: VADDR_BASE,
+            base_len: base.len() as u64,
+            exponent: VADDR_EXPONENT,
+            exponent_len: exponent.len() as u64,
+            modulus: VADDR_MODULUS,
+            modulus_len: modulus.len() as u64,
+        };
+
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                vec![
+                    MemoryRegion::new(bytes_of(&params), VADDR_PARAMS),
+                    MemoryRegion::new(bytes_of_slice(&base), VADDR_BASE),
+                    MemoryRegion::new(bytes_of_slice(&exponent), VADDR_EXPONENT),
+                    MemoryRegion::new(bytes_of_slice(&modulus), VADDR_MODULUS),
+                    MemoryRegion::new(bytes_of_slice_mut(&mut data_out), VADDR_OUT),
+                ],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v1(memory_mapping);
+        let budget = invoke_context.get_execution_cost();
+        let cost = budget.big_modular_exponentiation_base_cost
+            + big_mod_exp_operation_cost(
+                budget.big_modular_exponentiation_cost_divisor,
+                &params,
+                &exponent,
+            )
+            .unwrap();
+        invoke_context.compute_meter.mock_set_remaining(cost);
+
+        let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
+
+        assert_matches!(
+            result,
+            Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::InvalidAttribute
+        );
+        assert_eq!(data_out, [0x00]);
+    }
+
+    #[test]
+    fn test_syscall_big_mod_exp_overlapping_result() {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+
+        const VADDR_PARAMS: u64 = 0x100000000;
+        const VADDR_BASE: u64 = 0x200000000;
+        const VADDR_EXPONENT: u64 = 0x300000000;
+        const VADDR_MODULUS: u64 = 0x400000000;
+        let mut base = [0x05];
+        let exponent = [0x02];
+        let modulus = [0x07];
+        assert_eq!(big_mod_exp(&[0x05], &[0x02], &[0x07]), Some(vec![0x04]));
+        let params = BigModExpParams {
+            base: VADDR_BASE,
+            base_len: 1,
+            exponent: VADDR_EXPONENT,
+            exponent_len: 1,
+            modulus: VADDR_MODULUS,
+            modulus_len: 1,
+        };
+
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                vec![
+                    MemoryRegion::new(bytes_of(&params), VADDR_PARAMS),
+                    MemoryRegion::new(bytes_of_slice_mut(&mut base), VADDR_BASE),
+                    MemoryRegion::new(bytes_of_slice(&exponent), VADDR_EXPONENT),
+                    MemoryRegion::new(bytes_of_slice(&modulus), VADDR_MODULUS),
+                ],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v1(memory_mapping);
+        let budget = invoke_context.get_execution_cost();
+        let cost = budget.big_modular_exponentiation_base_cost
+            + big_mod_exp_operation_cost(
+                budget.big_modular_exponentiation_cost_divisor,
+                &params,
+                &exponent,
+            )
+            .unwrap();
+        invoke_context.compute_meter.mock_set_remaining(cost);
+
+        let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_BASE, 0, 0, 0);
+
+        assert_eq!(result.unwrap(), SUCCESS);
+        assert_eq!(base, [0x04]);
+    }
+
+    #[test]
+    fn test_syscall_big_mod_exp_abort_conditions() {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+
+        const VADDR_PARAMS: u64 = 0x100000000;
+        const VADDR_DATA: u64 = 0x200000000;
+        const VADDR_OUT: u64 = 0x300000000;
+        let data = [0u8; 1];
+        let mut data_out = [0u8; 1];
+        let params = BigModExpParams {
+            base: VADDR_DATA,
+            base_len: BIG_MOD_EXP_MAX_BYTES + 1,
+            exponent: VADDR_DATA,
+            exponent_len: 0,
+            modulus: VADDR_DATA,
+            modulus_len: 1,
+        };
+
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                vec![
+                    MemoryRegion::new(bytes_of(&params), VADDR_PARAMS),
+                    MemoryRegion::new(bytes_of_slice(&data), VADDR_DATA),
+                    MemoryRegion::new(bytes_of_slice_mut(&mut data_out), VADDR_OUT),
+                ],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v1(memory_mapping);
+
+        let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
+        assert_matches!(
+            result,
+            Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::InvalidLength
+        );
+    }
+
+    #[test]
     fn test_syscall_get_epoch_stake_total_stake() {
         let config = Config::default();
         let compute_cost = SVMTransactionExecutionCost::default();
@@ -6466,8 +6814,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_add() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::ADD,
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
         };
 
         let config = Config::default();
@@ -6586,8 +6934,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_sub() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::SUB,
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
         };
 
         let config = Config::default();
@@ -6709,8 +7057,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_mul() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::MUL,
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
         };
 
         let config = Config::default();
@@ -6825,8 +7173,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_add() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::ADD,
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
         };
 
         let config = Config::default();
@@ -6977,8 +7325,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_sub() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::SUB,
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
         };
 
         let config = Config::default();
@@ -7132,8 +7480,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_mul() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::MUL,
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
         };
 
         let config = Config::default();
@@ -7268,7 +7616,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_pairing_be() {
-        use crate::bls12_381_curve_id::BLS12_381_BE;
+        use solana_define_syscall::curve_constants::BLS12_381_BE;
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7375,7 +7723,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_pairing_le() {
-        use crate::bls12_381_curve_id::BLS12_381_LE;
+        use solana_define_syscall::curve_constants::BLS12_381_LE;
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7482,7 +7830,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_decompress_g1() {
-        use crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE};
+        use solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE};
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7578,7 +7926,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_decompress_g2() {
-        use crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE};
+        use solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE};
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7690,7 +8038,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_validate_g1() {
-        use crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE};
+        use solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE};
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7767,7 +8115,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_validate_g2() {
-        use crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE};
+        use solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE};
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7890,6 +8238,40 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn test_sol_big_mod_exp_registration() {
+        let compute_budget = SVMTransactionExecutionBudget::default();
+
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.enable_big_mod_exp_syscall = true;
+        let env = create_program_runtime_environment(
+            &feature_set,
+            &compute_budget,
+            /* reject_deployment_of_broken_elfs */ false,
+            /* debugging_features */ false,
+        )
+        .unwrap();
+        assert!(
+            env.get_function_registry()
+                .lookup_by_name(b"sol_big_mod_exp")
+                .is_some()
+        );
+
+        feature_set.enable_big_mod_exp_syscall = false;
+        let env = create_program_runtime_environment(
+            &feature_set,
+            &compute_budget,
+            /* reject_deployment_of_broken_elfs */ false,
+            /* debugging_features */ false,
+        )
+        .unwrap();
+        assert!(
+            env.get_function_registry()
+                .lookup_by_name(b"sol_big_mod_exp")
+                .is_none()
+        );
     }
 
     #[test]

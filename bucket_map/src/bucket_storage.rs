@@ -318,18 +318,6 @@ impl<O: BucketOccupied> BucketStorage<O> {
             }
     }
 
-    pub(crate) fn get_header<T>(&self, ix: u64) -> &T {
-        let slice = self.get_slice::<T>(ix, 1, IncludeHeader::Header);
-        // SAFETY: `get_cell_slice` ensures there's at least one element in the slice
-        unsafe { slice.get_unchecked(0) }
-    }
-
-    pub(crate) fn get_header_mut<T>(&mut self, ix: u64) -> &mut T {
-        let slice = self.get_slice_mut::<T>(ix, 1, IncludeHeader::Header);
-        // SAFETY: `get_mut_cell_slice` ensures there's at least one element in the slice
-        unsafe { slice.get_unchecked_mut(0) }
-    }
-
     pub(crate) fn get<T>(&self, ix: u64) -> &T {
         let slice = self.get_slice::<T>(ix, 1, IncludeHeader::NoHeader);
         // SAFETY: `get_cell_slice` ensures there's at least one element in the slice
@@ -621,7 +609,6 @@ mod test {
             )
             .is_none()
         );
-        agave_logger::setup();
         for len in [0, 1, 47, 48, 49, 4097] {
             // create a zero len file. That will fail to load since it is too small.
             let path = tmpdir.path().join("small");

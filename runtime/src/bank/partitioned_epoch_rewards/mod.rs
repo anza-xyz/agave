@@ -96,9 +96,12 @@ impl PartitionedStakeRewards {
         self.rewards.spare_capacity_mut()
     }
 
-    unsafe fn assume_init(&mut self, num_stake_rewards: usize) {
+    /// Safety: all `total_len` elements must be initialized in `self.rewards`.
+    /// `num_stake_rewards` is the number of those elements that are `Some`.
+    unsafe fn assume_init(&mut self, num_stake_rewards: usize, total_len: usize) {
+        debug_assert!(num_stake_rewards <= total_len);
         unsafe {
-            self.rewards.set_len(self.rewards.capacity());
+            self.rewards.set_len(total_len);
         }
         self.num_rewards = num_stake_rewards;
     }
@@ -332,7 +335,7 @@ pub(super) struct PartitionedRewardsCalculation {
     capitalization: u64,
     point_value: PointValue,
     /// Number of vote accounts in the distribution-epoch snapshot after
-    /// SIMD-0357 VAT filtering (or the unfiltered count when VAT is off).
+    /// SIMD-0357 VAT filtering.
     /// Surfaced for the `epoch_rewards` datapoint without re-running the
     /// filter at distribution time.
     num_filtered_vote_accounts: usize,
@@ -435,18 +438,26 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::{SlotLeader, tests::create_genesis_config},
+            alpenglow_epoch_type::RewardEpochDelegatedStakes,
+            bank::{
+                NewEpochBundle, RewardsMetrics, SlotLeader, null_tracer,
+                tests::create_genesis_config,
+            },
             bank_forks::BankForks,
             genesis_utils::{
-                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
-                deactivate_features,
+                GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features_alpenglow,
+                create_genesis_config_with_vote_accounts, deactivate_features,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
+            sysvar_account::from_account,
         },
         assert_matches::assert_matches,
         rand::Rng,
-        solana_account::{Account, state_traits::StateMut},
+        rayon::ThreadPoolBuilder,
+        solana_account::{
+            Account, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+        },
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             partitioned_rewards::PartitionedEpochRewardsConfig,
@@ -457,6 +468,7 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_signer::Signer,
+        solana_stake_interface::{stake_flags::StakeFlags, state::StakeStateV2},
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
@@ -907,7 +919,7 @@ mod tests {
                     .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                    solana_account::from_account(&account).unwrap();
+                    from_account(&account).unwrap();
                 assert_eq!(post_cap, pre_cap + epoch_rewards.distributed_rewards);
             } else {
                 // 2. when curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
@@ -958,7 +970,7 @@ mod tests {
                 .get_account(&solana_sysvar::epoch_rewards::id())
                 .unwrap_or_default();
             let pre_epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                solana_account::from_account(&pre_sysvar_account).unwrap_or_default();
+                from_account(&pre_sysvar_account).unwrap_or_default();
             let pre_distributed_rewards = pre_epoch_rewards.distributed_rewards;
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
@@ -1001,7 +1013,7 @@ mod tests {
                     .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                    solana_account::from_account(&account).unwrap();
+                    from_account(&account).unwrap();
                 reward_distribution_completion_slot =
                     Some(SLOTS_PER_EPOCH + epoch_rewards.num_partitions);
             } else if slot
@@ -1019,7 +1031,7 @@ mod tests {
                     .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                    solana_account::from_account(&account).unwrap();
+                    from_account(&account).unwrap();
                 assert_eq!(
                     post_cap,
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
@@ -1056,7 +1068,7 @@ mod tests {
                     .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                    solana_account::from_account(&account).unwrap();
+                    from_account(&account).unwrap();
                 assert_eq!(
                     post_cap,
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
@@ -1271,5 +1283,163 @@ mod tests {
             num_partitions: Some(42),
         };
         assert!(rewards_and_partitions.should_record());
+    }
+
+    #[test]
+    fn test_reward_epoch_delegated_stakes_excludes_vat() {
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(500);
+        activate_all_features_alpenglow(&mut genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let first_normal_slot = bank.epoch_schedule().first_normal_slot;
+        let slots_per_epoch = bank.epoch_schedule().slots_per_epoch;
+
+        let stake_amount = 10_000;
+        {
+            let stakes = bank.stakes_cache.stakes();
+            assert!(stakes.vote_accounts().as_ref().is_empty());
+            assert!(stakes.stake_delegations().is_empty());
+        }
+
+        let ((non_vat_vote_address, non_vat_vote_account), (stake_address, stake_account)) =
+            crate::stakes::tests::create_staked_node_accounts(
+                stake_amount,
+                &bank.rent_collector.rent,
+            );
+
+        bank.store_account(&non_vat_vote_address, &non_vat_vote_account);
+        bank.store_account(&stake_address, &stake_account);
+
+        let ((vat_vote_address, mut vat_vote_account), (stake_address, stake_account)) =
+            crate::stakes::tests::create_staked_node_accounts(
+                stake_amount,
+                &bank.rent_collector.rent,
+            );
+        vat_vote_account.set_lamports(bank.vat_to_burn_per_epoch() * 5);
+
+        bank.store_account(&vat_vote_address, &vat_vote_account);
+        bank.store_account(&stake_address, &stake_account);
+
+        // Advance to first normal slot
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            first_normal_slot,
+        );
+        drop(bank_forks); // so that `Arc::into_inner` succeeds
+        let mut bank = Arc::into_inner(bank).unwrap();
+
+        let (
+            (unstaked_vat_vote_address, mut unstaked_vat_vote_account),
+            (stake_address, mut stake_account),
+        ) = crate::stakes::tests::create_staked_node_accounts(
+            stake_amount,
+            &bank.rent_collector.rent,
+        );
+        unstaked_vat_vote_account.set_lamports(bank.vat_to_burn_per_epoch() * 5);
+        {
+            // Will activate in next epoch, so validator still has 0 stake in
+            // rewarded epoch
+            let state: StakeStateV2 = stake_account.state().unwrap();
+            let meta = state.meta().unwrap();
+            let mut stake = state.stake().unwrap();
+            stake.delegation.activation_epoch = bank.epoch();
+
+            stake_account
+                .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
+                .expect("set_state");
+        }
+        bank.store_account(&unstaked_vat_vote_address, &unstaked_vat_vote_account);
+        bank.store_account(&stake_address, &stake_account);
+
+        {
+            let stakes = bank.stakes_cache.stakes();
+            assert_eq!(stakes.vote_accounts().len(), 3);
+            assert_eq!(stakes.stake_delegations().len(), 3);
+        }
+
+        // Mimic some of the early work in `Bank::new_from_parent`
+        bank.slot = bank.slot() + slots_per_epoch;
+        bank.epoch += 1;
+
+        // Simulate the steps in `compute_new_epoch_caches_and_rewards`
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let mut rewards_metrics = RewardsMetrics::default();
+        let NewEpochBundle {
+            stake_history: _,
+            unfiltered_distribution_vote_accounts,
+            delegated_stakes: _,
+            reward_epoch_delegated_stakes,
+            filtered_distribution_vote_accounts,
+            rewards_calculation: _,
+            calculate_activated_stake_time_us: _,
+            update_rewards_with_thread_pool_time_us: _,
+        } = bank.compute_new_epoch_caches_and_rewards(
+            &thread_pool,
+            bank.epoch() - 1,
+            null_tracer(),
+            &mut rewards_metrics,
+        );
+        unfiltered_distribution_vote_accounts
+            .get(&non_vat_vote_address)
+            .unwrap();
+        unfiltered_distribution_vote_accounts
+            .get(&vat_vote_address)
+            .unwrap();
+        unfiltered_distribution_vote_accounts
+            .get(&unstaked_vat_vote_address)
+            .unwrap();
+
+        assert!(
+            filtered_distribution_vote_accounts
+                .get(&non_vat_vote_address)
+                .is_none()
+        );
+        filtered_distribution_vote_accounts
+            .get(&unstaked_vat_vote_address)
+            .unwrap();
+        filtered_distribution_vote_accounts
+            .get(&vat_vote_address)
+            .unwrap();
+
+        // Filtered out during `RewardEpochDelegatedStakes::set`
+        assert!(
+            !reward_epoch_delegated_stakes
+                .delegated_stakes
+                .contains_key(&non_vat_vote_address)
+        );
+        assert!(
+            reward_epoch_delegated_stakes
+                .delegated_stakes
+                .contains_key(&vat_vote_address)
+        );
+
+        // Even though the validator isn't staked in the rewarded epoch, it still
+        // has an entry in the map because there is an activating stake account
+        // delegated to it
+        assert_eq!(
+            *reward_epoch_delegated_stakes
+                .delegated_stakes
+                .get(&unstaked_vat_vote_address)
+                .unwrap(),
+            0
+        );
+
+        // actually advance to the next epoch, see that everything lines up
+        bank.slot = bank.slot() - slots_per_epoch;
+        bank.epoch -= 1;
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            first_normal_slot + slots_per_epoch,
+        );
+        let fetched_reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(&bank).unwrap();
+        assert_eq!(
+            fetched_reward_epoch_delegated_stakes,
+            reward_epoch_delegated_stakes
+        );
     }
 }

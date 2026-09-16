@@ -22,6 +22,7 @@ use {
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         num::NonZeroUsize,
+        ops::RangeInclusive,
         sync::{
             Arc, RwLock,
             atomic::{AtomicUsize, Ordering},
@@ -182,6 +183,8 @@ pub struct StreamerStats {
     pub(crate) total_packets_sent_to_consumer: AtomicUsize,
     pub(crate) total_bytes_sent_to_consumer: AtomicUsize,
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
+    /// Number of completed packets assembled from at least the accumulator's inline chunk capacity.
+    pub(crate) total_packets_at_or_above_chunk_capacity: AtomicUsize,
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
     pub(crate) num_evictions_staked: AtomicUsize,
@@ -415,6 +418,12 @@ impl StreamerStats {
                 i64
             ),
             (
+                "packets_at_or_above_chunk_capacity",
+                self.total_packets_at_or_above_chunk_capacity
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
                 "staked_chunks_received",
                 self.total_staked_chunks_received.swap(0, Ordering::Relaxed),
                 i64
@@ -547,6 +556,11 @@ impl StreamerStats {
     }
 }
 
+/// Default bounds for the randomized interval between checks that a staked
+/// connection's peer still retains sufficient stake.
+pub const DEFAULT_STAKE_REVALIDATION_INTERVAL: RangeInclusive<Duration> =
+    Duration::from_secs(60 * 60)..=Duration::from_secs(2 * 60 * 60);
+
 #[derive(Clone)]
 pub struct QuicStreamerConfig {
     pub max_connections_per_ipaddr_per_min: u64,
@@ -556,6 +570,10 @@ pub struct QuicStreamerConfig {
     pub stream_receive_window_size: u32,
     /// Maximum total bytes allowed per stream (hard cap).
     pub max_stream_data_bytes: u32,
+    /// Bounds for the randomized interval between checks that a staked
+    /// connection's peer still retains sufficient stake; randomized to spread
+    /// reconnects of evicted peers over time.
+    pub stake_revalidation_interval: RangeInclusive<Duration>,
 }
 
 #[derive(Clone)]
@@ -578,6 +596,7 @@ impl Default for QuicStreamerConfig {
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
             stream_receive_window_size: PACKET_DATA_SIZE as u32,
             max_stream_data_bytes: PACKET_DATA_SIZE as u32,
+            stake_revalidation_interval: DEFAULT_STAKE_REVALIDATION_INTERVAL,
         }
     }
 }

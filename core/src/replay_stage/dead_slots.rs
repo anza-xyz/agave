@@ -23,6 +23,7 @@ use {
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
         bank::Bank,
+        block_component_processor::BlockComponentProcessorError,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_time_utils::timestamp,
@@ -119,6 +120,9 @@ fn is_update_parent_recoverable_replay_error(err: &BlockstoreProcessorError) -> 
         | BlockstoreProcessorError::InvalidTransaction(_)
         | BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(_)
         | BlockstoreProcessorError::ChainedBlockIdFailure(_, _) => true,
+        BlockstoreProcessorError::FailedToLoadEntries(
+            BlockstoreError::InvalidShredData(_) | BlockstoreError::BlockAborted(_),
+        ) => true,
         BlockstoreProcessorError::BlockComponentProcessor(err) => {
             err.is_update_parent_recoverable_replay_error()
         }
@@ -132,49 +136,69 @@ fn is_update_parent_recoverable_replay_error(err: &BlockstoreProcessorError) -> 
     }
 }
 
-/// Returns true when replay failed before the slot's final parent is known.
+/// Returns the recoverable dead-slot reason while the slot's final parent is
+/// not yet known.
 ///
 /// Fast leader handover may execute a prefix built on an optimistic parent. If
 /// a later `UpdateParent` marker can still make that prefix obsolete, the slot
 /// is only soft-dead in `ProgressMap`; blockstore/RPC are updated only after the
 /// marker proves recovery impossible.
-fn should_mark_soft_dead(
+///
+/// Returning `None` means the failure is not eligible for soft-dead recovery;
+/// `mark_replay_dead_slot` will therefore mark the slot hard-dead.
+fn soft_dead_reason(
     blockstore: &Blockstore,
     bank: &Bank,
     err: &BlockstoreProcessorError,
     progress: &ProgressMap,
     migration_status: &MigrationStatus,
-) -> bool {
+) -> Option<DeadSlotReason> {
     let slot = bank.slot();
     if !bank.feature_set.snapshot().alpenglow_fast_leader_handover
         || !migration_status.should_allow_block_markers(slot)
         || blockstore.is_dead(slot)
         || !is_update_parent_recoverable_replay_error(err)
     {
-        return false;
+        return None;
     }
 
-    let Some(fork_progress) = progress.get(&slot) else {
-        return false;
-    };
+    let fork_progress = progress.get(&slot)?;
     let replayed_shreds = fork_progress.replay_progress.read().unwrap().num_shreds;
-    let Some(slot_meta) = blockstore.meta(slot).ok().flatten() else {
-        return false;
-    };
+    let slot_meta = blockstore.meta(slot).ok().flatten()?;
 
     if slot_meta.has_update_parent() {
-        if replayed_shreds >= u64::from(slot_meta.replay_fec_set_index) {
-            // Execution error past update parent is hard-dead, because the
-            // marker can no longer make the replayed prefix obsolete.
-            return false;
+        let replay_fec_set_index = u64::from(slot_meta.replay_fec_set_index);
+        if replayed_shreds < replay_fec_set_index {
+            return Some(DeadSlotReason::ReplayFailureBeforeUpdateParent);
         }
+
+        // SpuriousUpdateParent is raised before the marker is consumed. At
+        // equality, replay therefore has not executed past the new-parent
+        // boundary and can safely restart from it. Other failures at the same
+        // boundary remain terminal.
+        if replayed_shreds == replay_fec_set_index
+            && matches!(
+                err,
+                BlockstoreProcessorError::BlockComponentProcessor(
+                    BlockComponentProcessorError::SpuriousUpdateParent
+                )
+            )
+        {
+            return Some(DeadSlotReason::ReplayFailureAtUpdateParent(
+                replay_fec_set_index,
+            ));
+        }
+
+        // Execution error at or past UpdateParent is otherwise hard-dead,
+        // because the marker can no longer make the replayed prefix obsolete.
+        None
     } else if slot_meta.is_full() {
         // The slot is complete and no `UpdateParent` marker was observed, so
         // the replay failure is terminal.
-        return false;
+        None
+    } else {
+        Some(DeadSlotReason::ReplayFailureBeforeUpdateParent)
     }
-
-    true
 }
 
 /// Mark a slot soft-dead after replay fails before a possible UpdateParent.
@@ -185,6 +209,7 @@ fn should_mark_soft_dead(
 fn mark_soft_dead_slot(
     bank: &Bank,
     err: &BlockstoreProcessorError,
+    reason: DeadSlotReason,
     progress: &mut ProgressMap,
     notifications: &DeadSlotNotifications,
 ) {
@@ -194,10 +219,7 @@ fn mark_soft_dead_slot(
         ("error", format!("error: {err:?}"), String),
         ("slot", slot, i64),
     );
-    progress
-        .get_mut(&slot)
-        .unwrap()
-        .mark_dead(DeadSlotReason::ReplayFailureBeforeUpdateParent);
+    progress.get_mut(&slot).unwrap().mark_dead(reason);
     send_invalid_bank(bank, &notifications.replay_vote_sender);
 }
 
@@ -342,14 +364,21 @@ pub(super) fn mark_replay_dead_slot(
     progress: &mut ProgressMap,
     dead_slot_context: &mut DeadSlotContext<'_>,
 ) {
-    if should_mark_soft_dead(
+    bank.clear_accounts_lt_hash_async_progress_is_at_end();
+    if let Some(reason) = soft_dead_reason(
         dead_slot_context.notifications.blockstore.as_ref(),
         bank,
         err,
         progress,
         dead_slot_context.migration_status,
     ) {
-        mark_soft_dead_slot(bank, err, progress, &dead_slot_context.notifications);
+        mark_soft_dead_slot(
+            bank,
+            err,
+            reason,
+            progress,
+            &dead_slot_context.notifications,
+        );
         return;
     }
 

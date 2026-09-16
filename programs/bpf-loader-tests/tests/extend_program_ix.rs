@@ -21,6 +21,7 @@ use {
     },
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
+    test_case::test_case,
 };
 
 mod common;
@@ -698,6 +699,51 @@ async fn test_extend_program_with_invalid_program_data_state() {
     .await;
 }
 
+#[test_case(false; "zero")]
+#[test_case(true; "uninitialized")]
+#[tokio::test]
+async fn test_extend_program_with_uninitialized_program_data(with_data: bool) {
+    let mut context = setup_test_context(LoaderV3Features {
+        minimum_extend_program_size: false,
+    })
+    .await;
+    let payer_address = context.payer.pubkey();
+
+    let program_address = Pubkey::new_unique();
+    let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
+    add_upgradeable_loader_account(
+        &mut context,
+        &program_address,
+        &UpgradeableLoaderState::Program {
+            programdata_address,
+        },
+        UpgradeableLoaderState::size_of_program(),
+        |_| {},
+    )
+    .await;
+    add_upgradeable_loader_account(
+        &mut context,
+        &programdata_address,
+        &UpgradeableLoaderState::Uninitialized,
+        UpgradeableLoaderState::size_of_uninitialized(),
+        |account| {
+            if !with_data {
+                account.set_data_from_slice(&[]);
+            }
+        },
+    )
+    .await;
+
+    assert_ix_error(
+        &mut context,
+        extend_program(&program_address, Some(&payer_address), 1024),
+        None,
+        InstructionError::InvalidAccountData,
+        "should fail because the program data account is not initialized",
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn test_extend_program_with_invalid_program_data_owner() {
     let mut context = setup_test_context(LoaderV3Features {
@@ -722,7 +768,7 @@ async fn test_extend_program_with_invalid_program_data_owner() {
     let invalid_owner = Pubkey::new_unique();
     add_upgradeable_loader_account(
         &mut context,
-        &program_address,
+        &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
             upgrade_authority_address: Some(payer_address),

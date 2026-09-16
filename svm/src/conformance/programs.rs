@@ -81,6 +81,13 @@ fn create_keyed_account_for_builtin_program(program_id: &Pubkey, name: &str) -> 
     (*program_id, account)
 }
 
+pub fn keyed_account_for_builtin_pubkey(program_id: &Pubkey) -> Option<(Pubkey, Account)> {
+    SVM_BUILTINS
+        .iter()
+        .find(|builtin| builtin.program_id == *program_id)
+        .map(|builtin| create_keyed_account_for_builtin_program(&builtin.program_id, builtin.name))
+}
+
 pub fn keyed_account_for_system_program() -> (Pubkey, Account) {
     create_keyed_account_for_builtin_program(&SVM_BUILTINS[0].program_id, SVM_BUILTINS[0].name)
 }
@@ -104,11 +111,7 @@ pub fn new_program_cache_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     for builtin in SVM_BUILTINS {
         cache.replenish(
             builtin.program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(
-                0u64,
-                builtin.name.len(),
-                builtin.register_fn,
-            )),
+            Arc::new(ProgramCacheEntry::new_builtin(builtin.register_fn)),
         );
     }
 
@@ -132,13 +135,11 @@ pub fn add_program_to_program_cache(
     )
     .unwrap();
 
-    let entry = ProgramCacheEntry::new(
+    let entry = ProgramCacheEntry::load(
         loader_key,
         program_runtime_environment,
         0, // deployment_slot
-        0, // effective_slot
         elf,
-        elf.len(),
         #[cfg(feature = "metrics")]
         &mut LoadProgramMetrics::default(),
     )
@@ -169,7 +170,7 @@ pub fn fill_program_cache_from_accounts(
             {
                 continue;
             }
-            if let Some((loaded_program, _last_modification_slot)) = load_program_with_pubkey(
+            if let Some(loaded_program) = load_program_with_pubkey(
                 &FillFromAccountsCallback(accounts),
                 program_runtime_environment,
                 &acc.0,
@@ -185,10 +186,10 @@ pub fn fill_program_cache_from_accounts(
 struct FillFromAccountsCallback<'a>(&'a [(Pubkey, Account)]);
 
 impl TransactionProcessingCallback for FillFromAccountsCallback<'_> {
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, u64)> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.0
             .iter()
             .find(|(found_pubkey, _)| *found_pubkey == *pubkey)
-            .map(|(_, account)| (AccountSharedData::from(account.clone()), 0u64))
+            .map(|(_, account)| AccountSharedData::from(account.clone()))
     }
 }

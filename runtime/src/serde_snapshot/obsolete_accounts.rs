@@ -91,8 +91,8 @@ impl SerdeObsoleteAccounts {
     feature = "frozen-abi",
     derive(AbiExample, StableAbi, StableAbiSample),
     frozen_abi(
-        api_digest = "FbAP5pg2FLgSkMWiv3eMwEh433qMoNRbaJij9aLtG2NH",
-        abi_digest = "5AMjJ751HYUj4rCtZgAsjVi9q5NgdYYZ11YEp9W7cB86",
+        api_digest = "6ExDbK9xTxe5fpFGYp62B73sZFpsX4ixuJFobLASpnck",
+        abi_digest = "Bzyq9V5sWxtx4EVzcMQiyco1tgfUngC2Zp4YV54HWaD3",
         abi_serializer = "wincode"
     )
 )]

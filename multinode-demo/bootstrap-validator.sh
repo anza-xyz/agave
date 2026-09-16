@@ -31,6 +31,9 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --limit-ledger-size ]]; then
       args+=("$1" "$2")
       shift 2
+    elif [[ $1 = --limit-blockstore-size ]]; then
+      args+=("$1" "$2")
+      shift 2
     elif [[ $1 = --no-rocksdb-compaction ]]; then
       args+=("$1")
       shift

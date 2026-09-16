@@ -1,5 +1,3 @@
-#[cfg(feature = "frozen-abi")]
-use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use {
     crate::repair::standard_repair_handler::StandardRepairHandler,
@@ -41,7 +39,7 @@ use {
         blockstore_meta::BlockLocation,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
-            ShredFetchStats, ShredType, layout::get_merkle_root, merkle_tree,
+            ShredFetchStats, ShredFlags, ShredType, layout::get_merkle_root, merkle_tree,
         },
     },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
@@ -105,11 +103,31 @@ const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 
 #[cfg(test)]
 static_assertions::const_assert_eq!(MAX_ANCESTOR_RESPONSES, 30);
 
+/// The portion of an FEC-set Merkle root committed to by the double-Merkle tree.
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SchemaRead, SchemaWrite)]
+pub struct FecSetRoot(merkle_tree::MerkleProofEntry);
+
+impl FecSetRoot {
+    /// Returns the authenticated bytes of the FEC-set root.
+    pub fn as_bytes(&self) -> &merkle_tree::MerkleProofEntry {
+        &self.0
+    }
+}
+
+impl From<Hash> for FecSetRoot {
+    fn from(root: Hash) -> Self {
+        Self(*merkle_tree::hash_as_merkle_proof_entry(&root))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum ShredRepairType {
     /// Requesting `MAX_ORPHAN_REPAIR_RESPONSES ` parent shreds
     Orphan(Slot),
-    /// Requesting any shred with index greater than or equal to the particular index
+    /// Requesting any shred with index greater than or equal to the particular index,
+    /// or a lower shred marked as the last shred in its slot.
     HighestShred(Slot, u64),
     /// Requesting the missing shred at a particular index
     Shred(Slot, u64),
@@ -117,7 +135,7 @@ pub enum ShredRepairType {
     ShredForBlockId {
         slot: Slot,
         index: u32,
-        fec_set_merkle_root: Hash,
+        fec_set_merkle_root: FecSetRoot,
         // Double merkle block id
         block_id: Hash,
     },
@@ -164,7 +182,12 @@ impl RequestResponse for ShredRepairType {
         match self {
             ShredRepairType::Orphan(slot) => shred_slot <= *slot,
             ShredRepairType::HighestShred(slot, index) => {
-                shred_slot == *slot && get_shred_index(shred) >= Some(*index)
+                shred_slot == *slot
+                    && get_shred_index(shred).is_some_and(|shred_index| {
+                        shred_index >= *index
+                            || shred::layout::get_flags(shred)
+                                .is_ok_and(|flags| flags.contains(ShredFlags::LAST_SHRED_IN_SLOT))
+                    })
             }
             ShredRepairType::Shred(slot, index) => {
                 shred_slot == *slot && get_shred_index(shred) == Some(*index)
@@ -178,7 +201,10 @@ impl RequestResponse for ShredRepairType {
                 shred_slot == *slot
                     && matches!(shred::layout::get_shred_type(shred), Ok(ShredType::Data))
                     && shred::layout::get_index(shred) == Some(*index)
-                    && get_merkle_root(shred) == Some(*fec_set_merkle_root)
+                    && get_merkle_root(shred).is_some_and(|root| {
+                        merkle_tree::hash_as_merkle_proof_entry(&root)
+                            == fec_set_merkle_root.as_bytes()
+                    })
             }
         }
     }
@@ -194,10 +220,10 @@ impl AncestorHashesRepairType {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "DhEfFPRMwZSyPVCX3wqoK3u7LvrWaK6SE7q6uLXSJ5ph",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -231,6 +257,9 @@ pub enum BlockIdRepairType {
         slot: Slot,
         block_id: Hash,
         fec_set_index: u32,
+        // Authenticated by the ParentAndFecSetCount response and retained locally
+        // to verify the depth of the FEC-set proof. This is not sent on the wire.
+        fec_set_count: u32,
     },
 }
 
@@ -249,10 +278,10 @@ impl BlockIdRepairType {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
-        abi_digest = "4UwjM1HevzQRxGkh6L9vXhf1db7y2ioQYTXRUaKZ4iNo",
-        abi_serializer = ["bincode", "wincode"],
+        abi_digest = "CfbU7jxf8EKXfJYEveg2StWVK8MYbLovaQZitXsHMYLz",
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -265,7 +294,7 @@ pub enum BlockIdRepairResponse {
     },
 
     FecSetRoot {
-        fec_set_root: Hash,
+        fec_set_root: FecSetRoot,
         fec_set_proof: Vec<u8>,
     },
 
@@ -298,7 +327,7 @@ impl RequestResponse for BlockIdRepairType {
                     parent_proof,
                 },
             ) => {
-                if *fec_set_count > MAX_FEC_SETS_PER_SLOT {
+                if *fec_set_count == 0 || *fec_set_count > MAX_FEC_SETS_PER_SLOT {
                     return false;
                 }
 
@@ -316,7 +345,7 @@ impl RequestResponse for BlockIdRepairType {
                     &fec_set_count.to_le_bytes(),
                 ]);
                 merkle_tree::verify_merkle_proof(
-                    parent_info_leaf,
+                    merkle_tree::hash_as_merkle_proof_entry(&parent_info_leaf),
                     *fec_set_count as usize,
                     parent_proof,
                     *block_id,
@@ -329,17 +358,33 @@ impl RequestResponse for BlockIdRepairType {
                     slot: _slot,
                     block_id,
                     fec_set_index,
+                    fec_set_count,
                 },
                 Self::Response::FecSetRoot {
                     fec_set_root,
                     fec_set_proof,
                 },
             ) => {
-                debug_assert_eq!(*fec_set_index as usize % DATA_SHREDS_PER_FEC_BLOCK, 0);
+                if *fec_set_count == 0 || *fec_set_count > MAX_FEC_SETS_PER_SLOT {
+                    return false;
+                }
+                if !(*fec_set_index as usize).is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK) {
+                    return false;
+                }
                 // Convert from shred-space to leaf-index
                 let leaf_index = *fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
+                if leaf_index >= *fec_set_count as usize {
+                    return false;
+                }
+                // + 1 here to account for the parent info which is the final leaf of the tree.
+                let proof_size = merkle_tree::get_proof_size(*fec_set_count as usize + 1);
+                if fec_set_proof.len()
+                    != proof_size as usize * merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY
+                {
+                    return false;
+                }
                 merkle_tree::verify_merkle_proof(
-                    *fec_set_root,
+                    fec_set_root.as_bytes(),
                     leaf_index,
                     fec_set_proof,
                     *block_id,
@@ -391,10 +436,7 @@ struct ServeRepairStats {
     err_id_mismatch: usize,
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, Deserialize, Serialize, PartialEq)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, PartialEq))]
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequestHeader {
     signature: Signature,
@@ -446,13 +488,10 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 /// The message can then be removed once the feature gate is active and there are no responders.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(
-        AbiEnumVisitor, AbiExample, StableAbi, Deserialize, Serialize, PartialEq,
-    ),
+    derive(StableAbi, PartialEq),
     frozen_abi(
-        api_digest = "2j14Ywc3jWmohnXsEuMUQRPLf7JmxAVKvXKeKpYuzg7S",
         abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -575,13 +614,10 @@ fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStat
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(
-        AbiEnumVisitor, AbiExample, StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq,
-    ),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
-        api_digest = "2atc1j4n5MjGtmAYoL157stGow5ajeDtqAyMhwcniy5b",
         abi_digest = "5qmbs9MjvFrMQ2DYmre88SLLjLLDx3pdEW37cKUEQKMK",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -1868,6 +1904,7 @@ impl ServeRepair {
                 slot,
                 block_id,
                 fec_set_index,
+                fec_set_count: _,
             } => RepairProtocol::FecSetRoot {
                 header,
                 slot: *slot,
@@ -1916,14 +1953,8 @@ impl ServeRepair {
         if !pending_pongs.is_empty() {
             let num_pkts = pending_pongs.len();
             let pending_pongs = pending_pongs.iter().map(|(bytes, addr)| (bytes, addr));
-            match batch_send(repair_socket, pending_pongs) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(err, num_failed)) => {
-                    warn!(
-                        "batch_send failed to send {num_failed}/{num_pkts} packets. First error: \
-                         {err:?}"
-                    );
-                }
+            if let Err(SendPktsError::IoError(err)) = batch_send(repair_socket, pending_pongs) {
+                warn!("batch_send failed to send a batch of {num_pkts} pongs: {err:?}");
             }
         }
     }
@@ -1986,6 +2017,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             shred::{
                 ProcessShredsStats, ReedSolomonCache, Shred, Shredder, max_ticks_per_n_shreds,
+                merkle_tree::hash_as_merkle_proof_entry,
             },
         },
         solana_net_utils::SocketAddrSpace,
@@ -2508,7 +2540,7 @@ mod tests {
             index + 1,
             nonce,
         );
-        assert!(rv.is_none());
+        assert!(rv.is_some());
     }
 
     #[test]
@@ -3163,18 +3195,26 @@ mod tests {
         // ShredForBlockId
         let shred = new_test_data_shred(slot, index);
         let merkle_root = shred.merkle_root().expect("No more legacy shreds");
+        let mut poisoned_merkle_root = merkle_root.to_bytes();
+        poisoned_merkle_root[merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY] ^= 0xff;
+        let poisoned_merkle_root = Hash::new_from_array(poisoned_merkle_root);
+        assert_ne!(poisoned_merkle_root, merkle_root);
+        let fec_set_merkle_root = FecSetRoot::from(merkle_root);
+        assert_eq!(FecSetRoot::from(poisoned_merkle_root), fec_set_merkle_root);
         let request = ShredRepairType::ShredForBlockId {
             slot,
             index,
-            fec_set_merkle_root: merkle_root,
+            fec_set_merkle_root,
             block_id: Hash::new_unique(),
         };
         assert!(request.verify_response(shred.payload()));
-        // bad fec set root
+        // bad FEC-set root prefix
+        let mut bad_merkle_root = merkle_root.to_bytes();
+        bad_merkle_root[0] ^= 0xff;
         let request = ShredRepairType::ShredForBlockId {
             slot,
             index,
-            fec_set_merkle_root: Hash::new_unique(),
+            fec_set_merkle_root: Hash::new_from_array(bad_merkle_root).into(),
             block_id: Hash::new_unique(),
         };
         assert!(!request.verify_response(shred.payload()));
@@ -3294,6 +3334,73 @@ mod tests {
                 fec_set_count: fec_set_count + 1,
                 parent_info: (parent_slot, parent_block_id),
                 parent_proof: real_parent_proof.clone(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_verify_fec_set_root_rejects_empty_proof() {
+        let block_id = Hash::new_unique();
+        let request = BlockIdRepairType::FecSetRoot {
+            slot: 100,
+            block_id,
+            fec_set_index: 0,
+            fec_set_count: 1,
+        };
+        let response = BlockIdRepairResponse::FecSetRoot {
+            fec_set_root: block_id.into(),
+            fec_set_proof: vec![],
+        };
+
+        assert!(!request.verify_response(&response));
+    }
+
+    #[test]
+    fn test_verify_fec_set_root_rejects_shortened_proof() {
+        let fec_set_roots = [Hash::new_unique(), Hash::new_unique()];
+        let parent_info_leaf = Hash::new_unique();
+        let leaves = [fec_set_roots[0], fec_set_roots[1], parent_info_leaf];
+        let tree =
+            merkle_tree::MerkleTree::try_new_with_len(leaves.into_iter().map(Ok), leaves.len())
+                .unwrap();
+        let block_id = *tree.root();
+        let fec_set_proof: Vec<u8> = tree
+            .make_merkle_proof(0, leaves.len())
+            .flat_map(|entry| entry.unwrap().iter().copied())
+            .collect();
+        let internal_node = *merkle_tree::MerkleTree::try_new_with_len(
+            fec_set_roots.into_iter().map(Ok),
+            fec_set_roots.len(),
+        )
+        .unwrap()
+        .root();
+        let shortened_proof = fec_set_proof[merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY..].to_vec();
+
+        // The generic verifier cannot distinguish an internal node from a leaf.
+        assert!(
+            merkle_tree::verify_merkle_proof(
+                hash_as_merkle_proof_entry(&internal_node),
+                0,
+                &shortened_proof,
+                block_id
+            )
+            .is_ok()
+        );
+
+        let request = BlockIdRepairType::FecSetRoot {
+            slot: 100,
+            block_id,
+            fec_set_index: 0,
+            fec_set_count: 2,
+        };
+        assert!(request.verify_response(&BlockIdRepairResponse::FecSetRoot {
+            fec_set_root: FecSetRoot::from(fec_set_roots[0]),
+            fec_set_proof,
+        }));
+        assert!(
+            !request.verify_response(&BlockIdRepairResponse::FecSetRoot {
+                fec_set_root: FecSetRoot::from(internal_node),
+                fec_set_proof: shortened_proof,
             })
         );
     }

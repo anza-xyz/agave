@@ -24,16 +24,16 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    agave_votor::event::VotorEventSender,
-    agave_votor_messages::VerifiedVoterSlotsSender,
+    agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
+    agave_votor_messages::VerifiedVotorSlotsMessage,
     agave_xdp::transmitter::XdpSender,
-    crossbeam_channel::{Receiver, bounded, unbounded},
+    crossbeam_channel::{Receiver, bounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
     solana_poh::{
-        poh_recorder::{PohRecorder, WorkingBankEntryOrMarker},
+        poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankEntryOrMarker},
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
@@ -134,7 +134,8 @@ impl Tpu {
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
-        verified_voter_slots_sender: VerifiedVoterSlotsSender,
+        alpenglow_slot_clock: SharedAlpenglowSlotClock,
+        verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
@@ -321,6 +322,7 @@ impl Tpu {
             replay_vote_sender,
             log_messages_bytes_limit,
             bank_forks.clone(),
+            alpenglow_slot_clock,
             prioritization_fee_cache,
             filter_keys,
             scheduler_priority_floor,
@@ -346,7 +348,10 @@ impl Tpu {
 
         let (entry_receiver, tpu_entry_notifier) =
             if let Some(entry_notification_sender) = entry_notification_sender {
-                let (broadcast_entry_sender, broadcast_entry_receiver) = unbounded();
+                // Preserve every entry while bounding memory. If BroadcastStage falls behind,
+                // the notifier blocks here and propagates backpressure to PohRecorder.
+                let (broadcast_entry_sender, broadcast_entry_receiver) =
+                    bounded(WORKING_BANK_CHANNEL_CAPACITY);
                 let tpu_entry_notifier = TpuEntryNotifier::new(
                     entry_receiver,
                     entry_notification_sender,

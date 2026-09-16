@@ -28,8 +28,7 @@ use {
 pub const DEFAULT_VOTE_USE_QUIC: bool = false;
 
 /// The default connection count is set to 1 -- it should
-/// be sufficient for most use cases. Validators can use
-/// --tpu-connection-pool-size to override this default value.
+/// be sufficient for most use cases.
 pub const DEFAULT_TPU_CONNECTION_POOL_SIZE: usize = 1;
 
 pub type Result<T> = std::result::Result<T, TpuSenderError>;
@@ -215,6 +214,10 @@ where
         })
     }
 
+    #[deprecated(
+        since = "4.3.0",
+        note = "prefer send_and_confirm_transactions_in_parallel_v3"
+    )]
     #[cfg(feature = "spinner")]
     pub fn send_and_confirm_messages_with_spinner<T: Signers + ?Sized>(
         &self,
@@ -222,6 +225,7 @@ where
         signers: &T,
     ) -> Result<Vec<Option<TransactionError>>> {
         self.invoke(
+            #[allow(deprecated)]
             self.tpu_client
                 .send_and_confirm_messages_with_spinner(messages, signers),
         )

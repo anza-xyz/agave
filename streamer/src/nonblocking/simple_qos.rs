@@ -1,7 +1,7 @@
 use {
     crate::{
         nonblocking::{
-            qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
+            qos::{ConnectionContext, OpaqueStreamerCounter, QosController, has_sufficient_stake},
             quic::{
                 CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_REASON_DISALLOWED,
                 ClientConnectionTracker, ConnectionHandlerError, ConnectionPeerType,
@@ -270,6 +270,10 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
             last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             stream_counter: None,
         }
+    }
+
+    fn has_sufficient_stake(&self, context: &SimpleQosConnectionContext) -> bool {
+        has_sufficient_stake(context, &self.staked_nodes)
     }
 
     fn spawn_background_tasks(&mut self) {

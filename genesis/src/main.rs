@@ -287,7 +287,7 @@ fn add_validator_accounts(
             identity_pubkey,
             u16::from(commission) * 100,
             vote_pubkey,
-            0,
+            10_000,
             identity_pubkey,
             vote_account_lamports,
         );
@@ -390,7 +390,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .value_name("BLS_PUBKEY")
                 .multiple(true)
                 .takes_value(true)
-                .required(false)
+                .required(true)
                 .help("The bootstrap validator's bls pubkey"),
         )
         .arg(
@@ -477,7 +477,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("lamports-per-byte-year")
                 .value_name("LAMPORTS")
                 .takes_value(true)
-                .default_value(default_lamports_per_byte)
                 .help(
                     "The cost in lamports that the cluster will charge per byte for accounts with \
                      data",

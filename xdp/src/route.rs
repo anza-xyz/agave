@@ -37,7 +37,10 @@ pub struct GreRouteInfo {
     pub mtu: u32,
     pub underlay_mtu: u32,
     pub tunnel_info: GreTunnelInfo,
-    pub mac_addr: MacAddress,
+    pub underlay_if_index: u32,
+    pub underlay_ip_addr: Ipv4Addr,
+    pub underlay_mac_addr: Option<MacAddress>,
+    pub underlay_neigh_requires_refresh: bool,
 }
 
 /// VLAN encapsulation directive carried on a resolved NextHop.
@@ -62,6 +65,7 @@ pub struct NextHop {
     pub ip_addr: IpAddr,
     pub if_index: u32,
     pub mtu: u32,
+    pub neigh_requires_refresh: bool,
     pub preferred_src_ip: Option<Ipv4Addr>,
     pub gre: Option<GreRouteInfo>,
     pub vlan: Option<VlanRouteInfo>,
@@ -234,11 +238,10 @@ impl Neighbors {
         self.neighbors.iter()
     }
 
-    fn lookup(&self, ip: IpAddr, if_index: u32) -> Option<&MacAddress> {
+    fn lookup(&self, ip: IpAddr, if_index: u32) -> Option<&NeighborEntry> {
         self.neighbors
             .iter()
             .find(|n| n.ifindex == if_index as i32 && n.destination == Some(ip))
-            .and_then(|n| n.lladdr.as_ref())
     }
 
     fn upsert(&mut self, new_neighbor: NeighborEntry) -> bool {
@@ -543,6 +546,7 @@ impl Router {
                 if_index,
                 mtu: default_route.mtu,
                 mac_addr: default_route.mac_addr,
+                neigh_requires_refresh: default_route.neigh_requires_refresh,
                 preferred_src_ip,
                 gre: default_route.gre.clone(),
                 vlan: default_route.vlan,
@@ -554,7 +558,8 @@ impl Router {
                 if_index,
                 mtu: gre.underlay_mtu,
                 ip_addr: next_hop_ip,
-                mac_addr: Some(gre.mac_addr),
+                mac_addr: gre.underlay_mac_addr,
+                neigh_requires_refresh: gre.underlay_neigh_requires_refresh,
                 preferred_src_ip,
                 gre: Some(gre),
                 vlan: None,
@@ -572,16 +577,21 @@ impl Router {
         // IPv4 multicast destinations map deterministically to a multicast MAC (RFC 1112 §6.4)
         // and never participate in ARP, so there is no neighbor entry to look up. Otherwise
         // consult the neighbor cache for the unicast MAC.
-        let mac_addr = if next_hop_v4.is_multicast() {
-            Some(ipv4_multicast_mac(next_hop_v4))
+        let (mac_addr, neigh_requires_refresh) = if next_hop_v4.is_multicast() {
+            (Some(ipv4_multicast_mac(next_hop_v4)), false)
         } else {
-            self.neighbors.lookup(next_hop_ip, if_index).cloned()
+            let neighbor = self.neighbors.lookup(next_hop_ip, if_index);
+            (
+                neighbor.and_then(|neighbor| neighbor.lladdr),
+                neighbor.is_none_or(NeighborEntry::requires_refresh),
+            )
         };
         Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
             if_index,
             mtu,
+            neigh_requires_refresh,
             preferred_src_ip,
             gre: None,
             vlan,
@@ -630,7 +640,6 @@ impl Router {
             IpAddr::V4(local) => local,
             IpAddr::V6(_) => return None,
         };
-        // Skip unconfigured tunnels (remote/local 0.0.0.0)
         if remote == Ipv4Addr::UNSPECIFIED || local == Ipv4Addr::UNSPECIFIED {
             return None;
         }
@@ -649,18 +658,22 @@ impl Router {
             );
             return None;
         }
-        let underlay_next_hop_ip = IpAddr::V4(underlay_route.gateway.unwrap_or(remote));
-        let mac_addr = self
+        let underlay_ip_addr = underlay_route.gateway.unwrap_or(remote);
+        let underlay_neighbor = self
             .neighbors
-            .lookup(underlay_next_hop_ip, underlay_if_index)
-            .copied()?;
+            .lookup(IpAddr::V4(underlay_ip_addr), underlay_if_index);
+        let underlay_mac_addr = underlay_neighbor.and_then(|neighbor| neighbor.lladdr);
 
         Some(GreRouteInfo {
             if_index: interface.if_index,
             mtu: interface.mtu,
             underlay_mtu: underlay_interface.mtu,
             tunnel_info: tunnel_info.clone(),
-            mac_addr,
+            underlay_if_index,
+            underlay_ip_addr,
+            underlay_mac_addr,
+            underlay_neigh_requires_refresh: underlay_neighbor
+                .is_none_or(NeighborEntry::requires_refresh),
         })
     }
 }
@@ -701,7 +714,7 @@ mod tests {
     use {
         super::*,
         crate::netlink::{MacAddress, NeighborEntry, RouteEntry, VlanLinkInfo},
-        libc::{AF_INET, NUD_REACHABLE},
+        libc::{AF_INET, NUD_NOARP, NUD_PERMANENT, NUD_REACHABLE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -794,12 +807,16 @@ mod tests {
             lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
             ifindex: 1,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         }));
         assert!(tables.upsert_neighbor(NeighborEntry {
             destination: Some(IpAddr::V4(backup_gateway)),
             lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02])),
             ifindex: 2,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         }));
         assert!(tables.upsert_route(test_route_entry_with_priority(
             None,
@@ -838,6 +855,8 @@ mod tests {
             lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
             ifindex: 1,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         };
         assert!(tables.upsert_neighbor(neighbor));
 
@@ -872,6 +891,7 @@ mod tests {
         let next_hop = router.route_v4(test_dst).unwrap();
         assert_eq!(next_hop.if_index, 1);
         assert_eq!(next_hop.ip_addr, IpAddr::V4(gateway));
+        assert!(next_hop.neigh_requires_refresh);
 
         // Delete using same key should remove the route
         assert!(tables.remove_route(route.clone()));
@@ -943,6 +963,8 @@ mod tests {
             lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
             ifindex: 1,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         };
 
         // Upsert new neighbor and check that it was inserted and neighbors are dirty
@@ -1021,6 +1043,8 @@ mod tests {
             lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
             ifindex: 1,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         }));
         assert!(tables.upsert_route(test_route_entry(
             Some(test_dst),
@@ -1042,6 +1066,7 @@ mod tests {
         let next_hop = router.route_v4(test_dst).unwrap();
         assert_eq!(next_hop.if_index, 1);
         assert_eq!(next_hop.ip_addr, IpAddr::V4(main_gateway));
+        assert!(next_hop.neigh_requires_refresh);
     }
 
     #[test]
@@ -1062,6 +1087,8 @@ mod tests {
             lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
             ifindex: 1,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         }));
         assert!(tables.upsert_route(test_route_entry(
             Some(test_dst),
@@ -1083,6 +1110,7 @@ mod tests {
         let next_hop = router.route_v4(test_dst).unwrap();
         assert_eq!(next_hop.if_index, 1);
         assert_eq!(next_hop.ip_addr, IpAddr::V4(main_gateway));
+        assert!(next_hop.neigh_requires_refresh);
     }
 
     #[test]
@@ -1103,12 +1131,16 @@ mod tests {
                 lladdr: Some(mac1),
                 ifindex: if_index_underlay,
                 state: NUD_REACHABLE,
+                flags: 0,
+                flags_ext: 0,
             },
             NeighborEntry {
                 destination: Some(IpAddr::V4(remote2)),
                 lladdr: Some(mac2),
                 ifindex: if_index_underlay,
                 state: NUD_REACHABLE,
+                flags: 0,
+                flags_ext: 0,
             },
         ];
 
@@ -1157,23 +1189,33 @@ mod tests {
         assert_eq!(hop1.if_index, if_index_gre1 as u32);
         assert_eq!(hop1.mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop1.mac_addr, Some(mac1));
+        assert!(hop1.neigh_requires_refresh);
 
         let hop1_gre = hop1.gre.as_ref().unwrap();
         assert_eq!(hop1_gre.if_index, if_index_gre1 as u32);
         assert_eq!(hop1_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
         assert_eq!(hop1_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop1.mtu, hop1_gre.underlay_mtu);
+        assert_eq!(hop1_gre.underlay_if_index, if_index_underlay as u32);
+        assert_eq!(hop1_gre.underlay_ip_addr, remote1);
+        assert_eq!(hop1_gre.underlay_mac_addr, Some(mac1));
+        assert!(hop1_gre.underlay_neigh_requires_refresh);
 
         let hop2 = router.route_v4(gre_dest2).unwrap();
         assert_eq!(hop2.if_index, if_index_gre2 as u32);
         assert_eq!(hop2.mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop2.mac_addr, Some(mac2));
+        assert!(hop2.neigh_requires_refresh);
 
         let hop2_gre = hop2.gre.as_ref().unwrap();
         assert_eq!(hop2_gre.if_index, if_index_gre2 as u32);
         assert_eq!(hop2_gre.mtu, DEFAULT_MTU_FOR_TESTS + 100);
         assert_eq!(hop2_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop2.mtu, hop2_gre.underlay_mtu);
+        assert_eq!(hop2_gre.underlay_if_index, if_index_underlay as u32);
+        assert_eq!(hop2_gre.underlay_ip_addr, remote2);
+        assert_eq!(hop2_gre.underlay_mac_addr, Some(mac2));
+        assert!(hop2_gre.underlay_neigh_requires_refresh);
     }
 
     #[test]
@@ -1189,6 +1231,8 @@ mod tests {
             lladdr: Some(mac),
             ifindex: if_index_underlay,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         }];
 
         let routes = vec![
@@ -1231,23 +1275,33 @@ mod tests {
         assert_eq!(hop_default.if_index, if_index_gre as u32);
         assert_eq!(hop_default.mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop_default.mac_addr, Some(mac));
+        assert!(hop_default.neigh_requires_refresh);
 
         let hop_default_gre = hop_default.gre.as_ref().unwrap();
         assert_eq!(hop_default_gre.if_index, if_index_gre as u32);
         assert_eq!(hop_default_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
         assert_eq!(hop_default_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop_default.mtu, hop_default_gre.underlay_mtu);
+        assert_eq!(hop_default_gre.underlay_if_index, if_index_underlay as u32);
+        assert_eq!(hop_default_gre.underlay_ip_addr, remote);
+        assert_eq!(hop_default_gre.underlay_mac_addr, Some(mac));
+        assert!(hop_default_gre.underlay_neigh_requires_refresh);
 
         let hop_route = router.route_v4(dest).unwrap();
         assert_eq!(hop_route.if_index, if_index_gre as u32);
         assert_eq!(hop_route.mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop_route.mac_addr, Some(mac));
+        assert!(hop_route.neigh_requires_refresh);
 
         let hop_route_gre = hop_route.gre.as_ref().unwrap();
         assert_eq!(hop_route_gre.if_index, if_index_gre as u32);
         assert_eq!(hop_route_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
         assert_eq!(hop_route_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop_route.mtu, hop_route_gre.underlay_mtu);
+        assert_eq!(hop_route_gre.underlay_if_index, if_index_underlay as u32);
+        assert_eq!(hop_route_gre.underlay_ip_addr, remote);
+        assert_eq!(hop_route_gre.underlay_mac_addr, Some(mac));
+        assert!(hop_route_gre.underlay_neigh_requires_refresh);
     }
 
     #[test]
@@ -1267,6 +1321,8 @@ mod tests {
             lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
             ifindex: 1,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         }));
 
         assert!(tables.upsert_route(test_route_entry(
@@ -1310,6 +1366,7 @@ mod tests {
         let next_hop = router.default().unwrap();
         assert_eq!(next_hop.if_index, 1);
         assert_eq!(next_hop.ip_addr, IpAddr::V4(primary));
+        assert!(next_hop.neigh_requires_refresh);
 
         {
             let mut tables = tables.clone();
@@ -1326,6 +1383,7 @@ mod tests {
             let next_hop = router.default().unwrap();
             assert_eq!(next_hop.if_index, 1);
             assert_eq!(next_hop.ip_addr, IpAddr::V4(primary));
+            assert!(next_hop.neigh_requires_refresh);
         }
 
         let mut tables = tables;
@@ -1342,6 +1400,119 @@ mod tests {
         let next_hop = router.default().unwrap();
         assert_eq!(next_hop.if_index, 2);
         assert_eq!(next_hop.ip_addr, IpAddr::V4(backup));
+        assert!(next_hop.neigh_requires_refresh);
+    }
+
+    #[test]
+    fn test_permanent_neighbors_do_not_require_refresh() {
+        let test_dst = Ipv4Addr::new(10, 255, 255, 123);
+        let router = router_from_tables(
+            vec![NeighborEntry {
+                destination: Some(IpAddr::V4(test_dst)),
+                lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+                ifindex: 1,
+                state: NUD_PERMANENT,
+                flags: 0,
+                flags_ext: 0,
+            }],
+            vec![test_route(Some(test_dst), 1)],
+            vec![InterfaceInfo {
+                if_index: 1,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: None,
+            }],
+        );
+
+        let next_hop = router.route_v4(test_dst).unwrap();
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(test_dst));
+        assert!(!next_hop.neigh_requires_refresh);
+    }
+
+    #[test]
+    fn test_noarp_neighbors_do_not_require_refresh() {
+        let gateway = Ipv4Addr::new(10, 255, 255, 1);
+        let test_dst = Ipv4Addr::new(10, 255, 255, 123);
+        let router = router_from_tables(
+            vec![NeighborEntry {
+                destination: Some(IpAddr::V4(gateway)),
+                lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+                ifindex: 1,
+                state: NUD_NOARP,
+                flags: 0,
+                flags_ext: 0,
+            }],
+            vec![
+                test_route_entry(
+                    Some(test_dst),
+                    Some(gateway),
+                    1,
+                    32,
+                    u32::from(RouteTable::Main),
+                )
+                .try_into()
+                .unwrap(),
+            ],
+            vec![InterfaceInfo {
+                if_index: 1,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: None,
+            }],
+        );
+
+        let next_hop = router.route_v4(test_dst).unwrap();
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(gateway));
+        assert!(!next_hop.neigh_requires_refresh);
+    }
+
+    #[test]
+    fn test_gre_with_permanent_underlay_neighbor_does_not_require_refresh() {
+        let remote = Ipv4Addr::new(10, 0, 0, 1);
+        let gre_dest = Ipv4Addr::new(192, 168, 0, 1);
+        let if_index_underlay = 1;
+        let if_index_gre = 100;
+        let mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+
+        let router = router_from_tables(
+            vec![NeighborEntry {
+                destination: Some(IpAddr::V4(remote)),
+                lladdr: Some(mac),
+                ifindex: if_index_underlay,
+                state: NUD_PERMANENT,
+                flags: 0,
+                flags_ext: 0,
+            }],
+            vec![
+                test_route(Some(remote), if_index_underlay as u32),
+                test_route(Some(gre_dest), if_index_gre as u32),
+            ],
+            vec![
+                InterfaceInfo {
+                    if_index: if_index_underlay as u32,
+                    mtu: DEFAULT_MTU_FOR_TESTS,
+                    gre_tunnel: None,
+                    vlan_link: None,
+                },
+                InterfaceInfo {
+                    if_index: if_index_gre as u32,
+                    mtu: DEFAULT_MTU_FOR_TESTS,
+                    gre_tunnel: Some(GreTunnelInfo {
+                        local: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
+                        remote: IpAddr::V4(remote),
+                        ttl: 0,
+                        tos: 0,
+                        pmtudisc: 0,
+                    }),
+                    vlan_link: None,
+                },
+            ],
+        );
+
+        let next_hop = router.route_v4(gre_dest).unwrap();
+        assert!(!next_hop.neigh_requires_refresh);
+        let gre = next_hop.gre.as_ref().unwrap();
+        assert!(!gre.underlay_neigh_requires_refresh);
     }
 
     #[test]
@@ -1358,6 +1529,8 @@ mod tests {
             lladdr: Some(peer_mac),
             ifindex: vlan_if as i32,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         }];
         let interfaces = vec![InterfaceInfo {
             if_index: vlan_if,
@@ -1404,12 +1577,16 @@ mod tests {
                 lladdr: Some(mac_a),
                 ifindex: vlan_if_a as i32,
                 state: NUD_REACHABLE,
+                flags: 0,
+                flags_ext: 0,
             },
             NeighborEntry {
                 destination: Some(IpAddr::V4(peer_b)),
                 lladdr: Some(mac_b),
                 ifindex: vlan_if_b as i32,
                 state: NUD_REACHABLE,
+                flags: 0,
+                flags_ext: 0,
             },
         ];
         let interfaces = vec![
@@ -1455,6 +1632,8 @@ mod tests {
             lladdr: Some(underlay_mac),
             ifindex: if_index_underlay as i32,
             state: NUD_REACHABLE,
+            flags: 0,
+            flags_ext: 0,
         }];
         let routes = vec![
             test_route(Some(remote), if_index_underlay),
@@ -1536,6 +1715,7 @@ mod tests {
             Some(MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x03]))
         );
         assert_eq!(next_hop.if_index, if_index);
+        assert!(!next_hop.neigh_requires_refresh);
     }
 
     #[test]

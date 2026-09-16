@@ -2,7 +2,7 @@ use solana_program_runtime::solana_sbpf::program::BuiltinFunctionDefinition;
 #[allow(deprecated)]
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    solana_account::{self as account, AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, WritableAccount},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
     solana_nonce::{
@@ -14,14 +14,31 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::{
         system_program,
-        sysvar::{recent_blockhashes, rent},
+        sysvar::{self, recent_blockhashes, rent},
     },
     solana_system_interface::instruction::SystemInstruction,
     solana_sysvar::recent_blockhashes::{IterItem, MAX_ENTRIES, RecentBlockhashes},
+    solana_sysvar_id::SysvarId,
 };
 
 const SEED: &str = "bench test";
 const ACCOUNT_BALANCE: u64 = u64::MAX / 4;
+
+fn create_sysvar_account<T>(value: &T) -> AccountSharedData
+where
+    T: wincode::Serialize<Src = T> + SysvarId,
+{
+    let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+    let canonical_data_len = match T::id() {
+        sysvar::recent_blockhashes::ID => solana_sysvar::recent_blockhashes::SIZE,
+        sysvar::rent::ID => solana_rent::SIZE,
+        id => panic!("unsupported sysvar: {id}"),
+    };
+    let required_data_len = canonical_data_len.max(serialized_len);
+    let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
+    wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
+    account
+}
 
 #[derive(Default)]
 struct TestSetup {
@@ -277,7 +294,7 @@ impl TestSetup {
             (nonce_address, nonce_account),
             (
                 blockhash_id,
-                account::create_account_shared_data_for_test(
+                create_sysvar_account(
                     // create a populated RecentBlockhashes sysvar account
                     &RecentBlockhashes::from_iter(vec![
                         IterItem(0u64, &Hash::default(), 0);
@@ -285,10 +302,7 @@ impl TestSetup {
                     ]),
                 ),
             ),
-            (
-                rent_id,
-                account::create_account_shared_data_for_test(&Rent::free()),
-            ),
+            (rent_id, create_sysvar_account(&Rent::free())),
         ];
 
         self.instruction_accounts = vec![
@@ -361,7 +375,7 @@ impl TestSetup {
             (nonce_address, nonce_account),
             (
                 blockhash_id,
-                account::create_account_shared_data_for_test(
+                create_sysvar_account(
                     // create a populated RecentBlockhashes sysvar account
                     &RecentBlockhashes::from_iter(vec![
                         IterItem(0u64, &Hash::default(), 0);
@@ -440,7 +454,7 @@ impl TestSetup {
             ),
             (
                 blockhash_id,
-                account::create_account_shared_data_for_test(
+                create_sysvar_account(
                     // create a populated RecentBlockhashes sysvar account
                     &RecentBlockhashes::from_iter(vec![
                         IterItem(0u64, &Hash::default(), 0);
@@ -448,10 +462,7 @@ impl TestSetup {
                     ]),
                 ),
             ),
-            (
-                rent_id,
-                account::create_account_shared_data_for_test(&Rent::free()),
-            ),
+            (rent_id, create_sysvar_account(&Rent::free())),
         ];
 
         self.instruction_accounts = vec![

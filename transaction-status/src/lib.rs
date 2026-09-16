@@ -29,6 +29,7 @@ use {
     base64::{Engine, prelude::BASE64_STANDARD},
     serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
+    solana_entry::block_component::VersionedBlockMarker,
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_message::{
@@ -393,11 +394,12 @@ impl ConfirmedBlock {
 }
 
 // Confirmed block with type guarantees that transaction metadata is always
-// present, as well as a list of the entry data needed to cryptographically
-// verify the block. Used for uploading to BigTable.
-pub struct VersionedConfirmedBlockWithEntries {
+// present, as well as the entry data and block markers needed to
+// cryptographically verify the block. Used for uploading to BigTable.
+pub struct VersionedConfirmedBlockWithSplitComponents {
     pub block: VersionedConfirmedBlock,
     pub entries: Vec<EntrySummary>,
+    pub markers: Vec<VersionedBlockMarker>,
 }
 
 // Data needed to reconstruct an Entry, given an ordered list of transactions in

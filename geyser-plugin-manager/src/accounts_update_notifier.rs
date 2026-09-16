@@ -2,7 +2,7 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaAccountInfoV4, ReplicaAccountInfoVersions,
+        ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
@@ -35,14 +35,9 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         pubkey: &Pubkey,
         write_version: u64,
     ) {
-        let account_info = self.accountinfo_from_shared_account_data(
-            Some(bank_id),
-            account,
-            txn,
-            pubkey,
-            write_version,
-        );
-        self.notify_plugins_of_account_update(account_info, slot, false);
+        let account_info =
+            self.accountinfo_from_shared_account_data(account, txn, pubkey, write_version);
+        self.notify_plugins_of_account_update_for_bank(account_info, slot, bank_id);
     }
 
     fn notify_account_restore_from_snapshot(
@@ -53,7 +48,7 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     ) {
         let mut account = self.accountinfo_from_account_for_geyser(account);
         account.write_version = write_version;
-        self.notify_plugins_of_account_update(account, slot, true);
+        self.notify_plugins_of_account_update_from_snapshot(account, slot);
     }
 
     fn notify_end_of_restore_from_snapshot(&self) {
@@ -95,13 +90,12 @@ impl AccountsUpdateNotifierImpl {
 
     fn accountinfo_from_shared_account_data<'a>(
         &self,
-        bank_id: Option<BankId>,
         account: &'a AccountSharedData,
         txn: &'a Option<&'a SanitizedTransaction>,
         pubkey: &'a Pubkey,
         write_version: u64,
-    ) -> ReplicaAccountInfoV4<'a> {
-        ReplicaAccountInfoV4 {
+    ) -> ReplicaAccountInfoV3<'a> {
+        ReplicaAccountInfoV3 {
             pubkey: pubkey.as_ref(),
             lamports: account.lamports(),
             owner: account.owner().as_ref(),
@@ -110,15 +104,14 @@ impl AccountsUpdateNotifierImpl {
             data: account.data(),
             write_version,
             txn: *txn,
-            bank_id,
         }
     }
 
     fn accountinfo_from_account_for_geyser<'a>(
         &self,
         account: &'a AccountForGeyser<'_>,
-    ) -> ReplicaAccountInfoV4<'a> {
-        ReplicaAccountInfoV4 {
+    ) -> ReplicaAccountInfoV3<'a> {
+        ReplicaAccountInfoV3 {
             pubkey: account.pubkey.as_ref(),
             lamports: account.lamports(),
             owner: account.owner().as_ref(),
@@ -127,15 +120,13 @@ impl AccountsUpdateNotifierImpl {
             data: account.data(),
             write_version: 0, // can/will be populated afterwards
             txn: None,
-            bank_id: None,
         }
     }
 
-    fn notify_plugins_of_account_update(
+    fn notify_plugins_of_account_update_from_snapshot(
         &self,
-        account: ReplicaAccountInfoV4,
+        account: ReplicaAccountInfoV3,
         slot: Slot,
-        is_startup: bool,
     ) {
         let plugin_manager = self.plugin_manager.load();
 
@@ -146,10 +137,49 @@ impl AccountsUpdateNotifierImpl {
             if !plugin.account_data_notifications_enabled() {
                 continue;
             }
-            match plugin.update_account(
-                ReplicaAccountInfoVersions::V0_0_4(&account),
+            match plugin
+                .update_account_from_snapshot(ReplicaAccountInfoVersions::V0_0_3(&account), slot)
+            {
+                Err(err) => {
+                    error!(
+                        "Failed to update account {} at slot {}, error: {} to plugin {}",
+                        bs58::encode(account.pubkey).into_string(),
+                        slot,
+                        err,
+                        plugin.name()
+                    )
+                }
+                Ok(_) => {
+                    trace!(
+                        "Successfully updated account {} at slot {} to plugin {}",
+                        bs58::encode(account.pubkey).into_string(),
+                        slot,
+                        plugin.name()
+                    );
+                }
+            }
+        }
+    }
+
+    fn notify_plugins_of_account_update_for_bank(
+        &self,
+        account: ReplicaAccountInfoV3,
+        slot: Slot,
+        bank_id: BankId,
+    ) {
+        let plugin_manager = self.plugin_manager.load();
+
+        if plugin_manager.plugins.is_empty() {
+            return;
+        }
+        for plugin in plugin_manager.plugins.iter() {
+            if !plugin.account_data_notifications_enabled() {
+                continue;
+            }
+            match plugin.update_account_for_bank(
+                ReplicaAccountInfoVersions::V0_0_3(&account),
                 slot,
-                is_startup,
+                bank_id,
             ) {
                 Err(err) => {
                     error!(
@@ -195,7 +225,7 @@ mod tests {
         name: &'static str,
         account_updates_enabled: bool,
         account_update_count: Arc<AtomicUsize>,
-        account_update_bank_ids: Arc<Mutex<Vec<Option<BankId>>>>,
+        account_update_bank_ids: Arc<Mutex<Vec<BankId>>>,
     }
 
     impl GeyserPlugin for TestAccountPlugin {
@@ -203,19 +233,28 @@ mod tests {
             self.name
         }
 
-        fn update_account(
+        fn update_account_for_bank(
             &self,
             account: ReplicaAccountInfoVersions,
             _slot: Slot,
-            _is_startup: bool,
+            bank_id: BankId,
         ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
-            let ReplicaAccountInfoVersions::V0_0_4(account) = account else {
-                panic!("expected V0_0_4 account info");
+            let ReplicaAccountInfoVersions::V0_0_3(_account) = account else {
+                panic!("expected V0_0_3 account info");
             };
-            self.account_update_bank_ids
-                .lock()
-                .unwrap()
-                .push(account.bank_id);
+            self.account_update_bank_ids.lock().unwrap().push(bank_id);
+            self.account_update_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn update_account_from_snapshot(
+            &self,
+            account: ReplicaAccountInfoVersions,
+            _slot: Slot,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            let ReplicaAccountInfoVersions::V0_0_3(_account) = account else {
+                panic!("expected V0_0_3 account info");
+            };
             self.account_update_count.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
@@ -269,7 +308,7 @@ mod tests {
 
         assert_eq!(enabled_count.load(Ordering::Relaxed), 1);
         assert_eq!(disabled_count.load(Ordering::Relaxed), 0);
-        assert_eq!(*enabled_bank_ids.lock().unwrap(), vec![Some(bank_id)]);
+        assert_eq!(*enabled_bank_ids.lock().unwrap(), vec![bank_id]);
         assert!(disabled_bank_ids.lock().unwrap().is_empty());
     }
 
@@ -301,6 +340,9 @@ mod tests {
         notifier.notify_account_restore_from_snapshot(42, 7, &account);
 
         assert_eq!(account_update_count.load(Ordering::Relaxed), 1);
-        assert_eq!(*account_update_bank_ids.lock().unwrap(), vec![None]);
+        assert_eq!(
+            *account_update_bank_ids.lock().unwrap(),
+            Vec::<BankId>::new()
+        );
     }
 }

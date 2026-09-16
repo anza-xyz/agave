@@ -23,20 +23,26 @@ impl EntryBytesBudget {
         self.slot_limit
     }
 
+    pub fn consumed(&self) -> u64 {
+        self.consumed.load(Ordering::Acquire)
+    }
+
     pub fn reserve(&self, bytes: u64) -> std::result::Result<(), EntryBytesReserveError> {
+        let mut current = self.consumed.load(Ordering::Acquire);
         loop {
-            let current = self.consumed.load(Ordering::Acquire);
             let next = current.saturating_add(bytes);
             if next > self.slot_limit {
                 return Err(EntryBytesReserveError::ExceedsSlotLimit);
             }
 
-            if self
-                .consumed
-                .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                return Ok(());
+            match self.consumed.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(actual) => current = actual,
             }
         }
     }
@@ -50,7 +56,7 @@ mod tests {
     #[test]
     fn test_load_new() {
         let budget = EntryBytesBudget::new(TEST_SLOT_LIMIT);
-        assert_eq!(budget.consumed.load(Ordering::Acquire), 0);
+        assert_eq!(budget.consumed(), 0);
         assert_eq!(budget.slot_limit(), TEST_SLOT_LIMIT);
     }
 
@@ -59,7 +65,7 @@ mod tests {
         let budget = EntryBytesBudget::new(TEST_SLOT_LIMIT);
 
         assert!(budget.reserve(100).is_ok());
-        assert_eq!(budget.consumed.load(Ordering::Acquire), 100);
+        assert_eq!(budget.consumed(), 100);
     }
 
     #[test]
@@ -71,6 +77,6 @@ mod tests {
             budget.reserve(2),
             Err(EntryBytesReserveError::ExceedsSlotLimit)
         );
-        assert_eq!(budget.consumed.load(Ordering::Acquire), TEST_SLOT_LIMIT - 1);
+        assert_eq!(budget.consumed(), TEST_SLOT_LIMIT - 1);
     }
 }

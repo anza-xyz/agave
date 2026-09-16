@@ -8,6 +8,7 @@ mod tests {
         crate::{
             genesis_utils::activate_all_features_alpenglow, inflation_rewards::points::PointValue,
         },
+        solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
         solana_genesis_config::create_genesis_config,
         solana_leader_schedule::SlotLeader,
         solana_sysvar::epoch_rewards::EpochRewards,
@@ -221,5 +222,41 @@ mod tests {
         };
         assert_eq!(cached_post_footer_clock.slot, bank1_slot);
         assert_eq!(cached_post_footer_clock.unix_timestamp, footer_timestamp);
+    }
+
+    #[test]
+    fn test_alpenglow_clock_epoch_start_timestamp_before_footer() {
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
+        activate_all_features_alpenglow(&mut genesis_config);
+        let (parent, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+
+        let parent_footer_timestamp = parent.clock().unix_timestamp.saturating_add(42);
+        parent.update_clock_from_footer(parent_footer_timestamp.saturating_mul(1_000_000_000));
+        assert_ne!(
+            parent.clock().epoch_start_timestamp,
+            parent_footer_timestamp
+        );
+
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            parent,
+            SlotLeader::default(),
+            MINIMUM_SLOTS_PER_EPOCH,
+        );
+        assert_eq!(bank.epoch(), 1);
+
+        let clock = bank.clock();
+        assert_eq!(clock.unix_timestamp, parent_footer_timestamp);
+        assert_eq!(clock.epoch_start_timestamp, parent_footer_timestamp);
+
+        let cached_clock = bank
+            .transaction_processor
+            .sysvar_cache()
+            .get_clock()
+            .unwrap();
+        assert_eq!(cached_clock.epoch_start_timestamp, parent_footer_timestamp);
     }
 }

@@ -16,10 +16,17 @@ impl InvokeContextCallback for DefaultCallback {}
 
 /// Conformance callback. Full precompile support across all features.
 #[cfg(feature = "conformance")]
-pub struct ConformanceCallback;
+#[derive(Default)]
+pub struct ConformanceCallback {
+    pub epoch_total_stake: u64,
+}
 
 #[cfg(feature = "conformance")]
 impl InvokeContextCallback for ConformanceCallback {
+    fn get_epoch_stake(&self) -> u64 {
+        self.epoch_total_stake
+    }
+
     fn is_precompile(&self, program_id: &Pubkey) -> bool {
         is_precompile(program_id, |_| true)
     }

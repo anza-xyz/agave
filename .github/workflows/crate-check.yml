@@ -18,19 +18,24 @@ jobs:
     if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Get commit range (push)
         if: ${{ github.event_name == 'push' }}
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
-          echo "COMMIT_RANGE=${{ github.event.before }}..$GITHUB_SHA" >> $GITHUB_ENV
+          printf 'COMMIT_RANGE=%s..%s\n' "$BEFORE_SHA" "$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - name: Get commit range (pull_request)
         if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          echo "COMMIT_RANGE=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
+          printf 'COMMIT_RANGE=%s..%s\n' "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_ENV"
 
       - name: Setup Rust
         shell: bash

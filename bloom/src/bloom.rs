@@ -4,7 +4,6 @@ use {
     bv::BitVec,
     fnv::FnvHasher,
     rand::{self, Rng},
-    serde::{Deserialize, Serialize},
     solana_time_utils::AtomicInterval,
     std::{
         cmp, fmt,
@@ -25,10 +24,9 @@ pub trait BloomHashIndex {
 /// Samples a random, non-empty [`BitVec`] for `StableAbi` abi-digest tests.
 ///
 /// `BitVec` implements neither `StableAbi` nor `FromIterator`, so the derive can't
-/// sample it. We build one from a non-empty random block buffer: an empty
-/// `BitVec::from_bits(&[])` has an inner `Some([])` that serde encodes as `[1, 0]`,
-/// whereas wincode normalizes empty to `[0]` (`None`) — an empty sample would make
-/// the bincode and wincode abi digests diverge. Shared via
+/// sample it. We build one from a non-empty random block buffer: wincode normalizes
+/// an empty `BitVec` to `[0]` (`None`), so sampling one would leave the round-trip
+/// test exercising only the degenerate encoding. Shared via
 /// `#[stable_abi_sample(with = "...")]` by `BitVec` fields here and in gossip.
 #[cfg(feature = "frozen-abi")]
 pub fn sample_bit_vec<Block>(
@@ -43,8 +41,8 @@ where
     )
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Serialize, Deserialize, Default, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Default, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct Bloom<T: BloomHashIndex> {
     pub keys: Vec<u64>,
     #[cfg_attr(
@@ -505,28 +503,5 @@ mod test {
             bloom.add(hash_value);
         }
         assert_eq!(bits, bloom.bits);
-    }
-
-    #[test]
-    fn test_wincode_compatibility_bloom() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let num_keys = rng.random_range(1..8usize);
-            let keys: Vec<u64> = (0..num_keys).map(|_| rng.random()).collect();
-            let num_bits = rng.random_range(1..1024usize);
-            let mut bloom = Bloom::<Hash>::new(num_bits, keys);
-            let num_inserts = rng.random_range(0..32usize);
-            for _ in 0..num_inserts {
-                bloom.add(&generate_random_hash());
-            }
-
-            let bincode_bytes = bincode::serialize(&bloom).unwrap();
-            let wincode_bytes = wincode::serialize(&bloom).unwrap();
-            assert_eq!(bincode_bytes, wincode_bytes);
-            let wincode_decoded: Bloom<Hash> = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(bloom, wincode_decoded);
-            let bincode_decoded: Bloom<Hash> = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(bloom, bincode_decoded);
-        }
     }
 }

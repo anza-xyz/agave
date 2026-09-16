@@ -1,4 +1,7 @@
+mod shared;
+
 use {
+    shared::from_account_info,
     solana_account_info::{AccountInfo, next_account_info},
     solana_clock::Clock,
     solana_epoch_rewards::EpochRewards,
@@ -15,7 +18,7 @@ use {
     solana_sdk_ids::sysvar::{clock, epoch_schedule, rent},
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
-    solana_sysvar::{Sysvar, SysvarSerialize},
+    solana_sysvar::Sysvar,
     solana_transaction::Transaction,
 };
 
@@ -264,13 +267,13 @@ fn from_account_info_process_instruction(
     let epoch_schedule_info = next_account_info(account_info_iter)?;
     let rent_info = next_account_info(account_info_iter)?;
 
-    let clock = Clock::from_account_info(clock_info)?;
+    let clock = from_account_info::<Clock>(clock_info)?;
     assert_eq!(42, clock.slot);
 
-    let epoch_schedule = EpochSchedule::from_account_info(epoch_schedule_info)?;
+    let epoch_schedule = from_account_info::<EpochSchedule>(epoch_schedule_info)?;
     assert_eq!(epoch_schedule, EpochSchedule::default());
 
-    let rent = Rent::from_account_info(rent_info)?;
+    let rent = from_account_info::<Rent>(rent_info)?;
     assert_eq!(
         rent.lamports_per_byte,
         solana_rent::DEFAULT_LAMPORTS_PER_BYTE

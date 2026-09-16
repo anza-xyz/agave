@@ -1,12 +1,12 @@
 #[cfg(test)]
-use solana_perf::packet::PacketRef;
+use {crate::banking_stage::packet_bytes, solana_perf::packet::PacketRef};
 use {
-    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     solana_bincode::limited_deserialize,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
     solana_vote_program::vote_instruction::VoteInstruction,
     thiserror::Error,
@@ -24,7 +24,7 @@ pub struct LatestValidatorVote {
     vote_source: VoteSource,
     vote_pubkey: Pubkey,
     authorized_voter_pubkey: Pubkey,
-    vote: Option<SanitizedTransactionView<SharedBytes>>,
+    vote: Option<SanitizedTransactionView<Bytes>>,
     slot: Slot,
     hash: Hash,
     timestamp: Option<UnixTimestamp>,
@@ -32,7 +32,7 @@ pub struct LatestValidatorVote {
 
 impl LatestValidatorVote {
     pub fn new_from_view(
-        vote: SanitizedTransactionView<SharedBytes>,
+        vote: SanitizedTransactionView<Bytes>,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
@@ -106,8 +106,9 @@ impl LatestValidatorVote {
             return Err(DeserializedPacketError::VoteTransaction);
         }
 
+        let packet_data = packet.data(..).unwrap();
         let vote = SanitizedTransactionView::try_new_sanitized(
-            std::sync::Arc::new(packet.data(..).unwrap().to_vec()),
+            packet_bytes(packet, packet_data),
             &solana_runtime_transaction::sanitize_config::sanitize_config(),
         )
         .unwrap();
@@ -143,7 +144,7 @@ impl LatestValidatorVote {
         self.vote.is_none()
     }
 
-    pub fn take_vote(&mut self) -> Option<SanitizedTransactionView<SharedBytes>> {
+    pub fn take_vote(&mut self) -> Option<SanitizedTransactionView<Bytes>> {
         self.vote.take()
     }
 }

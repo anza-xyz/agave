@@ -4,7 +4,7 @@ use {
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
             AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
-            ScanAccountStorageData, ScanStorageResult, UpdateIndexThreadSelection,
+            ScanAccountStorageData, ScanStorageResult,
         },
         accounts_index::IndexKey,
         accounts_scan::{ScanConfig, ScanError, ScanResult},
@@ -111,7 +111,11 @@ impl Accounts {
         loaded_addresses: &mut LoadedAddresses,
     ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
-            .load_with_fixed_root(ancestors, address_table_lookup.account_key)
+            .load_with_fixed_root(
+                ancestors,
+                address_table_lookup.account_key,
+                None::<fn(_, &_, _) -> _>,
+            )
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
 
@@ -165,12 +169,14 @@ impl Accounts {
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
+        load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
         self.accounts_db.load(
             ancestors,
             pubkey,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::True,
+            load_filter,
         )
     }
 
@@ -186,6 +192,7 @@ impl Accounts {
             pubkey,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::False,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 
@@ -199,6 +206,7 @@ impl Accounts {
             pubkey,
             LoadHint::Unspecified,
             PopulateReadCache::True,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 
@@ -493,56 +501,11 @@ impl Accounts {
     }
 
     /// Store `accounts` into the DB
-    ///
-    /// This version updates the accounts index sequentially,
-    /// using the same thread that calls the fn itself.
-    pub fn store_accounts_seq<'a>(
+    pub fn store_accounts<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: &Ancestors,
-    ) {
-        self._store_accounts(
-            accounts,
-            bank_id,
-            transactions,
-            UpdateIndexThreadSelection::Inline,
-            ancestors,
-        );
-    }
-
-    /// Store `accounts` into the DB
-    ///
-    /// This version updates the accounts index in parallel,
-    /// using the foreground AccountsDb thread pool.
-    pub fn store_accounts_par<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        bank_id: BankId,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: &Ancestors,
-    ) {
-        self._store_accounts(
-            accounts,
-            bank_id,
-            transactions,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-            ancestors,
-        );
-    }
-
-    /// Store `accounts` into the DB
-    ///
-    /// This version is a private impl, performing the common additional tasks
-    /// when storing accounts that fall outside AccountsDb itself.
-    /// E.g. geyser account update notifications.
-    fn _store_accounts<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        bank_id: BankId,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        update_index_thread_selection: UpdateIndexThreadSelection,
         ancestors: &Ancestors,
     ) {
         let accounts_db = &self.accounts_db;
@@ -568,7 +531,7 @@ impl Accounts {
             }
         }
 
-        accounts_db.store_accounts_unfrozen(accounts, update_index_thread_selection, ancestors);
+        accounts_db.store_accounts_unfrozen(accounts, ancestors);
     }
 
     /// Add a slot to root.  Root slots cannot be purged
@@ -636,7 +599,7 @@ mod tests {
     #[test]
     fn test_load_lookup_table_addresses_account_not_found() {
         let ancestors = Ancestors::from(vec![0]);
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let invalid_table_key = Pubkey::new_unique();
@@ -659,7 +622,7 @@ mod tests {
     #[test]
     fn test_load_lookup_table_addresses_invalid_account_owner() {
         let ancestors = Ancestors::from(vec![0]);
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let invalid_table_key = Pubkey::new_unique();
@@ -687,7 +650,7 @@ mod tests {
     #[test]
     fn test_load_lookup_table_addresses_invalid_account_data() {
         let ancestors = Ancestors::from(vec![0]);
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let invalid_table_key = Pubkey::new_unique();
@@ -715,7 +678,7 @@ mod tests {
     #[test]
     fn test_load_lookup_table_addresses() {
         let ancestors = Ancestors::from(vec![1, 0]);
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let table_key = Pubkey::new_unique();
@@ -760,7 +723,7 @@ mod tests {
 
     #[test]
     fn test_load_by_program_slot() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         // Load accounts owned by various programs into AccountsDb
@@ -785,7 +748,7 @@ mod tests {
 
     #[test]
     fn test_lock_accounts_with_duplicates() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let keypair = Keypair::new();
@@ -806,7 +769,7 @@ mod tests {
 
     #[test]
     fn test_lock_accounts_with_too_many_accounts() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let keypair = Keypair::new();
@@ -875,7 +838,7 @@ mod tests {
         let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
         let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
@@ -990,7 +953,7 @@ mod tests {
         let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
         let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
@@ -1073,7 +1036,7 @@ mod tests {
         let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
         let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
@@ -1145,7 +1108,7 @@ mod tests {
         let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
         let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
@@ -1224,7 +1187,7 @@ mod tests {
     fn test_accounts_locks_intrabatch_conflicts() {
         let pubkey = Pubkey::new_unique();
         let account_data = AccountSharedData::new(1, 0, &Pubkey::default());
-        let accounts_db = Arc::new(AccountsDb::new_single_for_tests());
+        let accounts_db = Arc::new(AccountsDb::default_for_tests());
         accounts_db.store_for_tests((
             0,
             [
@@ -1297,7 +1260,7 @@ mod tests {
 
     #[test]
     fn huge_clean() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();
         let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
@@ -1314,7 +1277,7 @@ mod tests {
 
     #[test]
     fn test_load_largest_accounts() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         /* This test assumes pubkey0 < pubkey1 < pubkey2.

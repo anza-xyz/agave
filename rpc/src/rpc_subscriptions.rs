@@ -1987,8 +1987,8 @@ pub(crate) mod tests {
         let mut last_notified_confirmed_slot: Slot = 0;
         let prioritization_fee_cache_inner: Option<Arc<PrioritizationFeeCache>> = None;
         let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
-        // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is unfrozen, we expect
-        // to see transaction for alice and bob to be notified in order.
+        // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is unfrozen.
+        // Notifications are deferred until bank3 is frozen.
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(3, bank3_pending_hash),
@@ -2031,20 +2031,6 @@ pub(crate) mod tests {
             })
         };
 
-        let response = receiver.recv();
-        let expected = build_expected_resp(1, 1, &alice.pubkey().to_string(), 0);
-        assert_eq!(
-            expected,
-            serde_json::from_str::<serde_json::Value>(&response).unwrap(),
-        );
-
-        let response = receiver.recv();
-        let expected = build_expected_resp(2, 2, &bob.pubkey().to_string(), 0);
-        assert_eq!(
-            expected,
-            serde_json::from_str::<serde_json::Value>(&response).unwrap(),
-        );
-
         bank3.freeze();
         assert!(pending_optimistically_confirmed_banks.remove(&(3, bank3_pending_hash)));
         pending_optimistically_confirmed_banks.insert((3, bank3.hash()));
@@ -2063,6 +2049,20 @@ pub(crate) mod tests {
             &None,
             prioritization_fee_cache,
             &None, // no dependency tracker
+        );
+
+        let response = receiver.recv();
+        let expected = build_expected_resp(1, 1, &alice.pubkey().to_string(), 0);
+        assert_eq!(
+            expected,
+            serde_json::from_str::<serde_json::Value>(&response).unwrap(),
+        );
+
+        let response = receiver.recv();
+        let expected = build_expected_resp(2, 2, &bob.pubkey().to_string(), 0);
+        assert_eq!(
+            expected,
+            serde_json::from_str::<serde_json::Value>(&response).unwrap(),
         );
 
         let response = receiver.recv();
