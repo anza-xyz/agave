@@ -134,8 +134,14 @@ impl StakesCache {
                 };
             };
         } else if stake_program::check_id(owner) {
-            match StakeAccount::try_from(create_account_shared_data(account)) {
-                Ok(stake_account) => {
+            let is_uninitialized = account.data().get(..4).is_none_or(|tag| tag == [0; 4]);
+            let stake_account = if is_uninitialized {
+                None
+            } else {
+                StakeAccount::try_from(create_account_shared_data(account)).ok()
+            };
+            match stake_account {
+                Some(stake_account) => {
                     let mut stakes = self.0.write().unwrap();
                     stakes.upsert_stake_delegation(
                         *pubkey,
@@ -143,7 +149,7 @@ impl StakesCache {
                         new_rate_activation_epoch,
                     );
                 }
-                Err(_) => {
+                None => {
                     let mut stakes = self.0.write().unwrap();
                     stakes.remove_stake_delegation(pubkey, new_rate_activation_epoch);
                 }
