@@ -187,7 +187,7 @@ use {
         error_object::RpcErrorObject,
         response::{
             Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
+            RpcReceivedTransaction, RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
         },
     },
     solana_signature::Signature,
@@ -448,6 +448,33 @@ impl PubsubClient {
     /// [`voteSubscribe`]: https://solana.com/docs/rpc/websocket#votesubscribe
     pub async fn vote_subscribe(&self) -> SubscribeResult<'_, RpcVote> {
         self.subscribe("vote", json!([])).await
+    }
+
+    /// Subscribe to transactions accepted on the `sendTransaction` path.
+    ///
+    /// Receives messages of type [`RpcReceivedTransaction`] when the node accepts a
+    /// transaction submitted via `sendTransaction`, at the moment it is admitted for
+    /// forwarding and before any leader has seen it.
+    ///
+    /// No execution has occurred at this point, so the payload carries no status, logs or
+    /// balances, and a transaction reported here may never land. It is also unverified
+    /// intent: when [`RpcReceivedTransaction::preflight_skipped`] is true the
+    /// transaction's signatures were not checked, so do not treat the payload as valid.
+    ///
+    /// The node reports each admission once. Periodic re-forwarding does not re-notify,
+    /// but a client resubmitting the same signature is a fresh admission and is reported
+    /// again, so dedupe by signature.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`transactionReceivedSubscribe`] RPC
+    /// method.
+    ///
+    /// [`transactionReceivedSubscribe`]: https://solana.com/docs/rpc/websocket
+    pub async fn transaction_received_subscribe(
+        &self,
+    ) -> SubscribeResult<'_, RpcReceivedTransaction> {
+        self.subscribe("transactionReceived", json!([])).await
     }
 
     /// Subscribe to root events.
