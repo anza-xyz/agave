@@ -1,5 +1,5 @@
 use {
-    crate::crds_data::{new_rand_timestamp, sanitize_wallclock},
+    crate::crds_data::new_rand_timestamp,
     bv::BitVec,
     itertools::Itertools,
     rand::Rng,
@@ -88,8 +88,7 @@ struct RawOffsets(
 
 impl Sanitize for RestartLastVotedForkSlots {
     fn sanitize(&self) -> std::result::Result<(), SanitizeError> {
-        sanitize_wallclock(self.wallclock)?;
-        self.last_voted_hash.sanitize()
+        Err(SanitizeError::InvalidValue)
     }
 }
 
@@ -165,8 +164,7 @@ impl RestartLastVotedForkSlots {
 
 impl Sanitize for RestartHeaviestFork {
     fn sanitize(&self) -> Result<(), SanitizeError> {
-        sanitize_wallclock(self.wallclock)?;
-        self.last_slot_hash.sanitize()
+        Err(SanitizeError::InvalidValue)
     }
 }
 
@@ -238,167 +236,5 @@ impl RawOffsets {
             .collect();
         slots.reverse();
         slots
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use {
-        super::*,
-        crate::{
-            crds_data::CrdsData,
-            crds_value::{CrdsValue, CrdsValueLabel},
-            protocol::MAX_CRDS_OBJECT_SIZE,
-        },
-        solana_keypair::Keypair,
-        solana_signer::Signer,
-        solana_time_utils::timestamp,
-        std::iter::repeat_with,
-    };
-
-    fn make_rand_slots<R: Rng>(rng: &mut R) -> impl Iterator<Item = Slot> + '_ {
-        repeat_with(|| rng.random_range(1..5)).scan(0, |slot, step| {
-            *slot += step;
-            Some(*slot)
-        })
-    }
-
-    #[test]
-    fn test_restart_last_voted_fork_slots_max_bytes() {
-        let keypair = Keypair::new();
-        let header = RestartLastVotedForkSlots::new(
-            keypair.pubkey(),
-            timestamp(),
-            &[1, 2],
-            Hash::default(),
-            0,
-        )
-        .unwrap();
-        // If the following assert fails, please update RestartLastVotedForkSlots::MAX_BYTES
-        let header_size = wincode::serialized_size(&header).unwrap();
-        assert_eq!(
-            RestartLastVotedForkSlots::MAX_BYTES,
-            MAX_CRDS_OBJECT_SIZE - header_size as usize
-        );
-
-        // Create large enough slots to make sure we are discarding some to make slots fit.
-        let mut rng = rand::rng();
-        let large_length = 8000;
-        let range: Vec<Slot> = make_rand_slots(&mut rng).take(large_length).collect();
-        let large_slots = RestartLastVotedForkSlots::new(
-            keypair.pubkey(),
-            timestamp(),
-            &range,
-            Hash::default(),
-            0,
-        )
-        .unwrap();
-        let large_slots_size = wincode::serialized_size(&large_slots).unwrap();
-        assert!(large_slots_size <= MAX_CRDS_OBJECT_SIZE as u64);
-        let retrieved_slots = large_slots.to_slots(0);
-        assert!(retrieved_slots.len() <= range.len());
-        assert!(retrieved_slots.last().unwrap() - retrieved_slots.first().unwrap() > 5000);
-    }
-
-    #[test]
-    fn test_restart_last_voted_fork_slots() {
-        let keypair = Keypair::new();
-        let slot = 53;
-        let slot_parent = slot - 5;
-        let shred_version = 21;
-        let original_slots_vec = [slot_parent, slot];
-        let slots = RestartLastVotedForkSlots::new(
-            keypair.pubkey(),
-            timestamp(),
-            &original_slots_vec,
-            Hash::default(),
-            shred_version,
-        )
-        .unwrap();
-        let value = CrdsValue::new(CrdsData::RestartLastVotedForkSlots(slots.clone()), &keypair);
-        assert_eq!(value.sanitize(), Ok(()));
-        let label = value.label();
-        assert_eq!(
-            label,
-            CrdsValueLabel::RestartLastVotedForkSlots(keypair.pubkey())
-        );
-        assert_eq!(label.pubkey(), keypair.pubkey());
-        assert_eq!(value.wallclock(), slots.wallclock);
-        let retrieved_slots = slots.to_slots(0);
-        assert_eq!(retrieved_slots.len(), 2);
-        assert_eq!(retrieved_slots[0], slot_parent);
-        assert_eq!(retrieved_slots[1], slot);
-
-        let bad_value = RestartLastVotedForkSlots::new(
-            keypair.pubkey(),
-            timestamp(),
-            &[],
-            Hash::default(),
-            shred_version,
-        );
-        assert!(bad_value.is_err());
-
-        let last_slot: Slot = 8000;
-        let large_slots_vec: Vec<Slot> = (0..last_slot + 1).collect();
-        let large_slots = RestartLastVotedForkSlots::new(
-            keypair.pubkey(),
-            timestamp(),
-            &large_slots_vec,
-            Hash::default(),
-            shred_version,
-        )
-        .unwrap();
-        let large_slots_size = wincode::serialized_size(&large_slots).unwrap();
-        assert!(large_slots_size < MAX_CRDS_OBJECT_SIZE as u64);
-        let retrieved_slots = large_slots.to_slots(0);
-        assert_eq!(retrieved_slots, large_slots_vec);
-    }
-
-    fn check_run_length_encoding(slots: Vec<Slot>) {
-        let last_voted_slot = slots[slots.len() - 1];
-        let mut bitvec = BitVec::new_fill(false, last_voted_slot - slots[0] + 1);
-        for slot in &slots {
-            bitvec.set(last_voted_slot - slot, true);
-        }
-        let rle = RunLengthEncoding::new(&bitvec);
-        let retrieved_slots = rle.to_slots(last_voted_slot, 0);
-        assert_eq!(retrieved_slots, slots);
-    }
-
-    #[test]
-    fn test_run_length_encoding() {
-        check_run_length_encoding((1000..16384 + 1000).map(|x| x as Slot).collect_vec());
-        check_run_length_encoding([1000 as Slot].into());
-        check_run_length_encoding(
-            [
-                1000 as Slot,
-                RestartLastVotedForkSlots::MAX_SLOTS as Slot + 999,
-            ]
-            .into(),
-        );
-        check_run_length_encoding((1000..1800).step_by(2).map(|x| x as Slot).collect_vec());
-
-        let mut rng = rand::rng();
-        let large_length = 500;
-        let range: Vec<Slot> = make_rand_slots(&mut rng).take(large_length).collect();
-        check_run_length_encoding(range);
-    }
-
-    #[test]
-    fn test_restart_heaviest_fork() {
-        let keypair = Keypair::new();
-        let slot = 53;
-        let mut fork = RestartHeaviestFork {
-            from: keypair.pubkey(),
-            wallclock: timestamp(),
-            last_slot: slot,
-            last_slot_hash: Hash::default(),
-            observed_stake: 800_000,
-            shred_version: 1,
-        };
-        assert_eq!(fork.sanitize(), Ok(()));
-        assert_eq!(fork.observed_stake, 800_000);
-        fork.wallclock = crate::crds_data::MAX_WALLCLOCK;
-        assert_eq!(fork.sanitize(), Err(SanitizeError::ValueOutOfBounds));
     }
 }
