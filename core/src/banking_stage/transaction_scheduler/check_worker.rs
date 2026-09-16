@@ -375,23 +375,30 @@ pub(crate) mod external {
                     continue;
                 }
 
+                // txs and max_ages include successfully translated transactions even
+                // when their scheduling details fail. Consume those entries before
+                // skipping, or a later response will use an earlier transaction's data.
+                let resolved_transaction = parsing_and_resolve_results.is_ok().then(|| {
+                    let transaction = resolved_transaction_iter.next().expect(
+                        "resolved_transaction_iter must contain an element for each successfully \
+                         translated transaction",
+                    );
+                    let max_age = max_age_iter.next().expect(
+                        "max_age_iter must contain an element for each successfully translated \
+                         transaction",
+                    );
+                    (transaction, max_age)
+                });
+
                 let response = &mut responses[transaction_index];
                 if response.scheduling_details_flags & scheduling_details_flags::FAILED != 0 {
                     continue;
                 }
                 response.resolve_flags |= resolve_flags::PERFORMED;
-                if parsing_and_resolve_results.is_err() {
+                let Some((transaction, max_age)) = resolved_transaction else {
                     response.resolve_flags |= resolve_flags::FAILED;
                     continue;
-                }
-
-                let transaction = resolved_transaction_iter.next().expect(
-                    "resolved_transaction_iter iterator must contain element for each sent parsed \
-                     transaction",
-                );
-                let max_age = max_age_iter.next().expect(
-                    "max_age_iter iterator must contain element for each sent parsed transaction",
-                );
+                };
 
                 // Address table lookups are sanitized to contain at least one account, so there
                 // are loaded keys exactly when account keys outnumber static account keys.
