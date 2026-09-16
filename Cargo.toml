@@ -333,7 +333,7 @@ smallvec = { version = "1.16.0", default-features = false, features = ["union"] 
 smpl_jwt = "0.9.0"
 socket2 = "0.6.5"
 soketto = "0.8"
-solana-account = "4.7.0"
+solana-account = "5.0.0"
 solana-account-decoder = { path = "account-decoder", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.1"
