@@ -46,7 +46,7 @@ tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { workspace = true, features = ["auto-color"] }
 solana-net-utils = { path = ".", features = ["agave-unstable-api"] }
 
 [lints]

@@ -55,7 +55,7 @@ tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 chrono = { workspace = true, features = ["now"] }

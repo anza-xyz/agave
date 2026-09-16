@@ -195,6 +195,17 @@ check_dcou() {
     grep -q -F "true"
 }
 
+# env_logger's color layer walks every record through an ANSI state machine
+# while holding the stderr lock, even when it resolves to "never", so released
+# binaries must not link it. Feature unification spans the whole workspace, so
+# any member enabling agave-logger/auto-color on a normal dependency pulls it
+# in, even one nothing else depends on.
+check_no_color() {
+  RUSTC_BOOTSTRAP=1 \
+    cargo_build -Z unstable-options --unit-graph "$@" | \
+    jq -e 'any(.units[]; .target.name == "anstream") | not' >/dev/null
+}
+
 # Some binaries (like the notable agave-ledger-tool) need to activate
 # the dev-context-only-utils feature flag to build.
 # Build those binaries separately to avoid the unwanted feature unification.
@@ -210,6 +221,11 @@ check_dcou() {
   # Note that `cargo tree` can't be used, because it doesn't support `--bin`.
   if check_dcou "${binArgs[@]}" --workspace; then
      echo 'dcou feature activation is incorrectly activated!'
+     exit 1
+  fi
+
+  if ! check_no_color "${binArgs[@]}" --workspace; then
+     echo 'env_logger color layer is linked into production binaries!'
      exit 1
   fi
 

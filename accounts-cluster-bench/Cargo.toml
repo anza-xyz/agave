@@ -51,6 +51,7 @@ spl-token-interface = { workspace = true }
 jemallocator = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true, features = ["auto-color"] }
 solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api"] }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-context-only-utils"] }
