@@ -1,7 +1,7 @@
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     bincode::serialize,
-    criterion::{Criterion, criterion_group, criterion_main},
+    criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     solana_account::{Account, AccountSharedData, WritableAccount},
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
@@ -292,15 +292,6 @@ impl BenchAuthorize {
             instruction_accounts,
         }
     }
-
-    fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchInitializeAccount {
@@ -356,14 +347,6 @@ impl BenchInitializeAccount {
             instruction_accounts,
         }
     }
-    pub fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchVote {
@@ -400,15 +383,6 @@ impl BenchVote {
             transaction_accounts,
             instruction_accounts,
         }
-    }
-
-    pub fn run(&self) {
-        let _accounts = process_deprecated_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
     }
 }
 
@@ -451,16 +425,6 @@ impl BenchWithdraw {
             transaction_accounts,
             instruction_accounts,
         }
-    }
-
-    fn run(&self) {
-        // should pass, withdraw using authorized_withdrawer to authorized_withdrawer's account
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
     }
 }
 
@@ -509,15 +473,6 @@ impl BenchUpdateValidatorIdentity {
             instruction_accounts,
         }
     }
-
-    pub fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchUpdateCommission {
@@ -564,14 +519,6 @@ impl BenchUpdateCommission {
             instruction_accounts,
         }
     }
-    fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchVoteSwitch {
@@ -609,14 +556,6 @@ impl BenchVoteSwitch {
             transaction_accounts,
             instruction_accounts,
         }
-    }
-    fn run(&self) {
-        let _accounts = process_deprecated_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
     }
 }
 
@@ -688,14 +627,6 @@ impl BenchAuthorizeChecked {
             instruction_accounts,
         }
     }
-    fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchUpdateVoteState {
@@ -740,15 +671,6 @@ impl BenchUpdateVoteState {
             transaction_accounts,
             instruction_accounts,
         }
-    }
-
-    fn run(&self) {
-        let _accounts = process_deprecated_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
     }
 }
 
@@ -836,14 +758,6 @@ impl BenchAuthorizeWithSeed {
             transaction_accounts,
             instruction_accounts,
         }
-    }
-    fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
     }
 }
 
@@ -940,14 +854,6 @@ impl BenchAuthorizeCheckedWithSeed {
             instruction_accounts,
         }
     }
-    fn run(&self) {
-        let _accounts = process_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 struct BenchCompactUpdateVoteState {
@@ -1002,14 +908,6 @@ impl BenchCompactUpdateVoteState {
             transaction_accounts,
             instruction_accounts,
         }
-    }
-    fn run(&self) {
-        let _accounts = process_deprecated_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
     }
 }
 
@@ -1066,125 +964,374 @@ impl BenchTowerSync {
             instruction_accounts,
         }
     }
-    fn run(&self) {
-        let _accounts = process_deprecated_instruction(
-            &self.instruction_data,
-            self.transaction_accounts.clone(),
-            self.instruction_accounts.clone(),
-            Ok(()),
-        );
-    }
 }
 
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_authorize(c: &mut Criterion) {
     let test_setup = BenchAuthorize::new();
     c.bench_function("vote_instruction_authorize", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_vote(c: &mut Criterion) {
     let test_setup = BenchVote::new();
     c.bench_function("vote_instruction_vote", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_withdraw(c: &mut Criterion) {
     let test_setup = BenchWithdraw::new();
     c.bench_function("vote_instruction_withdraw", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            // should pass, withdraw using authorized_withdrawer to authorized_withdrawer's account
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_update_validator_identity(c: &mut Criterion) {
     let test_setup = BenchUpdateValidatorIdentity::new();
     c.bench_function("vote_update_validator_identity", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_update_commission(c: &mut Criterion) {
     let test_setup = BenchUpdateCommission::new();
     c.bench_function("vote_update_commission", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_vote_switch(c: &mut Criterion) {
     let test_setup = BenchVoteSwitch::new();
     c.bench_function("vote_vote_switch", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_authorize_checked(c: &mut Criterion) {
     let test_setup = BenchAuthorizeChecked::new();
     c.bench_function("vote_authorize_checked", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_update_vote_state(c: &mut Criterion) {
     let test_setup = BenchUpdateVoteState::new(false);
     c.bench_function("vote_update_vote_state", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_update_vote_state_switch(c: &mut Criterion) {
     let test_setup = BenchUpdateVoteState::new(true);
     c.bench_function("vote_update_vote_state_switch", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_authorize_with_seed(c: &mut Criterion) {
     let test_setup = BenchAuthorizeWithSeed::new();
     c.bench_function("vote_authorize_with_seed", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_authorize_checked_with_seed(c: &mut Criterion) {
     let test_setup = BenchAuthorizeCheckedWithSeed::new();
     c.bench_function("vote_authorize_checked_with_seed", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_compact_update_vote_state(c: &mut Criterion) {
     let test_setup = BenchCompactUpdateVoteState::new(false);
     c.bench_function("vote_compact_update_vote_state", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_compact_update_vote_state_switch(c: &mut Criterion) {
     let test_setup = BenchCompactUpdateVoteState::new(true);
     c.bench_function("vote_compact_update_vote_state_switch", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_tower_sync(c: &mut Criterion) {
     let test_setup = BenchTowerSync::new(false);
     c.bench_function("vote_tower_sync", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_tower_sync_switch(c: &mut Criterion) {
     let test_setup = BenchTowerSync::new(true);
     c.bench_function("vote_tower_sync_switch", |bencher| {
-        bencher.iter(|| test_setup.run())
+        bencher.iter_batched(
+            || {
+                (
+                    test_setup.transaction_accounts.clone(),
+                    test_setup.instruction_accounts.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_accounts)| {
+                process_deprecated_instruction(
+                    &test_setup.instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    Ok(()),
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
