@@ -146,7 +146,6 @@ impl AggregateCommitmentService {
                 }
                 recv(ag_receiver) -> msg => {
                     let data = msg?;
-                    let data = ag_receiver.try_iter().last().unwrap_or(data);
 
                     if data.commitment_type == AlpenglowCommitmentType::Rooted
                         && let (Some(dependency_tracker), Some(dependency_work)) =
@@ -367,12 +366,15 @@ mod tests {
     }
 
     #[test]
-    fn test_alpenglow_root_waits_for_dependency() {
+    fn test_alpenglow_commitment_updates_wait_and_preserve_order() {
         let exit = Arc::new(AtomicBool::new(false));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests()));
         let dependency_tracker = Arc::new(DependencyTracker::default());
-        let dependency_work = dependency_tracker.declare_work();
-        let rooted_slot = 42;
+        let first_dependency_work = dependency_tracker.declare_work();
+        let second_dependency_work = dependency_tracker.declare_work();
+        let first_rooted_slot = 42;
+        let second_rooted_slot = 43;
+        let notarized_slot = 44;
 
         let (tower_sender, alpenglow_sender, commitment_service) = AggregateCommitmentService::new(
             exit.clone(),
@@ -383,8 +385,8 @@ mod tests {
         alpenglow_sender
             .send(AlpenglowCommitmentAggregationData {
                 commitment_type: AlpenglowCommitmentType::Rooted,
-                slot: rooted_slot,
-                dependency_work: Some(dependency_work),
+                slot: first_rooted_slot,
+                dependency_work: Some(first_dependency_work),
             })
             .unwrap();
 
@@ -396,15 +398,37 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
         let root_before_dependency = block_commitment_cache.read().unwrap().root();
 
-        dependency_tracker.mark_work_processed(dependency_work);
+        alpenglow_sender
+            .send(AlpenglowCommitmentAggregationData {
+                commitment_type: AlpenglowCommitmentType::Rooted,
+                slot: second_rooted_slot,
+                dependency_work: Some(second_dependency_work),
+            })
+            .unwrap();
+        alpenglow_sender
+            .send(AlpenglowCommitmentAggregationData {
+                commitment_type: AlpenglowCommitmentType::Notarize,
+                slot: notarized_slot,
+                dependency_work: None,
+            })
+            .unwrap();
+
+        dependency_tracker.mark_work_processed(second_dependency_work);
+        dependency_tracker.mark_work_processed(first_dependency_work);
 
         let update_deadline = Instant::now() + Duration::from_secs(5);
-        while block_commitment_cache.read().unwrap().root() != rooted_slot
-            && Instant::now() < update_deadline
-        {
+        while {
+            let commitment_cache = block_commitment_cache.read().unwrap();
+            (commitment_cache.root() != second_rooted_slot
+                || commitment_cache.slot() != notarized_slot)
+                && Instant::now() < update_deadline
+        } {
             thread::yield_now();
         }
-        let root_after_dependency = block_commitment_cache.read().unwrap().root();
+        let commitment_cache = block_commitment_cache.read().unwrap();
+        let root_after_dependency = commitment_cache.root();
+        let slot_after_dependency = commitment_cache.slot();
+        drop(commitment_cache);
 
         exit.store(true, Ordering::Relaxed);
         drop(tower_sender);
@@ -416,7 +440,8 @@ mod tests {
             "commitment service did not receive the message"
         );
         assert_eq!(root_before_dependency, 0);
-        assert_eq!(root_after_dependency, rooted_slot);
+        assert_eq!(root_after_dependency, second_rooted_slot);
+        assert_eq!(slot_after_dependency, notarized_slot);
     }
 
     #[test]
