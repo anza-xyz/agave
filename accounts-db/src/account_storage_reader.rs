@@ -1,7 +1,7 @@
 use {
     crate::{
-        account_info::Offset, account_storage_entry::AccountStorageEntry,
-        accounts_file::OpenFileForArchive,
+        account_storage_entry::AccountStorageEntry,
+        accounts_file::{AccountsFileReaderForArchiving, OpenFileForArchive},
     },
     agave_fs::{
         buffered_reader::{self, FileBufRead},
@@ -79,10 +79,7 @@ pub enum TombstonesFilter {
 /// via `set_file` (typically using a file opened with [`open_storage_files`])
 /// before constructing the reader.
 pub struct AccountStorageReader<'r, R> {
-    sorted_excluded_accounts: Vec<(Offset, usize)>,
-    reader: &'r mut R,
-    num_alive_bytes: usize,
-    num_total_bytes: usize,
+    reader: AccountsFileReaderForArchiving<'r, R>,
 }
 
 impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'r, R> {
@@ -97,47 +94,26 @@ impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'r, R> {
         tombstones_filter: TombstonesFilter,
         file_reader: &'r mut R,
     ) -> io::Result<Self> {
-        let num_total_bytes = storage.accounts.len();
-        let mut num_alive_bytes = num_total_bytes - storage.get_obsolete_bytes(snapshot_slot);
-
-        let mut sorted_excluded_accounts: Vec<_> = storage
+        let mut excluded_accounts: Vec<_> = storage
             .obsolete_accounts_read_lock()
             .filter_obsolete_accounts(snapshot_slot)
             .collect();
 
-        // Convert the length to the size
-        sorted_excluded_accounts
-            .iter_mut()
-            .for_each(|(_offset, len)| {
-                *len = storage.accounts.calculate_stored_size(*len);
-            });
-
         if tombstones_filter == TombstonesFilter::Exclude {
-            // Tombstones are zero-lamport accounts, which store no data, so every
-            // tombstone record has the fixed stored size of a data-less account.
-            let tombstone_stored_size = storage.accounts.calculate_stored_size(0);
             let tombstone_offsets = storage.tombstone_offsets_read_lock();
-            num_alive_bytes -= tombstone_offsets.len() * tombstone_stored_size;
-            sorted_excluded_accounts.extend(
-                tombstone_offsets
-                    .iter()
-                    .map(|offset| (*offset, tombstone_stored_size)),
-            );
+            // Tombstones are zero-lamport accounts, which store no data.
+            excluded_accounts.extend(tombstone_offsets.iter().map(|offset| (*offset, 0)));
         }
 
-        sorted_excluded_accounts
-            .sort_unstable_by(|(a_offset, _), (b_offset, _)| b_offset.cmp(a_offset));
-
         Ok(Self {
-            sorted_excluded_accounts,
-            reader: file_reader,
-            num_alive_bytes,
-            num_total_bytes,
+            reader: storage
+                .accounts
+                .reader_for_archiving(excluded_accounts, file_reader),
         })
     }
 
     pub fn len(&self) -> usize {
-        self.num_alive_bytes
+        self.reader.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -147,43 +123,7 @@ impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'r, R> {
 
 impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut total_read = 0;
-        let buf_len = buf.len();
-
-        while total_read < buf_len {
-            let next_excluded_account = self.sorted_excluded_accounts.last();
-            let file_offset = self.reader.get_file_offset();
-            if let Some(&(excluded_start, excluded_size)) = next_excluded_account
-                && file_offset == excluded_start
-            {
-                let skip_len = excluded_size.min(self.num_total_bytes - excluded_start as usize);
-                self.reader.consume_or_skip(skip_len);
-                self.sorted_excluded_accounts.pop();
-                continue;
-            }
-
-            // Cannot read beyond the end of the buffer
-            let bytes_left_in_buffer = buf_len.saturating_sub(total_read);
-
-            // Cannot read beyond the next excluded account or the end of the file
-            let bytes_to_read_from_file = if let Some((excluded_start, _)) = next_excluded_account {
-                excluded_start.saturating_sub(file_offset) as usize
-            } else {
-                self.num_total_bytes.saturating_sub(file_offset as usize)
-            };
-
-            let bytes_to_read = bytes_left_in_buffer.min(bytes_to_read_from_file);
-
-            let read_size = self.reader.read(&mut buf[total_read..][..bytes_to_read])?;
-
-            if read_size == 0 {
-                break; // EOF
-            }
-
-            total_read += read_size;
-        }
-
-        Ok(total_read)
+        self.reader.read(buf)
     }
 }
 
