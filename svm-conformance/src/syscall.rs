@@ -29,7 +29,7 @@ use {
         serialization::{SerializedParameters, push_and_serialize_parameters},
         setup::{
             InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
-            program_runtime_environments, sysvar_cache_from_accounts,
+            program_runtime_environment, sysvar_cache_from_accounts,
         },
     },
     std::{ffi::c_int, sync::Arc},
@@ -60,10 +60,8 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
     let program_id = instr_context.instruction.program_id;
     let loader_key = program_loader_key(&instr_context.accounts, &program_id);
 
-    let program_runtime_environments = program_runtime_environments(&feature_set, &compute_budget);
-    let deployment_environment = program_runtime_environments.get_env_for_deployment();
-    let execution_environment = program_runtime_environments.get_env_for_execution();
-    let config = execution_environment.get_config().clone();
+    let program_runtime_environment = program_runtime_environment(&feature_set, &compute_budget);
+    let config = program_runtime_environment.get_config().clone();
 
     // Only build out the program cache if the syscall is CPI.
     let mut program_cache = if contains_cpi(&syscall_invocation) {
@@ -74,7 +72,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         let mut cache = new_program_cache_with_builtins(slot);
         fill_program_cache_from_accounts(
             &mut cache,
-            deployment_environment,
+            &program_runtime_environment,
             &instr_context.accounts,
             slot,
         );
@@ -97,7 +95,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         &loader_key,
         &sysvar_cache,
         &compute_budget,
-        &program_runtime_environments,
+        &program_runtime_environment,
     );
 
     // Replay any prior return data the fuzzer wants in scope before the syscall.
@@ -151,7 +149,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         .set_memory_context_abi_v1(memory_context)
         .expect("failed to set memory context");
 
-    let syscall_function = execution_environment
+    let syscall_function = program_runtime_environment
         .get_function_registry()
         .lookup_by_name(&syscall_invocation.function_name)
         .expect("syscall function not registered")

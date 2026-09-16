@@ -17,6 +17,7 @@ use {
             create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
             minimum_vote_account_balance_for_vat,
         },
+        loader_utils::{create_buffer_with_elf, create_program_with_elf},
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
         slot_params::{
@@ -13487,5 +13488,92 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
     assert_eq!(
         bank.capitalization(),
         bank.calculate_capitalization_for_tests()
+    );
+}
+
+#[test]
+fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
+    let (genesis_config, mint_keypair) =
+        create_genesis_config_no_tx_fee(1_000_000 * LAMPORTS_PER_SOL);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    let mut feature_set = FeatureSet::all_enabled();
+    feature_set.deactivate(&feature_set::disable_sbpf_v0_execution::id());
+    feature_set.deactivate(&feature_set::reenable_sbpf_v0_execution::id());
+    feature_set.deactivate(&feature_set::disable_sbpf_v0_v1_v2_deployment::id());
+    bank.feature_set = Arc::new(feature_set);
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+    let elf = include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
+    let authority_keypair = Keypair::new();
+    let payer = mint_keypair.insecure_clone();
+
+    // Stand the SBPFv0 program up before the feature is submitted.
+    let program_id = create_program_with_elf(
+        &bank,
+        &bpf_loader_upgradeable::id(),
+        &authority_keypair.pubkey(),
+        elf,
+    );
+
+    let upgrade_with_sbpf_v0_elf = |bank: &Arc<Bank>| {
+        let buffer_address = create_buffer_with_elf(bank, &authority_keypair.pubkey(), elf);
+        let message = Message::new(
+            &[solana_loader_v3_interface::instruction::upgrade(
+                &program_id,
+                &buffer_address,
+                &authority_keypair.pubkey(),
+                &payer.pubkey(),
+            )],
+            Some(&payer.pubkey()),
+        );
+        bank.process_transaction(&Transaction::new(
+            &[&payer, &authority_keypair],
+            message,
+            bank.last_blockhash(),
+        ))
+    };
+
+    // Submit `disable_sbpf_v0_execution` for activation at the next epoch boundary.
+    let feature_account_balance =
+        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+    bank.store_account(
+        &feature_set::disable_sbpf_v0_execution::id(),
+        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+    );
+
+    // Advance to the last slot of the epoch. This is past the start of the
+    // recompilation phase, so the upcoming environment has been prepared.
+    let last_slot_in_epoch = bank.epoch_schedule().get_last_slot_in_epoch(bank.epoch());
+    goto_end_of_slot(bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(
+        &bank_forks,
+        bank,
+        SlotLeader::default(),
+        last_slot_in_epoch,
+    );
+    assert_eq!(bank.epoch(), 0);
+    assert_ne!(
+        bank.transaction_processor
+            .program_runtime_environment_for_epoch(0),
+        bank.transaction_processor
+            .program_runtime_environment_for_epoch(1),
+    );
+
+    // The upgrade verifies against the current epoch's environment, which still
+    // permits SBPFv0.
+    assert_eq!(upgrade_with_sbpf_v0_elf(&bank), Ok(()));
+
+    // Cross the epoch boundary, activating the feature.
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
+    assert_eq!(bank.epoch(), 1);
+
+    // The same upgrade is now rejected by the new environment.
+    assert_eq!(
+        upgrade_with_sbpf_v0_elf(&bank),
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidAccountData
+        ))
     );
 }

@@ -9,7 +9,7 @@ use {
         direct_mapping::direct_mapping_handle_cu_exhaustion,
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         setup::{
-            compute_budget as default_compute_budget, program_runtime_environments,
+            compute_budget as default_compute_budget, program_runtime_environment,
             sysvar_cache_from_accounts,
         },
         txn::{context::TxnContext, harness::execute_txn_with_callback},
@@ -30,17 +30,12 @@ pub fn execute_txn_proto(input: ProtoTxnContext) -> ProtoTxnResult {
         let slot = sysvar_cache.get_clock().unwrap().slot;
         let runtime_features = context.feature_set.runtime_features();
         let compute_budget = default_compute_budget(&runtime_features);
-        let environments = program_runtime_environments(&runtime_features, &compute_budget);
+        let environment = program_runtime_environment(&runtime_features, &compute_budget);
 
         let accounts = context.accounts.clone();
 
         let mut cache = new_program_cache_with_builtins(slot);
-        fill_program_cache_from_accounts(
-            &mut cache,
-            environments.get_env_for_execution(),
-            &accounts,
-            slot,
-        );
+        fill_program_cache_from_accounts(&mut cache, &environment, &accounts, slot);
 
         cache
     };

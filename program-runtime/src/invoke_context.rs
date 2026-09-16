@@ -13,9 +13,7 @@ use {
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
-        },
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
         memory_context::{MemoryContext, MemoryContexts},
         program_cache_entry::ProgramCacheEntryType,
         stable_log,
@@ -164,7 +162,7 @@ pub struct EnvironmentConfig<'a> {
     alpenglow_migration_succeeded: bool,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
-    program_runtime_environments: &'a ProgramRuntimeEnvironments,
+    program_runtime_environment: &'a ProgramRuntimeEnvironment,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
@@ -174,7 +172,7 @@ impl<'a> EnvironmentConfig<'a> {
         alpenglow_migration_succeeded: bool,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
-        program_runtime_environments: &'a ProgramRuntimeEnvironments,
+        program_runtime_environment: &'a ProgramRuntimeEnvironment,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
@@ -183,7 +181,7 @@ impl<'a> EnvironmentConfig<'a> {
             alpenglow_migration_succeeded,
             epoch_stake_callback,
             feature_set,
-            program_runtime_environments,
+            program_runtime_environment,
             sysvar_cache,
         }
     }
@@ -688,12 +686,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 },
             ))?;
         let mut vm = EbpfVm::new(
-            Arc::clone(
-                &**self
-                    .environment_config
-                    .program_runtime_environments
-                    .get_env_for_execution(),
-            ),
+            Arc::clone(&**self.environment_config.program_runtime_environment),
             SBPFVersion::V0,
             // Removes lifetime tracking
             unsafe { std::mem::transmute::<&mut InvokeContext, &mut InvokeContext>(self) },
@@ -760,10 +753,9 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config.feature_set
     }
 
-    pub fn get_program_runtime_environment_for_deployment(&self) -> &ProgramRuntimeEnvironment {
-        self.environment_config
-            .program_runtime_environments
-            .get_env_for_deployment()
+    /// Get this invocation's program runtime environment.
+    pub fn get_program_runtime_environment(&self) -> &ProgramRuntimeEnvironment {
+        self.environment_config.program_runtime_environment
     }
 
     pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
@@ -866,7 +858,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+                loaded_programs::ProgramCacheForTxBatch,
                 sysvar_cache::SysvarCache,
             },
         };
@@ -892,14 +884,15 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             compute_budget.max_instruction_trace_length,
             $top_level_instructions,
         );
-        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        let program_runtime_environment =
+            $crate::loaded_programs::ProgramRuntimeEnvironment::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             false,
             &MockInvokeContextCallback {},
             $feature_set,
-            &program_runtime_environments,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
@@ -2176,14 +2169,14 @@ mod tests {
         ));
         let sysvar_cache = SysvarCache::default();
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        let program_runtime_environment = ProgramRuntimeEnvironment::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -2228,14 +2221,14 @@ mod tests {
                 ),
             ]),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        let program_runtime_environment = ProgramRuntimeEnvironment::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut transaction_context =
@@ -2266,14 +2259,14 @@ mod tests {
                 ),
             ]),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        let program_runtime_environment = ProgramRuntimeEnvironment::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 1);
@@ -2392,14 +2385,14 @@ mod tests {
         ));
         let sysvar_cache = SysvarCache::default();
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        let program_runtime_environment = ProgramRuntimeEnvironment::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -2423,14 +2416,14 @@ mod tests {
             )],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        let program_runtime_environment = ProgramRuntimeEnvironment::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut transaction_context =
@@ -2459,14 +2452,14 @@ mod tests {
             )],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        let program_runtime_environment = ProgramRuntimeEnvironment::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 1);
@@ -2616,14 +2609,14 @@ mod tests {
             }
         }
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        let program_runtime_environment = ProgramRuntimeEnvironment::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(

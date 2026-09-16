@@ -13,8 +13,7 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        program_cache_entry::ProgramCacheEntryType,
+        loaded_programs::ProgramCacheForTxBatch, program_cache_entry::ProgramCacheEntryType,
         program_metrics::ProgramStatistics,
     },
     solana_pubkey::Pubkey,
@@ -288,10 +287,9 @@ fn svm_concurrent() {
                     &th_txs,
                     check_results,
                     &TransactionProcessingEnvironment {
-                        program_runtime_environments: ProgramRuntimeEnvironments::new(
-                            local_batch.program_runtime_environment.clone(),
-                            local_batch.program_runtime_environment.clone(),
-                        ),
+                        program_runtime_environment: local_batch
+                            .program_runtime_environment
+                            .clone(),
                         ..get_mock_transaction_processing_environment()
                     },
                     &processing_config,

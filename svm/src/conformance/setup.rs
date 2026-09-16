@@ -19,7 +19,7 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::{EnvironmentConfig, mock_compile_message},
-        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        loaded_programs::ProgramRuntimeEnvironment,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -51,7 +51,7 @@ pub fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
     loader_key: &Pubkey,
     sysvar_cache: &'a SysvarCache,
     compute_budget: &ComputeBudget,
-    program_runtime_environments: &'a ProgramRuntimeEnvironments,
+    program_runtime_environment: &'a ProgramRuntimeEnvironment,
 ) -> InvokeContextFields<'a, 'a> {
     let rent = sysvar_cache.get_rent().unwrap();
 
@@ -71,7 +71,7 @@ pub fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
         false,
         callback,
         &instr_context.feature_set,
-        program_runtime_environments,
+        program_runtime_environment,
         sysvar_cache,
     );
 
@@ -99,7 +99,7 @@ pub(crate) fn prepare_transaction_invoke_context_fields<'a, 'b, C: InvokeContext
     sysvar_cache: &'a SysvarCache,
     compute_budget: &ComputeBudget,
     execution_budget: SVMTransactionExecutionBudget,
-    program_runtime_environments: &'a ProgramRuntimeEnvironments,
+    program_runtime_environment: &'a ProgramRuntimeEnvironment,
     nonce_fields: NonceFields,
 ) -> InvokeContextFields<'a, 'b> {
     let environment_config = EnvironmentConfig::new(
@@ -108,7 +108,7 @@ pub(crate) fn prepare_transaction_invoke_context_fields<'a, 'b, C: InvokeContext
         false,
         callback,
         feature_set,
-        program_runtime_environments,
+        program_runtime_environment,
         sysvar_cache,
     );
 
@@ -195,20 +195,18 @@ pub fn sanitized_message_from_versioned_message(
     .expect("transaction context message must resolve address table lookups")
 }
 
-/// The paired (execution + deployment) program runtime environments for a
-/// harness invocation. Both halves share one environment.
-pub fn program_runtime_environments(
+/// The program runtime environment for a harness invocation.
+pub fn program_runtime_environment(
     feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
-) -> ProgramRuntimeEnvironments {
-    let environment = create_program_runtime_environment(
+) -> ProgramRuntimeEnvironment {
+    create_program_runtime_environment(
         feature_set,
         &compute_budget.to_budget(),
         false, /* deployment */
         false, /* debugging_features */
     )
-    .unwrap();
-    ProgramRuntimeEnvironments::new(ProgramRuntimeEnvironment::clone(&environment), environment)
+    .unwrap()
 }
 
 /// The most recent blockhash and its lamports-per-signature from the sysvar

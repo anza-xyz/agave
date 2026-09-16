@@ -26,7 +26,7 @@ use {
         execution_budget::{
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
         },
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        loaded_programs::ProgramCacheForTxBatch,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
@@ -175,10 +175,8 @@ impl SvmTestEnvironment<'_> {
             alpenglow_migration_succeeded: false,
             epoch_total_stake: 0,
             feature_set: test_entry.feature_set,
-            program_runtime_environments: ProgramRuntimeEnvironments::new(
-                batch_processor.program_runtime_environment_for_epoch(EXECUTION_EPOCH),
-                batch_processor.program_runtime_environment_for_epoch(EXECUTION_EPOCH),
-            ),
+            program_runtime_environment: batch_processor
+                .program_runtime_environment_for_epoch(EXECUTION_EPOCH),
             rent: test_entry.rent.clone(),
         };
 
@@ -377,9 +375,7 @@ impl SvmTestEnvironment<'_> {
         self.batch_processor.replenish_program_cache(
             &account_loader,
             missing_programs,
-            self.processing_environment
-                .program_runtime_environments
-                .get_env_for_execution(),
+            &self.processing_environment.program_runtime_environment,
             &mut program_cache_for_tx_batch,
             &mut execute_timings,
             false, // limit_to_load_programs
