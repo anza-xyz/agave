@@ -796,7 +796,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .is_precompile(pubkey)
     }
 
-    pub fn get_leader_info(&self) -> Option<LeaderInfo> {
+    pub fn get_leader_info(&self) -> LeaderInfo {
         self.environment_config
             .epoch_stake_callback
             .get_leader_info()

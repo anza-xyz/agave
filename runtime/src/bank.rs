@@ -6958,15 +6958,15 @@ impl InvokeContextCallback for Bank {
         }
     }
 
-    fn get_leader_info(&self) -> Option<LeaderInfo> {
+    fn get_leader_info(&self) -> LeaderInfo {
         let current_leader = self.leader();
         let next_leader = self.next_leader();
-        Some(LeaderInfo {
+        LeaderInfo {
             leader_id: current_leader.id,
             next_leader_id: next_leader.id,
             leader_vote: current_leader.vote_address,
             next_leader_vote: next_leader.vote_address,
-        })
+        }
     }
 }
 
