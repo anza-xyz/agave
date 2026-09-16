@@ -29,6 +29,7 @@ serde = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-serde = { workspace = true }

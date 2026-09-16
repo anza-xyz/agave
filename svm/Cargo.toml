@@ -45,7 +45,6 @@ dev-context-only-utils = [
     "dep:solana-compute-budget",
     "dep:solana-compute-budget-instruction",
     "dep:solana-compute-budget-program",
-    "dep:solana-instruction-error",
     "dep:solana-precompile-error",
     "dep:solana-slot-hashes",
     "dep:solana-syscalls",
@@ -86,9 +85,9 @@ solana-compute-budget-program = { workspace = true, optional = true }
 solana-fee-structure = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
-solana-instruction-error = { workspace = true, optional = true }
+solana-instruction-error = { workspace = true }
 solana-instructions-sysvar = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true, features = ["wincode"] }

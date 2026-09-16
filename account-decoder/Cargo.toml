@@ -34,6 +34,7 @@ solana-config-interface = { workspace = true, features = ["bincode"] }
 solana-epoch-schedule = { workspace = true, features = ["serde"] }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-nonce = { workspace = true, features = ["serde"] }
 solana-program-option = { workspace = true }
