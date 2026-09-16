@@ -2,6 +2,7 @@ use {
     crate::bank::Bank,
     agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2},
     agave_votor_messages::{
+        alpenglow_slot::AlpenglowSlot,
         consensus_message::Block,
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
         vote::Vote,
@@ -42,7 +43,7 @@ fn extract_slot(
     bank: &Bank,
     skip: &Option<SkipRewardCertificate>,
     notar: &Option<NotarRewardCertificate>,
-) -> Result<Option<Slot>, Error> {
+) -> Result<Option<AlpenglowSlot>, Error> {
     let current_slot = bank.slot();
     let slot = match (skip, notar) {
         (None, None) => return Ok(None),
@@ -59,15 +60,23 @@ fn extract_slot(
             s.slot
         }
     };
-    if slot.saturating_add(NUM_SLOTS_FOR_REWARD) != current_slot
-        || slot <= bank.get_alpenglow_migration_slot().unwrap_or(slot)
-    {
+    if slot.saturating_add(NUM_SLOTS_FOR_REWARD) != current_slot {
         return Err(Error::InvalidSlotNumbers {
             current_slot: bank.slot(),
             notar_slot: notar.as_ref().map(|c| c.slot),
             skip_slot: skip.as_ref().map(|c| c.slot),
         });
     }
+    let Some(slot) = bank
+        .get_alpenglow_genesis_certificate()
+        .and_then(|c| AlpenglowSlot::try_new(slot, &c))
+    else {
+        return Err(Error::InvalidSlotNumbers {
+            current_slot,
+            notar_slot: Some(slot),
+            skip_slot: Some(slot),
+        });
+    };
     Ok(Some(slot))
 }
 
@@ -77,7 +86,7 @@ pub struct ValidatedRewardCert {
     /// List of validators that were present in the reward certs.
     validators: HashSet<Pubkey>,
     /// The slot the reward certs refer to
-    reward_slot: Slot,
+    reward_slot: AlpenglowSlot,
 }
 
 impl ValidatedRewardCert {
@@ -92,7 +101,7 @@ impl ValidatedRewardCert {
             return Ok(None);
         };
         let rank_map = bank
-            .epoch_stakes_from_slot(reward_slot)
+            .epoch_stakes_from_slot(reward_slot.into())
             .ok_or(Error::NoRankMap)?
             .bls_pubkey_to_rank_map();
         let max_validators = rank_map.len();
@@ -164,7 +173,7 @@ impl ValidatedRewardCert {
         }))
     }
 
-    pub(crate) fn slot(&self) -> Slot {
+    pub(crate) fn slot(&self) -> AlpenglowSlot {
         self.reward_slot
     }
 
@@ -172,9 +181,10 @@ impl ValidatedRewardCert {
         &self.validators
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_for_tests(reward_slot: Slot, validators: Vec<Pubkey>) -> Self {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_for_tests(reward_slot: Slot, validators: Vec<Pubkey>) -> Self {
         let validators = validators.into_iter().collect();
+        let reward_slot = AlpenglowSlot::new_for_tests(reward_slot);
         Self {
             reward_slot,
             validators,
@@ -284,7 +294,7 @@ mod tests {
                     })
                 );
             } else {
-                assert_eq!(result, Ok(Some(reward_slot)));
+                assert_eq!(result.unwrap().unwrap().into(), reward_slot);
             }
         }
     }

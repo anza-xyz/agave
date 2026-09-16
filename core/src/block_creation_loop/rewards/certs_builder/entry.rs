@@ -127,6 +127,7 @@ mod tests {
         solana_bls_signatures::{
             Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed, SignatureProjective,
         },
+        solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_pubkey::Pubkey,
