@@ -291,6 +291,13 @@ impl VoteAccounts {
             .map(|(vote_pubkey, (_stake, vote_account))| (vote_pubkey, vote_account))
     }
 
+    /// Helper used if some other kind of iterator is needed directly on the
+    /// inner HashMap. In general, prefer using any other getter, such as
+    /// `iter()`, `delegated_starkes()`, `get()`, or `get_delegated_stake()`
+    pub fn inner(&self) -> &VoteAccountsHashMap {
+        &self.vote_accounts
+    }
+
     pub fn delegated_stakes(&self) -> impl Iterator<Item = (&Pubkey, u64)> {
         self.vote_accounts
             .iter()
