@@ -7,7 +7,7 @@ use {
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
     crate::alpenglow_epoch_type::AlpenglowEpochType,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_stake_interface::{
         error::StakeError,
         state::{Stake, StakeActivationStatus},

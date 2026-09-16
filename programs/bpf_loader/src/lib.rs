@@ -6,7 +6,8 @@
 use qualifier_attr::qualifiers;
 use {
     solana_bincode::limited_deserialize,
-    solana_instruction::{AccountMeta, error::InstructionError},
+    solana_instruction::AccountMeta,
+    solana_instruction_error::InstructionError,
     solana_loader_v3_interface::{
         instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, UpgradeableLoaderInstruction},
         state::UpgradeableLoaderState,
@@ -1104,7 +1105,8 @@ mod tests {
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
-        solana_instruction::{AccountMeta, error::InstructionError},
+        solana_instruction::AccountMeta,
+        solana_instruction_error::InstructionError,
         solana_program_runtime::{
             invoke_context::mock_process_instruction, loaded_programs::ProgramRuntimeEnvironment,
             program_metrics::ProgramStatistics, vm::calculate_heap_cost, with_mock_invoke_context,

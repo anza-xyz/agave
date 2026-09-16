@@ -36,7 +36,8 @@ use {
         SendAndConfirmConfigV3, SendTransport, send_and_confirm_transactions_in_parallel_v3,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_instruction::{Instruction, error::InstructionError},
+    solana_instruction::Instruction,
+    solana_instruction_error::InstructionError,
     solana_keypair::{Keypair, keypair_from_seed, read_keypair_file},
     solana_loader_v3_interface::{
         get_program_data_address,

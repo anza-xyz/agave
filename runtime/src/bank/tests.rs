@@ -87,7 +87,8 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_inflation::Inflation,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{AccountMeta, Instruction},
+    solana_instruction_error::InstructionError,
     solana_keypair::{Keypair, keypair_from_seed},
     solana_lattice_hash::lt_hash::LtHash,
     solana_loader_v3_interface::{
@@ -11391,7 +11392,7 @@ fn test_cap_accounts_data_allocations_per_transaction() {
         result,
         Err(TransactionError::InstructionError(
             NUM_MAX_SIZE_ALLOCATIONS_PER_TRANSACTION as u8,
-            solana_instruction::error::InstructionError::MaxAccountsDataAllocationsExceeded,
+            solana_instruction_error::InstructionError::MaxAccountsDataAllocationsExceeded,
         )),
     );
 }

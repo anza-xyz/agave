@@ -4387,7 +4387,7 @@ mod tests {
         solana_account_decoder::{UiAccountData, encode_ui_account},
         solana_account_decoder_client_types::UiAccountEncoding,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
         solana_message::{
             MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction, v1,

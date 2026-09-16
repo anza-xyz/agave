@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_stake_interface::{
         program as stake_program,

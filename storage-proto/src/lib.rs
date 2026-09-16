@@ -306,7 +306,7 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
 #[cfg(test)]
 mod tests {
     use {
-        crate::StoredTransactionError, solana_instruction::error::InstructionError,
+        crate::StoredTransactionError, solana_instruction_error::InstructionError,
         solana_transaction_error::TransactionError, test_case::test_case,
     };
 

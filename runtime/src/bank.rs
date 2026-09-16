@@ -7393,7 +7393,7 @@ pub mod test_utils {
         super::Bank,
         crate::installed_scheduler_pool::BankWithScheduler,
         solana_account::{ReadableAccount, WritableAccount, state_traits::StateMutWincode as _},
-        solana_instruction::error::LamportsError,
+        solana_instruction_error::LamportsError,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hashv,
         solana_vote_interface::state::VoteStateV4,

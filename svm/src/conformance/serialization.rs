@@ -1,7 +1,7 @@
 //! Program-input parameter serialization, shared by the conformance harnesses.
 
 use {
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_message::SanitizedMessage,
     solana_program_runtime::{
         invoke_context::InvokeContext,

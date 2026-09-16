@@ -6,7 +6,7 @@ use {
     solana_clock::Clock,
     solana_epoch_rewards::EpochRewards,
     solana_epoch_schedule::EpochSchedule,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_last_restart_slot::LastRestartSlot,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
