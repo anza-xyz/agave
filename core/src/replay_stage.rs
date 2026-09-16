@@ -2300,6 +2300,7 @@ impl ReplayStage {
                 .collect()
         };
         for bank in banks_to_remove {
+            bank.quiesce_transaction_execution();
             let _ = bank.wait_for_completed_scheduler();
         }
 
@@ -2589,6 +2590,7 @@ impl ReplayStage {
 
         // Wait for any in progress execution
         for bank in banks_to_clear.iter() {
+            bank.quiesce_transaction_execution();
             let _ = bank.wait_for_completed_scheduler();
         }
         let bank_slots_to_clear = banks_to_clear

@@ -4,7 +4,6 @@ use {
     solana_clock::Slot,
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, PartialEq)]
 pub struct Ancestors {
     ancestors: RollingBitField,

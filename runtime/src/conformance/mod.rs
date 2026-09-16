@@ -1,35 +1,27 @@
 //! Solana runtime conformance harnesses.
 
-#[cfg(feature = "conformance")]
 pub mod block;
-#[cfg(feature = "conformance")]
-pub mod cost;
-pub mod txn;
 
-#[cfg(feature = "conformance")]
 use {
     protosol::protos::{
         AcctState, BlockhashQueueEntry as ProtoBlockhashQueueEntry,
         FeeRateGovernor as ProtoFeeRateGovernor,
     },
     solana_account::AccountSharedData,
-    solana_accounts_db::blockhash_queue::BlockhashQueue,
+    solana_accounts_db::{
+        accounts::Accounts,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
+        blockhash_queue::BlockhashQueue,
+    },
     solana_fee_calculator::FeeRateGovernor,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_svm::conformance::account_state::account_from_proto,
-};
-use {
-    solana_accounts_db::{
-        accounts::Accounts,
-        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
-    },
     std::{num::NonZeroUsize, sync::Arc},
 };
 
 /// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
 /// accounts (treated as nonexistent).
-#[cfg(feature = "conformance")]
 pub(crate) fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
     accounts
         .iter()
@@ -41,7 +33,6 @@ pub(crate) fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, Accou
         .collect()
 }
 
-#[cfg(feature = "conformance")]
 pub(crate) fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> BlockhashQueue {
     let mut blockhash_queue = BlockhashQueue::default();
     for entry in entries {
@@ -52,7 +43,6 @@ pub(crate) fn restore_blockhash_queue(entries: &[ProtoBlockhashQueueEntry]) -> B
     blockhash_queue
 }
 
-#[cfg(feature = "conformance")]
 pub(crate) fn fee_rate_governor_from_proto(
     value: &ProtoFeeRateGovernor,
     lamports_per_signature: u64,
@@ -78,7 +68,6 @@ pub(crate) fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbCo
     let single_thread = NonZeroUsize::new(1).unwrap();
     AccountsDbConfig {
         num_background_threads: Some(single_thread),
-        num_foreground_threads: Some(single_thread),
         read_cache_num_shards: Some(2),
         skip_initial_hash_calc: true,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING
@@ -94,7 +83,6 @@ mod tests {
         let accounts = new_accounts_for_tests_single_threaded();
         let accounts_db = &accounts.accounts_db;
         assert!(accounts_db.skip_initial_hash_calc);
-        assert_eq!(accounts_db.thread_pool_foreground.current_num_threads(), 1);
         assert_eq!(accounts_db.thread_pool_background.current_num_threads(), 1);
     }
 
@@ -107,9 +95,8 @@ mod tests {
         assert_eq!(index.num_flush_threads, Some(one));
         assert!(matches!(index.index_limit, IndexLimit::InMemOnly));
         assert!(config.skip_initial_hash_calc);
-        assert!(!config.exhaustively_verify_refcounts);
+        assert!(!config.verify_index);
         assert_eq!(config.read_cache_num_shards, Some(2));
         assert_eq!(config.num_background_threads, Some(one));
-        assert_eq!(config.num_foreground_threads, Some(one));
     }
 }

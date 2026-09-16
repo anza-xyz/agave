@@ -782,6 +782,7 @@ mod tests {
             },
         },
         agave_feature_set::FeatureSet,
+        agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
@@ -800,7 +801,6 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
-        solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
@@ -832,7 +832,7 @@ mod tests {
 
         fn schedule_execution(
             &self,
-            _transaction: RuntimeTransaction<SanitizedTransaction>,
+            _transaction: RuntimeTransaction<ResolvedTransactionView<bytes::Bytes>>,
             _task_id: OrderedTaskId,
         ) -> ScheduleResult {
             Ok(())
@@ -1035,10 +1035,7 @@ mod tests {
     fn test_initialize_migration_status() {
         let ff_activation_slot = 5;
         let genesis_cert = GenesisCert {
-            block: Block {
-                slot: 1,
-                block_id: Hash::default(),
-            },
+            block: Block::new_unique(1),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],
@@ -1129,10 +1126,7 @@ mod tests {
         // Migration can still succeed
         let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
         let genesis_cert = GenesisCert {
-            block: Block {
-                slot: 1,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(1),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],

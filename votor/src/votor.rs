@@ -47,7 +47,9 @@ use {
     crate::{
         commitment::CommitmentAggregationData,
         consensus_metrics::ConsensusMetrics,
-        consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
+        consensus_pool_service::{
+            ConsensusPoolContext, ConsensusPoolService, staked_status::StakedStatus,
+        },
         event::{
             LatestSwitchRequest, LeaderWindowInfo, RepairEventSender, VotorEventReceiver,
             VotorEventSender,
@@ -269,7 +271,8 @@ impl Votor {
             root_context,
         };
 
-        let epoch_schedule = sharable_banks.root().epoch_schedule().clone();
+        let root_bank = sharable_banks.root();
+        let epoch_schedule = root_bank.epoch_schedule().clone();
 
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
@@ -288,6 +291,7 @@ impl Votor {
             event_sender,
             repair_event_sender,
             highest_finalized,
+            staked_status: StakedStatus::new(&root_bank, &cluster_info),
         };
 
         let metrics = ConsensusMetrics::start_metrics_loop(

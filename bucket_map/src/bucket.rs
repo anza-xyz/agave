@@ -2,7 +2,7 @@
 use crate::bucket_item::BucketItem;
 use {
     crate::{
-        MaxSearch, RefCount,
+        MaxSearch,
         bucket_map::BucketMapError,
         bucket_stats::BucketMapStats,
         bucket_storage::{
@@ -199,10 +199,9 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             }
             let ix = IndexEntryPlaceInBucket::new(ii);
             let key = ix.key(&self.index);
-            let (v, ref_count) = ix.read_value(&self.index, &self.data);
+            let v = ix.read_value(&self.index, &self.data);
             result.push(BucketItem {
                 pubkey: *key,
-                ref_count,
                 slot_list: v.to_vec(),
             });
         }
@@ -296,7 +295,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         Err(BucketMapError::IndexNoSpace(index.contents.capacity()))
     }
 
-    pub(crate) fn read_value(&self, key: &Pubkey) -> Option<(&[T], RefCount)> {
+    pub(crate) fn read_value(&self, key: &Pubkey) -> Option<&[T]> {
         //debug!("READ_VALUE: {:?}", key);
         let (elem, _) = self.find_index_entry(key)?;
         Some(elem.read_value(&self.index, &self.data))
@@ -314,7 +313,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         inserts
     }
 
-    /// batch insert of `items`. Assumption is a single slot list element and ref_count == 1.
+    /// batch insert of `items`. Assumption is a single slot list element
     /// For any pubkeys that already exist, the index in `items` of the failed insertion and the existing data (previously put in the index) are returned.
     pub(crate) fn batch_insert_non_duplicates(&mut self, items: &[(Pubkey, T)]) -> Vec<(usize, T)> {
         assert!(
@@ -403,8 +402,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                     OccupyIfMatches::SuccessfulInit => {}
                     OccupyIfMatches::FoundDuplicate => {
                         // pubkey is same, and it is occupied, so we found a duplicate
-                        let (v_existing, _ref_count_existing) =
-                            elem.read_value(index, data_buckets);
+                        let v_existing = elem.read_value(index, data_buckets);
                         // someone is already allocated with this pubkey, so we found a duplicate
                         duplicates.push((ix, *v_existing.first().unwrap()));
                     }
@@ -480,8 +478,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 } else {
                     // occupied, see if the key already exists here
                     if elem.key(index) == k {
-                        let (v_existing, _ref_count_existing) =
-                            elem.read_value(index, data_buckets);
+                        let v_existing = elem.read_value(index, data_buckets);
                         duplicates.push((i, *v_existing.first().unwrap()));
                         continue 'outer; // this 'insertion' is completed: found a duplicate entry
                     }
@@ -501,12 +498,11 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         key: &Pubkey,
         mut data: impl Iterator<Item = &'b T>,
         data_len: usize,
-        ref_count: RefCount,
     ) -> Result<(), BucketMapError> {
         let num_slots = data_len as u64;
         let best_fit_bucket = MultipleSlots::data_bucket_from_num_slots(data_len as u64);
         // num_slots > 1 because we can store num_slots = 0 or num_slots = 1 in the index entry
-        let requires_data_bucket = num_slots > 1 || ref_count != 1;
+        let requires_data_bucket = num_slots > 1;
         if requires_data_bucket && self.data.get(best_fit_bucket as usize).is_none() {
             // fail early if the data bucket we need doesn't exist - we don't want the index entry partially allocated
             return Err(BucketMapError::DataNoSpace((best_fit_bucket, 0)));
@@ -543,7 +539,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 } else {
                     self.stats
                         .index
-                        .index_uses_uncommon_slot_list_len_or_refcount
+                        .index_uses_uncommon_slot_list_len
                         .store(true, Ordering::Relaxed);
                     OccupiedEnum::ZeroSlots
                 },
@@ -563,9 +559,6 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             let elem_loc = multiple_slots.data_loc(current_bucket);
 
             if best_fit_bucket == bucket_ix as u64 {
-                // in place update in same data file
-                MultipleSlots::set_ref_count(current_bucket, elem_loc, ref_count);
-
                 // write data
                 assert!(!current_bucket.is_free(elem_loc));
                 let slice: &mut [T] = current_bucket.get_slice_mut(
@@ -611,7 +604,6 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 multiple_slots
                     .set_storage_capacity_when_created_pow2(best_bucket.contents.capacity_pow2());
                 multiple_slots.set_num_slots(num_slots);
-                MultipleSlots::set_ref_count(best_bucket, ix, ref_count);
 
                 //debug!(                        "DATA ALLOC {:?} {} {} {}",                        key, elem.data_location, best_bucket.capacity, elem_uid                    );
                 let best_bucket = &mut self.data[best_fit_bucket as usize];
@@ -640,7 +632,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 );
                 self.stats
                     .index
-                    .index_uses_uncommon_slot_list_len_or_refcount
+                    .index_uses_uncommon_slot_list_len
                     .store(true, Ordering::Relaxed);
                 success = true;
                 break;
@@ -858,10 +850,9 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         }
     }
 
-    pub fn insert(&mut self, key: &Pubkey, value: (&[T], RefCount)) {
-        let (new, refct) = value;
+    pub fn insert(&mut self, key: &Pubkey, value: &[T]) {
         loop {
-            let Err(err) = self.try_write(key, new.iter(), new.len(), refct) else {
+            let Err(err) = self.try_write(key, value.iter(), value.len()) else {
                 return;
             };
             self.grow(err);
@@ -871,7 +862,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
 
     pub fn update<F>(&mut self, key: &Pubkey, mut updatefn: F)
     where
-        F: FnMut(Option<(&[T], RefCount)>) -> Option<(Vec<T>, RefCount)>,
+        F: FnMut(Option<&[T]>) -> Option<Vec<T>>,
     {
         let current = self.read_value(key);
         let new = updatefn(current);
@@ -879,8 +870,8 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             self.delete_key(key);
             return;
         }
-        let (new, refct) = new.unwrap();
-        self.insert(key, (&new, refct));
+        let new = new.unwrap();
+        self.insert(key, &new);
     }
 }
 
@@ -1318,8 +1309,7 @@ mod tests {
                     let elem = IndexEntryPlaceInBucket::new(
                         single_hashed_raw_inserted.0 % index.capacity(),
                     );
-                    let (value, ref_count) = elem.read_value(&index, &data_buckets);
-                    assert_eq!(ref_count, 1);
+                    let value = elem.read_value(&index, &data_buckets);
                     assert_eq!(value, &[raw[single_hashed_raw_inserted.1].1]);
                     let expected_duplicates = hashed_raw
                         .iter()
@@ -1371,8 +1361,7 @@ mod tests {
                     (0..len).for_each(|i| {
                         let raw2 = hashed_raw[i];
                         let elem = IndexEntryPlaceInBucket::new(raw2.0 % index.capacity());
-                        let (value, ref_count) = elem.read_value(&index, &data_buckets);
-                        assert_eq!(ref_count, 1);
+                        let value = elem.read_value(&index, &data_buckets);
                         assert_eq!(value, &[raw[hashed_raw[i].1].1]);
                     });
                 }
@@ -1440,8 +1429,7 @@ mod tests {
                                 let elem = IndexEntryPlaceInBucket::new(
                                     (raw2.0 + search_required) % index.capacity(),
                                 );
-                                let (value, ref_count) = elem.read_value(&index, &data_buckets);
-                                assert_eq!(ref_count, 1);
+                                let value = elem.read_value(&index, &data_buckets);
                                 assert_eq!(value, &[raw[hashed_raw[i].1].1]);
                             }
                         });
@@ -1578,7 +1566,7 @@ mod tests {
         let key = Pubkey::new_unique();
         assert_eq!(bucket.read_value(&key), None);
 
-        bucket.update(&key, |_| Some((vec![0], 0)));
+        bucket.update(&key, |_| Some(vec![0]));
         bucket.delete_key(&key);
 
         bucket.batch_insert_non_duplicates(&[]);

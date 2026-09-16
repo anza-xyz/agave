@@ -1,0 +1,2 @@
+# Nightly toolchain for CI jobs needing unstable features: frozen-abi, benches.
+nightly = "2026-07-16"

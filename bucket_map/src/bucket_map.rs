@@ -1,9 +1,7 @@
 //! BucketMap is a mostly contention free concurrent map backed by MmapMut
 
 use {
-    crate::{
-        MaxSearch, RefCount, bucket_api::BucketApi, bucket_stats::BucketMapStats, restart::Restart,
-    },
+    crate::{MaxSearch, bucket_api::BucketApi, bucket_stats::BucketMapStats, restart::Restart},
     solana_pubkey::Pubkey,
     std::{
         convert::TryInto,
@@ -154,7 +152,7 @@ impl<T: Clone + Copy + Debug + PartialEq> BucketMap<T> {
     }
 
     /// Get the values for Pubkey `key`
-    pub fn read_value<C: for<'a> From<&'a [T]>>(&self, key: &Pubkey) -> Option<(C, RefCount)> {
+    pub fn read_value<C: for<'a> From<&'a [T]>>(&self, key: &Pubkey) -> Option<C> {
         self.get_bucket(key).read_value(key)
     }
 
@@ -164,19 +162,19 @@ impl<T: Clone + Copy + Debug + PartialEq> BucketMap<T> {
     }
 
     /// Update Pubkey `key`'s value with 'value'
-    pub fn insert(&self, key: &Pubkey, value: (&[T], RefCount)) {
+    pub fn insert(&self, key: &Pubkey, value: &[T]) {
         self.get_bucket(key).insert(key, value)
     }
 
     /// Update Pubkey `key`'s value with 'value'
-    pub fn try_insert(&self, key: &Pubkey, value: (&[T], RefCount)) -> Result<(), BucketMapError> {
+    pub fn try_insert(&self, key: &Pubkey, value: &[T]) -> Result<(), BucketMapError> {
         self.get_bucket(key).try_write(key, value)
     }
 
     /// Update Pubkey `key`'s value with function `updatefn`
     pub fn update<F>(&self, key: &Pubkey, updatefn: F)
     where
-        F: FnMut(Option<(&[T], RefCount)>) -> Option<(Vec<T>, RefCount)>,
+        F: FnMut(Option<&[T]>) -> Option<Vec<T>>,
     {
         self.get_bucket(key).update(key, updatefn)
     }
@@ -210,7 +208,6 @@ fn read_be_u64(input: &[u8]) -> u64 {
 mod tests {
     use {
         super::*,
-        crate::index_entry::MAX_LEGAL_REFCOUNT,
         rand::{Rng, rng},
         std::{collections::HashMap, sync::RwLock},
     };
@@ -220,8 +217,8 @@ mod tests {
         let key = Pubkey::new_unique();
         let config = BucketMapConfig::new(1 << 1);
         let index = BucketMap::new(config);
-        index.update(&key, |_| Some((vec![0], 1)));
-        assert_eq!(index.read_value(&key), Some((vec![0], 1)));
+        index.update(&key, |_| Some(vec![0]));
+        assert_eq!(index.read_value(&key), Some(vec![0]));
     }
 
     #[test]
@@ -231,23 +228,24 @@ mod tests {
             let config = BucketMapConfig::new(1 << 1);
             let index = BucketMap::new(config);
             let bucket = index.get_bucket(&key);
+            // 2 slots require a data bucket, which does not exist until we grow
             if pass == 0 {
-                index.insert(&key, (&[0], 0));
+                index.insert(&key, &[0, 1]);
             } else {
-                let result = index.try_insert(&key, (&[0], 0));
+                let result = index.try_insert(&key, &[0, 1]);
                 assert!(result.is_err());
                 assert_eq!(index.read_value::<Vec<_>>(&key), None);
                 if pass == 2 {
                     // another call to try insert again - should still return an error
-                    let result = index.try_insert(&key, (&[0], 0));
+                    let result = index.try_insert(&key, &[0, 1]);
                     assert!(result.is_err());
                     assert_eq!(index.read_value::<Vec<_>>(&key), None);
                 }
                 bucket.grow(result.unwrap_err());
-                let result = index.try_insert(&key, (&[0], 0));
+                let result = index.try_insert(&key, &[0, 1]);
                 assert!(result.is_ok());
             }
-            assert_eq!(index.read_value(&key), Some((vec![0], 0)));
+            assert_eq!(index.read_value(&key), Some(vec![0, 1]));
         }
     }
 
@@ -256,10 +254,10 @@ mod tests {
         let key = Pubkey::new_unique();
         let config = BucketMapConfig::new(1 << 1);
         let index = BucketMap::new(config);
-        index.insert(&key, (&[0], 1));
-        assert_eq!(index.read_value(&key), Some((vec![0], 1)));
-        index.insert(&key, (&[1], 1));
-        assert_eq!(index.read_value(&key), Some((vec![1], 1)));
+        index.insert(&key, &[0]);
+        assert_eq!(index.read_value(&key), Some(vec![0]));
+        index.insert(&key, &[1]);
+        assert_eq!(index.read_value(&key), Some(vec![1]));
     }
 
     #[test]
@@ -267,10 +265,10 @@ mod tests {
         let key = Pubkey::new_unique();
         let config = BucketMapConfig::new(1 << 1);
         let index = BucketMap::new(config);
-        index.update(&key, |_| Some((vec![0], 1)));
-        assert_eq!(index.read_value(&key), Some((vec![0], 1)));
-        index.update(&key, |_| Some((vec![1], 1)));
-        assert_eq!(index.read_value(&key), Some((vec![1], 1)));
+        index.update(&key, |_| Some(vec![0]));
+        assert_eq!(index.read_value(&key), Some(vec![0]));
+        index.update(&key, |_| Some(vec![1]));
+        assert_eq!(index.read_value(&key), Some(vec![1]));
     }
 
     #[test]
@@ -278,17 +276,17 @@ mod tests {
         let key = Pubkey::new_unique();
         let config = BucketMapConfig::new(1 << 1);
         let index = BucketMap::new(config);
-        index.update(&key, |_| Some((vec![0], 1)));
-        assert_eq!(index.read_value(&key), Some((vec![0], 1)));
+        index.update(&key, |_| Some(vec![0]));
+        assert_eq!(index.read_value(&key), Some(vec![0]));
         // sets len to 0, updates in place
-        index.update(&key, |_| Some((vec![], 1)));
-        assert_eq!(index.read_value(&key), Some((vec![], 1)));
+        index.update(&key, |_| Some(vec![]));
+        assert_eq!(index.read_value(&key), Some(vec![]));
         // sets len to 0, doesn't update in place - finds a new place, which causes us to no longer have an allocation in data
-        index.update(&key, |_| Some((vec![], 2)));
-        assert_eq!(index.read_value(&key), Some((vec![], 2)));
+        index.update(&key, |_| Some(vec![]));
+        assert_eq!(index.read_value(&key), Some(vec![]));
         // sets len to 1, doesn't update in place - finds a new place
-        index.update(&key, |_| Some((vec![1], 2)));
-        assert_eq!(index.read_value(&key), Some((vec![1], 2)));
+        index.update(&key, |_| Some(vec![1]));
+        assert_eq!(index.read_value(&key), Some(vec![1]));
     }
 
     #[test]
@@ -299,14 +297,14 @@ mod tests {
             let key = Pubkey::new_unique();
             assert_eq!(index.read_value::<Vec<_>>(&key), None);
 
-            index.update(&key, |_| Some((vec![i], 1)));
-            assert_eq!(index.read_value(&key), Some((vec![i], 1)));
+            index.update(&key, |_| Some(vec![i]));
+            assert_eq!(index.read_value(&key), Some(vec![i]));
 
             index.delete_key(&key);
             assert_eq!(index.read_value::<Vec<_>>(&key), None);
 
-            index.update(&key, |_| Some((vec![i], 1)));
-            assert_eq!(index.read_value(&key), Some((vec![i], 1)));
+            index.update(&key, |_| Some(vec![i]));
+            assert_eq!(index.read_value(&key), Some(vec![i]));
             index.delete_key(&key);
         }
     }
@@ -319,14 +317,14 @@ mod tests {
             let key = Pubkey::new_unique();
             assert_eq!(index.read_value::<Vec<_>>(&key), None);
 
-            index.update(&key, |_| Some((vec![i], 1)));
-            assert_eq!(index.read_value(&key), Some((vec![i], 1)));
+            index.update(&key, |_| Some(vec![i]));
+            assert_eq!(index.read_value(&key), Some(vec![i]));
 
             index.delete_key(&key);
             assert_eq!(index.read_value::<Vec<_>>(&key), None);
 
-            index.update(&key, |_| Some((vec![i], 1)));
-            assert_eq!(index.read_value(&key), Some((vec![i], 1)));
+            index.update(&key, |_| Some(vec![i]));
+            assert_eq!(index.read_value(&key), Some(vec![i]));
             index.delete_key(&key);
         }
     }
@@ -337,8 +335,8 @@ mod tests {
         let index = BucketMap::new(config);
         for i in 0..100 {
             let key = Pubkey::new_unique();
-            index.update(&key, |_| Some((vec![i], 1)));
-            assert_eq!(index.read_value(&key), Some((vec![i], 1)));
+            index.update(&key, |_| Some(vec![i]));
+            assert_eq!(index.read_value(&key), Some(vec![i]));
         }
     }
     #[test]
@@ -349,12 +347,12 @@ mod tests {
         for k in 0..keys.len() {
             let key = &keys[k];
             let i = read_be_u64(key.as_ref());
-            index.update(key, |_| Some((vec![i], 1)));
-            assert_eq!(index.read_value(key), Some((vec![i], 1)));
+            index.update(key, |_| Some(vec![i]));
+            assert_eq!(index.read_value(key), Some(vec![i]));
             for (ix, key) in keys.iter().enumerate() {
                 let i = read_be_u64(key.as_ref());
                 //debug!("READ: {:?} {}", key, i);
-                let expected = if ix <= k { Some((vec![i], 1)) } else { None };
+                let expected = if ix <= k { Some(vec![i]) } else { None };
                 assert_eq!(index.read_value(key), expected);
             }
         }
@@ -367,13 +365,13 @@ mod tests {
         let keys: Vec<Pubkey> = (0..20).map(|_| Pubkey::new_unique()).collect();
         for key in keys.iter() {
             let i = read_be_u64(key.as_ref());
-            index.update(key, |_| Some((vec![i], 1)));
-            assert_eq!(index.read_value(key), Some((vec![i], 1)));
+            index.update(key, |_| Some(vec![i]));
+            assert_eq!(index.read_value(key), Some(vec![i]));
         }
         for key in keys.iter() {
             let i = read_be_u64(key.as_ref());
             //debug!("READ: {:?} {}", key, i);
-            assert_eq!(index.read_value(key), Some((vec![i], 1)));
+            assert_eq!(index.read_value(key), Some(vec![i]));
         }
         for k in 0..keys.len() {
             let key = &keys[k];
@@ -381,7 +379,7 @@ mod tests {
             assert_eq!(index.read_value::<Vec<_>>(key), None);
             for key in keys.iter().skip(k + 1) {
                 let i = read_be_u64(key.as_ref());
-                assert_eq!(index.read_value(key), Some((vec![i], 1)));
+                assert_eq!(index.read_value(key), Some(vec![i]));
             }
         }
     }
@@ -396,28 +394,15 @@ mod tests {
                     BucketMap::new(config)
                 })
                 .collect::<Vec<_>>();
-            let hash_map = RwLock::new(HashMap::<Pubkey, (Vec<(usize, usize)>, RefCount)>::new());
+            let hash_map = RwLock::new(HashMap::<Pubkey, Vec<(usize, usize)>>::new());
             let max_slot_list_len = 5;
             let all_keys = Mutex::new(vec![]);
 
             let gen_rand_value = || {
                 let count = rng().random_range(0..max_slot_list_len);
-                let v = (0..count)
+                (0..count)
                     .map(|x| (x as usize, x as usize /*rng().random::<usize>()*/))
-                    .collect::<Vec<_>>();
-                let range = rng().random_range(0..100);
-                // pick ref counts that are useful and common
-                let rc = if range < 50 {
-                    1
-                } else if range < 60 {
-                    0
-                } else if range < 70 {
-                    2
-                } else {
-                    rng().random_range(0..MAX_LEGAL_REFCOUNT)
-                };
-
-                (v, rc)
+                    .collect::<Vec<_>>()
             };
 
             let get_key = || {
@@ -454,8 +439,7 @@ mod tests {
                     for map in maps.iter_mut() {
                         for i in 0..map.len() {
                             if k == &map[i].pubkey {
-                                assert_eq!(map[i].slot_list, v.0);
-                                assert_eq!(map[i].ref_count, v.1);
+                                assert_eq!(&map[i].slot_list, v);
                                 map.remove(i);
                                 break;
                             }
@@ -489,16 +473,14 @@ mod tests {
                             let k = solana_pubkey::new_rand();
                             let mut v = gen_rand_value();
                             if use_batch_insert {
-                                // refcount has to be 1 to use batch insert
-                                v.1 = 1;
                                 // len has to be 1 to use batch insert
-                                if v.0.len() > 1 {
-                                    v.0.truncate(1);
-                                } else if v.0.is_empty() {
+                                if v.len() > 1 {
+                                    v.truncate(1);
+                                } else if v.is_empty() {
                                     loop {
                                         let mut new_v = gen_rand_value();
-                                        if !new_v.0.is_empty() {
-                                            v.0 = vec![new_v.0.pop().unwrap()];
+                                        if !new_v.is_empty() {
+                                            v = vec![new_v.pop().unwrap()];
                                             break;
                                         }
                                     }
@@ -523,7 +505,7 @@ mod tests {
                             let mut batch_additions = additions
                                 .clone()
                                 .into_iter()
-                                .map(|(k, mut v)| (k, v.0.pop().unwrap()))
+                                .map(|(k, mut v)| (k, v.pop().unwrap()))
                                 .collect::<Vec<_>>();
                             let mut duplicates = 0;
                             if batch_additions.len() > 1 && rng().random_range(0..2) == 0 {
@@ -547,7 +529,7 @@ mod tests {
                         } else {
                             additions.clone().into_iter().for_each(|(k, v)| {
                                 if insert {
-                                    map.insert(&k, (&v.0, v.1))
+                                    map.insert(&k, &v)
                                 } else {
                                     map.update(&k, |current| {
                                         assert!(current.is_none());
@@ -572,21 +554,21 @@ mod tests {
                     // update
                     if let Some(k) = get_key() {
                         let hm = hash_map.read().unwrap();
-                        let (v, rc) = gen_rand_value();
+                        let v = gen_rand_value();
                         let v_old = hm.get(&k);
                         let insert = rng().random_range(0..2) == 0;
                         maps.iter().for_each(|map| {
                             if insert {
-                                map.insert(&k, (&v, rc))
+                                map.insert(&k, &v)
                             } else {
                                 map.update(&k, |current| {
-                                    assert_eq!(current, v_old.map(|(v, rc)| (&v[..], *rc)), "{k}");
-                                    Some((v.clone(), rc))
+                                    assert_eq!(current, v_old.map(|v| &**v), "{k}");
+                                    Some(v.clone())
                                 })
                             }
                         });
                         drop(hm);
-                        hash_map.write().unwrap().insert(k, (v, rc));
+                        hash_map.write().unwrap().insert(k, v);
                         return_key(k);
                     }
                 }
@@ -603,17 +585,11 @@ mod tests {
                 if rng().random_range(0..10) == 0 {
                     // add/unref
                     if let Some(k) = get_key() {
-                        let mut inc = rng().random_range(0..2) == 0;
                         let mut hm = hash_map.write().unwrap();
-                        let (v, mut rc) = hm.get(&k).map(|(v, rc)| (v.to_vec(), *rc)).unwrap();
-                        if !inc && rc == 0 {
-                            // can't decrement rc=0
-                            inc = true;
-                        }
-                        rc = if inc { rc + 1 } else { rc - 1 };
-                        hm.insert(k, (v.to_vec(), rc));
+                        let v = hm.get(&k).map(|v| v.to_vec()).unwrap();
+                        hm.insert(k, v.to_vec());
                         maps.iter().for_each(|map| {
-                            map.update(&k, |current| Some((current.unwrap().0.to_vec(), rc)))
+                            map.update(&k, |current| Some(current.unwrap().to_vec()))
                         });
 
                         return_key(k);

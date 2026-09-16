@@ -26,7 +26,7 @@ use {
         execution_budget::{
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
         },
-        loaded_programs::ProgramRuntimeEnvironments,
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
@@ -35,9 +35,11 @@ use {
     solana_signer::Signer,
     solana_svm::{
         account_loader::{
-            CheckedTransactionDetails, TRANSACTION_ACCOUNT_BASE_SIZE, TransactionCheckResult,
+            AccountLoader, CheckedTransactionDetails, TRANSACTION_ACCOUNT_BASE_SIZE,
+            TransactionCheckResult,
         },
         nonce_info::NonceInfo,
+        program_loader::filter_executable_program_accounts,
         transaction_execution_result::TransactionExecutionDetails,
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResult,
@@ -50,6 +52,7 @@ use {
         },
     },
     solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::{
         instruction::SVMInstruction,
         svm_message::{SVMMessage, SVMStaticMessage},
@@ -352,21 +355,41 @@ impl SvmTestEnvironment<'_> {
     }
 
     pub fn is_program_blocked(&self, program_id: &Pubkey) -> bool {
-        let (_, program_cache_entry) = self
-            .batch_processor
-            .global_program_cache
-            .read()
-            .unwrap()
-            .get_flattened_entries_for_tests()
-            .into_iter()
-            .rev()
-            .find(|(key, _)| key == program_id)
-            .unwrap();
+        let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
+            self.processing_config.account_overrides,
+            &self.mock_bank,
+            &self.processing_environment.feature_set,
+            1,
+        );
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(EXECUTION_SLOT);
+
+        let missing_programs = filter_executable_program_accounts(
+            &account_loader,
+            &program_cache_for_tx_batch,
+            std::iter::once(program_id),
+        );
+        if missing_programs.is_empty() {
+            // The program won't land in the search list if it's closed.
+            return true;
+        }
+
+        let mut execute_timings = ExecuteTimings::default();
+        self.batch_processor.replenish_program_cache(
+            &account_loader,
+            missing_programs,
+            self.processing_environment
+                .program_runtime_environments
+                .get_env_for_execution(),
+            &mut program_cache_for_tx_batch,
+            &mut execute_timings,
+            false, // limit_to_load_programs
+            true,  // increment_usage_counter
+        );
+        let program_cache_entry = program_cache_for_tx_batch.find(program_id).unwrap();
 
         // in the same batch, a new valid loaderv3 program may have a Loaded entry with a later execution slot
         // in a later batch, the same loaderv3 program will have a DelayedVisibility tombstone
         // a new loaderv1/v2 account will have a FailedVerification tombstone
-        // and a closed loaderv3 program or any loaderv3 buffer will have a Closed tombstone
         program_cache_entry.effective_slot() > EXECUTION_SLOT || program_cache_entry.is_tombstone()
     }
 }

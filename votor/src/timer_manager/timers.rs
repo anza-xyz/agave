@@ -361,7 +361,7 @@ mod tests {
     fn default_timeout_schedule_matches_slot_pacing() {
         let now = Instant::now();
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
-        assert_eq!(delta_block, Duration::from_millis(400));
+        assert_eq!(delta_block, Duration::from_millis(300));
 
         let timeout_config = TimeoutConfig {
             delta_timeout: DELTA_TIMEOUT,
@@ -371,7 +371,8 @@ mod tests {
         .scaled(0, None);
         let (mut timer_state, next_fire) = TimerState::new(0, timeout_config, now);
 
-        let first_deadline = now + Duration::from_millis(800);
+        // A crashed leader is declared `delta_timeout` after their first FEC set was due.
+        let first_deadline = now + DELTA_TIMEOUT + delta_block;
         assert_eq!(next_fire, first_deadline);
         assert!(matches!(
             timer_state.progress(first_deadline).unwrap(),
@@ -384,7 +385,8 @@ mod tests {
             VotorEvent::Timeout(0)
         ));
 
-        let second_deadline = now + Duration::from_millis(1200);
+        // Every subsequent block in the window then gets one more `delta_block`.
+        let second_deadline = first_deadline + delta_block;
         assert_eq!(timer_state.next_fire().unwrap(), second_deadline);
         assert!(matches!(
             timer_state.progress(second_deadline).unwrap(),
@@ -393,7 +395,7 @@ mod tests {
 
         assert_eq!(
             timer_state.next_fire().unwrap(),
-            now + Duration::from_millis(1600)
+            second_deadline + delta_block
         );
     }
 

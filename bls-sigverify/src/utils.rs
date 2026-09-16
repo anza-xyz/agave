@@ -5,7 +5,7 @@ use {
         stats::{SenderStats, VoteSenderStats},
     },
     agave_votor_messages::{
-        VerifiedVoterSlotsSender,
+        VerifiedVotorSlotsMessage,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
@@ -13,6 +13,7 @@ use {
     log::{error, info, warn},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{collections::HashMap, time::Instant},
 };
 
@@ -101,21 +102,21 @@ pub(super) fn send_sig_verified_batch_to_pool(
 
 pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
-    votes: HashMap<Pubkey, Vec<Slot>>,
-    channel: &VerifiedVoterSlotsSender,
+    votes: HashMap<Slot, Vec<Pubkey>>,
+    channel: &EvictingSender<VerifiedVotorSlotsMessage>,
     stats: &mut VoteSenderStats,
 ) {
-    for (pubkey, slots) in votes {
-        match channel.try_send((pubkey, slots)) {
-            Ok(()) => stats.repair_sender.sent += 1,
-            Err(TrySendError::Full(_)) => {
-                warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");
-                stats.repair_sender.channel_full += 1
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" disconnected");
-                return;
-            }
+    if votes.is_empty() {
+        return;
+    }
+    match channel.try_send(votes) {
+        Ok(()) => stats.repair_sender.sent += 1,
+        Err(TrySendError::Full(_)) => {
+            warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");
+            stats.repair_sender.channel_full += 1
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" disconnected");
         }
     }
 }

@@ -2,10 +2,8 @@
 
 use {
     agave_feature_set::virtual_address_space_adjustments,
-    agave_precompiles::is_precompile,
     prost::Message,
     protosol::protos::{TxnContext as ProtoTxnContext, TxnResult as ProtoTxnResult},
-    solana_instruction::error::InstructionError,
     solana_svm::conformance::{
         callback::ConformanceCallback,
         direct_mapping::direct_mapping_handle_cu_exhaustion,
@@ -16,7 +14,6 @@ use {
         },
         txn::{context::TxnContext, harness::execute_txn_with_callback},
     },
-    solana_transaction_error::TransactionError,
     std::ffi::c_int,
 };
 
@@ -52,28 +49,7 @@ pub fn execute_txn_proto(input: ProtoTxnContext) -> ProtoTxnResult {
     let mut effects =
         execute_txn_with_callback(&context, &callback, &mut program_cache, &sysvar_cache);
 
-    let precompile_custom_error_index = match &effects.status {
-        Err(TransactionError::InstructionError(index, InstructionError::Custom(_))) => context
-            .message
-            .instructions()
-            .get(usize::from(*index))
-            .and_then(|instruction| {
-                context
-                    .message
-                    .static_account_keys()
-                    .get(usize::from(instruction.program_id_index))
-            })
-            .is_some_and(|program_id| is_precompile(program_id, |_| true))
-            .then_some(*index),
-        _ => None,
-    };
-
-    if let Some(index) = precompile_custom_error_index {
-        effects.status = Err(TransactionError::InstructionError(
-            index,
-            InstructionError::Custom(0),
-        ));
-    }
+    effects.zero_precompile_custom_error(&context.message);
 
     let cu_avail = effects.cu_avail;
     let has_err = effects.status.is_err();

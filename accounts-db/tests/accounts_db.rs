@@ -85,6 +85,7 @@ fn test_load_after_remove_unrooted_and_restore_to_same_slot() {
                         &pubkey,
                         LoadHint::FixedMaxRoot,
                         PopulateReadCache::False,
+                        None::<fn(_, &_, _) -> _>,
                     );
                 }
             })

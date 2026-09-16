@@ -183,11 +183,6 @@ classes of issue are out of scope
   * Those requiring calls from multiple clients
   * Those impacting getProgramAccounts, et al. without secondary indexes enabled and/or
     unfiltered requests, which are known to be slow on clusters with large accounts sets
-* Alpenglow crates (votor, votor-messages, etc) and plumbing. Migration of the
-Alpenglow logic from a feature fork to agave master is currently underway. As
-such there are many partially migrated changes isolated to a few areas. These
-are disqualified from reports and bounties. Bugs in integration logic that impact
-the no-Alpenglow code path remain in scope
 * Loader V4 (the `loader-v4` crate and associated code paths). Loader V4 is
 being removed from the codebase and its feature ID has been stubbed out. Bugs
 relating to Loader V4 functionality are disqualified from reports and bounties.

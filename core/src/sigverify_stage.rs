@@ -373,8 +373,13 @@ mod tests {
         let payer = Keypair::new();
         let recipient = Pubkey::new_unique();
         let instruction = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
-        let message =
-            v1::Message::try_compile(&payer.pubkey(), &[instruction], Hash::new_unique()).unwrap();
+        let message = v1::Message::try_compile_with_config(
+            &payer.pubkey(),
+            &[instruction],
+            Hash::new_unique(),
+            v1::TransactionConfig::empty(),
+        )
+        .unwrap();
 
         VersionedTransaction::try_new(VersionedMessage::V1(message), &[&payer]).unwrap()
     }

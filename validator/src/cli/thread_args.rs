@@ -12,7 +12,6 @@ use {
 // Need this struct to provide &str whose lifetime matches that of the CLAP Arg's
 pub struct DefaultThreadArgs {
     pub accounts_db_background_threads: String,
-    pub accounts_db_foreground_threads: String,
     pub accounts_index_flush_threads: String,
     pub block_production_num_workers: String,
     pub ip_echo_server_threads: String,
@@ -33,8 +32,6 @@ impl Default for DefaultThreadArgs {
     fn default() -> Self {
         Self {
             accounts_db_background_threads: AccountsDbBackgroundThreadsArg::bounded_default()
-                .to_string(),
-            accounts_db_foreground_threads: AccountsDbForegroundThreadsArg::bounded_default()
                 .to_string(),
             accounts_index_flush_threads: AccountsIndexFlushThreadsArg::bounded_default()
                 .to_string(),
@@ -63,7 +60,6 @@ impl Default for DefaultThreadArgs {
 pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
     vec![
         new_thread_arg::<AccountsDbBackgroundThreadsArg>(&defaults.accounts_db_background_threads),
-        new_thread_arg::<AccountsDbForegroundThreadsArg>(&defaults.accounts_db_foreground_threads),
         new_thread_arg::<AccountsIndexFlushThreadsArg>(&defaults.accounts_index_flush_threads),
         new_thread_arg::<BlockProductionNumWorkersArg>(&defaults.block_production_num_workers),
         new_thread_arg::<IpEchoServerThreadsArg>(&defaults.ip_echo_server_threads),
@@ -98,7 +94,6 @@ pub(crate) fn new_thread_arg<'a, T: ThreadArg>(default: &str) -> Arg<'_, 'a> {
 
 pub struct NumThreadConfig {
     pub accounts_db_background_threads: NonZeroUsize,
-    pub accounts_db_foreground_threads: NonZeroUsize,
     pub accounts_index_flush_threads: NonZeroUsize,
     pub block_production_num_workers: NonZeroUsize,
     pub ip_echo_server_threads: NonZeroUsize,
@@ -120,11 +115,6 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
         accounts_db_background_threads: value_t_or_exit!(
             matches,
             AccountsDbBackgroundThreadsArg::NAME,
-            NonZeroUsize
-        ),
-        accounts_db_foreground_threads: value_t_or_exit!(
-            matches,
-            AccountsDbForegroundThreadsArg::NAME,
             NonZeroUsize
         ),
         accounts_index_flush_threads: value_t_or_exit!(
@@ -228,18 +218,6 @@ impl ThreadArg for AccountsDbBackgroundThreadsArg {
 
     fn default() -> usize {
         accounts_db::quarter_thread_count()
-    }
-}
-
-struct AccountsDbForegroundThreadsArg;
-impl ThreadArg for AccountsDbForegroundThreadsArg {
-    const NAME: &'static str = "accounts_db_foreground_threads";
-    const LONG_NAME: &'static str = "accounts-db-foreground-threads";
-    const HELP: &'static str =
-        "Number of threads to use for AccountsDb foreground tasks, e.g. transaction processing";
-
-    fn default() -> usize {
-        accounts_db::default_num_foreground_threads()
     }
 }
 

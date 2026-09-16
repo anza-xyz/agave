@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 
-CI_BUILD_START=$(date +%s)
-export CI_BUILD_START
-
 source ci/env.sh
 
 # Kill leftover containers from this agent's previous job. Scoped by

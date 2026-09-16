@@ -198,23 +198,23 @@ impl StandardBroadcastRun {
         }
         // Set the reference_tick as if the PoH completed for this slot
         let reference_tick = max_ticks_in_slot;
-        let shreds: Vec<_> =
-            Shredder::new(self.slot, self.parent, reference_tick, self.shred_version)
-                .unwrap()
-                .make_merkle_shreds_from_entries(
-                    keypair,
-                    &[],  // entries
-                    true, // is_last_in_slot,
-                    self.chained_merkle_root,
-                    self.next_shred_index,
-                    self.next_code_index,
-                    &self.reed_solomon_cache,
-                    &mut self.process_shreds_stats,
-                )
-                // These shreds will finish the slot so no need to update
-                // self.next_shred_index and self.next_code_index
-                .inspect(|shred| self.process_shreds_stats.record_shred(shred))
-                .collect();
+        let shreds = Shredder::new(self.slot, self.parent, reference_tick, self.shred_version)
+            .unwrap()
+            .make_merkle_shreds_from_entries(
+                keypair,
+                &[],  // entries
+                true, // is_last_in_slot,
+                self.chained_merkle_root,
+                self.next_shred_index,
+                self.next_code_index,
+                &self.reed_solomon_cache,
+                &mut self.process_shreds_stats,
+            );
+        // These shreds will finish the slot so no need to update
+        // self.next_shred_index and self.next_code_index
+        shreds.iter().for_each(|shred| {
+            self.process_shreds_stats.record_shred(shred);
+        });
         if let Some(shred) = shreds.last() {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }
@@ -243,16 +243,15 @@ impl StandardBroadcastRun {
                     self.next_code_index,
                     &self.reed_solomon_cache,
                     process_stats,
-                )
-                .inspect(|shred| {
-                    process_stats.record_shred(shred);
-                    let next_index = match shred.shred_type() {
-                        ShredType::Code => &mut self.next_code_index,
-                        ShredType::Data => &mut self.next_shred_index,
-                    };
-                    *next_index = (*next_index).max(shred.index() + 1);
-                })
-                .collect();
+                );
+        shreds.iter().for_each(|shred| {
+            process_stats.record_shred(shred);
+            let next_index = match shred.shred_type() {
+                ShredType::Code => &mut self.next_code_index,
+                ShredType::Data => &mut self.next_shred_index,
+            };
+            *next_index = (*next_index).max(shred.index() + 1);
+        });
 
         if self
             .migration_status

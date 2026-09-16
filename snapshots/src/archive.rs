@@ -143,13 +143,13 @@ pub fn archive_snapshot(
                 matches!(snapshot_archive_kind, SnapshotArchiveKind::Incremental(_));
             let use_direct_io = io_setup.use_direct_io && !use_page_cache;
 
-            // Full snapshots do not need to persist tombstones as their older versions are
-            // guaranteed to be skipped as obsolete accounts
-            let tombstones_filter = if matches!(snapshot_archive_kind, SnapshotArchiveKind::Full) {
-                TombstonesFilter::Exclude
-            } else {
-                TombstonesFilter::Include
-            };
+            // Tombstones must always be included in the snapshot archive.
+            // This is to handle the scenario where a long-running RPC scan_accounts()
+            // causes snapshot handling to flush the write cache _without_ also cleaning,
+            // which could allow an account to have duplicates: an older open version and a new closed (zero lamport) version.
+            // If the newer closed (tombstone) version is filtered out, the older open
+            // version would remain, and revive the now-zombie account.
+            let tombstones_filter = TombstonesFilter::Include;
 
             // Walk storages and their (lazily-opened) file handles in chunks,
             // bounding how many archive-mode fds are simultaneously open.

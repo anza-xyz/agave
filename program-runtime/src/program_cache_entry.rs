@@ -188,7 +188,7 @@ impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
         self.deployment_slot == other.deployment_slot
             && self.account_owner == other.account_owner
-            && self.is_tombstone() == other.is_tombstone()
+            && std::mem::discriminant(&self.program) == std::mem::discriminant(&other.program)
     }
 }
 
@@ -250,7 +250,7 @@ impl ProgramCacheEntry {
             account_owner,
             deployment_slot,
             stats: Arc::default(),
-            latest_access_slot: AtomicU64::new(0),
+            latest_access_slot: AtomicU64::new(deployment_slot),
         }
     }
 

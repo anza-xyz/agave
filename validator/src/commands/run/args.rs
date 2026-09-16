@@ -952,10 +952,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("accounts_db_verify_refcounts")
-            .long("accounts-db-verify-refcounts")
+        Arg::with_name("accounts_db_verify_index")
+            .long("accounts-db-verify-index")
             .help(
-                "Debug option to scan all append vecs and verify account index refcounts prior to \
+                "Debug option to scan all storages and verify account index slot lists prior to \
                  clean",
             )
             .hidden(hidden_unless_forced()),
@@ -1097,6 +1097,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<usize>)
             .takes_value(true)
             .help("Pre-allocate the accounts index, assuming this many accounts")
+            .long_help(
+                "Pre-allocate the accounts index, assuming this many accounts. Overrides the \
+                 account count recorded in the local snapshot directory, which is otherwise used \
+                 when starting from local snapshot state rather than a snapshot archive.",
+            )
             .hidden(hidden_unless_forced()),
     )
     .arg(

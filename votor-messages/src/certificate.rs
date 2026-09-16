@@ -85,6 +85,18 @@ pub enum CertificateType {
 }
 
 impl CertificateType {
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Returns a notar certificate type with the given slot and unique block id for test purposes.
+    pub fn new_unique_notar(slot: Slot) -> Self {
+        Self::Notarize(Block::new_unique(slot))
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Returns a notar fallback certificate type with the given slot and unique block id for test purposes.
+    pub fn new_unique_notar_fallback(slot: Slot) -> Self {
+        Self::NotarizeFallback(Block::new_unique(slot))
+    }
+
     /// Get the slot of the certificate
     pub fn slot(&self) -> Slot {
         match self {

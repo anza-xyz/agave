@@ -18,12 +18,10 @@ use {
         ThreadPool,
         iter::{IntoParallelIterator, ParallelIterator},
     },
-    solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::collections::{HashMap, HashSet},
-    thiserror::Error,
 };
 
 pub(super) struct CertPayload {
@@ -31,17 +29,9 @@ pub(super) struct CertPayload {
     pub(super) sender_identity_pubkey: Pubkey,
 }
 
-#[derive(Debug, Error)]
-enum CertVerifyError {
-    #[error("Cert Verification Error {0}")]
-    CertVerifyFailed(#[from] BlsCertVerifyError),
-    #[error("discarding cert with slot {cert_slot} too far in future from root slot {root_slot}")]
-    TooFarInFuture { cert_slot: Slot, root_slot: Slot },
-}
-
 struct CertVerifyOutcome {
     verified_cert: Option<Certificate>,
-    failures: Vec<(CertVerifyError, Pubkey)>,
+    failures: Vec<(BlsCertVerifyError, Pubkey)>,
 }
 
 /// Verifies certificates and sends the verified certificates to the consensus pool.
@@ -62,6 +52,7 @@ pub(super) fn verify_and_send_certificates(
     thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
     for cert_type in cert_groups.keys() {
+        debug_assert!(cert_type.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY));
         debug_assert!(!verified_certs_set.contains(cert_type));
     }
     let mut measure = Measure::start("verify_and_send_certificates");
@@ -71,7 +62,7 @@ pub(super) fn verify_and_send_certificates(
         return Ok(stats);
     }
 
-    let messages = verify_certs(
+    let messages = verify_cert_groups(
         cert_groups,
         root_bank,
         verified_certs_set,
@@ -94,7 +85,7 @@ pub(super) fn verify_and_send_certificates(
 /// The valid certs are inserted into the [`verified_certs_set`].
 /// Invalid cert senders are banlisted.
 /// Returns a [`SigVerifiedBatch`] constructed from the valid certs.
-fn verify_certs(
+fn verify_cert_groups(
     cert_groups: HashMap<CertificateType, Vec<CertPayload>>,
     root_bank: &Bank,
     verified_certs_set: &mut HashSet<CertificateType>,
@@ -102,7 +93,7 @@ fn verify_certs(
     ban_sender: &BanSender,
     thread_pool: &ThreadPool,
 ) -> SigVerifiedBatch {
-    let verified = thread_pool.install(|| {
+    let results = thread_pool.install(|| {
         cert_groups
             .into_par_iter()
             .map(|(_, certs)| {
@@ -113,7 +104,7 @@ fn verify_certs(
     });
 
     let mut certs = Vec::new();
-    for (num_certs, outcome) in verified {
+    for (num_certs, outcome) in results {
         let num_certs_attempted = if outcome.verified_cert.is_some() {
             outcome.failures.len().saturating_add(1)
         } else {
@@ -123,7 +114,10 @@ fn verify_certs(
         stats.redundant_certs_skipped += num_certs.saturating_sub(num_certs_attempted) as u64;
 
         for (err, sender_identity_pubkey) in outcome.failures {
-            handle_cert_verify_error(err, sender_identity_pubkey, stats, ban_sender);
+            stats.banning_validator += 1;
+            ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
+            info!("bls_cert_sigverify: banned sender={sender_identity_pubkey} due to error {err}");
+            stats.certificate_verification_failed += 1;
         }
 
         if let Some(cert) = outcome.verified_cert {
@@ -159,37 +153,12 @@ fn verify_cert_group(certs: Vec<CertPayload>, root_bank: &Bank) -> CertVerifyOut
     }
 }
 
-fn handle_cert_verify_error(
-    err: CertVerifyError,
-    sender_identity_pubkey: Pubkey,
-    stats: &mut SigVerifyCertStats,
-    ban_sender: &BanSender,
-) {
-    match &err {
-        CertVerifyError::CertVerifyFailed(_) => {
-            stats.banning_validator += 1;
-            ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
-            info!("bls_cert_sigverify: banned sender={sender_identity_pubkey} due to error {err}");
-            stats.certificate_verification_failed += 1;
-        }
-        CertVerifyError::TooFarInFuture { .. } => {
-            stats.too_far_in_future += 1;
-        }
-    }
-}
-
 fn verify_cert(
     cert: UnverifiedCertificate,
     root_bank: &Bank,
-) -> Result<Certificate, CertVerifyError> {
+) -> Result<Certificate, BlsCertVerifyError> {
     let cert_slot = cert.cert_type.slot();
     let root_slot = root_bank.slot();
-    if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
-        return Err(CertVerifyError::TooFarInFuture {
-            cert_slot,
-            root_slot,
-        });
-    }
-    let cert = root_bank.verify_certificate(cert)?;
-    Ok(cert)
+    debug_assert!(cert_slot <= root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY));
+    root_bank.verify_certificate(cert)
 }

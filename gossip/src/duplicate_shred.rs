@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::crds_data::sanitize_wallclock,
     itertools::Itertools,
@@ -50,35 +52,40 @@ pub struct DuplicateShred {
 
 impl DuplicateShred {
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn num_chunks(&self) -> u8 {
         self.num_chunks
     }
 
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn chunk_index(&self) -> u8 {
         self.chunk_index
     }
 
-    // Conformance-only accessors; unused under DCOU.
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     #[inline]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     #[inline]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     #[inline]
     pub(crate) fn slot(&self) -> Slot {
         self.slot
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     #[inline]
     pub(crate) fn chunk(&self) -> &[u8] {
         &self.chunk

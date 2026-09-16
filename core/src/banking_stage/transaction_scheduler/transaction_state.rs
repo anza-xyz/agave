@@ -18,6 +18,8 @@ pub(crate) struct TransactionState<Tx> {
     max_age: MaxAge,
     /// Priority of the transaction.
     priority: u64,
+    /// Order in which the transaction entered the scheduler's container.
+    arrival_order: u64,
     /// Estimated cost of the transaction.
     cost: u64,
     /// Nonce address, if this is a validated nonce transaction.
@@ -31,6 +33,7 @@ impl<Tx> TransactionState<Tx> {
             transaction: Some(transaction),
             max_age,
             priority,
+            arrival_order: 0,
             cost,
             nonce_address: None,
         }
@@ -41,6 +44,14 @@ impl<Tx> TransactionState<Tx> {
     /// The priority is used to order transactions for processing.
     pub(crate) fn priority(&self) -> u64 {
         self.priority
+    }
+
+    pub(crate) fn arrival_order(&self) -> u64 {
+        self.arrival_order
+    }
+
+    pub(crate) fn set_arrival_order(&mut self, arrival_order: u64) {
+        self.arrival_order = arrival_order;
     }
 
     /// Return the cost of the transaction.

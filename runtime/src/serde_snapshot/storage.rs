@@ -1,14 +1,13 @@
 use {
     serde::{Deserialize, Serialize},
-    solana_accounts_db::account_storage_entry::AccountStorageEntry,
-    solana_clock::Slot,
     wincode::{SchemaRead, SchemaWrite},
 };
 
 /// The serialized AccountsFileId type is fixed as usize
 pub(crate) type SerializedAccountsFileId = usize;
 
-// Serializable version of AccountStorageEntry for snapshot format
+// Serializable version of AccountStorageEntry, no longer written nor read back; only kept to name
+// the wire shape of the deprecated storage entries map in the snapshot manifest.
 #[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
@@ -25,23 +24,4 @@ pub(crate) type SerializedAccountsFileId = usize;
 pub struct SerializableAccountStorageEntry {
     id: SerializedAccountsFileId,
     accounts_current_len: usize,
-}
-
-impl SerializableAccountStorageEntry {
-    /// Creates a new SerializableAccountStorageEntry from the current
-    /// AccountStorageEntry and a given snapshot slot. When obsolete accounts
-    /// are enabled, the saved size is decreased by the amount of obsolete bytes
-    /// in the storage. The number of obsolete bytes is determined by the snapshot
-    /// slot, as an entry's obsolescence is dependent on the slot that marked it
-    /// as such.
-    pub fn new(
-        accounts: &AccountStorageEntry,
-        snapshot_slot: Slot,
-    ) -> SerializableAccountStorageEntry {
-        SerializableAccountStorageEntry {
-            id: accounts.id() as SerializedAccountsFileId,
-            accounts_current_len: accounts.accounts.len()
-                - accounts.get_obsolete_bytes(Some(snapshot_slot)),
-        }
-    }
 }

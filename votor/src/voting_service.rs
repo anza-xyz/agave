@@ -7,7 +7,10 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_runtime::validated_block_finalization::ValidatedBlockFinalizationCert,
+    solana_runtime::{
+        slot_params::slot_time_feature_gates,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
+    },
     std::{
         collections::{BTreeMap, HashSet},
         ops::Bound::{Excluded, Included, Unbounded},
@@ -18,18 +21,46 @@ use {
     tokio::sync::{mpsc, mpsc::error::TrySendError},
 };
 
-/// The maximum amount of packets per second we expect from an honest node
-pub const VOTOR_RATE_LIMIT_PPS: usize = 50;
-
-/// Max new packets per second in steady state:
+/// Max new packets per slot in steady state:
 /// - Notarize + Finalize votes
 /// - NotarizeFallback + Notarize + FastFinalize + Finalize certificates
-///
-/// 200ms slots, 6 packets * 5 slots per second = 30 PPS
-const NEW_PACKETS_PER_SECOND: usize = 30;
+const NEW_PACKETS_PER_SLOT: usize = 6;
 
 /// The amount of packets we should send per second from the standstill queue
-const STANDSTILL_REFRESH_BATCH_SIZE: usize = VOTOR_RATE_LIMIT_PPS - NEW_PACKETS_PER_SECOND;
+const STANDSTILL_REFRESH_BATCH_SIZE: usize = 20;
+
+/// The packets per second an honest node produces at `slot_duration`.
+///
+/// `NEW_PACKETS_PER_SLOT` for every slot in a second, plus the standstill refresh
+/// budget:
+///
+/// `pps = NEW_PACKETS_PER_SLOT * 1_000 / slot_duration_ms + STANDSTILL_REFRESH_BATCH_SIZE`
+fn rate_limit_pps_for_slot_duration(slot_duration: Duration) -> usize {
+    const MS_IN_SEC: usize = 1_000;
+
+    let slot_ms = slot_duration.as_millis();
+    assert!(slot_ms > 0, "slot duration must be at least 1ms");
+
+    let new_packets_per_second = NEW_PACKETS_PER_SLOT
+        .saturating_mul(MS_IN_SEC)
+        .div_ceil(slot_ms.try_into().expect("slot_ms can't exceed usize::MAX"));
+
+    new_packets_per_second.saturating_add(STANDSTILL_REFRESH_BATCH_SIZE)
+}
+
+/// The maximum amount of packets per second we expect from an honest node.
+/// Calculated based on the min slot duration from `slot_time_feature_gates`.
+pub fn votor_rate_limit_pps() -> usize {
+    // The shortest slot duration the runtime can run at, across every slot-time
+    // reduction feature.
+    let min_slot_duration = slot_time_feature_gates()
+        .iter()
+        .min_by_key(|(_, params)| params.ns_per_slot())
+        .map(|(_, params)| Duration::from_nanos_u128(params.ns_per_slot()))
+        .expect("slot_time_feature_gates is never empty");
+
+    rate_limit_pps_for_slot_duration(min_slot_duration)
+}
 
 /// How often we should refresh messages from the standstill queue
 const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -335,7 +366,9 @@ mod tests {
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
+            migration::MigrationStatus,
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
         agave_votor_transport::{
             PeerList, PeerListReceiver, PeerListSender,
@@ -345,7 +378,10 @@ mod tests {
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded, unbounded},
         rand::Rng,
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        solana_bls_signatures::{
+            BLS_SIGNATURE_AFFINE_SIZE, Keypair as BlsKeypair, Signature as BLSSignature,
+            signature::SignatureAffine,
+        },
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -376,17 +412,24 @@ mod tests {
     fn test_vote_message(
         vote: Vote,
         rank: u16,
-        shred_verion: u16,
+        shred_version: u16,
     ) -> VersionedWireConsensusMessage {
         VersionedWireConsensusMessage::new_from_vote(
-            VoteMessage {
-                vote,
-                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                rank,
-                stake: NonZero::new(123).unwrap(),
-            },
-            shred_verion,
+            test_vote(vote, rank, shred_version),
+            shred_version,
         )
+    }
+
+    fn test_vote(vote: Vote, rank: u16, shred_version: u16) -> VoteMessage {
+        let bls_keypair = BlsKeypair::new();
+        let payload = get_vote_payload_to_sign(vote, shred_version);
+        let signature = SignatureAffine::from(bls_keypair.sign(&payload));
+        VoteMessage {
+            vote,
+            signature,
+            rank,
+            stake: NonZero::new(123).unwrap(),
+        }
     }
 
     fn test_certificate_message(
@@ -401,6 +444,35 @@ mod tests {
             },
             my_shred_version,
         )
+    }
+
+    #[test]
+    fn test_rate_limit_pps_for_slot_duration() {
+        assert_eq!(
+            rate_limit_pps_for_slot_duration(Duration::from_millis(100)),
+            80
+        );
+        assert_eq!(
+            rate_limit_pps_for_slot_duration(Duration::from_millis(200)),
+            50
+        );
+        assert_eq!(
+            rate_limit_pps_for_slot_duration(Duration::from_millis(400)),
+            35
+        );
+    }
+
+    #[test]
+    fn test_votor_rate_limit_pps_covers_every_slot_time_reduction() {
+        let limit = votor_rate_limit_pps();
+
+        for (_, params) in slot_time_feature_gates() {
+            let duration = Duration::from_nanos_u128(params.ns_per_slot());
+            assert!(
+                limit >= rate_limit_pps_for_slot_duration(duration),
+                "limit {limit} is below the honest rate at {duration:?}"
+            );
+        }
     }
 
     #[test]
@@ -500,7 +572,8 @@ mod tests {
             client_socket,
             ingress_sender,
             peer_list_receiver,
-            VOTOR_RATE_LIMIT_PPS,
+            SocketAddrSpace::Unspecified,
+            votor_rate_limit_pps(),
             CancellationToken::new(),
         )
         .expect("QuicDatagramEndpoint::spawn");
@@ -546,6 +619,7 @@ mod tests {
                 spy_listener.0,
                 Some(spy_listener.1),
             )]))),
+            Arc::new(MigrationStatus::post_migration_status()),
         );
         (
             VotingService::new(
@@ -560,45 +634,29 @@ mod tests {
         )
     }
 
-    #[test_case(BLSOp::PushVote {
-        vote: Arc::new(VoteMessage {
-            vote: Vote::new_skip_vote(5),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank: 1,
-            stake:NonZero::new(123).unwrap()
-        }),
-    }, ConsensusMessage::Vote(VoteMessage {
-        vote: Vote::new_skip_vote(5),
-        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        rank: 1,
-        stake:NonZero::new(123).unwrap()
-    }))]
+    #[test_case(BLSOp::PushVote { vote: Arc::new(test_vote(Vote::new_skip_vote(5), 1, 0)) }, None)]
     #[test_case(BLSOp::PushCertificates {
         certificates: vec![Arc::new(Certificate {
         cert_type: CertificateType::Skip(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: Vec::new(),
         })],
-    }, ConsensusMessage::Certificate(Certificate {
+    }, Some(ConsensusMessage::Certificate(Certificate {
         cert_type: CertificateType::Skip(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: Vec::new(),
-    }))]
+    })))]
     #[test_case(BLSOp::RefreshVotes {
-        votes: vec![Arc::new(VoteMessage {
-        vote: Vote::new_skip_vote(6),
-        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        rank: 1,
-        stake:NonZero::new(123).unwrap()
-        })],
-    }, ConsensusMessage::Vote(VoteMessage {
-        vote: Vote::new_skip_vote(6),
-        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        rank: 1,
-        stake:NonZero::new(123).unwrap()
-    }))]
-    fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
+        votes: vec![Arc::new(test_vote(Vote::new_skip_vote(6), 1, 0))],
+    }, None)]
+    fn test_send_message(bls_op: BLSOp, expected_message: Option<ConsensusMessage>) {
         agave_logger::setup();
+
+        let expected_message = expected_message.unwrap_or_else(|| match &bls_op {
+            BLSOp::PushVote { vote } => ConsensusMessage::Vote((**vote).clone()),
+            BLSOp::RefreshVotes { votes } => ConsensusMessage::Vote((*votes[0]).clone()),
+            _ => panic!("expected message is required for certificate operations"),
+        });
 
         let listener_kp = Keypair::new();
         let listener_pubkey = listener_kp.pubkey();

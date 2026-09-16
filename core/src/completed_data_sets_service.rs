@@ -661,7 +661,6 @@ pub mod test {
                     &ReedSolomonCache::default(),
                     &mut ProcessShredsStats::default(),
                 )
-                .collect::<Vec<_>>()
         };
         let mut shreds = make_marker_shreds(
             VersionedBlockMarker::from_block_header(BlockHeaderV1 {

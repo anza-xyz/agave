@@ -26,7 +26,7 @@ use {
 mod field_frames;
 mod frame_v1_14_11;
 mod frame_v3;
-mod frame_v4;
+pub(crate) mod frame_v4;
 mod list_view;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -39,6 +39,7 @@ pub enum VoteStateViewError {
     InvalidEpochCreditsLength,
     OldVersion,
     UnsupportedVersion,
+    AccountDataSizeIncorrect,
 }
 
 pub type Result<T> = core::result::Result<T, VoteStateViewError>;

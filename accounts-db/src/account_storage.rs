@@ -191,7 +191,7 @@ impl AccountStorage {
             "shrink is in progress! slots: {:?}",
             self.shrink_in_progress_map.read().unwrap().keys(),
         );
-        assert!(self.map.insert(store.slot, store).is_none());
+        assert!(self.map.insert(store.slot(), store).is_none());
     }
 
     /// called when shrinking begins on a slot and append vec.

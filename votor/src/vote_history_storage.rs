@@ -1,5 +1,3 @@
-#[cfg(feature = "frozen-abi")]
-use serde::{Deserialize, Serialize};
 use {
     super::vote_history::*,
     log::trace,
@@ -31,10 +29,10 @@ fn vote_history_wincode_config() -> VoteHistoryWincodeConfig {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize, Deserialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "4VVxd5brhUZgopYJ7zwAYC8J62zU2nUZSAV4kETb3m9q",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -87,24 +85,18 @@ impl From<SavedVoteHistory> for SavedVoteHistoryVersions {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize, Deserialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        digest = "J6vB6FWFT8CFEvxndXWes461hroo8Q5L9Wq9cv4FEzaQ",
         abi_digest = "Mhh4tHGaVTfWbkJ78sY1dDbYZHtQjXiVFBtC3BfQH5C",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
     )
 )]
 #[derive(Default, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct SavedVoteHistory {
     signature: Signature,
-    #[cfg_attr(feature = "frozen-abi", serde(with = "serde_bytes"))]
     data: Vec<u8>,
     #[wincode(skip)]
-    #[cfg_attr(
-        feature = "frozen-abi",
-        serde(skip),
-        stable_abi_sample(with = "Default::default()")
-    )]
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     node_pubkey: Pubkey,
 }
 
@@ -278,21 +270,12 @@ mod test {
         // The validator still casts a Finalize vote for each notarized block,
         // but no finalization certificate advances the root.
         for slot in 1..=MAX_SLOTS_WITHOUT_FINALIZATION as u64 {
-            let block = Block {
-                slot,
-                block_id: Hash::default(),
-            };
+            let block = Block::new_unique(slot);
             vote_history.add_vote(Vote::new_notarization_vote(block));
             vote_history.add_block_notarized(block);
             vote_history.add_vote(Vote::new_finalization_vote(slot));
             if slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64) {
-                vote_history.add_parent_ready(
-                    slot,
-                    Block {
-                        slot: slot - 1,
-                        block_id: Hash::default(),
-                    },
-                );
+                vote_history.add_parent_ready(slot, Block::new_unique(slot - 1));
             }
         }
         let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();

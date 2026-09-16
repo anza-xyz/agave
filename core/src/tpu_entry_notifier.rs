@@ -1,10 +1,12 @@
 use {
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     solana_clock::BankId,
     solana_entry::{
         block_component::VersionedBlockMarker, entry::EntrySummary, entry_or_marker::EntryOrMarker,
     },
-    solana_ledger::entry_notifier_service::{EntryNotification, EntryNotifierSender},
+    solana_ledger::entry_notifier_service::{
+        EntryNotification, EntryNotifierSender, send_entry_notification,
+    },
     solana_poh::poh_recorder::WorkingBankEntryOrMarker,
     std::{
         sync::{
@@ -18,6 +20,25 @@ use {
 
 pub(crate) struct TpuEntryNotifier {
     thread_hdl: JoinHandle<()>,
+}
+
+/// Try the nonblocking fast path first so saturation is observable, then block
+/// rather than dropping an entry on its way to BroadcastStage.
+fn send_broadcast_entry(
+    sender: &Sender<WorkingBankEntryOrMarker>,
+    entry: WorkingBankEntryOrMarker,
+) -> Result<(), Box<SendError<WorkingBankEntryOrMarker>>> {
+    match sender.try_send(entry) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(entry)) => {
+            log::error!(
+                "TPU entry notifier to BroadcastStage channel is full; blocking to preserve the \
+                 entry"
+            );
+            sender.send(entry).map_err(Box::new)
+        }
+        Err(TrySendError::Disconnected(entry)) => Err(Box::new(SendError(entry))),
+    }
 }
 
 impl TpuEntryNotifier {
@@ -86,13 +107,16 @@ impl TpuEntryNotifier {
                     hash: entry.hash,
                     num_transactions: entry.transactions.len() as u64,
                 };
-                if let Err(err) = entry_notification_sender.send(EntryNotification::Entry {
-                    slot,
-                    bank_id,
-                    index,
-                    entry: entry_summary,
-                    starting_transaction_index: *current_transaction_index,
-                }) {
+                if let Err(err) = send_entry_notification(
+                    entry_notification_sender,
+                    EntryNotification::Entry {
+                        slot,
+                        bank_id,
+                        index,
+                        entry: entry_summary,
+                        starting_transaction_index: *current_transaction_index,
+                    },
+                ) {
                     warn!(
                         "Failed to send slot {slot:?} entry {index:?} from Tpu to \
                          EntryNotifierService, error {err:?}",
@@ -103,12 +127,14 @@ impl TpuEntryNotifier {
             }
             EntryOrMarker::Marker(VersionedBlockMarker::V1(marker)) => {
                 if let Some(block_footer) = marker.as_block_footer()
-                    && let Err(err) =
-                        entry_notification_sender.send(EntryNotification::BlockFooter {
+                    && let Err(err) = send_entry_notification(
+                        entry_notification_sender,
+                        EntryNotification::BlockFooter {
                             slot,
                             bank_id,
                             block_footer: Box::new(block_footer.clone()),
-                        })
+                        },
+                    )
                 {
                     warn!(
                         "Failed to send slot {slot:?} block footer from Tpu to \
@@ -118,7 +144,10 @@ impl TpuEntryNotifier {
             }
         }
 
-        if let Err(err) = broadcast_entry_sender.send((bank, (entry_or_marker, tick_height))) {
+        if let Err(err) = send_broadcast_entry(
+            broadcast_entry_sender,
+            (bank, (entry_or_marker, tick_height)),
+        ) {
             warn!(
                 "Failed to send slot {slot:?} entry/marker {index:?} from Tpu to BroadcastStage, \
                  error {err:?}",

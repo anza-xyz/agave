@@ -385,7 +385,13 @@ fn filter_account_result(
         {
             get_parsed_token_account(&bank, &params.pubkey, account, None)
         } else {
-            encode_ui_account(&params.pubkey, &account, params.encoding, None, None)
+            encode_ui_account(
+                &params.pubkey,
+                &account,
+                params.encoding,
+                None,
+                params.data_slice,
+            )
         }
     });
     (account, last_modified_slot)
@@ -415,6 +421,7 @@ fn filter_program_results(
 ) -> (impl Iterator<Item = RpcKeyedAccount> + use<>, Slot) {
     let accounts_is_empty = accounts.is_empty();
     let encoding = params.encoding;
+    let data_slice = params.data_slice;
     let filters = params.filters.clone();
     let keyed_accounts = accounts.into_iter().filter(move |(_, account)| {
         filters
@@ -430,7 +437,7 @@ fn filter_program_results(
     } else {
         let accounts = keyed_accounts.map(move |(pubkey, account)| RpcKeyedAccount {
             pubkey: pubkey.to_string(),
-            account: encode_ui_account(&pubkey, &account, encoding, None, None),
+            account: encode_ui_account(&pubkey, &account, encoding, None, data_slice),
         });
         Either::Right(accounts)
     };
@@ -1270,6 +1277,117 @@ pub(crate) mod tests {
                "subscription": account_result.subscription,
            }
         })
+    }
+
+    #[test]
+    fn test_account_and_program_notifications_honor_data_slice() {
+        use {
+            solana_account_decoder::UiDataSliceConfig,
+            solana_rpc_client_api::filter::{Memcmp, RpcFilterType},
+        };
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let pubkey = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let data = b"0123456789abcdef";
+        let account = AccountSharedData::new_with_data(42, data.to_vec(), &owner);
+        let filtered_out = AccountSharedData::new(42, 15, &owner);
+
+        for encoding in [
+            UiAccountEncoding::Binary,
+            UiAccountEncoding::Base58,
+            UiAccountEncoding::Base64,
+            UiAccountEncoding::Base64Zstd,
+            UiAccountEncoding::JsonParsed,
+        ] {
+            for (data_slice, expected) in [
+                (None, data.as_slice()),
+                (
+                    Some(UiDataSliceConfig {
+                        offset: 3,
+                        length: 4,
+                    }),
+                    b"3456".as_slice(),
+                ),
+                (
+                    Some(UiDataSliceConfig {
+                        offset: 14,
+                        length: 8,
+                    }),
+                    b"ef".as_slice(),
+                ),
+                (
+                    Some(UiDataSliceConfig {
+                        offset: 0,
+                        length: 0,
+                    }),
+                    b"".as_slice(),
+                ),
+                (
+                    Some(UiDataSliceConfig {
+                        offset: usize::MAX,
+                        length: 0,
+                    }),
+                    b"".as_slice(),
+                ),
+                (
+                    Some(UiDataSliceConfig {
+                        offset: 16,
+                        length: 1,
+                    }),
+                    b"".as_slice(),
+                ),
+            ] {
+                let account_params = AccountSubscriptionParams {
+                    pubkey,
+                    encoding,
+                    data_slice,
+                    commitment: CommitmentConfig::processed(),
+                };
+                let (ui_account, slot) = filter_account_result(
+                    Some((account.clone(), 1)),
+                    &account_params,
+                    0,
+                    bank.clone(),
+                );
+                assert_eq!(slot, 1);
+
+                let program_params = ProgramSubscriptionParams {
+                    pubkey: owner,
+                    filters: vec![
+                        RpcFilterType::DataSize(16),
+                        RpcFilterType::Memcmp(Memcmp::new_raw_bytes(10, b"abc".to_vec())),
+                    ],
+                    encoding,
+                    data_slice,
+                    commitment: CommitmentConfig::processed(),
+                    with_context: false,
+                };
+                let (accounts, slot) = filter_program_results(
+                    vec![
+                        (pubkey, account.clone()),
+                        (Pubkey::new_unique(), filtered_out.clone()),
+                    ],
+                    &program_params,
+                    1,
+                    bank.clone(),
+                );
+                assert_eq!(slot, 1);
+                let accounts: Vec<_> = accounts.collect();
+                assert_eq!(accounts.len(), 1);
+                assert_eq!(accounts[0].pubkey, pubkey.to_string());
+                for ui_account in [ui_account.unwrap(), accounts[0].account.clone()] {
+                    assert_eq!(
+                        ui_account.data.decode().unwrap(),
+                        expected,
+                        "{encoding:?}, {data_slice:?}"
+                    );
+                    assert_eq!(ui_account.space, Some(16));
+                    assert_eq!(ui_account.lamports, 42);
+                    assert_eq!(ui_account.owner, owner.to_string());
+                }
+            }
+        }
     }
 
     #[test]

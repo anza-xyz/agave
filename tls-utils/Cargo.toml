@@ -21,10 +21,10 @@ agave-unstable-api = []
 [dependencies]
 quinn = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
+rustls-webpki = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
-x509-parser = { workspace = true }
 
 [lints]
 workspace = true

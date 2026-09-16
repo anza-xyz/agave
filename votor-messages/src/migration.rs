@@ -373,10 +373,7 @@ impl MigrationStatus {
     /// Enable alpenglow for testing code
     #[cfg(feature = "dev-context-only-utils")]
     pub fn enable_alpenglow_for_tests(&self) {
-        let block = Block {
-            slot: 0,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(0);
         self.record_feature_activation(0);
         self.set_genesis_block(block);
         self.set_genesis_certificate(Arc::new(GenesisCert {

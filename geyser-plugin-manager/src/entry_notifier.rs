@@ -1,18 +1,91 @@
 /// Module responsible for notifying plugins about entries
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
-    agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaBlockFooterInfo, ReplicaBlockFooterInfoVersions, ReplicaEntryInfoV2,
-        ReplicaEntryInfoVersions, ReplicaEntryUpdateParentInfo,
-        ReplicaEntryUpdateParentInfoVersions,
+    agave_geyser_plugin_interface::{
+        block_footer,
+        geyser_plugin_interface::{
+            ReplicaBlockFooterInfo, ReplicaBlockFooterInfoVersions, ReplicaEntryInfoV2,
+            ReplicaEntryInfoVersions, ReplicaEntryUpdateParentInfo,
+            ReplicaEntryUpdateParentInfoVersions,
+        },
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
-    solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
+    solana_entry::{block_component, entry::EntrySummary},
     solana_ledger::entry_notifier_interface::{EntryNotifier, EntryUpdateParentInfo},
     std::sync::Arc,
 };
+
+/// Converts the internal block footer into the plugin interface mirror.
+///
+/// The mirror borrows all variable-length data from the internal footer, so
+/// the conversion allocates nothing. The exhaustive destructuring below is
+/// deliberate: if a field is added to any of the internal types, this stops
+/// compiling instead of silently dropping data on the plugin boundary.
+fn convert_block_footer(
+    footer: &block_component::VersionedBlockFooter,
+) -> block_footer::VersionedBlockFooter<'_> {
+    match footer {
+        block_component::VersionedBlockFooter::V1(block_component::BlockFooterV1 {
+            bank_hash,
+            block_producer_time_nanos,
+            block_user_agent,
+            block_final_cert,
+            skip_reward_cert,
+            notar_reward_cert,
+        }) => block_footer::VersionedBlockFooter::V1(block_footer::BlockFooterV1 {
+            bank_hash: *bank_hash,
+            block_producer_time_nanos: *block_producer_time_nanos,
+            block_user_agent,
+            block_final_cert: block_final_cert.as_ref().map(convert_finalization_cert),
+            skip_reward_cert: skip_reward_cert.as_ref().map(|cert| {
+                let (slot, signature, bitmap) = cert.as_parts();
+                block_footer::SkipRewardCertificate {
+                    slot,
+                    signature: *signature,
+                    bitmap,
+                }
+            }),
+            notar_reward_cert: notar_reward_cert.as_ref().map(|cert| {
+                let (slot, block_id, signature, bitmap) = cert.as_parts();
+                block_footer::NotarRewardCertificate {
+                    slot,
+                    block_id: *block_id,
+                    signature: *signature,
+                    bitmap,
+                }
+            }),
+        }),
+    }
+}
+
+fn convert_finalization_cert(
+    cert: &block_component::BlockFinalizationCert,
+) -> block_footer::BlockFinalizationCert<'_> {
+    let block_component::BlockFinalizationCert {
+        slot,
+        block_id,
+        final_aggregate,
+        notar_aggregate,
+    } = cert;
+    block_footer::BlockFinalizationCert {
+        slot: *slot,
+        block_id: *block_id,
+        final_aggregate: convert_votes_aggregate(final_aggregate),
+        notar_aggregate: notar_aggregate.as_ref().map(convert_votes_aggregate),
+    }
+}
+
+fn convert_votes_aggregate(
+    aggregate: &block_component::VotesAggregate,
+) -> block_footer::VotesAggregate<'_> {
+    let (signature, bitmap) = aggregate.as_parts();
+    block_footer::VotesAggregate {
+        signature: *signature,
+        bitmap,
+    }
+}
 
 pub(crate) struct EntryNotifierImpl {
     plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
@@ -60,20 +133,24 @@ impl EntryNotifier for EntryNotifierImpl {
         &self,
         slot: Slot,
         bank_id: BankId,
-        block_footer: &VersionedBlockFooter,
+        block_footer: &block_component::VersionedBlockFooter,
     ) {
         let plugin_manager = self.plugin_manager.load();
         if plugin_manager.plugins.is_empty() {
             return;
         }
 
-        let block_footer_info = ReplicaBlockFooterInfo { slot, block_footer };
+        let block_footer = convert_block_footer(block_footer);
+        let block_footer_info = ReplicaBlockFooterInfo {
+            slot,
+            block_footer: &block_footer,
+        };
         for plugin in plugin_manager.plugins.iter() {
             if !plugin.block_footer_notifications_enabled() {
                 continue;
             }
             match plugin.notify_block_footer(
-                ReplicaBlockFooterInfoVersions::V0_0_1(&block_footer_info),
+                ReplicaBlockFooterInfoVersions::V0_0_2(&block_footer_info),
                 bank_id,
             ) {
                 Err(err) => error!(
@@ -140,16 +217,22 @@ mod tests {
         super::*,
         crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
+        agave_votor_messages::reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
         arc_swap::ArcSwap,
         libloading::Library,
-        solana_entry::block_component::BlockFooterV1,
+        solana_bls_signatures::{BLS_SIGNATURE_COMPRESSED_SIZE, SignatureCompressed},
+        solana_entry::block_component::{
+            BlockFinalizationCert, BlockFooterV1, VersionedBlockFooter, VotesAggregate,
+        },
         solana_hash::Hash,
         std::sync::{Arc, Mutex},
     };
 
     type EntryUpdate = (Slot, BankId, usize, usize);
     type EntryUpdateParent = (Slot, BankId, Slot, Hash);
-    type BlockFooterUpdate = (Slot, BankId, VersionedBlockFooter);
+    // The mirror borrows from the notifying call's stack, so the mock stores
+    // an owned Debug snapshot instead of the borrowed struct itself.
+    type BlockFooterUpdate = (Slot, BankId, String);
 
     #[derive(Debug)]
     struct TestEntryPlugin {
@@ -187,11 +270,11 @@ mod tests {
             block_footer: ReplicaBlockFooterInfoVersions,
             bank_id: BankId,
         ) -> Result<()> {
-            let ReplicaBlockFooterInfoVersions::V0_0_1(block_footer) = block_footer;
+            let ReplicaBlockFooterInfoVersions::V0_0_2(block_footer) = block_footer;
             self.block_footer_updates.lock().unwrap().push((
                 block_footer.slot,
                 bank_id,
-                block_footer.block_footer.clone(),
+                format!("{:?}", block_footer.block_footer),
             ));
             Ok(())
         }
@@ -264,14 +347,53 @@ mod tests {
             hash: Hash::new_unique(),
             num_transactions: 2,
         };
+        let bank_hash = Hash::new_unique();
+        let block_id = Hash::new_unique();
+        let signature = SignatureCompressed([7; BLS_SIGNATURE_COMPRESSED_SIZE]);
         let block_footer = VersionedBlockFooter::V1(BlockFooterV1 {
-            bank_hash: Hash::new_unique(),
+            bank_hash,
             block_producer_time_nanos: 123,
             block_user_agent: b"test-validator".to_vec(),
-            block_final_cert: None,
-            skip_reward_cert: None,
-            notar_reward_cert: None,
+            block_final_cert: Some(BlockFinalizationCert {
+                slot: 42,
+                block_id,
+                final_aggregate: VotesAggregate::new(signature, vec![1, 2, 3]),
+                notar_aggregate: Some(VotesAggregate::new(signature, vec![4, 5])),
+            }),
+            skip_reward_cert: Some(SkipRewardCertificate::try_new(41, signature, vec![6]).unwrap()),
+            notar_reward_cert: Some(
+                NotarRewardCertificate::try_new(42, block_id, signature, vec![8]).unwrap(),
+            ),
         });
+        let expected_block_footer =
+            block_footer::VersionedBlockFooter::V1(block_footer::BlockFooterV1 {
+                bank_hash,
+                block_producer_time_nanos: 123,
+                block_user_agent: b"test-validator",
+                block_final_cert: Some(block_footer::BlockFinalizationCert {
+                    slot: 42,
+                    block_id,
+                    final_aggregate: block_footer::VotesAggregate {
+                        signature,
+                        bitmap: &[1, 2, 3],
+                    },
+                    notar_aggregate: Some(block_footer::VotesAggregate {
+                        signature,
+                        bitmap: &[4, 5],
+                    }),
+                }),
+                skip_reward_cert: Some(block_footer::SkipRewardCertificate {
+                    slot: 41,
+                    signature,
+                    bitmap: &[6],
+                }),
+                notar_reward_cert: Some(block_footer::NotarRewardCertificate {
+                    slot: 42,
+                    block_id,
+                    signature,
+                    bitmap: &[8],
+                }),
+            });
         let parent_block_id = Hash::new_unique();
 
         notifier.notify_entry(42, 9, 3, &entry, 7);
@@ -301,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             *block_footer_plugin_block_footer_updates.lock().unwrap(),
-            vec![(42, 9, block_footer)]
+            vec![(42, 9, format!("{expected_block_footer:?}"))]
         );
     }
 }

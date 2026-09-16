@@ -7,7 +7,6 @@ use {
         ShredFlags, ShredType, ShredVariant, layout, merkle,
     },
     crate::blockstore,
-    assert_matches::debug_assert_matches,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::PacketRef,
@@ -494,17 +493,10 @@ impl ShredRecoveryContext {
         recovered_shreds: &mut Vec<Payload>,
         recovered_data_shreds: &mut Vec<Shred>,
     ) -> Result<(), Error> {
-        let shreds = shreds
+        let shreds: Vec<_> = shreds
             .into_iter()
             .filter(|shred| !self.shred_filter_ctx.should_discard_shred(shred.payload()))
-            .map(|shred| {
-                debug_assert_matches!(
-                    shred.common_header().shred_variant,
-                    ShredVariant::MerkleCode { .. } | ShredVariant::MerkleData { .. }
-                );
-                merkle::Shred::try_from(shred)
-            })
-            .collect::<Result<_, _>>()?;
+            .collect();
 
         // With Merkle shreds, leader signs the Merkle root of the erasure batch
         // and all shreds within the same erasure batch have the same signature.
@@ -515,7 +507,7 @@ impl ShredRecoveryContext {
         // same Merkle root.
         let shreds = merkle::recover(shreds, &self.reed_solomon_cache)?;
         shreds
-            .filter_map(|shred| shred.ok().map(Shred::from))
+            .filter_map(|shred| shred.ok())
             .filter(|shred| !self.should_discard_shred(shred))
             .for_each(|shred| {
                 // All shreds should be retransmitted, but because there are no
@@ -619,7 +611,6 @@ mod tests {
             is_last_in_slot,
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
 
         assert_matches!(shreds[0].shred_type(), ShredType::Data);
@@ -772,7 +763,6 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         let coding_shreds: Vec<_> = shreds
             .into_iter()
             .filter(|shred| shred.shred_type() == ShredType::Code)
@@ -827,7 +817,7 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shred = Shred::from(shreds[0].clone());
+        let shred = shreds[0].clone();
         let shred_version = shred.common_header().version;
         let turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
         let mut packet = Packet::default();
@@ -867,7 +857,6 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
 
         assert_matches!(shreds[0].shred_type(), ShredType::Data);
@@ -947,7 +936,6 @@ mod tests {
             true,     // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         let shred_version = shreds[0].common_header().version;
         let data_shreds: Vec<_> = shreds
             .iter()
@@ -990,7 +978,6 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         let shred_version = shreds[0].common_header().version;
         let root_bank = new_test_bank(0);
 
@@ -1076,7 +1063,6 @@ mod tests {
             false,    // is_last_in_slot
         )
         .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
 
         let data_shred = shreds
             .iter()

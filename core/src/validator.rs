@@ -143,6 +143,7 @@ use {
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_streamer::{
+        evicting_sender::EvictingSender,
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
         streamer::StakedNodes,
@@ -1629,7 +1630,7 @@ impl Validator {
         let vote_tracker = Arc::<VoteTracker>::default();
 
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
-        let (verified_vote_sender, verified_vote_receiver) = unbounded();
+        let (verified_vote_sender, verified_vote_receiver) = EvictingSender::new_bounded(4096);
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
 
@@ -3290,10 +3291,7 @@ mod tests {
         ));
 
         let cert = GenesisCert {
-            block: Block {
-                slot: 40,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(40),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],
@@ -3748,10 +3746,7 @@ mod tests {
     }
 
     fn target_tick_duration() -> Duration {
-        let target_tick_duration_us =
-            solana_clock::DEFAULT_MS_PER_SLOT * 1000 / solana_clock::DEFAULT_TICKS_PER_SLOT;
-        assert_eq!(target_tick_duration_us, 6250);
-        Duration::from_micros(target_tick_duration_us)
+        Duration::from_nanos(solana_clock::DEFAULT_NS_PER_TICK)
     }
 
     #[test]

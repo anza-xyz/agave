@@ -3,6 +3,7 @@ use {
         scheduler_common::SchedulingCommon, scheduler_error::SchedulerError,
         transaction_state_container::StateContainer,
     },
+    solana_clock::Slot,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     std::num::Saturating,
 };
@@ -14,8 +15,13 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     fn schedule<S: StateContainer<Tx>>(
         &mut self,
         container: &mut S,
+        slot: Slot,
         budget: u64,
     ) -> Result<SchedulingSummary, SchedulerError>;
+
+    /// Returns true if any scheduled transactions have not yet been returned
+    /// by the consume workers.
+    fn has_in_flight_transactions(&self) -> bool;
 
     /// Receive completed batches of transactions without blocking.
     /// Returns (num_transactions, num_retryable_transactions) on success.

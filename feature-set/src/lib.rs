@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 use {
     ahash::{AHashMap, AHashSet},
@@ -29,7 +28,6 @@ pub struct FeatureSnapshot {
     pub simplify_alt_bn128_syscall_error_codes: bool,
     pub enable_big_mod_exp_syscall: bool,
     pub remove_bpf_loader_incorrect_program_id: bool,
-    pub syscall_parameter_address_restrictions: bool,
     pub virtual_address_space_adjustments: bool,
     pub account_data_direct_mapping: bool,
     pub last_restart_slot_sysvar: bool,
@@ -81,7 +79,6 @@ pub struct FeatureSnapshot {
     pub relax_post_exec_min_balance_check: bool,
     pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
-    pub upgrade_bpf_stake_program_to_v5_1: bool,
     pub relax_fee_payer_constraint: bool,
 }
 
@@ -109,9 +106,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_big_mod_exp_syscall: is_active(&enable_big_mod_exp_syscall::ID),
             remove_bpf_loader_incorrect_program_id: is_active(
                 &remove_bpf_loader_incorrect_program_id::ID,
-            ),
-            syscall_parameter_address_restrictions: is_active(
-                &syscall_parameter_address_restrictions::ID,
             ),
             virtual_address_space_adjustments: is_active(&virtual_address_space_adjustments::ID),
             account_data_direct_mapping: is_active(&account_data_direct_mapping::ID),
@@ -184,13 +178,11 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
-            upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
         }
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
     active: AHashMap<Pubkey, u64>,
@@ -294,7 +286,6 @@ impl FeatureSet {
         let snapshot = &self.snapshot;
         SVMFeatureSet {
             move_precompile_verification_to_svm: snapshot.move_precompile_verification_to_svm,
-            syscall_parameter_address_restrictions: snapshot.syscall_parameter_address_restrictions,
             virtual_address_space_adjustments: snapshot.virtual_address_space_adjustments,
             account_data_direct_mapping: snapshot.account_data_direct_mapping,
             enable_bpf_loader_set_authority_checked_ix: snapshot
@@ -1290,7 +1281,7 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
-    solana_pubkey::declare_id!("A1PeNgLEYU9sdwWJH5SEcRGVVKXLQYnyq26kpL6G3iJH");
+    solana_pubkey::declare_id!("A1pengvuM6JEcyNuTnMqepBKhwHE3N6PmUrdATGawhJS");
 }
 
 pub mod disable_zk_elgamal_proof_program {
@@ -1419,19 +1410,19 @@ pub mod set_lamports_per_byte_to_5080 {
 }
 
 pub mod set_lamports_per_byte_to_2575 {
-    solana_pubkey::declare_id!("Ftxb3ZKq7aNqgxDBbP7EonvR2RszZk9ctjdsTX38kQaz");
+    solana_pubkey::declare_id!("rntCigrTppP5JdZz7K8TyN9sMzLdAcXp8SejYpVpX6D");
 
     pub const LAMPORTS_PER_BYTE: u64 = 2575;
 }
 
 pub mod set_lamports_per_byte_to_1322 {
-    solana_pubkey::declare_id!("GsUBNYNDPdMLHPD37TToHzrzcNcjpC9w5n1EcJk5iTaM");
+    solana_pubkey::declare_id!("rntD7invRBswCAdKtRsh1G4psKjrPdS3BKqtnA78C7N");
 
     pub const LAMPORTS_PER_BYTE: u64 = 1322;
 }
 
 pub mod set_lamports_per_byte_to_696 {
-    solana_pubkey::declare_id!("mZdnRh9T2EbDNvqKjkCR3bvo5c816tJaojtE9Xs7iuY");
+    solana_pubkey::declare_id!("rntTjNZ9boq8owDxjGVFHPfWNQPDaKiM5JcjxmDGg47");
 
     pub const LAMPORTS_PER_BYTE: u64 = 696;
 }
@@ -1497,7 +1488,7 @@ pub mod define_ltds_fee_only_semantics {
 }
 
 pub mod set_lamports_per_byte_to_6960 {
-    solana_pubkey::declare_id!("5AqsUgSb6cgLizSaNiFn3o9XB7VUtKDtDZfcKEjEDmni");
+    solana_pubkey::declare_id!("rnt8ZQpz2HYhX3DkYBDGjJS1a36mYq69oXka7JrhEdi");
 
     pub const LAMPORTS_PER_BYTE: u64 = 6960;
 }
@@ -1520,10 +1511,6 @@ pub mod reduce_slot_time_to_200ms {
 
 pub mod upgrade_bpf_stake_program_to_v5_1 {
     solana_pubkey::declare_id!("s51VGwCAgebo2745DSUris72RavoLkXGUmVJosESCXr");
-
-    pub mod buffer {
-        solana_pubkey::declare_id!("p51x11QCYMHwuVS1MBcLHKb3MezWyqGS5BEB41CA1dk");
-    }
 }
 
 pub mod alpenglow_fast_leader_handover {

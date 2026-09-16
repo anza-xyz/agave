@@ -46,7 +46,7 @@ where
     let serialized_response = serialize(response).ok()?;
     let packet =
         repair_response::repair_response_packet_from_bytes(serialized_response, from_addr, nonce)?;
-    Some(RecycledPacketBatch::new_with_recycler_data(recycler, debug_label, vec![packet]).into())
+    Some(RecycledPacketBatch::new_with_recycler_data(recycler, debug_label, [packet]).into())
 }
 
 pub trait RepairHandler {
@@ -71,12 +71,8 @@ pub trait RepairHandler {
         // Try to find the requested index in one of the slots
         let packet = self.repair_response_packet(slot, shred_index, from_addr, nonce)?;
         Some(
-            RecycledPacketBatch::new_with_recycler_data(
-                recycler,
-                "run_window_request",
-                vec![packet],
-            )
-            .into(),
+            RecycledPacketBatch::new_with_recycler_data(recycler, "run_window_request", [packet])
+                .into(),
         )
     }
 
@@ -98,7 +94,7 @@ pub trait RepairHandler {
             RecycledPacketBatch::new_with_recycler_data(
                 recycler,
                 "run_window_request_for_block_id",
-                vec![packet],
+                [packet],
             )
             .into(),
         )
@@ -121,7 +117,7 @@ pub trait RepairHandler {
                 RecycledPacketBatch::new_with_recycler_data(
                     recycler,
                     "run_highest_window_request",
-                    vec![packet],
+                    [packet],
                 )
                 .into(),
             );

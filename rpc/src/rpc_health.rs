@@ -254,10 +254,7 @@ pub mod tests {
         *highest_finalized.write().unwrap() =
             Some(ValidatedBlockFinalizationCert::from_validated_fast(
                 FastFinalizeCert {
-                    block: Block {
-                        slot: 30,
-                        block_id: Hash::default(),
-                    },
+                    block: Block::new_unique(30),
                     signature,
                 },
                 &bank0,

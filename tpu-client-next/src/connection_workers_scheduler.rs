@@ -13,6 +13,7 @@ use {
         workers_cache::{WorkersCache, WorkersCacheError, shutdown_worker},
     },
     async_trait::async_trait,
+    itertools::Itertools,
     quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
     std::{
@@ -54,7 +55,7 @@ pub enum ConnectionWorkersSchedulerError {
 /// be targeted when sending transactions and connecting.
 ///
 /// Note, that the unit is number of leaders per
-/// [`solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
+/// [`solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
 /// [L1, L1, L1, L1, L1, L1, L1, L1, L2, L2, L2, L2], the leaders per
 /// consecutive leader slots are [L1, L1, L2], so there are 3 of them.
 ///
@@ -144,6 +145,10 @@ pub trait WorkersBroadcaster: Send + Sync {
     /// Returns error if a critical issue occurs, e.g. the implementation
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
+    ///
+    /// The scheduler may drop this future on shutdown, client identity updates, or identity-update
+    /// channel closure. Except on shutdown, when broadcast is interrupted, the scheduler tries to
+    /// broadcast the same transaction again.
     async fn send_to_workers(
         &self,
         workers: &mut WorkersCache,
@@ -194,14 +199,15 @@ impl ConnectionWorkersScheduler {
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to the network's
-    /// upcoming leaders. `broadcaster` allows customizing how transactions are sent to the
-    /// leaders, see [`WorkersBroadcaster`].
+    /// upcoming leaders. `broadcaster` allows customizing how transactions are sent to the leaders,
+    /// see [`WorkersBroadcaster`].
     ///
     /// Runs the main loop that handles worker scheduling and management for connections. Returns
     /// [`SendTransactionStats`] or an error.
     ///
-    /// Importantly, if some transactions were not delivered due to network problems, they will not
-    /// be retried when the problem is resolved.
+    /// Pending broadcasts interrupted by client identity updates or identity-update channel closure
+    /// are retried with refreshed targets. Shutdown discards the pending transaction. Network
+    /// delivery failures after enqueueing do not trigger scheduler retries.
     pub async fn run_with_broadcaster(
         self,
         ConnectionWorkersSchedulerConfig {
@@ -233,9 +239,18 @@ impl ConnectionWorkersScheduler {
         // channel is dropped.
         let mut identity_updater_is_active = true;
 
+        let mut next_leaders = Vec::with_capacity(leaders_fanout.connect);
+        let mut connect_leaders = Vec::with_capacity(leaders_fanout.connect);
+        let mut send_leaders = Vec::with_capacity(leaders_fanout.send);
+
+        let mut pending_transaction = None;
         loop {
             let transaction: WireTransaction = tokio::select! {
-                recv_res = transaction_receiver.recv() => match recv_res {
+                // Retry a pending transaction before receiving a new one.
+                () = std::future::ready(()), if pending_transaction.is_some() => {
+                    pending_transaction.take().unwrap()
+                },
+                recv_res = transaction_receiver.recv(), if pending_transaction.is_none() => match recv_res {
                     Some(transaction) => transaction,
                     None => {
                         debug!("End of `transaction_receiver`: shutting down.");
@@ -252,16 +267,12 @@ impl ConnectionWorkersScheduler {
                         identity_updater_is_active = false;
                         continue;
                     };
-
-                    let client_config = build_client_config(
-                        update_identity_receiver.borrow_and_update().as_ref(),
+                    update_identity(
+                        &mut endpoint,
+                        &mut workers,
+                        &mut update_identity_receiver,
                         initial_congestion_window,
                     );
-                    endpoint.set_default_client_config(client_config);
-                    // Flush workers since they are handling connections created
-                    // with outdated certificate.
-                    workers.flush();
-                    debug!("Updated certificate.");
                     continue;
                 },
                 () = cancel.cancelled() => {
@@ -270,14 +281,16 @@ impl ConnectionWorkersScheduler {
                 }
             };
 
-            let connect_leaders = leader_updater.next_leaders(leaders_fanout.connect);
-            let send_leaders = extract_send_leaders(&connect_leaders, leaders_fanout.send);
+            pending_transaction = Some(transaction.clone());
 
-            // add future leaders to the cache to hide the latency of opening
-            // the connection.
-            for peer in connect_leaders {
+            next_leaders.clear();
+            leader_updater.next_leaders(leaders_fanout.connect, &mut next_leaders);
+            select_unique_leaders(&next_leaders, leaders_fanout.connect, &mut connect_leaders);
+
+            // add future leaders to the cache to hide the latency of opening the connection.
+            for peer in &connect_leaders {
                 if let Some(evicted_worker) = workers.ensure_worker(
-                    peer,
+                    *peer,
                     &endpoint,
                     worker_channel_size,
                     max_reconnect_attempts,
@@ -288,19 +301,35 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) = broadcaster
-                .send_to_workers(&mut workers, &send_leaders, transaction)
-                .await
-            {
-                last_error = Some(error);
-                break;
+            select_unique_leaders(&next_leaders, leaders_fanout.send, &mut send_leaders);
+
+            tokio::select! {
+                result = broadcaster.send_to_workers(&mut workers, &send_leaders, transaction) => {
+                    pending_transaction = None;
+                    if let Err(error) = result {
+                        last_error = Some(error);
+                        break;
+                    }
+                }
+                result = update_identity_receiver.changed(), if identity_updater_is_active => {
+                    if result.is_err() {
+                        identity_updater_is_active = false;
+                        continue;
+                    }
+                    update_identity(
+                        &mut endpoint,
+                        &mut workers,
+                        &mut update_identity_receiver,
+                        initial_congestion_window,
+                    );
+                }
+                () = cancel.cancelled() => break,
             }
         }
 
         workers.shutdown().await;
 
         endpoint.close(0u32.into(), b"Closing connection");
-        leader_updater.stop().await;
         if let Some(error) = last_error {
             return Err(error);
         }
@@ -328,6 +357,23 @@ fn build_client_config(
         None => &QuicClientCertificate::new(None),
     };
     create_client_config(client_certificate, initial_congestion_window)
+}
+
+fn update_identity(
+    endpoint: &mut Endpoint,
+    workers: &mut WorkersCache,
+    update_identity_receiver: &mut watch::Receiver<Option<StakeIdentity>>,
+    initial_congestion_window: Option<u64>,
+) {
+    let client_config = build_client_config(
+        update_identity_receiver.borrow_and_update().as_ref(),
+        initial_congestion_window,
+    );
+    endpoint.set_default_client_config(client_config);
+    // Flush workers since they are handling connections created
+    // with outdated certificate.
+    workers.flush();
+    debug!("Updated certificate.");
 }
 
 /// [`NonblockingBroadcaster`] attempts to immediately send transactions to all the workers. If a
@@ -359,23 +405,12 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
     }
 }
 
-/// Extracts a list of unique leader addresses to which transactions will be sent.
-///
-/// This function selects up to `send_fanout` addresses from the `leaders` list, ensuring that
-/// only unique addresses are included while maintaining their original order.
-pub fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
-    let send_count = send_fanout.min(leaders.len());
-    remove_duplicates(&leaders[..send_count])
-}
-
-/// Removes duplicate `SocketAddr` elements from the given slice while
-/// preserving their original order.
-fn remove_duplicates(input: &[SocketAddr]) -> Vec<SocketAddr> {
-    let mut res = Vec::with_capacity(input.len());
-    for address in input {
-        if !res.contains(address) {
-            res.push(*address);
-        }
-    }
-    res
+/// Replaces `selected_leaders` with unique TPU addresses from the first `max_leaders` candidates.
+fn select_unique_leaders(
+    leaders: &[SocketAddr],
+    max_leaders: usize,
+    selected_leaders: &mut Vec<SocketAddr>,
+) {
+    selected_leaders.clear();
+    selected_leaders.extend(leaders.iter().take(max_leaders).copied().unique());
 }

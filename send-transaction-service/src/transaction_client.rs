@@ -1,6 +1,5 @@
 use {
     crate::{send_transaction_service_stats::SendTransactionServiceStats, tpu_info::TpuInfo},
-    async_trait::async_trait,
     log::warn,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
@@ -185,21 +184,24 @@ pub fn create_leader_updater<T: TpuInfoWithSendStatic>(
     })
 }
 
-#[async_trait]
 impl<T> LeaderUpdater for SendTransactionServiceLeaderUpdater<T>
 where
     T: TpuInfoWithSendStatic,
 {
-    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
-        let discovered_peers = self
+    fn next_leaders(&mut self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
+        if let Some(tpu_peers) = &self.tpu_peers {
+            leaders.extend_from_slice(tpu_peers);
+        }
+
+        if let Some(discovered_peers) = self
             .leader_info_provider
             .get_leader_info()
             .map(|leader_info| leader_info.get_not_unique_leader_tpus(lookahead_leaders as u64))
             .filter(|addresses| !addresses.is_empty())
-            .unwrap_or_else(|| vec![&self.my_tpu_address]);
-        let mut all_peers = self.tpu_peers.clone().unwrap_or_default();
-        all_peers.extend(discovered_peers.into_iter().cloned());
-        all_peers
+        {
+            leaders.extend(discovered_peers.into_iter().copied());
+        } else {
+            leaders.push(self.my_tpu_address);
+        }
     }
-    async fn stop(&mut self) {}
 }

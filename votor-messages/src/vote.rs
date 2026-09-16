@@ -130,6 +130,22 @@ impl Vote {
             Vote::Genesis(_) => VoteType::Genesis,
         }
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Returns a notar vote with the given slot and unique block id for test purposes
+    pub fn new_unique_notar(slot: Slot) -> Vote {
+        Vote::Notarize(NotarizationVote {
+            block: Block::new_unique(slot),
+        })
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Returns a notar fallback vote with the given slot and unique block id for test purposes
+    pub fn new_unique_notar_fallback(slot: Slot) -> Vote {
+        Vote::NotarizeFallback(NotarizationFallbackVote {
+            block: Block::new_unique(slot),
+        })
+    }
 }
 
 impl From<NotarizationVote> for Vote {

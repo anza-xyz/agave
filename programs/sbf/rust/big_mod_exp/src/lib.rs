@@ -1,7 +1,7 @@
 //! Big_mod_exp Syscall tests
 
 use {
-    solana_big_mod_exp::big_mod_exp, solana_msg::msg,
+    array_bytes::Dehexify, solana_big_mod_exp::big_mod_exp, solana_msg::msg,
     solana_program_entrypoint::custom_panic_default,
 };
 
@@ -67,10 +67,10 @@ fn big_mod_exp_test() {
     test_cases
         .iter()
         .for_each(|(base, exponent, modulus, expected)| {
-            let mut base = array_bytes::hex2bytes_unchecked(base);
-            let mut exponent = array_bytes::hex2bytes_unchecked(exponent);
-            let mut modulus = array_bytes::hex2bytes_unchecked(modulus);
-            let mut expected = array_bytes::hex2bytes_unchecked(expected);
+            let mut base = Vec::<u8>::dehexify(base).unwrap();
+            let mut exponent = Vec::<u8>::dehexify(exponent).unwrap();
+            let mut modulus = Vec::<u8>::dehexify(modulus).unwrap();
+            let mut expected = Vec::<u8>::dehexify(expected).unwrap();
             base.reverse();
             exponent.reverse();
             modulus.reverse();

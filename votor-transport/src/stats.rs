@@ -21,6 +21,10 @@ pub struct ClientStats {
     pub(crate) connect_failed: AtomicU64,
     /// A peer in the peer_list had no resolvable address.
     pub(crate) connect_failed_no_address: AtomicU64,
+    /// Datagrams dropped because the peer does not accept them: datagrams
+    /// disabled, or a size limit below our message. The connection is kept, so
+    /// this counts sends, not peers.
+    pub(crate) peer_config_error: AtomicU64,
     /// Connections closed because the local identity changed.
     pub(crate) connection_closed_identity_changed: AtomicU64,
     /// Existing connection closed because the peer's gossip address changed.
@@ -163,6 +167,7 @@ impl ClientStats {
         let datagrams_sent = swap(&self.datagrams_sent);
         let connect_failed = swap(&self.connect_failed);
         let connect_failed_no_address = swap(&self.connect_failed_no_address);
+        let peer_config_error = swap(&self.peer_config_error);
         let connection_lost = swap(&self.connection_lost);
         let connection_closed_peer_moved = swap(&self.connection_closed_peer_moved);
         let connection_closed_not_in_peer_list = swap(&self.connection_closed_not_in_peer_list);
@@ -173,6 +178,7 @@ impl ClientStats {
             ("datagrams_sent", datagrams_sent, i64),
             ("connect_failed", connect_failed, i64),
             ("connect_failed_no_address", connect_failed_no_address, i64),
+            ("peer_config_error", peer_config_error, i64),
             ("connection_lost", connection_lost, i64),
             (
                 "connection_closed_peer_moved",

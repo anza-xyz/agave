@@ -5,21 +5,42 @@
 /bls-sigverify/ @anza-xyz/consensus
 /bucket_map/ @anza-xyz/accountsdb
 /compute-budget-instruction/ @anza-xyz/fees
+/compute-budget/ @anza-xyz/svm
 /core/src/consensus.rs @anza-xyz/consensus
 /core/src/consensus/ @anza-xyz/consensus
 /core/src/repair/ @anza-xyz/networking @anza-xyz/consensus
 /fee/ @anza-xyz/fees
 /gossip/ @anza-xyz/networking
 /gossip/src/duplicate*.rs @anza-xyz/networking @anza-xyz/consensus
-/log-collector/ @anza-xyz/svm
 /net-utils/ @anza-xyz/networking
+/program-binaries/ @anza-xyz/svm
 /program-runtime/ @anza-xyz/svm
 /programs/bpf_loader/ @anza-xyz/svm
+/programs/compute-budget/ @anza-xyz/svm
+/programs/sbf/ @anza-xyz/svm
+# Last matching pattern takes precedence in CODEOWNERS; clear the owner from
+# the Cargo.lock and Cargo.toml file to avoid required @anza-xyz/svm review
+/programs/sbf/Cargo.lock
+/programs/sbf/Cargo.toml
+/programs/system/ @anza-xyz/svm
 /runtime-transaction/ @anza-xyz/tx-metadata
 /svm-callback/ @anza-xyz/svm
 /svm-conformance/ @anza-xyz/svm
-/svm-transaction/ @anza-xyz/svm
+/svm-feature-set/ @anza-xyz/svm
+/svm-log-collector/ @anza-xyz/svm
+/svm-measure/ @anza-xyz/svm
+/svm-timings/ @anza-xyz/svm
+/svm-type-overrides/ @anza-xyz/svm
 /svm/ @anza-xyz/svm
+# Last matching pattern takes precedence in CODEOWNERS; clear the owner from
+# the Cargo.lock and Cargo.toml file to avoid required @anza-xyz/svm review
+/svm/tests/example-programs/clock-sysvar/Cargo.toml
+/svm/tests/example-programs/complex-transfer/Cargo.toml
+/svm/tests/example-programs/hello-solana/Cargo.toml
+/svm/tests/example-programs/simple-transfer/Cargo.toml
+/svm/tests/example-programs/transfer-from-account/Cargo.toml
+/svm/tests/example-programs/write-to-account/Cargo.toml
+/syscalls/ @anza-xyz/svm
 /tls-utils/ @anza-xyz/networking
 /transaction-context/ @anza-xyz/svm
 /turbine/ @anza-xyz/networking

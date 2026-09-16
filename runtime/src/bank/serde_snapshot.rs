@@ -14,6 +14,7 @@ mod tests {
             snapshot_bank_utils,
             snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
         },
+        agave_fs::FileInfo,
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
             ObsoleteAccounts,
@@ -55,8 +56,8 @@ mod tests {
             std::fs::copy(storage_path, &output_path)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(output_path, storage_entry.accounts.len())?;
+            let file_info = FileInfo::new_from_path(output_path)?;
+            let accounts_file = AccountsFile::new_for_startup(file_info)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),
@@ -132,7 +133,6 @@ mod tests {
                 &mut writer,
                 bank_fields,
                 bank2.get_bank_hash_stats(),
-                &bank2.get_snapshot_storages(None),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
                     unused_incremental_snapshot_persistence: None,
@@ -157,7 +157,6 @@ mod tests {
                 &mut buf_wincode,
                 bank_fields,
                 bank2.get_bank_hash_stats(),
-                &bank2.get_snapshot_storages(None),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
                     unused_incremental_snapshot_persistence: None,
@@ -249,16 +248,11 @@ mod tests {
         assert_eq!(bank.epoch_stakes.len(), 3);
 
         // Serialize
-        let snapshot_storages = bank.get_snapshot_storages(None);
         let mut buf = vec![];
         let mut writer = Cursor::new(&mut buf);
 
-        crate::serde_snapshot::bank_to_stream(
-            &mut std::io::BufWriter::new(&mut writer),
-            &bank,
-            &snapshot_storages,
-        )
-        .unwrap();
+        crate::serde_snapshot::bank_to_stream(&mut std::io::BufWriter::new(&mut writer), &bank)
+            .unwrap();
 
         // Deserialize
         let rdr = Cursor::new(&buf[..]);

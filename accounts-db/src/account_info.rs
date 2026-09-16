@@ -5,15 +5,15 @@
 use {
     crate::{
         accounts_db::AccountsFileId,
-        accounts_file::ALIGN_BOUNDARY_OFFSET,
         accounts_index::{DiskIndexValue, IndexValue},
+        append_vec,
         is_zero_lamport::IsZeroLamport,
     },
     modular_bitfield::prelude::*,
 };
 
 /// offset within an accounts file to account data
-pub type Offset = usize;
+pub type Offset = u64;
 
 /// specify where account data is located
 #[derive(Debug, PartialEq, Eq)]
@@ -97,8 +97,8 @@ impl AccountInfo {
         }
     }
 
-    pub fn get_reduced_offset(offset: usize) -> OffsetReduced {
-        (offset / ALIGN_BOUNDARY_OFFSET) as OffsetReduced
+    pub fn get_reduced_offset(offset: Offset) -> OffsetReduced {
+        append_vec::logical_offset_from_file(offset).expect("illegal offset")
     }
 
     pub fn store_id(&self) -> AccountsFileId {
@@ -110,7 +110,7 @@ impl AccountInfo {
     }
 
     pub fn reduced_offset_to_offset(reduced_offset: OffsetReduced) -> Offset {
-        (reduced_offset as Offset) * ALIGN_BOUNDARY_OFFSET
+        append_vec::file_offset_from_logical(reduced_offset)
     }
 
     pub fn storage_location(&self) -> StorageLocation {
@@ -120,7 +120,10 @@ impl AccountInfo {
 
 #[cfg(test)]
 mod test {
-    use {super::*, crate::append_vec::MAXIMUM_APPEND_VEC_FILE_SIZE};
+    use {
+        super::*,
+        crate::{accounts_file::ALIGN_BOUNDARY_OFFSET, append_vec::MAXIMUM_APPEND_VEC_FILE_SIZE},
+    };
 
     #[test]
     fn test_limits() {
@@ -129,13 +132,13 @@ mod test {
             // MAXIMUM_APPEND_VEC_FILE_SIZE - 8 bytes would reference the very last 8 bytes in the file size. It makes no sense to reference that since element sizes are always more than 8.
             // MAXIMUM_APPEND_VEC_FILE_SIZE - 16 bytes would reference the second to last 8 bytes in the max file size. This is still likely meaningless, but it is 'valid' as far as the index
             // is concerned.
-            (MAXIMUM_APPEND_VEC_FILE_SIZE - 2 * (ALIGN_BOUNDARY_OFFSET as u64)) as Offset,
+            (MAXIMUM_APPEND_VEC_FILE_SIZE - 2 * (ALIGN_BOUNDARY_OFFSET as Offset)),
             0,
-            ALIGN_BOUNDARY_OFFSET,
-            4 * ALIGN_BOUNDARY_OFFSET,
+            ALIGN_BOUNDARY_OFFSET as Offset,
+            4 * ALIGN_BOUNDARY_OFFSET as Offset,
         ] {
             let info = AccountInfo::new(StorageLocation::AccountsFile(0, offset), true);
-            assert!(info.offset() == offset);
+            assert_eq!(info.offset(), offset);
         }
     }
 

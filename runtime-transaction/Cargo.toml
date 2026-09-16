@@ -26,6 +26,7 @@ dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-ut
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
+bytes = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }

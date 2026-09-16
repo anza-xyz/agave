@@ -5,7 +5,7 @@
 use log::*;
 use {
     crate::local_cluster::LocalCluster,
-    agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS,
+    agave_votor::voting_service::votor_rate_limit_pps,
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
@@ -17,6 +17,7 @@ use {
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
+    solana_bls_signatures::signature::SignatureAffine,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_core::consensus::tower_storage::{
@@ -657,7 +658,8 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         client_socket,
         sender,
         peer_list_receiver,
-        VOTOR_RATE_LIMIT_PPS,
+        SocketAddrSpace::Unspecified,
+        votor_rate_limit_pps(),
         CancellationToken::new(),
     )
     .expect("alpenglow datagram listener");
@@ -685,9 +687,10 @@ fn convert_datagram_to_vote_message(
     let bank = bank_forks.read().unwrap().root_bank();
     let rank_map = bank.get_rank_map(vote_msg.vote.slot())?;
     let (rank, sender_entry) = rank_map.get_ranked_entry_for_node(&sender)?;
+    let signature = SignatureAffine::try_from(vote_msg.signature).ok()?;
     Some(VoteMessage {
         vote: vote_msg.vote,
-        signature: vote_msg.signature,
+        signature,
         rank,
         stake: sender_entry.stake,
     })

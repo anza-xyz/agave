@@ -5,8 +5,9 @@ use {
     crossbeam_channel::{bounded, unbounded},
     log::*,
     solana_clock::Slot,
+    solana_entry::block_component::{BlockHeaderV1, VersionedBlockMarker},
     solana_measure::measure::Measure,
-    solana_transaction_status::VersionedConfirmedBlockWithSplitComponents,
+    solana_transaction_status::{EntrySummary, VersionedConfirmedBlockWithSplitComponents},
     std::{
         cmp::{max, min},
         collections::HashSet,
@@ -44,21 +45,57 @@ struct BlockstoreLoadStats {
     pub elapsed: Duration,
 }
 
+fn maybe_convert_update_parent_to_block_header(
+    marker: VersionedBlockMarker,
+) -> VersionedBlockMarker {
+    let Some(update_parent) = marker.as_update_parent() else {
+        return marker;
+    };
+
+    // Blockstore omits everything before UpdateParent from the uploaded block,
+    // so UpdateParent becomes the effective header in Bigtable.
+    VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+        parent_slot: update_parent.new_parent_slot,
+        parent_block_id: update_parent.new_parent_block_id,
+    })
+}
+
+fn split_components_for_upload(
+    components: Vec<ConfirmedBlockComponent>,
+) -> Result<(Vec<EntrySummary>, Vec<VersionedBlockMarker>), &'static str> {
+    let mut entries = Vec::new();
+    let mut markers = Vec::new();
+    let mut seen_parent_marker = false;
+
+    for component in components {
+        match component {
+            ConfirmedBlockComponent::EntryBatch(entry_batch) => entries.extend(entry_batch),
+            ConfirmedBlockComponent::BlockMarker(marker) => {
+                if marker.is_parent_marker() {
+                    // Rooted data exposes either the original header or the effective
+                    // header synthesized from UpdateParent, never both.
+                    if seen_parent_marker {
+                        return Err("rooted block should only contain one parent marker");
+                    }
+                    seen_parent_marker = true;
+                }
+
+                let marker = maybe_convert_update_parent_to_block_header(marker);
+                markers.push(marker);
+            }
+        }
+    }
+
+    Ok((entries, markers))
+}
+
 fn get_confirmed_block_upload_data(
     blockstore: &Blockstore,
     slot: Slot,
 ) -> Result<VersionedConfirmedBlockWithSplitComponents, Box<dyn std::error::Error>> {
     let VersionedConfirmedBlockWithComponents { block, components } =
         blockstore.get_rooted_block_with_components(slot, true)?;
-    let mut entries = Vec::new();
-    let mut markers = Vec::new();
-
-    for component in components {
-        match component {
-            ConfirmedBlockComponent::EntryBatch(entry_batch) => entries.extend(entry_batch),
-            ConfirmedBlockComponent::BlockMarker(marker) => markers.push(marker),
-        }
-    }
+    let (entries, markers) = split_components_for_upload(components)?;
 
     Ok(VersionedConfirmedBlockWithSplitComponents {
         block,
@@ -206,7 +243,7 @@ pub async fn upload_confirmed_blocks(
                                         sender.send((slot, Some(upload_data)))
                                     }
                                     Err(err) => {
-                                        warn!(
+                                        error!(
                                             "Failed to get load confirmed block from slot {slot}: \
                                              {err:?}"
                                         );
@@ -302,5 +339,76 @@ pub async fn upload_confirmed_blocks(
         Err(format!("Incomplete upload, {failures} operations failed").into())
     } else {
         Ok(last_slot)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_entry::block_component::{BlockFooterV1, UpdateParentV1},
+        solana_hash::Hash,
+    };
+
+    #[test]
+    fn test_split_components_converts_update_parent_to_block_header() {
+        let new_parent_slot = 42;
+        let new_parent_block_id = Hash::new_unique();
+        let first_entry = EntrySummary {
+            num_hashes: 1,
+            hash: Hash::new_unique(),
+            num_transactions: 2,
+            starting_transaction_index: 0,
+        };
+        let second_entry = EntrySummary {
+            num_hashes: 3,
+            hash: Hash::new_unique(),
+            num_transactions: 4,
+            starting_transaction_index: 2,
+        };
+        let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
+            new_parent_slot,
+            new_parent_block_id,
+        });
+        let footer = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+            bank_hash: Hash::new_unique(),
+            block_producer_time_nanos: 0,
+            block_user_agent: Vec::new(),
+            block_final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        });
+        let (entries, markers) = split_components_for_upload(vec![
+            ConfirmedBlockComponent::BlockMarker(update_parent),
+            ConfirmedBlockComponent::EntryBatch(vec![first_entry]),
+            ConfirmedBlockComponent::EntryBatch(vec![second_entry]),
+            ConfirmedBlockComponent::BlockMarker(footer.clone()),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            markers,
+            vec![
+                VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                    parent_slot: new_parent_slot,
+                    parent_block_id: new_parent_block_id,
+                }),
+                footer,
+            ]
+        );
+        assert_eq!(
+            entries.iter().map(|entry| entry.hash).collect::<Vec<_>>(),
+            vec![first_entry.hash, second_entry.hash]
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.starting_transaction_index)
+                .collect::<Vec<_>>(),
+            vec![
+                first_entry.starting_transaction_index,
+                second_entry.starting_transaction_index,
+            ]
+        );
     }
 }

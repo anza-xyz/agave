@@ -12,7 +12,10 @@ use {
     solana_cli_config::SettingType,
     solana_clock::UnixTimestamp,
     solana_hash::Hash,
-    solana_message::{compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup},
+    solana_message::{
+        VersionedMessage, compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup,
+        v1,
+    },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_stake_interface as stake,
@@ -269,6 +272,10 @@ fn write_transaction<W: io::Write>(
         write_address_table_lookups(w, address_table_lookups, prefix)?;
     }
 
+    if let VersionedMessage::V1(message) = message {
+        write_transaction_config(w, &message.config, prefix)?;
+    }
+
     if let Some(transaction_status) = transaction_status {
         write_status(w, &transaction_status.status, prefix)?;
         write_fees(w, transaction_status.fee, prefix)?;
@@ -519,6 +526,45 @@ fn write_address_table_lookups<W: io::Write>(
     Ok(())
 }
 
+fn write_transaction_config<W: io::Write>(
+    w: &mut W,
+    config: &v1::TransactionConfig,
+    prefix: &str,
+) -> io::Result<()> {
+    writeln!(w, "{prefix}Transaction Config:")?;
+    writeln!(
+        w,
+        "{}  Compute Unit Limit: {}",
+        prefix,
+        describe_limit(config.compute_unit_limit, 0, "unset"),
+    )?;
+    writeln!(
+        w,
+        "{}  Loaded Accounts Data Size Limit: {}",
+        prefix,
+        describe_limit(config.loaded_accounts_data_size_limit, 0, "unset"),
+    )?;
+    writeln!(
+        w,
+        "{}  Heap Size: {}",
+        prefix,
+        describe_limit(config.heap_size, v1::DEFAULT_HEAP_SIZE, "default"),
+    )?;
+    writeln!(
+        w,
+        "{}  Priority Fee: {} lamports",
+        prefix,
+        describe_limit(config.priority_fee, 0, "unset"),
+    )
+}
+
+fn describe_limit<T: fmt::Display>(limit: Option<T>, unset_value: T, unset_note: &str) -> String {
+    match limit {
+        Some(value) => value.to_string(),
+        None => format!("{unset_value} ({unset_note})"),
+    }
+}
+
 fn write_rewards<W: io::Write>(
     w: &mut W,
     rewards: Option<&Rewards>,
@@ -747,6 +793,7 @@ mod test {
         solana_message::{
             Message as LegacyMessage, MessageHeader, VersionedMessage,
             v0::{self, LoadedAddresses},
+            v1::{self as v1_message, TransactionConfig},
         },
         solana_pubkey::Pubkey,
         solana_seed_derivable::SeedDerivable,
@@ -781,6 +828,27 @@ mod test {
                     vec![1, 2],
                 )],
             }),
+            &[&keypair],
+        )
+        .unwrap()
+    }
+
+    fn new_test_v1_transaction(config: TransactionConfig) -> VersionedTransaction {
+        let keypair = Keypair::from_seed(&[0u8; 32]).unwrap();
+        let account_key = Pubkey::new_from_array([1u8; 32]);
+        let program_key = Pubkey::new_from_array([2u8; 32]);
+        VersionedTransaction::try_new(
+            VersionedMessage::V1(v1_message::Message::new(
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                config,
+                Hash::default(),
+                vec![keypair.pubkey(), account_key, program_key],
+                vec![CompiledInstruction::new_from_raw_parts(2, vec![], vec![1])],
+            )),
             &[&keypair],
         )
         .unwrap()
@@ -964,6 +1032,98 @@ Rewards:
   Address                                            Type        Amount            New Balance         \0
   CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8        rent        -◎0.0000001       ◎0.0000149         \0
 ".replace("\\0", "") // replace marker used to subvert trailing whitespace linter on CI
+        );
+    }
+
+    #[test]
+    fn test_write_v1_transaction() {
+        let transaction = new_test_v1_transaction(
+            TransactionConfig::empty()
+                .with_compute_unit_limit(20_000)
+                .with_loaded_accounts_data_size_limit(64 * 1024)
+                .with_heap_size(64 * 1024)
+                .with_priority_fee(5_000),
+        );
+        let sigverify_status = CliSignatureVerificationStatus::verify_transaction(&transaction);
+
+        let output = {
+            let mut write_buffer = BufWriter::new(Vec::new());
+            write_transaction(
+                &mut write_buffer,
+                &transaction,
+                None,
+                "",
+                Some(&sigverify_status),
+                Some(1628633791),
+                CliTimezone::Utc,
+            )
+            .unwrap();
+            String::from_utf8(write_buffer.into_inner().unwrap()).unwrap()
+        };
+
+        assert_eq!(
+            output,
+            r"Block Time: 2021-08-10T22:16:31Z
+Version: 1
+Recent Blockhash: 11111111111111111111111111111111
+Signature 0: 9mKgTm5rqgQBZfmeueDnQQa1LHg5BLkLBaui6Z1CqDvm3jA9TwDM8J2PfyDnGWvCHN5rsvFzWifzhE6MbEY6b4y (pass)
+Account 0: srw- 4zvwRjXUKGfvwnParsHAS3HuSVzV5cA4McphgmoCtajS (fee payer)
+Account 1: -rw- 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi
+Account 2: -r-x 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR
+Instruction 0
+  Program:   8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR (2)
+  Account 0: 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi (1)
+  Data: []
+Transaction Config:
+  Compute Unit Limit: 20000
+  Loaded Accounts Data Size Limit: 65536
+  Heap Size: 65536
+  Priority Fee: 5000 lamports
+Status: Unavailable
+"
+        );
+    }
+
+    #[test]
+    fn test_write_v1_transaction_empty_config() {
+        let transaction = new_test_v1_transaction(TransactionConfig::empty());
+        let sigverify_status = CliSignatureVerificationStatus::verify_transaction(&transaction);
+
+        let output = {
+            let mut write_buffer = BufWriter::new(Vec::new());
+            write_transaction(
+                &mut write_buffer,
+                &transaction,
+                None,
+                "",
+                Some(&sigverify_status),
+                Some(1628633791),
+                CliTimezone::Utc,
+            )
+            .unwrap();
+            String::from_utf8(write_buffer.into_inner().unwrap()).unwrap()
+        };
+
+        assert_eq!(
+            output,
+            r"Block Time: 2021-08-10T22:16:31Z
+Version: 1
+Recent Blockhash: 11111111111111111111111111111111
+Signature 0: EM1XJrm8BobgCiG81H2NvBjD2NNrsWcsVRVFSBzsdr4nktZWhFchhgzcBPpdnVUd3Sf3Q3rqrjcfq8Shy8v91mW (pass)
+Account 0: srw- 4zvwRjXUKGfvwnParsHAS3HuSVzV5cA4McphgmoCtajS (fee payer)
+Account 1: -rw- 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi
+Account 2: -r-x 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR
+Instruction 0
+  Program:   8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR (2)
+  Account 0: 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi (1)
+  Data: []
+Transaction Config:
+  Compute Unit Limit: 0 (unset)
+  Loaded Accounts Data Size Limit: 0 (unset)
+  Heap Size: 32768 (default)
+  Priority Fee: 0 (unset) lamports
+Status: Unavailable
+"
         );
     }
 

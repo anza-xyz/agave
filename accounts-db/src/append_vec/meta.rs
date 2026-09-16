@@ -1,6 +1,6 @@
 use {
-    crate::is_zero_lamport::IsZeroLamport, solana_account::ReadableAccount, solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    super::FileOffset, crate::is_zero_lamport::IsZeroLamport, solana_account::ReadableAccount,
+    solana_clock::Epoch, solana_pubkey::Pubkey,
 };
 
 /// Meta contains enough context to recover the index from storage itself
@@ -42,7 +42,7 @@ pub struct StoredAccountMeta<'append_vec> {
     /// account data
     pub account_meta: &'append_vec AccountMeta,
     pub(crate) data: &'append_vec [u8],
-    pub(crate) offset: usize,
+    pub(crate) offset: FileOffset,
     /// Only read via `stored_size()` under `dev-context-only-utils` (tests, store-tool).
     #[allow(dead_code)]
     pub(crate) stored_size: usize,
@@ -58,7 +58,7 @@ impl<'append_vec> StoredAccountMeta<'append_vec> {
         self.stored_size
     }
 
-    pub fn offset(&self) -> usize {
+    pub fn offset(&self) -> FileOffset {
         self.offset
     }
 
@@ -95,7 +95,7 @@ impl<'append_vec> ReadableAccount for StoredAccountMeta<'append_vec> {
 pub struct StoredAccountNoData<'append_vec> {
     pub meta: &'append_vec StoredMeta,
     pub account_meta: &'append_vec AccountMeta,
-    pub offset: usize,
+    pub offset: FileOffset,
 }
 
 impl<'append_vec> StoredAccountNoData<'append_vec> {
@@ -114,22 +114,9 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
         &self.meta.pubkey
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn sanitize(&self) -> bool {
-        self.sanitize_executable() && self.sanitize_lamports()
-    }
-
     #[inline(always)]
-    pub fn offset(&self) -> usize {
+    pub fn offset(&self) -> FileOffset {
         self.offset
-    }
-
-    /// The on-disk size of this account, derived from its data length. The view is transient and
-    /// not persisted, so the size is computed on demand rather than stored.
-    #[cfg(feature = "dev-context-only-utils")]
-    #[inline(always)]
-    pub fn stored_size(&self) -> usize {
-        super::AppendVec::calculate_stored_size(self.meta.data_len as usize)
     }
 
     #[inline(always)]
@@ -146,43 +133,6 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
     pub fn rent_epoch(&self) -> Epoch {
         self.account_meta.rent_epoch
     }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn sanitize_executable(&self) -> bool {
-        // Sanitize executable to ensure higher 7-bits are cleared correctly.
-        self.ref_executable_byte() & !1 == 0
-    }
-
-    /// Check if the account data matches that of a default account.
-    ///
-    /// Note that we are not comparing against AccountSharedData::default() because we do not have access to the account data,
-    /// so we compare data _length_ in lieu of actual data. This check otherwise identical to AccountSharedData::default().
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn is_default_account(&self) -> bool {
-        self.account_meta.lamports == 0
-            && self.meta.data_len == 0
-            && !self.account_meta.executable
-            && self.account_meta.rent_epoch == Epoch::default()
-            && self.account_meta.owner == Pubkey::default()
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn sanitize_lamports(&self) -> bool {
-        // Check if the account data matches that of a default account if it has 0 lamports.
-        self.account_meta.lamports != 0 || self.is_default_account()
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn ref_executable_byte(&self) -> &u8 {
-        use std::ptr;
-        // Use extra references to avoid value silently clamped to 1 (=true) and 0 (=false)
-        // Yes, this really happens; see test_new_from_file_crafted_executable
-        let executable_bool: &bool = &self.account_meta.executable;
-        let executable_bool_ptr = ptr::from_ref(executable_bool);
-        // UNSAFE: Force to interpret mmap-backed bool as u8 to really read the actual memory content
-        let executable_byte: &u8 = unsafe { &*(executable_bool_ptr.cast()) };
-        executable_byte
-    }
 }
 
 impl IsZeroLamport for StoredAccountNoData<'_> {
@@ -197,6 +147,51 @@ mod tests {
         super::*,
         solana_account::{Account, accounts_equal},
     };
+
+    impl<'append_vec> StoredAccountNoData<'append_vec> {
+        /// The on-disk size of this account, derived from its data length. The view is transient and
+        /// not persisted, so the size is computed on demand rather than stored.
+        pub fn stored_size(&self) -> usize {
+            super::super::AppendVec::calculate_stored_size(self.meta.data_len as usize)
+        }
+
+        pub fn sanitize(&self) -> bool {
+            self.sanitize_executable() && self.sanitize_lamports()
+        }
+
+        fn sanitize_executable(&self) -> bool {
+            // Sanitize executable to ensure higher 7-bits are cleared correctly.
+            self.ref_executable_byte() & !1 == 0
+        }
+
+        fn sanitize_lamports(&self) -> bool {
+            // Check if the account data matches that of a default account if it has 0 lamports.
+            self.account_meta.lamports != 0 || self.is_default_account()
+        }
+
+        /// Check if the account data matches that of a default account.
+        ///
+        /// Note that we are not comparing against AccountSharedData::default() because we do not have access to the account data,
+        /// so we compare data _length_ in lieu of actual data. This check otherwise identical to AccountSharedData::default().
+        fn is_default_account(&self) -> bool {
+            self.account_meta.lamports == 0
+                && self.meta.data_len == 0
+                && !self.account_meta.executable
+                && self.account_meta.rent_epoch == Epoch::default()
+                && self.account_meta.owner == Pubkey::default()
+        }
+
+        pub fn ref_executable_byte(&self) -> &u8 {
+            use std::ptr;
+            // Use extra references to avoid value silently clamped to 1 (=true) and 0 (=false)
+            // Yes, this really happens; see test_new_from_file_crafted_executable
+            let executable_bool: &bool = &self.account_meta.executable;
+            let executable_bool_ptr = ptr::from_ref(executable_bool);
+            // UNSAFE: Force to interpret mmap-backed bool as u8 to really read the actual memory content
+            let executable_byte: &u8 = unsafe { &*(executable_bool_ptr.cast()) };
+            executable_byte
+        }
+    }
 
     #[test]
     fn test_stored_readable_account() {
@@ -223,7 +218,7 @@ mod tests {
             rent_epoch,
             data: data.clone(),
         };
-        let offset = 99 * size_of::<u64>(); // offset needs to be 8 byte aligned
+        let offset = 99 * size_of::<u64>() as FileOffset; // offset needs to be 8 byte aligned
         let stored_size = 101;
         let stored_account = StoredAccountMeta {
             meta: &meta,
