@@ -1,7 +1,5 @@
-#![feature(test)]
-extern crate test;
-
 use {
+    criterion::{Criterion, criterion_group, criterion_main},
     rand::{Rng, rng},
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_leader_schedule::SlotLeader,
@@ -16,8 +14,7 @@ use {
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_system_interface::instruction as system_instruction,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-    std::sync::Arc,
-    test::Bencher,
+    std::{sync::Arc, time::Duration},
 };
 const TRANSFER_TRANSACTION_COMPUTE_UNIT: u32 = 200;
 
@@ -39,9 +36,7 @@ fn build_sanitized_transaction(
     RuntimeTransaction::from_transaction_for_tests(transaction)
 }
 
-#[bench]
-#[ignore]
-fn bench_process_transactions_single_slot(bencher: &mut Bencher) {
+fn bench_process_transactions_single_slot(c: &mut Criterion) {
     let prioritization_fee_cache = PrioritizationFeeCache::default();
 
     let bank = Arc::new(Bank::default_for_tests());
@@ -58,8 +53,10 @@ fn bench_process_transactions_single_slot(bencher: &mut Bencher) {
         })
         .collect();
 
-    bencher.iter(|| {
-        prioritization_fee_cache.update(&bank, transactions.iter());
+    c.bench_function("bench_process_transactions_single_slot", |b| {
+        b.iter(|| {
+            prioritization_fee_cache.update(&bank, transactions.iter());
+        })
     });
 }
 
@@ -92,9 +89,7 @@ fn process_transactions_multiple_slots(banks: &[Arc<Bank>], num_slots: usize, nu
     }
 }
 
-#[bench]
-#[ignore]
-fn bench_process_transactions_multiple_slots(bencher: &mut Bencher) {
+fn bench_process_transactions_multiple_slots(c: &mut Criterion) {
     const NUM_SLOTS: usize = 5;
     const NUM_THREADS: usize = 3;
 
@@ -107,7 +102,26 @@ fn bench_process_transactions_multiple_slots(bencher: &mut Bencher) {
         .map(|n| Arc::new(Bank::new_from_parent(bank.clone(), leader, n as u64)))
         .collect::<Vec<_>>();
 
-    bencher.iter(|| {
-        process_transactions_multiple_slots(&banks, NUM_SLOTS, NUM_THREADS);
+    c.bench_function("bench_process_transactions_multiple_slots", |b| {
+        b.iter(|| {
+            process_transactions_multiple_slots(&banks, NUM_SLOTS, NUM_THREADS);
+        })
     });
 }
+
+criterion_group! {
+    name = benches;
+    // Cut total run time by trimming criterion's defaults, as in status_cache.rs.
+    config = Criterion::default()
+        // 3s default; the medians are flat from 100ms
+        .warm_up_time(Duration::from_millis(150))
+        // 5s default; the medians are flat from 0.5s, but a multi-slot
+        // iteration builds a rayon pool and 5000 transactions and takes
+        // ~14ms, so 0.5s is below criterion's floor for 10 samples
+        .measurement_time(Duration::from_secs(1))
+        // 100 default, 10 is criterion's minimum
+        .sample_size(10)
+        .without_plots();
+    targets = bench_process_transactions_single_slot, bench_process_transactions_multiple_slots
+}
+criterion_main!(benches);

@@ -18,6 +18,9 @@ rustdoc-args = ["--cfg=docsrs"]
 [lib]
 crate-type = ["lib"]
 name = "solana_runtime"
+# Disable to avoid cargo building a libtest bench target for the lib: it
+# rejects criterion's flags, and the lib has no #[bench] fns anyway.
+bench = false
 
 [features]
 agave-unstable-api = []
@@ -220,6 +223,14 @@ jemallocator = { workspace = true }
 
 [[bench]]
 name = "prioritization_fee_cache"
+harness = false
+# Keep out of the default set, so `cargo bench -p solana-runtime` skips it.
+# Run it directly with `--bench prioritization_fee_cache`.
+bench = false
+
+[[bench]]
+name = "status_cache"
+harness = false
 
 [[bench]]
 name = "epoch_turnover"
