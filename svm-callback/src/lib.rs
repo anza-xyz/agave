@@ -32,8 +32,8 @@ pub trait InvokeContextCallback {
         Err(PrecompileError::InvalidPublicKey)
     }
 
-    fn get_leader_info(&self) -> Option<LeaderInfo> {
-        None
+    fn get_leader_info(&self) -> LeaderInfo {
+        LeaderInfo::default()
     }
 }
 
