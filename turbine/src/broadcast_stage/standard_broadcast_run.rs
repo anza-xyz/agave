@@ -412,6 +412,10 @@ impl StandardBroadcastRun {
         };
 
         if component.is_none() && !maybe_send_header {
+            // If there's nothing to transmit, early exit.
+            // This can happen during the FLH sad path - the leader bank is reset
+            // which causes the SlotStart message to arrive again, but there is
+            // no reason to publish another block header.
             return Ok(());
         }
 
