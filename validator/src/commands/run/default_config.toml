@@ -1,0 +1,81 @@
+# Built-in validator policy, and the reference for the config file format.
+# Print it with `agave-validator --print-default-config`.
+#
+# Layers: this policy, then `--config-file`, then CLI flags, each overriding the
+# previous. Unknown fields are rejected. `device` and `workers` are single
+# choices: naming either replaces the whole choice rather than merging into it.
+# A user file containing `interfaces` replaces the built-in label set; omitted
+# labels are dropped, matching labels inherit unspecified fields, and a new
+# label must define `device`, `xdp.zero_copy` and `xdp.workers`.
+#
+# XDP transmit is Linux-only. Other platforms validate this policy, then report
+# it as inactive. schema_version must be 1; omitting it means 1.
+#
+# [xdp]
+# enabled       Global gate. False puts every module on OS sockets. `--no-xdp`
+#               forces it false and nothing re-enables it.
+#
+# [interfaces.<label>]
+# <label> is a logical name, not a device name, referenced by each module's
+# tx.interface. Version 1 supports one interface: enabled modules naming more
+# than one, or naming an undeclared label, is an error. Specify exactly one
+# device selector:
+#
+# device.route = "default"    Bind the NIC carrying the default route.
+# device.name = "ens1f0"      Bind this device by name.
+#
+# [interfaces.<label>.xdp]
+# zero_copy     Strictly request AF_XDP zero-copy; startup fails when the device
+#               cannot provide it. `--xdp-zero-copy` and `--no-xdp-zero-copy`
+#               override it.
+#
+# Each worker owns one hardware queue and runs on one CPU. Worker CPUs must be
+# in the process CPU affinity, cannot be the PoH core, and must leave at least
+# one CPU for non-XDP work. Define the pool with exactly one mode, 1 to 4096
+# workers; `--xdp-cpu-cores` replaces it with the workers.cpus form:
+#
+# workers.auto.count = 1      Select the N highest eligible CPUs, excluding PoH;
+#                             assign queues 0..N-1.
+# workers.cpus = [8, 9]       Queue 0 uses CPU 8; queue 1 uses CPU 9.
+# workers.bindings = [        Map queues to CPUs explicitly, for a NIC whose
+#   { queue = 0, cpu = 8 },   queue ids are not 0..n-1. List order is sender
+#   { queue = 3, cpu = 9 },   order. Requires device.name.
+# ]
+#
+# [<module>.xdp] for tpu, turbine, repair and gossip
+# enabled       False leaves the module on OS sockets.
+# tx.interface  Which declared interface this module transmits over.
+# tx.queues     "all", or hardware queue ids in sender order, e.g. [0, 3]. Ids
+#               must exist in the pool above. Modules may share a queue.
+
+schema_version = 1
+
+[xdp]
+enabled = true
+
+[interfaces.primary]
+device.route = "default"
+
+[interfaces.primary.xdp]
+zero_copy = false
+workers.auto.count = 1
+
+[tpu.xdp]
+enabled = true
+tx.interface = "primary"
+tx.queues = "all"
+
+[turbine.xdp]
+enabled = true
+tx.interface = "primary"
+tx.queues = "all"
+
+[repair.xdp]
+enabled = true
+tx.interface = "primary"
+tx.queues = "all"
+
+[gossip.xdp]
+enabled = true
+tx.interface = "primary"
+tx.queues = "all"
