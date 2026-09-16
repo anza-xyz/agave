@@ -91,7 +91,9 @@ use {
         installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::first_of_consecutive_leader_slots,
         snapshot_controller::SnapshotController,
-        transaction_execution::TransactionStatusSender,
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
+        },
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
@@ -975,6 +977,7 @@ impl ReplayStage {
                     &replay_vote_sender,
                     migration_status.as_ref(),
                     entry_notification_sender.as_ref(),
+                    transaction_status_sender.as_ref(),
                 );
 
                 let mut generate_new_bank_forks_time =
@@ -1078,6 +1081,7 @@ impl ReplayStage {
                         &replay_vote_sender,
                         migration_status.as_ref(),
                         entry_notification_sender.as_ref(),
+                        transaction_status_sender.as_ref(),
                     );
                     Self::alpenglow_handle_newly_frozen_banks(
                         &new_frozen_slots,
@@ -1109,6 +1113,7 @@ impl ReplayStage {
                             &bank_forks,
                             &mut progress,
                             &mut async_verification_freelist,
+                            transaction_status_sender.as_ref(),
                         )
                         .expect("Blockstore operations must succeed");
                     }
@@ -2437,6 +2442,7 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+        transaction_status_sender: Option<&TransactionStatusSender>,
     ) -> Result<(), BlockstoreError> {
         let root = bank_forks.read().unwrap().root();
 
@@ -2542,6 +2548,25 @@ impl ReplayStage {
             progress,
             async_verification_freelist,
         );
+
+        if let Some(transaction_status_sender) = transaction_status_sender {
+            for slot in blocks_to_switch
+                .iter()
+                .map(|(slot, _)| *slot)
+                .chain(original_dead_slots_to_clear.iter().copied())
+            {
+                transaction_status_sender
+                    .send_purge_transaction_history_for_slot(
+                        slot,
+                        TransactionHistoryPurgeSource::SwitchBank,
+                        TransactionHistoryPurgeInput::SwitchBank,
+                    )
+                    .expect(
+                        "TransactionStatusService failed to purge transaction history before \
+                         SwitchBank",
+                    );
+            }
+        }
 
         // Banks are clear, move shreds in blockstore
         for (slot, location) in blocks_to_switch {

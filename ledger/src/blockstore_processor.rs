@@ -50,7 +50,9 @@ use {
         leader_schedule_utils::leader_slot_index,
         runtime_config::RuntimeConfig,
         snapshot_controller::SnapshotController,
-        transaction_execution::TransactionStatusSender,
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
+        },
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::ReplayTransaction,
@@ -294,6 +296,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("bank hash mismatch at slot {0}: expected {1}, got {2}")]
     BankHashMismatch(Slot, Hash, Hash),
+
+    #[error("failed to purge transaction history for slot {0}: {1}")]
+    FailedToPurgeTransactionHistory(Slot, String),
 }
 
 impl BlockstoreProcessorError {
@@ -2373,6 +2378,22 @@ pub fn process_single_slot(
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
+
+    // Clear pre-UpdateParent transaction history
+    if blockstore
+        .meta(slot)?
+        .is_some_and(|meta| meta.has_update_parent())
+        && let Some(transaction_status_sender) = transaction_status_sender
+    {
+        transaction_status_sender
+            .send_purge_transaction_history_for_slot(
+                slot,
+                TransactionHistoryPurgeSource::StartupReplay,
+                TransactionHistoryPurgeInput::ReplayStage,
+            )
+            .map_err(|err| BlockstoreProcessorError::FailedToPurgeTransactionHistory(slot, err))?;
+    }
+
     if !opts.skip_inter_slot_verification {
         match check_chained_block_id(blockstore, bank, migration_status) {
             ChainedBlockIdCheck::Inactive | ChainedBlockIdCheck::Pass => (),
@@ -5210,6 +5231,7 @@ pub mod tests {
                     indexes.extend_from_slice(&batch.transaction_indexes);
                 }
                 TransactionStatusMessage::Freeze(_) => {}
+                TransactionStatusMessage::PurgeTransactionHistory { .. } => unreachable!(),
             }
         }
         indexes.sort();
