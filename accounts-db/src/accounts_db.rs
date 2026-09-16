@@ -1521,6 +1521,7 @@ impl AccountsDb {
                 let mut missing = 0;
                 let mut useful = 0;
                 let mut purges_old_accounts_local = 0;
+                let mut reclaims_local = ReclaimsWithNewestSlot::new();
                 // Take the bin so its allocation is freed by this thread once the bin is
                 // scanned, rather than serially after every bin completes.
                 let candidates_bin = mem::take(&mut *candidates_bin.write().unwrap());
@@ -1584,12 +1585,13 @@ impl AccountsDb {
                         ScanFilter::All,
                     );
                     if should_collect_reclaims {
-                        let reclaims_new =
-                            self.collect_reclaims(&candidate_pubkey, max_clean_root_inclusive);
-                        if !reclaims_new.is_empty() {
-                            reclaims.lock().unwrap().extend(reclaims_new);
-                        }
+                        reclaims_local.extend(
+                            self.collect_reclaims(&candidate_pubkey, max_clean_root_inclusive),
+                        );
                     }
+                }
+                if !reclaims_local.is_empty() {
+                    reclaims.lock().unwrap().append(&mut reclaims_local);
                 }
                 found_not_zero_accum.fetch_add(found_not_zero, Ordering::Relaxed);
                 not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
