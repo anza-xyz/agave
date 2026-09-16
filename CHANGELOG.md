@@ -38,6 +38,8 @@ Release channels have their own copy of this changelog:
 * Added `vote-update-commission-collector` to set the account that collects a vote account's
   commission. The `COMMISSION_KIND` argument selects which collector to update:
   `inflation-rewards` or `block-revenue`.
+* `leader-schedule` now accepts `--key-by-vote-account` to show each slot's leader by vote
+  account instead of validator identity.
 
 ## 4.3.0
 ### RPC
