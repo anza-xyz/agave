@@ -50,6 +50,7 @@ pub struct SVMFeatureSet {
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
+    pub enable_get_leader_syscall: bool,
 }
 
 impl SVMFeatureSet {
@@ -104,6 +105,7 @@ impl SVMFeatureSet {
             relax_post_exec_min_balance_check: true,
             define_ltds_fee_only_semantics: true,
             relax_fee_payer_constraint: true,
+            enable_get_leader_syscall: true,
         }
     }
 }

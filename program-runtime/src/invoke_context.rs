@@ -35,7 +35,7 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_svm_callback::InvokeContextCallback,
+    solana_svm_callback::{InvokeContextCallback, LeaderInfo},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{LogCollector, ic_msg},
     solana_svm_measure::{measure::Measure, measure_us},
@@ -794,6 +794,12 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config
             .epoch_stake_callback
             .is_precompile(pubkey)
+    }
+
+    pub fn get_leader_info(&self) -> LeaderInfo {
+        self.environment_config
+            .epoch_stake_callback
+            .get_leader_info()
     }
 
     // Should alignment be enforced during user pointer translation

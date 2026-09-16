@@ -30,6 +30,10 @@ pub trait InvokeContextCallback {
     ) -> Result<(), PrecompileError> {
         Err(PrecompileError::InvalidPublicKey)
     }
+
+    fn get_leader_info(&self) -> LeaderInfo {
+        LeaderInfo::default()
+    }
 }
 
 /// Runtime callbacks for transaction processing.
@@ -47,4 +51,13 @@ pub enum AccountState<'a> {
     Dead,
     /// This account is alive, and already existed prior to this transaction
     Alive(&'a AccountSharedData),
+}
+
+#[repr(C)]
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct LeaderInfo {
+    pub leader_id: Pubkey,
+    pub next_leader_id: Pubkey,
+    pub leader_vote: Pubkey,
+    pub next_leader_vote: Pubkey,
 }
