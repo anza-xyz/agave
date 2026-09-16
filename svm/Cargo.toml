@@ -125,7 +125,7 @@ xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-env_logger = { workspace = true }
+env_logger = { workspace = true, features = ["auto-color"] }
 libsecp256k1 = { workspace = true }
 rand = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }

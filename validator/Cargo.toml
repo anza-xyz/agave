@@ -109,6 +109,7 @@ caps = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true, features = ["auto-color"] }
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
 predicates = { workspace = true }

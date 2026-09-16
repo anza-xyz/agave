@@ -53,7 +53,7 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "wincode"] }
 
 [dev-dependencies]
-agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../../logger", features = ["agave-unstable-api", "auto-color"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }

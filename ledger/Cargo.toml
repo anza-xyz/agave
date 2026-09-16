@@ -132,7 +132,7 @@ default-features = false
 features = ["lz4"]
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }

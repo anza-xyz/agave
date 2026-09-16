@@ -192,7 +192,7 @@ thiserror = { workspace = true }
 wincode = { workspace = true, features = ["smallvec"] }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 agave-transaction-view = { workspace = true }
 bitvec = { workspace = true }
 bytes = { workspace = true }
