@@ -4,7 +4,7 @@ use {
     crate::vote_state::{self, handler::VoteStateTargetVersion},
     log::*,
     solana_bincode::limited_deserialize,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_runtime::{
         declare_process_instruction, invoke_context::InvokeContext,
         sysvar_cache::get_sysvar_with_account_check,
@@ -446,7 +446,7 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::sysvar,
-        solana_slot_hashes::SlotHashes,
+        solana_slot_hashes::{SlotHash, SlotHashes},
         solana_svm_feature_set::SVMFeatureSet,
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_PROGRAM_COMPUTE_UNITS,
         solana_sysvar_id::SysvarId,
@@ -2160,7 +2160,7 @@ mod tests {
     fn test_vote_signature() {
         let (vote_pubkey, vote_account) = create_test_account();
         let (vote, instruction_datas) = create_serialized_votes();
-        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes = SlotHashes::new(&[SlotHash::new(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = create_sysvar_account(&slot_hashes);
         let mut instruction_accounts = vec![
             AccountMeta {
@@ -2233,7 +2233,7 @@ mod tests {
             // should fail, wrong hash
             transaction_accounts[1] = (
                 sysvar::slot_hashes::id(),
-                create_sysvar_account(&SlotHashes::new(&[(
+                create_sysvar_account(&SlotHashes::new(&[SlotHash::new(
                     *vote.slots.last().unwrap(),
                     solana_sha256_hasher::hash(&[0u8]),
                 )])),
@@ -2249,7 +2249,7 @@ mod tests {
             // should fail, wrong slot
             transaction_accounts[1] = (
                 sysvar::slot_hashes::id(),
-                create_sysvar_account(&SlotHashes::new(&[(0, vote.hash)])),
+                create_sysvar_account(&SlotHashes::new(&[SlotHash::new(0, vote.hash)])),
             );
             process_instruction(
                 features,
@@ -2423,7 +2423,7 @@ mod tests {
 
         // should fail, not signed by authorized voter
         let (vote, instruction_datas) = create_serialized_votes();
-        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes = SlotHashes::new(&[SlotHash::new(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = create_sysvar_account(&slot_hashes);
         transaction_accounts.push((sysvar::slot_hashes::id(), slot_hashes_account));
         instruction_accounts.insert(
@@ -2666,7 +2666,7 @@ mod tests {
 
         // should fail, not signed by authorized voter
         let (vote, instruction_datas) = create_serialized_votes();
-        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes = SlotHashes::new(&[SlotHash::new(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = create_sysvar_account(&slot_hashes);
         transaction_accounts.push((sysvar::slot_hashes::id(), slot_hashes_account));
         instruction_accounts.insert(
