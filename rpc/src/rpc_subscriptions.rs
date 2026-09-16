@@ -1282,7 +1282,6 @@ pub(crate) mod tests {
     #[test]
     fn test_account_and_program_notifications_honor_data_slice() {
         use {
-            solana_account::Account,
             solana_account_decoder::UiDataSliceConfig,
             solana_rpc_client_api::filter::{Memcmp, RpcFilterType},
         };
@@ -1291,12 +1290,7 @@ pub(crate) mod tests {
         let pubkey = Pubkey::new_unique();
         let owner = Pubkey::new_unique();
         let data = b"0123456789abcdef";
-        let account = AccountSharedData::from(Account {
-            lamports: 42,
-            data: data.to_vec(),
-            owner,
-            ..Account::default()
-        });
+        let account = AccountSharedData::new_with_data(42, data.to_vec(), &owner);
         let filtered_out = AccountSharedData::new(42, 15, &owner);
 
         for encoding in [
