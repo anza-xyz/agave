@@ -277,7 +277,7 @@ static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "2RGYA9GpP1epajQ4CxQpCHMJPnLLBoseMbAyLJhTjsGS")
+    frozen_abi(digest = "8zvSkAYt3bK7sz6Ud968beDnoKXkD79jsViTH4fhi8JR")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
