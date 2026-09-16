@@ -26,6 +26,8 @@ use {
     },
 };
 
+const MAX_ORPHAN_REPAIR_TREES: usize = 1_024;
+
 #[derive(PartialEq, Eq, Copy, Clone, Hash, Debug)]
 enum TreeRoot {
     Root(Slot),
@@ -112,7 +114,7 @@ impl RepairWeight {
             }
             let mut tree_root = self.get_tree_root(slot);
             let mut new_ancestors = VecDeque::new();
-            // If we don't know know  how this slot chains to any existing trees
+            // If we don't know know how this slot chains to any existing trees
             // in `self.trees` or `self.pruned_trees`, then use `blockstore` to see if this chains
             // any existing trees in `self.trees`
             if tree_root.is_none() {
@@ -214,6 +216,8 @@ impl RepairWeight {
                 epoch_schedule,
             );
         }
+
+        self.prune_orphan_trees_to_limit(MAX_ORPHAN_REPAIR_TREES);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -960,6 +964,44 @@ impl RepairWeight {
         );
     }
 
+    fn prune_orphan_trees_to_limit(&mut self, max_orphan_trees: usize) {
+        if self.trees.len() <= max_orphan_trees.saturating_add(1) {
+            return;
+        }
+
+        let mut stake_weighted_trees: Vec<(Slot, u64)> = self
+            .trees
+            .iter()
+            .filter(|(slot, _)| **slot != self.root)
+            .map(|(slot, tree)| {
+                (
+                    *slot,
+                    tree.stake_voted_subtree(&(*slot, Hash::default()))
+                        .expect("Tree must have weight at its own root"),
+                )
+            })
+            .collect();
+
+        if stake_weighted_trees.len() > max_orphan_trees {
+            stake_weighted_trees.select_nth_unstable_by(
+                max_orphan_trees,
+                |(slot, stake_voted), (slot_, stake_voted_)| {
+                    if stake_voted == stake_voted_ {
+                        slot.cmp(slot_)
+                    } else {
+                        stake_voted.cmp(stake_voted_).reverse()
+                    }
+                },
+            );
+        }
+
+        for (tree_root, _) in stake_weighted_trees.iter().skip(max_orphan_trees) {
+            if let Some(tree) = self.trees.remove(tree_root) {
+                self.remove_tree_slots(&tree);
+            }
+        }
+    }
+
     /// Finds any ancestors available from `blockstore` for `slot`.
     /// Ancestor search is stopped when finding one that chains to any
     /// tree in `self.trees` or `self.pruned_trees` or if the ancestor is < self.root.
@@ -1067,6 +1109,68 @@ mod test {
         solana_runtime::{bank::Bank, bank_utils},
         trees::tr,
     };
+
+    #[test]
+    fn test_prune_excess_orphan_trees() {
+        let ledger_path = get_tmp_ledger_path!();
+        let blockstore = Blockstore::open(&ledger_path).unwrap();
+        let epoch_stakes = HashMap::new();
+        let epoch_schedule = EpochSchedule::default();
+        let voter = vec![Pubkey::new_unique()];
+
+        let mut repair_weight = RepairWeight::new(0);
+        let votes = (1..=(MAX_ORPHAN_REPAIR_TREES as u64 + 10)).map(|slot| (slot, voter.clone()));
+        repair_weight.add_voters(&blockstore, votes, &epoch_stakes, &epoch_schedule);
+
+        assert_eq!(repair_weight.trees.len(), MAX_ORPHAN_REPAIR_TREES + 1);
+        assert!(repair_weight.trees.contains_key(&0));
+        assert!(repair_weight.trees.contains_key(&1));
+        assert!(
+            repair_weight
+                .trees
+                .contains_key(&(MAX_ORPHAN_REPAIR_TREES as u64))
+        );
+        assert!(
+            !repair_weight
+                .trees
+                .contains_key(&(MAX_ORPHAN_REPAIR_TREES as u64 + 1))
+        );
+        assert!(
+            !repair_weight
+                .slot_to_tree
+                .contains_key(&(MAX_ORPHAN_REPAIR_TREES as u64 + 1))
+        );
+    }
+
+    #[test]
+    fn test_prune_excess_orphan_trees_keeps_higher_stake() {
+        let ledger_path = get_tmp_ledger_path!();
+        let blockstore = Blockstore::open(&ledger_path).unwrap();
+        let stake = 100;
+        let (bank, vote_pubkeys) = bank_utils::setup_bank_and_vote_pubkeys_for_tests(2, stake);
+
+        let mut repair_weight = RepairWeight::new(0);
+        repair_weight.add_voters(
+            &blockstore,
+            [
+                (1, vec![vote_pubkeys[0]]),
+                (2, vec![vote_pubkeys[0]]),
+                (3, vote_pubkeys.clone()),
+            ]
+            .into_iter(),
+            bank.epoch_stakes_map(),
+            bank.epoch_schedule(),
+        );
+        repair_weight.prune_orphan_trees_to_limit(2);
+
+        assert_eq!(repair_weight.trees.len(), 3);
+        assert!(repair_weight.trees.contains_key(&0));
+        assert!(repair_weight.trees.contains_key(&1));
+        assert!(repair_weight.trees.contains_key(&3));
+        assert!(repair_weight.slot_to_tree.contains_key(&3));
+        assert!(!repair_weight.trees.contains_key(&2));
+        assert!(!repair_weight.slot_to_tree.contains_key(&2));
+    }
 
     #[test]
     fn test_sort_by_stake_weight_slot() {
