@@ -347,7 +347,7 @@ mod tests {
         // Mark account 1 obsolete and record account 3 as a tombstone.
         let obsolete_offset = offsets[1];
         let tombstone_offset = offsets[3];
-        let data_lens = storage.accounts.get_account_data_lens(&[obsolete_offset]);
+        let data_lens = storage.accounts.get_account_data_lens([obsolete_offset]);
         storage
             .obsolete_accounts()
             .write()

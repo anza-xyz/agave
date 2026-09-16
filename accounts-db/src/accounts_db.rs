@@ -4284,7 +4284,9 @@ impl AccountsDb {
                         let mut offsets = offsets.iter().cloned().collect::<Vec<_>>();
                         // sort so offsets are in order. This improves efficiency of loading the accounts.
                         offsets.sort_unstable();
-                        let data_lens = store.accounts.get_account_data_lens(&offsets);
+                        let data_lens = store
+                            .accounts
+                            .get_account_data_lens(offsets.iter().copied());
                         let dead_bytes = data_lens
                             .iter()
                             .map(|len| store.accounts.calculate_stored_size(*len))

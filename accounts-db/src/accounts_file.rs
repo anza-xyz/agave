@@ -202,9 +202,9 @@ impl AccountsFile {
     }
 
     /// Returns the account data size for each account in `offsets`.
-    pub(crate) fn get_account_data_lens<'a>(
+    pub(crate) fn get_account_data_lens(
         &self,
-        offsets: impl IntoIterator<Item = &'a Offset, IntoIter: ExactSizeIterator>,
+        offsets: impl IntoIterator<Item = Offset, IntoIter: ExactSizeIterator>,
     ) -> Vec<usize> {
         match self {
             Self::AppendVec(av) => av.get_account_data_lens(offsets),

@@ -334,7 +334,9 @@ mod tests {
         storage.batch_insert_tombstone_offsets(tombstone_offsets);
 
         // Mark the obsolete accounts in storage
-        let data_lens = storage.accounts.get_account_data_lens(&obsolete_offsets);
+        let data_lens = storage
+            .accounts
+            .get_account_data_lens(obsolete_offsets.iter().copied());
         storage
             .obsolete_accounts()
             .write()
@@ -486,7 +488,7 @@ mod tests {
         // Mark the obsolete accounts in storage at different slots
         let mut slot_marked_dead = 0;
         obsolete_account_offset.into_iter().for_each(|offset| {
-            let mut size = storage.accounts.get_account_data_lens(&[offset]);
+            let mut size = storage.accounts.get_account_data_lens([offset]);
             storage
                 .obsolete_accounts()
                 .write()
