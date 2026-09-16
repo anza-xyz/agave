@@ -12,10 +12,6 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
         _arg5: u64,
     ) -> Result<u64, Error> {
         let leader_info = invoke_context.get_leader_info();
-        let Some(leader_info) = leader_info else {
-            // maybe wrong error type to use
-            return Err(SyscallError::InvalidAttribute.into());
-        };
         let amount = invoke_context
             .get_execution_cost()
             .sysvar_base_cost

@@ -4756,8 +4756,8 @@ mod tests {
 
         struct MockCallback {}
         impl InvokeContextCallback for MockCallback {
-            fn get_leader_info(&self) -> Option<LeaderInfo> {
-                Some(LEADER_INFO)
+            fn get_leader_info(&self) -> LeaderInfo {
+                LEADER_INFO
             }
         }
 
