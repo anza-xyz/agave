@@ -292,7 +292,7 @@ impl CrdsGossipPull {
         stakes: &HashMap<Pubkey, u64>,
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
-        pings: &mut Vec<(SocketAddr, Ping)>,
+        pings: &mut Vec<(Pubkey, SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
     ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<>, CrdsGossipError>
     {
@@ -717,7 +717,7 @@ pub(crate) mod tests {
             stakes: &HashMap<Pubkey, u64>,
             bloom_size: usize,
             ping_cache: &Mutex<PingCache>,
-            pings: &mut Vec<(SocketAddr, Ping)>,
+            pings: &mut Vec<(Pubkey, SocketAddr, Ping)>,
             socket_addr_space: &SocketAddrSpace,
         ) -> Result<Vec<(ContactInfo, Vec<CrdsFilter>)>, CrdsGossipError> {
             let out = self.new_pull_request(
