@@ -1,5 +1,5 @@
 use {
-    crate::cluster_info_metrics::should_report_message_signature,
+    crate::{cluster_info_metrics::should_report_message_signature, crds_value::CrdsValue},
     indexmap::IndexMap,
     lazy_lru::LruCache,
     rand::{CryptoRng, Rng},
@@ -20,6 +20,7 @@ use {
 
 const PING_PONG_HASH_PREFIX: &[u8] = "SOLANA_PING_PONG".as_bytes();
 const PONG_SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 5;
+const DEFERRED_CONTACT_INFO_TTL: Duration = Duration::from_secs(10);
 
 // For backward compatibility we are using a const generic parameter here.
 // N should always be >= 8 and only the first 8 bytes are used. So the new code
@@ -65,6 +66,10 @@ pub struct PingCache<const N: usize> {
     pings: IndexMap<(Pubkey, SocketAddr), (Instant, Hash)>,
     // Verified pong responses from remote nodes.
     pongs: LruCache<(Pubkey, SocketAddr), Instant>,
+    // Remote nodes whose ContactInfo was deferred on ingress until the node
+    // proves reachability by responding to a ping (used to close the duplicate
+    // instance detection window).
+    deferred_contact_infos: LruCache<(Pubkey, SocketAddr), (Instant, CrdsValue)>,
     // Timestamp of last ping message sent to a remote IP.
     ping_times: LruCache<IpAddr, Instant>,
 }
@@ -179,8 +184,43 @@ impl<const N: usize> PingCache<N> {
             max_pings,
             pings: IndexMap::with_capacity(max_pings),
             pongs: LruCache::new(max_pings),
+            deferred_contact_infos: LruCache::new(max_pings),
             ping_times: LruCache::new(max_pings),
         }
+    }
+
+    pub fn defer_contact_info(
+        &mut self,
+        remote_node: (Pubkey, SocketAddr),
+        now: Instant,
+        value: CrdsValue,
+    ) {
+        self.deferred_contact_infos.put(remote_node, (now, value));
+    }
+
+    pub fn take_deferred_contact_info(
+        &mut self,
+        remote_node: &(Pubkey, SocketAddr),
+        now: Instant,
+    ) -> Option<CrdsValue> {
+        self.deferred_contact_infos
+            .pop(remote_node)
+            .and_then(|(deferred_at, value)| {
+                if now.saturating_duration_since(deferred_at) > DEFERRED_CONTACT_INFO_TTL {
+                    None
+                } else {
+                    Some(value)
+                }
+            })
+    }
+
+    pub fn get_deferred_contact_len(&self) -> usize {
+        self.deferred_contact_infos.len()
+    }
+
+    #[cfg(test)]
+    pub fn has_deferred_contact_info(&self, remote_node: &(Pubkey, SocketAddr)) -> bool {
+        self.deferred_contact_infos.peek(remote_node).is_some()
     }
 
     /// Checks if the pong hash matches a ping message sent out previously.
