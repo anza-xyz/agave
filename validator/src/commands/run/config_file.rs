@@ -169,31 +169,17 @@ impl<'de> Deserialize<'de> for DeviceSelector {
             name: Option<String>,
         }
 
-        match Device::deserialize(deserializer)? {
-            Device {
-                route: Some(route),
-                name: None,
-            } if route == "default" => Ok(Self::DefaultRoute),
-            Device {
-                route: Some(route),
-                name: None,
-            } => Err(serde::de::Error::custom(format!(
+        let Device { route, name } = Device::deserialize(deserializer)?;
+        match (route, name) {
+            (Some(route), None) if route == "default" => Ok(Self::DefaultRoute),
+            (Some(route), None) => Err(serde::de::Error::custom(format!(
                 "device.route must be \"default\"; found {route:?}"
             ))),
-            Device {
-                route: None,
-                name: Some(name),
-            } => Ok(Self::Name(name)),
-            Device {
-                route: None,
-                name: None,
-            } => Err(serde::de::Error::custom(
+            (None, Some(name)) => Ok(Self::Name(name)),
+            (None, None) => Err(serde::de::Error::custom(
                 "device must specify exactly one of device.route or device.name",
             )),
-            Device {
-                route: Some(_),
-                name: Some(_),
-            } => Err(serde::de::Error::custom(
+            (Some(_), Some(_)) => Err(serde::de::Error::custom(
                 "device specifies conflicting keys device.route and device.name",
             )),
         }
