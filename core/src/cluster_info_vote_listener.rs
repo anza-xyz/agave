@@ -923,7 +923,7 @@ impl ClusterInfoVoteListener {
         for slot in vote_slots
             .into_iter()
             .inspect(|&slot| {
-                verified_voter_slots.insert(slot, vec![*vote_pubkey]);
+                verified_voter_slots.insert(slot, Arc::new(vec![*vote_pubkey]));
             })
             .filter(|&slot| slot > root && slot >= *latest_vote_slot)
             .rev()
@@ -1646,7 +1646,7 @@ mod tests {
                     let vote_keypair = &keypairs.vote_keypair;
                     expected_voter_slots.push(HashMap::from([(
                         i as Slot + 1,
-                        vec![vote_keypair.pubkey()],
+                        Arc::new(vec![vote_keypair.pubkey()]),
                     )]));
                     let tower_sync =
                         TowerSync::new_from_slots(vec![(i as u64 + 1)], bank_hash, None);

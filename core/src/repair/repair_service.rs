@@ -706,13 +706,13 @@ impl RepairService {
         let mut get_votes_us = Measure::start("get_votes_us");
         let mut slot_to_vote_pubkeys = HashMap::new();
         verified_voter_slots_receiver.try_iter().for_each(|map| {
-            for (slot, mut pubkeys) in map {
+            for (slot, pubkeys) in map {
                 match slot_to_vote_pubkeys.entry(slot) {
                     Entry::Vacant(e) => {
-                        e.insert(pubkeys);
+                        e.insert(Arc::unwrap_or_clone(pubkeys));
                     }
                     Entry::Occupied(e) => {
-                        e.into_mut().append(&mut pubkeys);
+                        e.into_mut().append(&mut Arc::unwrap_or_clone(pubkeys));
                     }
                 }
             }
