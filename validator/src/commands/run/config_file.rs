@@ -13,14 +13,11 @@ use {
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_XDP_WORKERS: usize = 4096;
-const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
 
 /// The embedded default policy, as shipped, for `--print-default-config`.
-pub(crate) fn default_config_toml() -> &'static str {
-    DEFAULT_CONFIG
-}
+pub(crate) const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 enum Source {
     #[default]
     BuiltIn,
@@ -28,26 +25,26 @@ enum Source {
     Cli,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum DeviceSelector {
     DefaultRoute,
     Name(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 enum WorkerPolicy {
     Auto { count: usize },
     Cpus(Vec<usize>),
     Bindings(Vec<QueueCpuBinding>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 enum QueueSelection {
     All,
     Explicit(Vec<u32>),
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EffectiveInterface {
     device: DeviceSelector,
@@ -56,7 +53,7 @@ struct EffectiveInterface {
     device_source: Source,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InterfaceXdp {
     zero_copy: bool,
@@ -67,20 +64,20 @@ struct InterfaceXdp {
     workers_source: Source,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EffectiveModule {
     xdp: ModuleXdp,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModuleXdp {
     enabled: bool,
     tx: ModuleTx,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModuleTx {
     interface: String,
@@ -91,7 +88,7 @@ struct ModuleTx {
     queues_source: Source,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct Modules<T> {
     pub gossip: T,
     pub repair: T,
@@ -105,18 +102,19 @@ impl<T> Modules<T> {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GlobalXdp {
     enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EffectiveConfig {
     // Validated against SCHEMA_VERSION on the raw TOML before decoding; carried
     // only so deny_unknown_fields accepts the key.
-    schema_version: i64,
+    #[serde(rename = "schema_version")]
+    _schema_version: i64,
     xdp: GlobalXdp,
     interfaces: BTreeMap<String, EffectiveInterface>,
     gossip: EffectiveModule,
@@ -158,7 +156,7 @@ pub(crate) struct CliApplication {
     pub warnings: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct RuntimeXdpConfig {
     pub interface_label: String,
     pub device: DeviceSelector,
@@ -210,21 +208,6 @@ impl<'de> Deserialize<'de> for DeviceSelector {
     }
 }
 
-fn checked_queue(value: i64, field: &str) -> Result<u32, String> {
-    u32::try_from(value).map_err(|_| {
-        format!(
-            "{field} value {value} is outside the supported range 0..={}",
-            u32::MAX
-        )
-    })
-}
-
-fn checked_usize(value: i64, field: &str) -> Result<usize, String> {
-    usize::try_from(value).map_err(|_| {
-        format!("{field} value {value} is outside the supported non-negative usize range")
-    })
-}
-
 fn validate_pool_len(len: usize, field: &str) -> Result<(), String> {
     if len == 0 || len > MAX_XDP_WORKERS {
         return Err(format!(
@@ -264,43 +247,37 @@ impl<'de> Deserialize<'de> for WorkerPolicy {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Auto {
-            count: i64,
+            count: usize,
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Binding {
-            queue: i64,
-            cpu: i64,
+            queue: u32,
+            cpu: usize,
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Workers {
             auto: Option<Auto>,
-            cpus: Option<Vec<i64>>,
+            cpus: Option<Vec<usize>>,
             bindings: Option<Vec<Binding>>,
         }
 
         let workers = Workers::deserialize(deserializer)?;
         let parse = || -> Result<_, String> {
-            let policy = match (workers.auto, workers.cpus, workers.bindings) {
+            match (workers.auto, workers.cpus, workers.bindings) {
                 (None, None, None) => Err("workers must specify exactly one of workers.auto, \
                                            workers.cpus, or workers.bindings"
                     .to_string()),
                 (Some(_), Some(_), _) | (Some(_), _, Some(_)) | (_, Some(_), Some(_)) => {
                     Err("workers specifies conflicting worker modes".to_string())
                 }
-                (Some(auto), None, None) => {
-                    let count = checked_usize(auto.count, "workers.auto.count")?;
+                (Some(Auto { count }), None, None) => {
                     validate_pool_len(count, "workers.auto.count")?;
                     Ok(WorkerPolicy::Auto { count })
                 }
-                (None, Some(raw_cpus), None) => {
-                    validate_pool_len(raw_cpus.len(), "workers.cpus")?;
-                    let mut cpus = Vec::with_capacity(raw_cpus.len());
-                    for (index, value) in raw_cpus.into_iter().enumerate() {
-                        let cpu = checked_usize(value, &format!("workers.cpus[{index}]"))?;
-                        cpus.push(cpu);
-                    }
+                (None, Some(cpus), None) => {
+                    validate_pool_len(cpus.len(), "workers.cpus")?;
                     validate_unique_cpus(&cpus, "workers.cpus")?;
                     Ok(WorkerPolicy::Cpus(cpus))
                 }
@@ -309,13 +286,7 @@ impl<'de> Deserialize<'de> for WorkerPolicy {
                     let mut queues = BTreeSet::new();
                     let mut cpus = BTreeSet::new();
                     let mut bindings = Vec::with_capacity(raw_bindings.len());
-                    for (index, binding) in raw_bindings.into_iter().enumerate() {
-                        let queue = checked_queue(
-                            binding.queue,
-                            &format!("workers.bindings[{index}].queue"),
-                        )?;
-                        let cpu =
-                            checked_usize(binding.cpu, &format!("workers.bindings[{index}].cpu"))?;
+                    for Binding { queue, cpu } in raw_bindings {
                         if !queues.insert(queue) {
                             return Err(format!(
                                 "workers.bindings contains duplicate queue {queue}"
@@ -328,8 +299,7 @@ impl<'de> Deserialize<'de> for WorkerPolicy {
                     }
                     Ok(WorkerPolicy::Bindings(bindings))
                 }
-            }?;
-            Ok(policy)
+            }
         };
         parse().map_err(serde::de::Error::custom)
     }
@@ -360,20 +330,14 @@ impl<'de> Deserialize<'de> for QueueSelection {
                     "tx.queues exceeds MAX_XDP_WORKERS ({MAX_XDP_WORKERS})"
                 ));
             }
+            let queues: Vec<u32> = toml::Value::Array(values)
+                .try_into()
+                .map_err(|error| format!("tx.queues: {error}"))?;
             let mut seen = BTreeSet::new();
-            let mut queues = Vec::with_capacity(values.len());
-            for (index, value) in values.into_iter().enumerate() {
-                let toml::Value::Integer(value) = value else {
-                    return Err(format!(
-                        "tx.queues array values must be integers; found {}",
-                        value.type_str()
-                    ));
-                };
-                let queue = checked_queue(value, &format!("tx.queues[{index}]"))?;
-                if !seen.insert(queue) {
+            for queue in &queues {
+                if !seen.insert(*queue) {
                     return Err(format!("tx.queues contains duplicate queue {queue}"));
                 }
-                queues.push(queue);
             }
             Ok(Self::Explicit(queues))
         };
