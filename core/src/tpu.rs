@@ -53,7 +53,7 @@ use {
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
             spawn_simple_qos_server, spawn_stake_weighted_qos_server,
         },
-        quic_socket::QuicSocket,
+        quic_socket::{QuicSocket, into_quic_socket},
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -437,10 +437,5 @@ fn into_quic_sockets(
 ) -> impl Iterator<Item = QuicSocket> {
     sockets
         .into_iter()
-        .map(move |socket| match &quic_xdp_sender {
-            Some((xdp_sender, fallback_src_ip)) => {
-                QuicSocket::with_xdp(socket, *fallback_src_ip, xdp_sender.clone())
-            }
-            None => QuicSocket::from(socket),
-        })
+        .map(move |socket| into_quic_socket(socket, quic_xdp_sender.as_ref()))
 }

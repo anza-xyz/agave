@@ -44,6 +44,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
     solana_signer::{Signer, signers::Signers},
+    solana_streamer::quic_socket::QuicSocket,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_tpu_client_next::{
@@ -650,7 +651,8 @@ pub fn start_datagram_listener_for_alpenglow_votor(
     }));
     // We want the sender to stay alive so the endpoint does not exit prematurely.
     Box::leak(Box::new(peer_list_sender));
-    let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
+    let client_socket =
+        QuicSocket::Kernel(bind_to_localhost_unique().expect("bind alpenglow client socket"));
     let (egress, endpoint) = QuicDatagramEndpoint::spawn(
         rt.handle(),
         &listener_keypair,

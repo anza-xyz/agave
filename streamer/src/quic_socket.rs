@@ -7,7 +7,7 @@ use {
     },
     bytes::Bytes,
     quinn::{
-        AsyncUdpSocket, Runtime, TokioRuntime, UdpPoller,
+        AsyncUdpSocket, Endpoint, EndpointConfig, Runtime, ServerConfig, TokioRuntime, UdpPoller,
         udp::{EcnCodepoint as QuinnEcnCodepoint, RecvMeta, Transmit},
     },
     std::{
@@ -58,6 +58,18 @@ impl QuicSocket {
     }
 }
 
+pub fn into_quic_socket(
+    socket: std::net::UdpSocket,
+    quic_xdp_sender: Option<&(XdpSender, Ipv4Addr)>,
+) -> QuicSocket {
+    match quic_xdp_sender {
+        Some((xdp_sender, fallback_src_ip)) => {
+            QuicSocket::with_xdp(socket, *fallback_src_ip, xdp_sender.clone())
+        }
+        None => QuicSocket::from(socket),
+    }
+}
+
 /// [`QuicXdpSocketParts`] wraps the resources required to construct an AF_XDP-backed QUIC socket.
 ///
 /// It carries both an [`XdpSender`] and a [`std::net::UdpSocket`], rather than constructing an
@@ -75,6 +87,36 @@ impl Debug for QuicXdpSocketParts {
         f.debug_struct("QuicXdpSocketParts")
             .field("socket", &self.socket)
             .finish()
+    }
+}
+
+/// Constructs [`Endpoint`] from [`QuicSocket`] using provided [`ServerConfig`] when necessary.
+///
+/// `config` selects server mode when `Some`, or client-only mode when `None`. The function uses
+/// Quinn's Tokio runtime integration internally, so it must be called from a context where Tokio
+/// socket registration is valid.
+pub fn create_endpoint(socket: QuicSocket, config: Option<ServerConfig>) -> io::Result<Endpoint> {
+    match socket {
+        QuicSocket::Kernel(socket) => Endpoint::new(
+            EndpointConfig::default(),
+            config,
+            socket,
+            Arc::new(TokioRuntime),
+        ),
+        QuicSocket::Xdp(QuicXdpSocketParts {
+            socket,
+            fallback_src_ip,
+            xdp_sender,
+        }) => {
+            let socket = Arc::new(QuicXdpTxSocket::new(socket, fallback_src_ip, xdp_sender)?)
+                as Arc<dyn AsyncUdpSocket>;
+            Endpoint::new_with_abstract_socket(
+                EndpointConfig::default(),
+                config,
+                socket,
+                Arc::new(TokioRuntime),
+            )
+        }
     }
 }
 

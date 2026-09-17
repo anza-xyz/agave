@@ -395,6 +395,7 @@ mod tests {
             },
         },
         solana_signer::Signer,
+        solana_streamer::quic_socket::QuicSocket,
         std::{
             collections::HashMap,
             net::SocketAddr,
@@ -563,7 +564,8 @@ mod tests {
             .expect("tokio runtime");
         let socket = bind_to_localhost_unique().expect("bind UDP");
         let addr = socket.local_addr().expect("local addr");
-        let client_socket = bind_to_localhost_unique().expect("bind client UDP");
+        let client_socket =
+            QuicSocket::Kernel(bind_to_localhost_unique().expect("bind client UDP"));
         let (ingress_sender, ingress_receiver) = bounded(4096);
         let (egress, endpoint) = QuicDatagramEndpoint::spawn(
             rt.handle(),

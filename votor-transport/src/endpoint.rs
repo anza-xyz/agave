@@ -18,6 +18,7 @@ use {
     solana_keypair::{Keypair, Signer},
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_pubkey::Pubkey,
+    solana_streamer::quic_socket::{QuicSocket, create_endpoint},
     solana_tls_utils::NotifyKeyUpdate,
     std::{
         net::{SocketAddr, UdpSocket},
@@ -78,7 +79,7 @@ impl QuicDatagramEndpoint {
         runtime: &Handle,
         keypair: &Keypair,
         inbound_sockets: Vec<UdpSocket>,
-        outbound_socket: UdpSocket,
+        outbound_socket: QuicSocket,
         inbound_datagrams: Sender<Datagram>,
         peer_list: PeerListReceiver,
         socket_addr_space: SocketAddrSpace,
@@ -126,13 +127,9 @@ impl QuicDatagramEndpoint {
                     .map_err(Error::Endpoint)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let outbound_endpoint = Endpoint::new(
-                EndpointConfig::default(),
-                None,
-                outbound_socket,
-                Arc::new(TokioRuntime),
-            )
-            .map_err(Error::Endpoint)?;
+            let outbound_endpoint =
+                create_endpoint(outbound_socket, None).map_err(Error::Endpoint)?;
+
             (inbound_endpoints, outbound_endpoint)
         };
         outbound_endpoint.set_default_client_config(new_client_config(
@@ -407,6 +404,7 @@ mod tests {
             },
         },
         solana_pubkey::Pubkey,
+        solana_streamer::quic_socket::QuicSocket,
         solana_tls_utils::NotifyKeyUpdate,
         std::{
             collections::HashMap,
@@ -500,7 +498,8 @@ mod tests {
             let addr = inbound_sockets[0]
                 .local_addr()
                 .expect("server local addr from first inbound socket");
-            let client_socket = bind_to_localhost_unique().expect("bind client UDP");
+            let client_socket =
+                QuicSocket::Kernel(bind_to_localhost_unique().expect("bind client UDP"));
             // Ingress channel size mirrors prod (`solana_core::tvu`):
             // `MAX_ALPENGLOW_PACKET_NUM`.
             let (ingress_sender, ingress_receiver) = bounded(INGRESS_CAP);

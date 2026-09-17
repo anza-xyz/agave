@@ -142,6 +142,7 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
+    solana_streamer::quic_socket::into_quic_socket,
     solana_streamer::{
         evicting_sender::EvictingSender,
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
@@ -1664,6 +1665,9 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
+        let votor_client_socket =
+            into_quic_socket(node.sockets.quic_votor_client, quic_xdp_sender.as_ref());
+
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1738,7 +1742,7 @@ impl Validator {
                 validator_exit: config.validator_exit.clone(),
                 key_notifiers: key_notifiers.clone(),
                 votor_server_sockets: node.sockets.votor_server,
-                votor_client_socket: node.sockets.quic_votor_client,
+                votor_client_socket,
                 votor_peer_overrides: config.votor_peer_overrides.clone(),
                 highest_finalized,
             },
@@ -1781,7 +1785,7 @@ impl Validator {
             &config.broadcast_stage_type,
             leader_schedule_cache.clone(),
             turbine_xdp_sender,
-            quic_xdp_sender,
+            quic_xdp_sender.clone(),
             exit.clone(),
             node.info.shred_version(),
             vote_tracker,

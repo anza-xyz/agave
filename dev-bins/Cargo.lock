@@ -549,6 +549,7 @@ dependencies = [
  "solana-metrics",
  "solana-net-utils",
  "solana-pubkey 4.3.0",
+ "solana-streamer",
  "solana-tls-utils",
  "thiserror 2.0.20",
  "tokio",

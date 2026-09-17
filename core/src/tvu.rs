@@ -81,7 +81,7 @@ use {
         validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_streamer::evicting_sender::EvictingSender,
+    solana_streamer::{evicting_sender::EvictingSender, quic_socket::QuicSocket},
     solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
     solana_validator_exit::Exit,
     std::{
@@ -205,7 +205,7 @@ pub struct AlpenglowInitializationState {
     // server sockets for Alpenglow consensus traffic
     pub votor_server_sockets: Vec<UdpSocket>,
     // client socket for Alpenglow consensus traffic
-    pub votor_client_socket: UdpSocket,
+    pub votor_client_socket: QuicSocket,
     // peers plugged into the votor peer_list regardless of stake
     pub votor_peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
 }
@@ -851,6 +851,8 @@ pub mod tests {
         let bank_forks_controller = Arc::new(bank_forks_controller);
         let (reward_vote_aggregates_sender, _reward_vote_aggregates_receiver) = bounded(1024);
 
+        let votor_client_socket =
+            QuicSocket::Kernel(bind_to_localhost_unique().expect("bind votor client socket"));
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
@@ -919,7 +921,7 @@ pub mod tests {
                 votor_server_sockets: vec![
                     bind_to_localhost_unique().expect("bind votor server socket"),
                 ],
-                votor_client_socket: bind_to_localhost_unique().expect("bind votor client socket"),
+                votor_client_socket,
                 votor_peer_overrides: Arc::default(),
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,
