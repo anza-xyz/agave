@@ -1088,10 +1088,35 @@ impl AccountsDb {
                         );
                     });
             });
+            // Queue the slots of the reclaims for shrinking if their storage is now worth shrinking
+            self.queue_shrink_candidates(reclaims.iter().map(|((slot, _), _)| *slot));
         });
         self.clean_accounts_stats
             .clean_old_root_reclaim_us
             .fetch_add(reclaim_us, Ordering::Relaxed);
+    }
+
+    /// Deduplicate slots and and enqueue any slots tht are worth shrinking to the shrinking
+    /// candidate set
+    fn queue_shrink_candidates(&self, slots: impl IntoIterator<Item = Slot>) {
+        let candidates = slots
+            .into_iter()
+            .collect::<IntSet<_>>()
+            .into_iter()
+            .filter(|slot| {
+                self.storage
+                    .get_slot_storage_entry(*slot)
+                    .is_some_and(|store| {
+                        self.is_shrinking_productive(&store) && self.is_candidate_for_shrink(&store)
+                    })
+            })
+            .collect::<Vec<_>>();
+        if !candidates.is_empty() {
+            self.shrink_candidate_slots
+                .lock()
+                .unwrap()
+                .extend(candidates);
+        }
     }
 
     /// Purges each key in `removed_keys` from the enabled secondary indexes, unless the key is
@@ -1716,13 +1741,6 @@ impl AccountsDb {
                 "remove_dead_accounts_remove_us",
                 self.clean_accounts_stats
                     .remove_dead_accounts_remove_us
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "remove_dead_accounts_shrink_us",
-                self.clean_accounts_stats
-                    .remove_dead_accounts_shrink_us
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -4253,7 +4271,6 @@ impl AccountsDb {
         assert!(self.storage.no_shrink_in_progress());
 
         let mut dead_slots = IntSet::default();
-        let mut new_shrink_candidates = ShrinkCandidates::default();
         let mut measure = Measure::start("remove");
         for (slot, account_info) in reclaims {
             reclaimed_offsets
@@ -4334,31 +4351,12 @@ impl AccountsDb {
                     // Every remaining account is a tombstone and the slot is older than
                     // the latest full snapshot slot, safe to remove
                     dead_slots.insert(slot);
-                } else if self.is_shrinking_productive(&store)
-                    && self.is_candidate_for_shrink(&store)
-                {
-                    // Checking that this single storage entry is ready for shrinking,
-                    // should be a sufficient indication that the slot is ready to be shrunk
-                    // because slots should only have one storage entry, namely the one that was
-                    // created by `flush_slot_cache()`.
-                    new_shrink_candidates.insert(slot);
                 }
             }
         });
         measure.stop();
         self.clean_accounts_stats
             .remove_dead_accounts_remove_us
-            .fetch_add(measure.as_us(), Ordering::Relaxed);
-
-        let mut measure = Measure::start("shrink");
-        let mut shrink_candidate_slots = self.shrink_candidate_slots.lock().unwrap();
-        for slot in new_shrink_candidates {
-            shrink_candidate_slots.insert(slot);
-        }
-        drop(shrink_candidate_slots);
-        measure.stop();
-        self.clean_accounts_stats
-            .remove_dead_accounts_shrink_us
             .fetch_add(measure.as_us(), Ordering::Relaxed);
 
         dead_slots
@@ -4544,6 +4542,9 @@ impl AccountsDb {
                 reclaims.iter(),
                 &purge_stats,
                 MarkAccountsObsolete::Yes(slot),
+            );
+            self.queue_shrink_candidates(
+                reclaims.iter().map(|(reclaimed_slot, _)| *reclaimed_slot),
             );
             is_slot_dead = dead_slots.contains(&slot);
             num_obsolete_slots_removed =
@@ -5363,7 +5364,9 @@ impl AccountsDb {
                         &stats,
                         MarkAccountsObsolete::Yes(slot_marked_obsolete),
                     );
+                    self.queue_shrink_candidates(reclaims.iter().map(|(slot, _)| *slot));
                 }
+
                 ObsoleteAccountsStats {
                     accounts_marked_obsolete: reclaims.len() as u64,
                     slots_removed: stats.num_stored_slots_removed.load(Ordering::Relaxed) as u64,
