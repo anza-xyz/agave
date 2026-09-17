@@ -121,6 +121,7 @@ members = [
     "votor",
     "votor-messages",
     "votor-transport",
+    "wake-channel",
     "watchtower",
     "xdp",
     "xdp-ebpf",
@@ -188,6 +189,7 @@ agave-transaction-view = "7.0.0"
 agave-votor = { path = "votor", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-votor-transport = { path = "votor-transport", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
+agave-wake-channel = { path = "wake-channel", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-xdp = { path = "xdp", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-xdp-ebpf = { path = "xdp-ebpf", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 ahash = "0.8.12"

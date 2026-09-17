@@ -585,6 +585,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-wake-channel"
+version = "4.4.0-alpha.5"
+dependencies = [
+ "atomic-wait",
+ "crossbeam-channel",
+ "crossbeam-utils",
+ "shuttle",
+]
+
+[[package]]
 name = "agave-watchtower"
 version = "4.4.0-alpha.5"
 dependencies = [
@@ -8850,9 +8860,9 @@ dependencies = [
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor-messages",
+ "agave-wake-channel",
  "anyhow",
  "assert_matches",
- "atomic-wait",
  "bitflags 2.13.1",
  "bs58",
  "bytes",
@@ -8861,7 +8871,6 @@ dependencies = [
  "chrono-humanize",
  "criterion",
  "crossbeam-channel",
- "crossbeam-utils",
  "dashmap",
  "eager",
  "fs_extra",
@@ -8884,7 +8893,6 @@ dependencies = [
  "rocksdb",
  "scopeguard",
  "serde",
- "shuttle",
  "smallvec",
  "solana-account",
  "solana-accounts-db",

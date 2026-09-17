@@ -556,6 +556,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-wake-channel"
+version = "4.4.0-alpha.5"
+dependencies = [
+ "atomic-wait",
+ "crossbeam-channel",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "agave-xdp"
 version = "4.4.0-alpha.5"
 dependencies = [
@@ -7046,16 +7055,15 @@ dependencies = [
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor-messages",
+ "agave-wake-channel",
  "anyhow",
  "assert_matches",
- "atomic-wait",
  "bitflags 2.13.1",
  "bytes",
  "bzip2",
  "chrono",
  "chrono-humanize",
  "crossbeam-channel",
- "crossbeam-utils",
  "dashmap",
  "eager",
  "fs_extra",
