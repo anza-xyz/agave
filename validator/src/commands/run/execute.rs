@@ -122,7 +122,7 @@ pub fn execute(
     // Print the built-in policy before RunArgs parsing, which loads identity
     // material and canonicalizes the ledger directory.
     if matches.is_present("print_default_config") {
-        print!("{}", config_file::default_config_toml());
+        print!("{}", config_file::DEFAULT_CONFIG);
         return Ok(());
     }
     // Debugging panics is easier with a backtrace
