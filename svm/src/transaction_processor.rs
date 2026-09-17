@@ -25,6 +25,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
+    solana_instruction_error::InstructionError,
     solana_message::{
         compiled_instruction::CompiledInstruction,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -632,6 +633,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                             Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                         }
+                        // If it bailed out then this transaction will be dropped from the batch.
+                        (
+                            Err(TransactionError::InstructionError(_, InstructionError::BailOut)),
+                            _,
+                        ) => Err(TransactionError::BailOut),
                         // If the transaction failed & drop on failure is set then we don't want to
                         // update the accounts as this transaction will be dropped from the batch.
                         (Err(err), true) => Err(err.clone()),
@@ -657,10 +663,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             // If this is an all or nothing batch and we failed to process this transaction then we
             // must abort all prior/remaining transactions.
-            if config.all_or_nothing && processing_result.is_err() {
+            if config.all_or_nothing
+                && let Err(ref err) = processing_result
+            {
+                let err = err.clone();
+
                 // Abort prior transactions.
                 for res in processing_results.iter_mut() {
-                    *res = Err(TransactionError::CommitCancelled);
+                    *res = Err(err.clone());
                 }
 
                 // Preserve the failure that triggered the batch to abort.
@@ -668,8 +678,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 // Abort remaining transactions.
                 processing_results.extend(
-                    (0..sanitized_txs.len() - processing_results.len())
-                        .map(|_| Err(TransactionError::CommitCancelled)),
+                    (0..sanitized_txs.len() - processing_results.len()).map(|_| Err(err.clone())),
                 );
 
                 return LoadAndExecuteSanitizedTransactionsOutput {
