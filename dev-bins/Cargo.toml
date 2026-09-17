@@ -162,7 +162,7 @@ solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "../test-validator", version = "=4.4.0-alpha.4" }
 solana-time-utils = "3.0.0"
 solana-tpu-client = { path = "../tpu-client", version = "=4.4.0-alpha.4", default-features = false, features = ["agave-unstable-api"] }
-solana-transaction = "4.1.0"
+solana-transaction = "5.0.0"
 solana-transaction-context = { path = "../transaction-context", version = "=4.4.0-alpha.4", features = ["agave-unstable-api", "bincode"] }
 solana-transaction-error = "3.3.1"
 solana-transaction-status = { path = "../transaction-status", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
