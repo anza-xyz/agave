@@ -8194,7 +8194,7 @@ dependencies = [
  "solana-sbf-rust-realloc-dep",
  "solana-sbf-rust-realloc-invoke-dep",
  "solana-sdk-ids",
- "solana-signer 4.0.0",
+ "solana-signer 3.0.1",
  "solana-stake-history 1.1.0",
  "solana-svm",
  "solana-svm-feature-set",
