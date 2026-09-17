@@ -183,10 +183,7 @@ impl<'de> Deserialize<'de> for DeviceSelector {
             Device {
                 route: None,
                 name: Some(name),
-            } => {
-                validate_device_name(&name, "device.name").map_err(serde::de::Error::custom)?;
-                Ok(Self::Name(name))
-            }
+            } => Ok(Self::Name(name)),
             Device {
                 route: None,
                 name: None,
@@ -216,23 +213,6 @@ fn validate_unique_cpus(cpus: &[usize], field: &str) -> Result<(), String> {
     let mut seen = BTreeSet::new();
     if let Some(cpu) = cpus.iter().find(|cpu| !seen.insert(**cpu)) {
         return Err(format!("{field} contains duplicate CPU {cpu}"));
-    }
-    Ok(())
-}
-
-fn validate_device_name(name: &str, field: &str) -> Result<(), String> {
-    // Linux IFNAMSIZ includes the terminating NUL.
-    let invalid = name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.len() >= 16
-        || name
-            .bytes()
-            .any(|byte| byte == 0 || byte == b'/' || byte == b':' || byte.is_ascii_whitespace());
-    if invalid {
-        return Err(format!(
-            "{field} value {name:?} is not a valid platform interface name"
-        ));
     }
     Ok(())
 }
@@ -565,9 +545,6 @@ pub(crate) fn apply_cli(
     mut config: EffectiveConfig,
     overrides: CliOverrides,
 ) -> Result<CliApplication, String> {
-    if let Some(name) = &overrides.interface {
-        validate_device_name(name, "--xdp-interface")?;
-    }
     if overrides.no_xdp {
         config.xdp.enabled = false;
     }
@@ -1075,31 +1052,6 @@ workers.cpus = [8]
         ] {
             let error = user_error(contents);
             assert!(error.contains(expected), "{case}: {error}");
-        }
-    }
-
-    #[test]
-    fn device_names_follow_linux_syntax() {
-        for name in ["eth0", "ens1f0.100", "veth@if", "123456789012345"] {
-            validate_device_name(name, "device.name").unwrap();
-        }
-        for name in [
-            "",
-            ".",
-            "..",
-            "bad/name",
-            "bad:name",
-            "bad name",
-            "bad\tname",
-            "bad\nname",
-            "bad\0name",
-            "1234567890123456",
-        ] {
-            let error = validate_device_name(name, "device.name").unwrap_err();
-            assert!(
-                error.contains("not a valid platform interface name"),
-                "{error}"
-            );
         }
     }
 
