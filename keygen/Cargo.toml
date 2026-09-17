@@ -46,7 +46,7 @@ solana-message = { version = "=4.6.0", features = ["wincode"] }
 solana-pubkey = { version = "=4.3.0", default-features = false }
 solana-remote-wallet = { workspace = true, features = ["keystone"] }
 solana-seed-derivable = { workspace = true }
-solana-signer = "=3.0.1"
+solana-signer = "=4.0.0"
 solana-version = { workspace = true }
 
 [dev-dependencies]
