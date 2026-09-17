@@ -402,55 +402,6 @@ fn merge_value(base: &mut toml::Value, user: toml::Value, path: &mut Vec<String>
     }
 }
 
-fn validate_user_interfaces(base: &toml::Value, user: &toml::Value) -> Result<(), String> {
-    let Some(interfaces) = user.get("interfaces").and_then(toml::Value::as_table) else {
-        return Ok(());
-    };
-    let inherited = base.get("interfaces").and_then(toml::Value::as_table);
-    for (label, interface) in interfaces {
-        let path = interface_path(label);
-        let Some(interface) = interface.as_table() else {
-            continue;
-        };
-        // Atomic choices are validated per layer with the same parsers the merged
-        // config uses, so a conflict inside one file is reported against that file
-        // rather than surfacing as a merged-value error.
-        if let Some(device) = interface.get("device") {
-            device
-                .clone()
-                .try_into::<DeviceSelector>()
-                .map_err(|error| format!("{path}.device is invalid: {error}"))?;
-        }
-        let xdp = interface.get("xdp").and_then(toml::Value::as_table);
-        if let Some(workers) = xdp.and_then(|xdp| xdp.get("workers")) {
-            workers
-                .clone()
-                .try_into::<WorkerPolicy>()
-                .map_err(|error| format!("{path}.xdp.workers is invalid: {error}"))?;
-        }
-        if inherited.is_some_and(|interfaces| interfaces.contains_key(label)) {
-            continue;
-        }
-        let mut missing = Vec::new();
-        if !interface.contains_key("device") {
-            missing.push(format!("{path}.device"));
-        }
-        if !xdp.is_some_and(|xdp| xdp.contains_key("zero_copy")) {
-            missing.push(format!("{path}.xdp.zero_copy"));
-        }
-        if !xdp.is_some_and(|xdp| xdp.contains_key("workers")) {
-            missing.push(format!("{path}.xdp.workers"));
-        }
-        if !missing.is_empty() {
-            return Err(format!(
-                "new interface {label:?} is incomplete; missing {}",
-                missing.join(", ")
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn mark_user_sources(config: &mut EffectiveConfig, user: &toml::Value) {
     if let Some(interfaces) = user.get("interfaces").and_then(toml::Value::as_table) {
         for (label, interface) in &mut config.interfaces {
@@ -531,7 +482,6 @@ pub(crate) fn load(user_path: Option<&Path>) -> Result<EffectiveConfig, String> 
             })?;
             let description = path.display().to_string();
             let user = parse_toml(&text, &description, false)?;
-            validate_user_interfaces(&built_in, &user)?;
             merge_value(&mut built_in, user.clone(), &mut Vec::new());
             let mut config = decode_config(built_in, &description, false)?;
             mark_user_sources(&mut config, &user);
@@ -973,19 +923,15 @@ zero_copy = true
     }
 
     #[test]
-    fn new_interface_error_lists_missing_fields() {
+    fn new_interface_error_identifies_missing_field() {
         let error = user_error(
             r#"
 [interfaces.fast.xdp]
 zero_copy = false
 "#,
         );
-        assert!(
-            error.contains("new interface \"fast\" is incomplete"),
-            "{error}"
-        );
-        assert!(error.contains("interfaces.fast.device"), "{error}");
-        assert!(error.contains("interfaces.fast.xdp.workers"), "{error}");
+        assert!(error.contains("missing field `workers`"), "{error}");
+        assert!(error.contains("interfaces.fast.xdp"), "{error}");
     }
 
     #[test]
@@ -1011,7 +957,7 @@ workers.unused = "warn"
     }
 
     #[test]
-    fn selector_conflicts_are_rejected_before_merge_or_completeness_checks() {
+    fn selector_conflicts_are_rejected_after_merge() {
         for (case, contents, expected) in [
             (
                 "existing interface device",
