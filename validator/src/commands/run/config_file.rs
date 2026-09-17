@@ -73,7 +73,6 @@ struct EffectiveModule {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModuleXdp {
-    enabled: bool,
     tx: ModuleTx,
 }
 
@@ -126,10 +125,6 @@ pub(crate) struct EffectiveConfig {
 impl EffectiveConfig {
     pub(crate) fn xdp_active(&self) -> bool {
         self.xdp.enabled
-            && self
-                .named_modules()
-                .into_iter()
-                .any(|(_, module)| module.enabled)
     }
 
     fn named_modules(&self) -> [(&'static str, &ModuleXdp); 4] {
@@ -162,7 +157,7 @@ pub(crate) struct RuntimeXdpConfig {
     pub device: DeviceSelector,
     pub queues: Vec<QueueCpuBinding>,
     pub zero_copy: bool,
-    pub modules: Modules<Option<Box<[usize]>>>,
+    pub modules: Modules<Box<[usize]>>,
 }
 
 impl<'de> Deserialize<'de> for DeviceSelector {
@@ -620,8 +615,7 @@ pub(crate) fn apply_cli(
                 .named_modules()
                 .into_iter()
                 .filter(|(_, module)| {
-                    module.enabled
-                        && module.tx.queues_source == Source::User
+                    module.tx.queues_source == Source::User
                         && matches!(module.tx.queues, QueueSelection::Explicit(_))
                 })
                 .map(|(name, _)| name)
@@ -683,9 +677,7 @@ pub(crate) fn apply_cli(
     Ok(CliApplication { config, warnings })
 }
 
-/// Queue ids a module transmits over, in its own sender order. Module gating is
-/// the caller's business: unused-worker diagnostics ask this of disabled modules
-/// too.
+/// Queue ids a module transmits over, in its own sender order.
 fn module_queue_ids(module: &ModuleXdp, pool: &[u32]) -> Vec<u32> {
     match &module.tx.queues {
         QueueSelection::All => pool.to_vec(),
@@ -701,8 +693,8 @@ fn worker_queue_ids(policy: &WorkerPolicy) -> Vec<u32> {
     }
 }
 
-/// Validate host-independent cross-references. Only live module bindings are
-/// fatal; dormant-policy problems are reported as warnings.
+/// Validate host-independent cross-references. Problems are fatal when XDP is
+/// enabled; dormant-policy problems are reported as warnings.
 pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, String> {
     let mut warnings = Vec::new();
     let active = config.xdp_active();
@@ -719,14 +711,13 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
     let used: BTreeSet<&str> = config
         .named_modules()
         .into_iter()
-        .filter(|(_, module)| module.enabled)
         .map(|(_, module)| module.tx.interface.as_str())
         .collect();
-    if used.len() > 1 {
+    if active && used.len() > 1 {
         let names: Vec<_> = used.iter().map(|name| format!("{name:?}")).collect();
         return Err(format!(
-            "XDP version 1 supports one interface, but enabled modules use {}; point every \
-             module's tx.interface at the same label",
+            "XDP version 1 supports one interface, but modules use {}; point every module's \
+             tx.interface at the same label",
             names.join(", ")
         ));
     }
@@ -738,7 +729,7 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
             "{name}.xdp.tx.interface names {:?}, which is not a declared interface; declared: {:?}",
             module.tx.interface, label
         );
-        if active && module.enabled {
+        if active {
             return Err(message);
         }
         warnings.push(message);
@@ -761,7 +752,7 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
                         .join(", "),
                     interface_path(label)
                 );
-                if config.xdp.enabled && module.enabled {
+                if active {
                     return Err(message);
                 }
                 warnings.push(message);
@@ -774,39 +765,18 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
     let selections: Vec<_> = config
         .named_modules()
         .into_iter()
-        .map(|(name, module)| (name, module.enabled, module_queue_ids(module, &pool)))
+        .map(|(_, module)| module_queue_ids(module, &pool))
         .collect();
     for queue in &pool {
-        if selections
-            .iter()
-            .any(|(_, enabled, queues)| *enabled && queues.contains(queue))
-        {
+        if selections.iter().any(|queues| queues.contains(queue)) {
             continue;
         }
-        let disabled_refs: Vec<_> = selections
-            .iter()
-            .filter(|(_, enabled, queues)| !*enabled && queues.contains(queue))
-            .map(|(name, _, _)| *name)
-            .collect();
-        let reason = if disabled_refs.is_empty() {
-            "unreferenced"
-        } else {
-            "disabled-modules-only"
-        };
         let message = format!(
-            "{} worker queue {queue} on interface {label:?} is inactive ({reason}){}",
+            "{} worker queue {queue} on interface {label:?} is inactive (unreferenced)",
             match interface.xdp.workers_source {
                 Source::BuiltIn => "built-in",
                 Source::User => "user-authored",
                 Source::Cli => "CLI-authored",
-            },
-            if disabled_refs.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    "; referenced by disabled module(s) {}",
-                    disabled_refs.join(", ")
-                )
             }
         );
         warnings.push(message);
@@ -881,17 +851,11 @@ pub(crate) fn resolve_runtime(
     let (label, interface) = config.interfaces.iter().next().unwrap();
     let declared = resolve_declared_workers(&interface.xdp.workers, allowed_cpus, poh_core)?;
     let pool: Vec<u32> = declared.iter().map(|binding| binding.queue).collect();
-    let selected = |module: &ModuleXdp| -> Vec<u32> {
-        if !module.enabled {
-            return Vec::new();
-        }
-        module_queue_ids(module, &pool)
-    };
     let selected = Modules {
-        gossip: selected(&config.gossip.xdp),
-        repair: selected(&config.repair.xdp),
-        tpu: selected(&config.tpu.xdp),
-        turbine: selected(&config.turbine.xdp),
+        gossip: module_queue_ids(&config.gossip.xdp, &pool),
+        repair: module_queue_ids(&config.repair.xdp, &pool),
+        tpu: module_queue_ids(&config.tpu.xdp, &pool),
+        turbine: module_queue_ids(&config.turbine.xdp, &pool),
     };
     let active_ids: BTreeSet<_> = selected.values().into_iter().flatten().copied().collect();
     let active_workers: Vec<_> = declared
@@ -910,10 +874,7 @@ pub(crate) fn resolve_runtime(
         .enumerate()
         .map(|(position, binding)| (binding.queue, position))
         .collect();
-    let module_positions = |name: &str, module: &ModuleXdp, queues: &[u32]| -> Result<_, String> {
-        if !module.enabled {
-            return Ok(None);
-        }
+    let module_positions = |name: &str, queues: &[u32]| -> Result<_, String> {
         let positions = queues
             .iter()
             .map(|queue| {
@@ -930,16 +891,16 @@ pub(crate) fn resolve_runtime(
                 "internal XDP resolution error: module {name} selected no queues"
             ));
         }
-        Ok(Some(positions.into_boxed_slice()))
+        Ok(positions.into_boxed_slice())
     };
     if active_workers.is_empty() {
         return Err("active XDP policy selected no workers".to_string());
     }
     let modules = Modules {
-        gossip: module_positions("gossip", &config.gossip.xdp, &selected.gossip)?,
-        repair: module_positions("repair", &config.repair.xdp, &selected.repair)?,
-        tpu: module_positions("tpu", &config.tpu.xdp, &selected.tpu)?,
-        turbine: module_positions("turbine", &config.turbine.xdp, &selected.turbine)?,
+        gossip: module_positions("gossip", &selected.gossip)?,
+        repair: module_positions("repair", &selected.repair)?,
+        tpu: module_positions("tpu", &selected.tpu)?,
+        turbine: module_positions("turbine", &selected.turbine)?,
     };
     Ok((
         RuntimeXdpConfig {
@@ -1003,12 +964,6 @@ tx.queues = [0]
         let interface = &config.interfaces["primary"];
         assert_eq!(interface.device, DeviceSelector::DefaultRoute);
         assert_eq!(interface.xdp.workers, WorkerPolicy::Auto { count: 1 });
-        assert!(
-            config
-                .named_modules()
-                .into_iter()
-                .all(|(_, module)| module.enabled)
-        );
     }
 
     #[test]
@@ -1022,7 +977,7 @@ tx.queues = [0]
             vec![QueueCpuBinding { queue: 0, cpu: 5 }]
         );
         for module in runtime.modules.values() {
-            assert_eq!(module.as_deref(), Some(&[0][..]));
+            assert_eq!(module.as_ref(), &[0][..]);
         }
     }
 
@@ -1263,13 +1218,9 @@ tx.interface = "fast"
         ));
         let (runtime, _) = resolve_runtime(&pointed, &BTreeSet::from([8, 9]), None).unwrap();
         assert_eq!(runtime.interface_label, "fast");
-        assert!(
-            runtime
-                .modules
-                .values()
-                .iter()
-                .all(|module| module.is_some())
-        );
+        for module in runtime.modules.values() {
+            assert_eq!(module.as_ref(), &[0][..]);
+        }
     }
 
     #[test]
@@ -1306,28 +1257,21 @@ tx.queues = [0]
     }
 
     #[test]
-    fn cli_worker_replacement_ignores_disabled_module_queue_ids() {
-        let config = user(
-            r#"
-[interfaces.primary.xdp]
-workers.cpus = [8, 9]
-[tpu.xdp]
-enabled = false
-tx.queues = [0]
-"#,
-        );
-        let application = apply_cli(
-            config,
-            CliOverrides {
-                cpu_cores: Some(vec![10, 11]),
-                ..CliOverrides::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            application.config.interfaces["primary"].xdp.workers,
-            WorkerPolicy::Cpus(vec![10, 11])
-        );
+    fn module_level_switches_are_rejected() {
+        for module in ["tpu", "turbine", "repair", "gossip"] {
+            for enabled in [true, false] {
+                let error = user_error(&format!(
+                    r#"
+[{module}.xdp]
+enabled = {enabled}
+"#
+                ));
+                assert!(
+                    error.contains("unknown field `enabled`"),
+                    "{module}: {error}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1348,8 +1292,8 @@ tx.queues = [0]
         .unwrap();
         let (runtime, _) =
             resolve_runtime(&application.config, &BTreeSet::from([8, 9, 10]), None).unwrap();
-        assert_eq!(runtime.modules.tpu.as_deref(), Some(&[0][..]));
-        assert_eq!(runtime.modules.turbine.as_deref(), Some(&[0, 1][..]));
+        assert_eq!(runtime.modules.tpu.as_ref(), &[0][..]);
+        assert_eq!(runtime.modules.turbine.as_ref(), &[0, 1][..]);
     }
 
     #[test]
