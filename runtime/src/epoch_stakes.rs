@@ -58,20 +58,6 @@ pub struct BLSPubkeyToRankMap {
     total_stake: NonZero<u64>,
 }
 
-// We cannot auto derive `AbiExample` for `BLSPubkeyToRankMap` because
-// the `BLSPubkeyAffine` type does not implement `AbiExample` or `Default`.
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::AbiExample for BLSPubkeyToRankMap {
-    fn example() -> Self {
-        Self {
-            vote_pubkey_to_rank: HashMap::new(),
-            sorted_pubkeys: Vec::new(),
-            total_stake: NonZero::new(1).unwrap(),
-            node_pubkey_to_rank: HashMap::new(),
-        }
-    }
-}
-
 pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
     bls_pubkey_compressed_bytes: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
 ) -> Option<(BLSPubkeyCompressed, PopVerified<BLSPubkeyAffine>)> {
@@ -187,7 +173,7 @@ impl BLSPubkeyToRankMap {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NodeVoteAccounts {
     pub vote_accounts: Vec<Pubkey>,
@@ -200,7 +186,7 @@ pub struct NodeVoteAccounts {
 /// deserialization by ignoring serialized stake delegations entirely.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(Serialize, SchemaWrite, AbiEnumVisitor, StableAbi, StableAbiSample)
+    derive(Serialize, SchemaWrite, StableAbi, StableAbiSample)
 )]
 #[derive(Clone, Debug, Deserialize, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -237,10 +223,7 @@ fn stable_abi_sample_deserializable_epoch_stakes(
 }
 
 #[derive(Clone, Debug, Serialize, SchemaWrite)]
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
     Current {
@@ -413,7 +396,7 @@ impl VersionedEpochStakes {
 
 /// The current version of epoch stakes
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct EpochStakes {
     epoch: Epoch,

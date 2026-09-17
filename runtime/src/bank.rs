@@ -275,10 +275,6 @@ static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
 });
 
 pub type BankStatusCache = StatusCache<Result<()>>;
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "8zvSkAYt3bK7sz6Ud968beDnoKXkD79jsViTH4fhi8JR")
-)]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
@@ -1165,7 +1161,7 @@ pub struct ProcessedTransactionCounts {
 /// Account stats for computing the bank hash
 /// This struct is serialized and stored in the snapshot.
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BankHashStats {
     pub num_updated_accounts: u64,

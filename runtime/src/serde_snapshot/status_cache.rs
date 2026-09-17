@@ -19,7 +19,6 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     frozen_abi(
-        api_digest = "5PdVgJexcuvqJaXHEUVGsJfXUyBxG6oZaicbsnknPMLx",
         abi_digest = "HCCRaZoLYwQxPFRGnXJEocFufqKjVNLUTxoTnZuG6kDD",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
@@ -117,8 +116,12 @@ pub fn deserialize_status_cache(
 /// contain a string in the BorshIoError variant.
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(api_digest = "7FDAkPdUMwwU8rt2aYYLeQvEwvprsebWeB5bdWGyUM9k"),
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+    frozen_abi(
+        abi_digest = "GuuCLDSN7oydnu1szHPBxp29WUqQeeeVdqhvaX1mouMY",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire"
+    ),
+    derive(StableAbi, StableAbiSample)
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
 enum SerdeTransactionError {
@@ -313,10 +316,7 @@ impl From<SerdeTransactionError> for TransactionError {
 /// Copy of `InstructionError` type in which the `BorshIoError` variant
 /// contains a string.
 #[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
 enum SerdeInstructionError {
     GenericError,

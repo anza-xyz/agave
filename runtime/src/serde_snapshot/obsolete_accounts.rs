@@ -12,7 +12,7 @@ use {
 };
 
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, SchemaRead, SchemaWrite, Serialize)]
 pub struct SerdeObsoleteAccountItem {
     /// Offset of the account in the account storage entry
@@ -23,7 +23,7 @@ pub struct SerdeObsoleteAccountItem {
     pub slot: Slot,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Serialize, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccounts {
     /// The ID of the associated account file. Used for verification to ensure the restored
@@ -89,9 +89,8 @@ impl SerdeObsoleteAccounts {
 /// to capture and restore obsolete accounts information for account storages.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        api_digest = "6ExDbK9xTxe5fpFGYp62B73sZFpsX4ixuJFobLASpnck",
         abi_digest = "Bzyq9V5sWxtx4EVzcMQiyco1tgfUngC2Zp4YV54HWaD3",
         abi_serializer = "wincode"
     )

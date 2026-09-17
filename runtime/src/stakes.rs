@@ -69,7 +69,6 @@ pub enum InvalidCacheEntryReason {
 type StakeAccount = stake_account::StakeAccount<Delegation>;
 pub(crate) type DelegatedStakes = ImblHashMap<Pubkey, u64>;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Default, Debug)]
 pub(crate) struct StakesCache(RwLock<Stakes<StakeAccount>>);
 
@@ -175,7 +174,7 @@ impl StakesCache {
 /// account and StakeStateV2 deserialized from the account. Doing so, will remove
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Default, Clone, PartialEq, Debug, Serialize, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
