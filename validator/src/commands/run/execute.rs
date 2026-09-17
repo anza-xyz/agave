@@ -109,7 +109,7 @@ pub enum Operation {
 #[cfg(target_os = "linux")]
 struct ResolvedXdp {
     policy: config_file::RuntimeXdpConfig,
-    device: Arc<NetworkDevice>,
+    device: NetworkDevice,
     src_ip: Ipv4Addr,
 }
 
@@ -1484,23 +1484,22 @@ fn build_xdp_transmit_setup(
 fn resolve_xdp_device(
     logical_interface: &str,
     selector: &config_file::DeviceSelector,
-) -> Result<Arc<NetworkDevice>, String> {
-    let device = match selector {
+) -> Result<NetworkDevice, String> {
+    match selector {
         config_file::DeviceSelector::Name(name) => NetworkDevice::new(name).map_err(|error| {
             format!(
                 "XDP logical interface `{logical_interface}` selects device.name {name:?}, which \
                  is not usable: {error}; fix the name or pass --no-xdp"
             )
-        })?,
+        }),
         config_file::DeviceSelector::DefaultRoute => NetworkDevice::new_from_default_route()
             .map_err(|error| {
                 format!(
                     "failed to open the default-route device for XDP logical interface \
                      `{logical_interface}`: {error}; set device.name or pass --no-xdp"
                 )
-            })?,
-    };
-    Ok(Arc::new(device))
+            }),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1526,28 +1525,37 @@ fn resolve_xdp_source_ipv4(
     }
 }
 
-#[cfg(any(not(target_os = "linux"), test))]
-fn validate_config_file_without_xdp(
+fn load_xdp_policy(
     matches: &ArgMatches,
     operation: &Operation,
-) -> Result<(), String> {
-    let user_path = matches.value_of("experimental_config_file");
-    let effective = config_file::load(user_path.map(Path::new))?;
+) -> Result<Option<config_file::CliApplication>, String> {
+    let effective = config_file::load(matches.value_of("experimental_config_file").map(Path::new))?;
     let overrides = cli_xdp_overrides(matches)?;
     if *operation == Operation::Initialize {
         info!("ledger initialization does not start XDP; skipping XDP policy validation");
-        return Ok(());
+        return Ok(None);
     }
     let application = config_file::apply_cli(effective, overrides)?;
     for warning in &application.warnings {
         warn!("{warning}");
     }
+    Ok(Some(application))
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn validate_config_file_without_xdp(
+    matches: &ArgMatches,
+    operation: &Operation,
+) -> Result<(), String> {
+    let Some(application) = load_xdp_policy(matches, operation)? else {
+        return Ok(());
+    };
     for warning in config_file::validate_policy(&application.config)? {
         warn!("{warning}");
     }
     // Only report inactivity the operator can act on. The built-in policy enables
     // XDP everywhere, so warning about it unprompted would fire on every startup.
-    if user_path.is_some() && application.config.xdp_active() {
+    if matches.is_present("experimental_config_file") && application.config.xdp_active() {
         warn!(
             "XDP transmit is unavailable on this platform; the configured XDP policy is valid but \
              inactive"
@@ -1562,16 +1570,9 @@ fn build_xdp_config(
     operation: &Operation,
     bind_addresses: &BindIpAddrs,
 ) -> Result<Option<ResolvedXdp>, String> {
-    let effective = config_file::load(matches.value_of("experimental_config_file").map(Path::new))?;
-    let overrides = cli_xdp_overrides(matches)?;
-    if *operation == Operation::Initialize {
-        info!("ledger initialization does not start XDP; skipping XDP policy validation");
+    let Some(application) = load_xdp_policy(matches, operation)? else {
         return Ok(None);
-    }
-    let application = config_file::apply_cli(effective, overrides)?;
-    for warning in &application.warnings {
-        warn!("{warning}");
-    }
+    };
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);

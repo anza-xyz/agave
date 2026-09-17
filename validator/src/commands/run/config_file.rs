@@ -82,8 +82,6 @@ struct ModuleTx {
     interface: String,
     queues: QueueSelection,
     #[serde(skip)]
-    interface_source: Source,
-    #[serde(skip)]
     queues_source: Source,
 }
 
@@ -423,14 +421,6 @@ fn mark_user_sources(config: &mut EffectiveConfig, user: &toml::Value) {
         {
             module.tx.queues_source = Source::User;
         }
-        if user
-            .get(name)
-            .and_then(|module| module.get("xdp"))
-            .and_then(|xdp| xdp.get("tx"))
-            .is_some_and(|tx| tx.get("interface").is_some())
-        {
-            module.tx.interface_source = Source::User;
-        }
     }
 }
 
@@ -591,10 +581,10 @@ pub(crate) fn apply_cli(
 }
 
 /// Queue ids a module transmits over, in its own sender order.
-fn module_queue_ids(module: &ModuleXdp, pool: &[u32]) -> Vec<u32> {
+fn module_queue_ids<'a>(module: &'a ModuleXdp, pool: &'a [u32]) -> &'a [u32] {
     match &module.tx.queues {
-        QueueSelection::All => pool.to_vec(),
-        QueueSelection::Explicit(queues) => queues.clone(),
+        QueueSelection::All => pool,
+        QueueSelection::Explicit(queues) => queues,
     }
 }
 
@@ -757,7 +747,12 @@ pub(crate) fn resolve_runtime(
         tpu: module_queue_ids(&config.tpu.xdp, &pool),
         turbine: module_queue_ids(&config.turbine.xdp, &pool),
     };
-    let active_ids: BTreeSet<_> = selected.values().into_iter().flatten().copied().collect();
+    let active_ids: BTreeSet<_> = selected
+        .values()
+        .into_iter()
+        .flat_map(|queues| queues.iter())
+        .copied()
+        .collect();
     let active_workers: Vec<_> = declared
         .into_iter()
         .filter(|binding| active_ids.contains(&binding.queue))
@@ -785,10 +780,10 @@ pub(crate) fn resolve_runtime(
             .collect()
     };
     let modules = Modules {
-        gossip: module_positions(&selected.gossip),
-        repair: module_positions(&selected.repair),
-        tpu: module_positions(&selected.tpu),
-        turbine: module_positions(&selected.turbine),
+        gossip: module_positions(selected.gossip),
+        repair: module_positions(selected.repair),
+        tpu: module_positions(selected.tpu),
+        turbine: module_positions(selected.turbine),
     };
     Ok((
         RuntimeXdpConfig {
