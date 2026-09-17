@@ -9320,7 +9320,7 @@ dependencies = [
  "solana-fee-structure",
  "solana-hash",
  "solana-instruction 3.5.1",
- "solana-instruction-error 2.5.0",
+ "solana-instruction-error 3.0.0",
  "solana-instructions-sysvar 4.0.0",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",

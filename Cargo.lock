@@ -8690,6 +8690,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d45854131ca87ba37ca0d537d06b460f8e0e99f00a8cd5f15492be961c85338"
 dependencies = [
  "num-traits",
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
  "solana-program-error",
 ]
 
@@ -9514,7 +9518,7 @@ dependencies = [
  "solana-fee-structure",
  "solana-hash",
  "solana-instruction 3.5.1",
- "solana-instruction-error 2.5.0",
+ "solana-instruction-error 3.0.0",
  "solana-keypair",
  "solana-last-restart-slot",
  "solana-loader-v3-interface",
@@ -10098,7 +10102,7 @@ dependencies = [
  "solana-hash",
  "solana-inflation",
  "solana-instruction 3.5.1",
- "solana-instruction-error 2.5.0",
+ "solana-instruction-error 3.0.0",
  "solana-keypair",
  "solana-lattice-hash",
  "solana-leader-schedule",
@@ -10717,7 +10721,7 @@ dependencies = [
  "solana-fee-structure",
  "solana-hash",
  "solana-instruction 3.5.1",
- "solana-instruction-error 2.5.0",
+ "solana-instruction-error 3.0.0",
  "solana-instructions-sysvar 4.0.0",
  "solana-keypair",
  "solana-loader-v3-interface",
