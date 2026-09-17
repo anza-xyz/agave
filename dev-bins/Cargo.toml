@@ -108,7 +108,7 @@ solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=
 solana-gossip = { path = "../gossip", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-hash = "4.5.0"
 solana-inflation = "3.1.1"
-solana-instruction = "3.5.1"
+solana-instruction = "4.0.0"
 solana-instruction-error = "2.4.0"
 solana-keypair = "3.1.2"
 solana-lattice-hash = { path = "../lattice-hash", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
