@@ -37,7 +37,9 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
-    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_net_utils::{
+        SocketAddrSpace, quic_socket::QuicSocket, sockets::bind_to_localhost_unique,
+    },
     solana_perf::packet::packet_config,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
@@ -650,11 +652,12 @@ pub fn start_datagram_listener_for_alpenglow_votor(
     }));
     // We want the sender to stay alive so the endpoint does not exit prematurely.
     Box::leak(Box::new(peer_list_sender));
-    let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
+    let client_socket =
+        QuicSocket::Kernel(bind_to_localhost_unique().expect("bind alpenglow client socket"));
     let (egress, endpoint) = QuicDatagramEndpoint::spawn(
         rt.handle(),
         &listener_keypair,
-        vec![vote_listener_socket],
+        vec![QuicSocket::Kernel(vote_listener_socket)],
         client_socket,
         sender,
         peer_list_receiver,
