@@ -1209,6 +1209,7 @@ pub mod test {
         super::*,
         crate::nonblocking::{
             qos::NullStreamerCounter,
+            stream_throttle::{MAX_UNSTAKED_TPS, streams_per_throttling_interval},
             swqos::SwQosConfig,
             testing_utilities::{
                 SpawnTestServerResult, check_multiple_streams, create_quic_server_sockets,
@@ -2181,8 +2182,9 @@ pub mod test {
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 
-        // unstaked connection can handle up to 100tps, so we should send in ~1s.
-        let expected_num_txs = 100;
+        // Send twice the maximum unstaked quota per throttling window so the
+        // excess streams are throttled. All must still be delivered.
+        let expected_num_txs = 2 * streams_per_throttling_interval(MAX_UNSTAKED_TPS) as usize;
         let start_time = tokio::time::Instant::now();
         for i in 0..expected_num_txs {
             let mut send_stream = client_connection.open_uni().await.unwrap();
