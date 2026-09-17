@@ -13,14 +13,13 @@
 # it as inactive. schema_version is required and must be 1.
 #
 # [xdp]
-# enabled       Global gate. False puts every module on OS sockets. `--no-xdp`
+# enabled       Enable XDP for every module. False uses OS sockets. `--no-xdp`
 #               forces it false and nothing re-enables it.
 #
 # [interfaces.<label>]
 # <label> is a logical name, not a device name, referenced by each module's
-# tx.interface. Version 1 supports one interface: enabled modules naming more
-# than one, or naming an undeclared label, is an error. Specify exactly one
-# device selector:
+# tx.interface. Version 1 supports one interface when XDP is enabled. Every
+# module must name that declared label. Specify exactly one device selector:
 #
 # device.route = "default"    Bind the NIC carrying the default route.
 # device.name = "ens1f0"      Bind this device by name.
@@ -44,7 +43,6 @@
 # ]
 #
 # [<module>.xdp] for tpu, turbine, repair and gossip
-# enabled       False leaves the module on OS sockets.
 # tx.interface  Which declared interface this module transmits over.
 # tx.queues     "all", or hardware queue ids in sender order, e.g. [0, 3]. Ids
 #               must exist in the pool above. Modules may share a queue.
@@ -62,21 +60,17 @@ zero_copy = false
 workers.auto.count = 1
 
 [tpu.xdp]
-enabled = true
 tx.interface = "primary"
 tx.queues = "all"
 
 [turbine.xdp]
-enabled = true
 tx.interface = "primary"
 tx.queues = "all"
 
 [repair.xdp]
-enabled = true
 tx.interface = "primary"
 tx.queues = "all"
 
 [gossip.xdp]
-enabled = true
 tx.interface = "primary"
 tx.queues = "all"

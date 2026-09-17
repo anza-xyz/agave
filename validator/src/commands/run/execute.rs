@@ -1445,10 +1445,10 @@ fn build_xdp_transmit_setup(
         modules,
     } = policy;
     let modules = XdpModules {
-        tpu: modules.tpu,
-        turbine: modules.turbine,
-        repair: modules.repair,
-        gossip: modules.gossip,
+        tpu: Some(modules.tpu),
+        turbine: Some(modules.turbine),
+        repair: Some(modules.repair),
+        gossip: Some(modules.gossip),
     };
     let xdp_interface = device.name().to_string();
     let transmitter_builder = TransmitterBuilder::new(
