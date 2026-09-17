@@ -431,7 +431,7 @@ solana-poh = { path = "poh", version = "=4.4.0-alpha.4", features = ["agave-unst
 solana-poh-config = "3.1.0"
 solana-poseidon = "5.0.0"
 solana-precompile-error = "3.0.0"
-solana-presigner = "3.0.0"
+solana-presigner = "4.0.0"
 solana-program = { version = "4.1.0", default-features = false }
 solana-program-binaries = { path = "program-binaries", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
 solana-program-entrypoint = "3.1.1"
