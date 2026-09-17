@@ -128,12 +128,7 @@ mod tests {
             ],
             expected_args,
         );
-    }
-
-    #[test]
-    fn verify_args_struct_by_command_run_with_enable_bigtable_ledger_upload_without_transaction_history()
-     {
-        // --enable-bigtable-ledger-upload requires --enable-rpc-transaction-history
+        // ensure failure if --enable-bigtable-ledger-upload is used without --enable-rpc-transaction-history
         verify_args_struct_by_command_run_is_error_with_identity_setup(
             crate::commands::run::args::RunArgs::default(),
             vec!["--enable-bigtable-ledger-upload"],
