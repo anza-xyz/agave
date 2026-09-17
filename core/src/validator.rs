@@ -142,11 +142,11 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::quic_socket::into_quic_socket,
     solana_streamer::{
         evicting_sender::EvictingSender,
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        quic_socket::{into_quic_socket, into_quic_sockets},
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
@@ -562,6 +562,7 @@ pub struct XdpModules {
     pub turbine: Option<Box<[usize]>>,
     pub repair: Option<Box<[usize]>>,
     pub gossip: Option<Box<[usize]>>,
+    pub votor: Option<Box<[usize]>>,
 }
 
 impl XdpModules {
@@ -571,6 +572,7 @@ impl XdpModules {
             ("turbine", &self.turbine),
             ("repair", &self.repair),
             ("gossip", &self.gossip),
+            ("votor", &self.votor),
         ] {
             let Some(positions) = positions else {
                 continue;
@@ -1456,9 +1458,10 @@ impl Validator {
         let (
             xdp_transmitter,
             turbine_xdp_sender,
-            quic_xdp_sender,
+            tpu_xdp_sender,
             repair_xdp_sender,
             gossip_xdp_sender,
+            votor_xdp_sender,
         ) = if let Some(XdpTransmitSetup {
             transmitter_builder,
             src_ip,
@@ -1519,9 +1522,17 @@ impl Validator {
                         SocketAddrV4::new(src_ip, gossip_src_port),
                     )
                 }),
+                modules.votor.map(|positions| {
+                    (
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        src_ip,
+                    )
+                }),
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         let gossip_service = GossipService::new(
@@ -1665,8 +1676,10 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
+        let votor_server_sockets =
+            into_quic_sockets(node.sockets.votor_server, votor_xdp_sender.as_ref()).collect();
         let votor_client_socket =
-            into_quic_socket(node.sockets.quic_votor_client, quic_xdp_sender.as_ref());
+            into_quic_socket(node.sockets.quic_votor_client, votor_xdp_sender.as_ref());
 
         let tvu = Tvu::new(
             vote_account,
@@ -1741,7 +1754,7 @@ impl Validator {
                 cancel: cancel.child_token(),
                 validator_exit: config.validator_exit.clone(),
                 key_notifiers: key_notifiers.clone(),
-                votor_server_sockets: node.sockets.votor_server,
+                votor_server_sockets,
                 votor_client_socket,
                 votor_peer_overrides: config.votor_peer_overrides.clone(),
                 highest_finalized,
@@ -1785,7 +1798,7 @@ impl Validator {
             &config.broadcast_stage_type,
             leader_schedule_cache.clone(),
             turbine_xdp_sender,
-            quic_xdp_sender.clone(),
+            tpu_xdp_sender,
             exit.clone(),
             node.info.shred_version(),
             vote_tracker,
@@ -3225,6 +3238,7 @@ mod tests {
             turbine: None,
             repair: Some([1, 1].into()),
             gossip: None,
+            votor: None,
         };
         let error = modules.validate_sender_positions(2).unwrap_err();
         assert!(

@@ -570,7 +570,7 @@ mod tests {
         let (egress, endpoint) = QuicDatagramEndpoint::spawn(
             rt.handle(),
             &keypair,
-            vec![socket],
+            vec![QuicSocket::Kernel(socket)],
             client_socket,
             ingress_sender,
             peer_list_receiver,

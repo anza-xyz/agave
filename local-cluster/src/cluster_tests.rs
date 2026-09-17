@@ -44,7 +44,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
     solana_signer::{Signer, signers::Signers},
-    solana_streamer::quic_socket::QuicSocket,
+    solana_streamer::quic_socket::{QuicSocket, into_quic_socket},
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_tpu_client_next::{
@@ -656,7 +656,7 @@ pub fn start_datagram_listener_for_alpenglow_votor(
     let (egress, endpoint) = QuicDatagramEndpoint::spawn(
         rt.handle(),
         &listener_keypair,
-        vec![vote_listener_socket],
+        vec![into_quic_socket(vote_listener_socket, None)],
         client_socket,
         sender,
         peer_list_receiver,

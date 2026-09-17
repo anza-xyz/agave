@@ -70,6 +70,15 @@ pub fn into_quic_socket(
     }
 }
 
+pub fn into_quic_sockets(
+    sockets: impl IntoIterator<Item = std::net::UdpSocket>,
+    quic_xdp_sender: Option<&(XdpSender, Ipv4Addr)>,
+) -> impl Iterator<Item = QuicSocket> {
+    sockets
+        .into_iter()
+        .map(move |socket| into_quic_socket(socket, quic_xdp_sender))
+}
+
 /// [`QuicXdpSocketParts`] wraps the resources required to construct an AF_XDP-backed QUIC socket.
 ///
 /// It carries both an [`XdpSender`] and a [`std::net::UdpSocket`], rather than constructing an

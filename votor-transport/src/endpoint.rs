@@ -14,14 +14,13 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     log::{error, warn},
     qualifier_attr::qualifiers,
-    quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_keypair::{Keypair, Signer},
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_pubkey::Pubkey,
     solana_streamer::quic_socket::{QuicSocket, create_endpoint},
     solana_tls_utils::NotifyKeyUpdate,
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::SocketAddr,
         sync::{Arc, Mutex, TryLockError},
         time::Duration,
     },
@@ -78,7 +77,7 @@ impl QuicDatagramEndpoint {
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
-        inbound_sockets: Vec<UdpSocket>,
+        inbound_sockets: Vec<QuicSocket>,
         outbound_socket: QuicSocket,
         inbound_datagrams: Sender<Datagram>,
         peer_list: PeerListReceiver,
@@ -118,13 +117,7 @@ impl QuicDatagramEndpoint {
             let inbound_endpoints = inbound_sockets
                 .into_iter()
                 .map(|socket| {
-                    Endpoint::new(
-                        EndpointConfig::default(),
-                        Some(server_config.clone()),
-                        socket,
-                        Arc::new(TokioRuntime),
-                    )
-                    .map_err(Error::Endpoint)
+                    create_endpoint(socket, Some(server_config.clone())).map_err(Error::Endpoint)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let outbound_endpoint =
@@ -510,7 +503,10 @@ mod tests {
             let (egress, endpoint) = QuicDatagramEndpoint::spawn(
                 rt.handle(),
                 &keypair,
-                inbound_sockets,
+                inbound_sockets
+                    .into_iter()
+                    .map(QuicSocket::Kernel)
+                    .collect(),
                 client_socket,
                 ingress_sender,
                 peer_list_receiver,

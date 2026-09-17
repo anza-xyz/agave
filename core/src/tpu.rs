@@ -53,7 +53,7 @@ use {
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
             spawn_simple_qos_server, spawn_stake_weighted_qos_server,
         },
-        quic_socket::{QuicSocket, into_quic_socket},
+        quic_socket::{QuicSocket, into_quic_sockets},
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -235,7 +235,7 @@ impl Tpu {
 
         // Streamer for TPU
         let transactions_quic_sockets =
-            into_quic_sockets(transactions_quic_sockets, quic_xdp_sender.clone());
+            into_quic_sockets(transactions_quic_sockets, quic_xdp_sender.as_ref());
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
@@ -255,7 +255,7 @@ impl Tpu {
 
         // Streamer for TPU forward
         let transactions_forwards_quic_sockets =
-            into_quic_sockets(transactions_forwards_quic_sockets, quic_xdp_sender);
+            into_quic_sockets(transactions_forwards_quic_sockets, quic_xdp_sender.as_ref());
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
@@ -429,13 +429,4 @@ impl Tpu {
         }
         Ok(())
     }
-}
-
-fn into_quic_sockets(
-    sockets: impl IntoIterator<Item = UdpSocket>,
-    quic_xdp_sender: Option<(XdpSender, Ipv4Addr)>,
-) -> impl Iterator<Item = QuicSocket> {
-    sockets
-        .into_iter()
-        .map(move |socket| into_quic_socket(socket, quic_xdp_sender.as_ref()))
 }
