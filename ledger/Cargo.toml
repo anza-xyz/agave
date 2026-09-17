@@ -27,7 +27,6 @@ frozen-abi = [
     "solana-runtime/frozen-abi",
 ]
 agave-unstable-api = []
-shuttle-test = ["dep:shuttle"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -35,16 +34,15 @@ agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-wake-channel = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
-atomic-wait = { workspace = true }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 chrono-humanize = { workspace = true }
 crossbeam-channel = { workspace = true }
-crossbeam-utils = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 eager = { workspace = true }
 fs_extra = { workspace = true }
@@ -65,7 +63,6 @@ rayon = { workspace = true }
 reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 scopeguard = { workspace = true }
 serde = { workspace = true }
-shuttle = { workspace = true, optional = true }
 smallvec = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
