@@ -27,10 +27,8 @@ use {
     solana_fee_calculator::{DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, FeeRateGovernor},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
-    solana_instruction::{
-        Instruction,
-        error::{InstructionError, UNSUPPORTED_SYSVAR},
-    },
+    solana_instruction::Instruction,
+    solana_instruction_error::{InstructionError, UNSUPPORTED_SYSVAR},
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,

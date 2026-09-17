@@ -10,7 +10,7 @@ use {
         vm_slice::VmSlice,
     },
     solana_account::ReadableAccount,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     std::collections::HashSet,
 };

@@ -22,7 +22,8 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_hash::Hash,
-    solana_instruction::{Instruction, error::InstructionError},
+    solana_instruction::Instruction,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,

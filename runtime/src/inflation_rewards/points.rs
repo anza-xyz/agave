@@ -5,7 +5,7 @@ use {
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     log::error,
     solana_clock::Epoch,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_stake_history::StakeHistory,
     solana_stake_interface::state::{Delegation, Stake, StakeStateV2},

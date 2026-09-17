@@ -2,7 +2,7 @@
 
 use {
     crate::memory_context::SerializedAccountMetadata,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_pubkey::Pubkey,
     solana_sbpf::{

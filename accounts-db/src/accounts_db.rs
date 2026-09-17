@@ -1602,10 +1602,12 @@ impl AccountsDb {
             .active_stats
             .activate(ActiveStatItem::CleanScanCandidates);
         let mut accounts_scan = Measure::start("accounts_scan");
-        if is_startup {
-            do_clean_scan();
-        } else {
-            self.thread_pool_background.install(do_clean_scan);
+        if num_candidates > 0 {
+            if is_startup {
+                do_clean_scan();
+            } else {
+                self.thread_pool_background.install(do_clean_scan);
+            }
         }
         accounts_scan.stop();
         drop(active_guard);
@@ -4284,7 +4286,9 @@ impl AccountsDb {
                         let mut offsets = offsets.iter().cloned().collect::<Vec<_>>();
                         // sort so offsets are in order. This improves efficiency of loading the accounts.
                         offsets.sort_unstable();
-                        let data_lens = store.accounts.get_account_data_lens(&offsets);
+                        let data_lens = store
+                            .accounts
+                            .get_account_data_lens(offsets.iter().copied());
                         let dead_bytes = data_lens
                             .iter()
                             .map(|len| store.accounts.calculate_stored_size(*len))

@@ -47,6 +47,7 @@ solana-epoch-schedule = { workspace = true, features = ["serde"] }
 solana-feature-gate-interface = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rpc-client-api = { workspace = true }

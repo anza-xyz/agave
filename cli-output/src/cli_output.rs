@@ -37,7 +37,7 @@ use {
         RpcSupply, RpcVoteAccountInfo,
     },
     solana_signature::Signature,
-    solana_stake_history::StakeHistoryEntry,
+    solana_stake_history::StakeHistoryItem,
     solana_stake_interface::state::{Authorized, Lockup},
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_status::{
@@ -1684,8 +1684,8 @@ impl fmt::Display for CliStakeHistory {
     }
 }
 
-impl From<&(Epoch, StakeHistoryEntry)> for CliStakeHistoryEntry {
-    fn from((epoch, entry): &(Epoch, StakeHistoryEntry)) -> Self {
+impl From<&StakeHistoryItem> for CliStakeHistoryEntry {
+    fn from(StakeHistoryItem { epoch, entry }: &StakeHistoryItem) -> Self {
         Self {
             epoch: *epoch,
             effective_stake: entry.effective,

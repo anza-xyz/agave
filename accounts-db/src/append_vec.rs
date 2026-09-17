@@ -272,10 +272,6 @@ impl AppendVec {
         }
     }
 
-    pub fn dead_bytes_due_to_zero_lamport_accounts(&self, count: usize) -> usize {
-        Self::calculate_stored_size(0) * count
-    }
-
     /// Flushes contents to disk
     pub fn flush(&self) -> Result<()> {
         // Check to see if we're actually dirty before flushing.
@@ -806,16 +802,16 @@ impl AppendVec {
     }
 
     /// Returns the account data size for each account in `offsets`.
-    pub(crate) fn get_account_data_lens<'a>(
+    pub(crate) fn get_account_data_lens(
         &self,
-        offsets: impl IntoIterator<Item = &'a FileOffset, IntoIter: ExactSizeIterator>,
+        offsets: impl IntoIterator<Item = FileOffset, IntoIter: ExactSizeIterator>,
     ) -> Vec<usize> {
         // self.len() is an atomic load, so only do it once
         let self_len = self.len();
         let offsets = offsets.into_iter();
         let mut account_sizes = Vec::with_capacity(offsets.len());
         let mut buffer = [MaybeUninit::<u8>::uninit(); mem::size_of::<StoredMeta>()];
-        for &offset in offsets {
+        for offset in offsets {
             // SAFETY: `read_into_buffer` will only write to uninitialized memory.
             let Some(bytes_read) =
                 read_into_buffer(&self.file, self_len as FileSize, offset, unsafe {
@@ -1094,7 +1090,7 @@ mod tests {
             &self,
             offset: FileOffset,
         ) -> Option<(Pubkey, solana_account::AccountSharedData)> {
-            let data_len = self.get_account_data_lens(&[offset]);
+            let data_len = self.get_account_data_lens([offset]);
             let sizes: usize = data_len
                 .iter()
                 .map(|len| AppendVec::calculate_stored_size(*len))
@@ -1472,7 +1468,7 @@ mod tests {
             assert_eq!(av.get_account_test(pos).unwrap(), account);
             indexes.push(pos);
             let stored_size = av
-                .get_account_data_lens(indexes.as_slice())
+                .get_account_data_lens(indexes.iter().copied())
                 .iter()
                 .map(|len| AppendVec::calculate_stored_size(*len))
                 .sum::<usize>();
@@ -1821,7 +1817,7 @@ mod tests {
         let (append_vec, _) = AppendVec::new_from_file(&path, total_stored_size).unwrap();
 
         let account_sizes = append_vec
-            .get_account_data_lens(account_offsets.as_slice())
+            .get_account_data_lens(account_offsets.iter().copied())
             .iter()
             .map(|len| AppendVec::calculate_stored_size(*len))
             .sum::<usize>();

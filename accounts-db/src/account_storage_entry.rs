@@ -178,9 +178,8 @@ impl AccountStorageEntry {
     /// Return the "alive_bytes" minus the bytes of this storage's tombstones
     /// (zero-lamport accounts already purged from the index).
     pub(crate) fn alive_bytes_exclude_zero_lamport_accounts(&self) -> usize {
-        let zero_lamport_dead_bytes = self
-            .accounts
-            .dead_bytes_due_to_zero_lamport_accounts(self.num_tombstones());
+        let zero_lamport_dead_bytes =
+            self.num_tombstones() * self.accounts.calculate_stored_size(0);
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 
@@ -347,7 +346,7 @@ mod tests {
         // Mark account 1 obsolete and record account 3 as a tombstone.
         let obsolete_offset = offsets[1];
         let tombstone_offset = offsets[3];
-        let data_lens = storage.accounts.get_account_data_lens(&[obsolete_offset]);
+        let data_lens = storage.accounts.get_account_data_lens([obsolete_offset]);
         storage
             .obsolete_accounts()
             .write()

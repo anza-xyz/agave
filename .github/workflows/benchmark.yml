@@ -89,7 +89,6 @@ jobs:
           # pipefail: without it the pipeline's status is tee's, so a bench
           # command that fails to even resolve a target passes silently
           set -o pipefail
-          source ci/rust-version.sh nightly
           echo '${{ toJson(matrix.test.commands) }}' | jq -r '.[]' | while read command; do
             eval $command | tee -a benchmark
           done

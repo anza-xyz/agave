@@ -205,7 +205,9 @@ one week in order to be eligible for a bounty
 * Participants must complete KYC and sign the participation agreement here when the registrations are open https://solana.foundation/kyc. Security exploits will still be assessed and open for submission at all times. This needs only be done prior to distribution of tokens.
 
 ### Duplicate Reports
-Compensation for duplicative reports will be split among reporters with first to report taking priority using the following equation
+Compensation for duplicative reports will be split among reporters with first to report
+making priority using the following equation. Shares that amount to less than one SOL
+will be deemed ineligible for payment
 ```
 R: total reports
 ri: report priority

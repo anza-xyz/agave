@@ -36,13 +36,14 @@ solana-big-mod-exp = { workspace = true }
 solana-blake3-hasher = { workspace = true, features = ["blake3"] }
 solana-bls12-381-syscall = { workspace = true }
 solana-bn254 = { workspace = true }
-solana-clock = { workspace = true }
+solana-clock = { workspace = true, features = ["serde", "sysvar"] }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
 solana-define-syscall = { workspace = true }
 solana-hash = { workspace = true, features = ["wincode"] }
 solana-hash-512 = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-poseidon = { workspace = true }
 solana-program-entrypoint = { workspace = true }
@@ -54,7 +55,7 @@ solana-secp256k1-recover = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-sha512-hasher = { workspace = true, features = ["sha2"] }
 solana-stable-layout = { workspace = true }
-solana-stake-history = { workspace = true }
+solana-stake-history = { workspace = true, features = ["serde", "sysvar", "wincode"] }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
@@ -72,7 +73,7 @@ solana-last-restart-slot = { workspace = true }
 solana-program = { workspace = true }
 solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-slot-hashes = { workspace = true }
+solana-slot-hashes = { workspace = true, features = ["sysvar", "wincode"] }
 solana-svm-callback = { path = "../svm-callback", features = ["agave-unstable-api"] }
 solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }

@@ -5,7 +5,7 @@ use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{

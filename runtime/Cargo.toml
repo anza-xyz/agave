@@ -24,13 +24,6 @@ bench = false
 
 [features]
 agave-unstable-api = []
-conformance = [
-    "agave-unstable-api",
-    "dep:prost",
-    "dep:protosol",
-    "dev-context-only-utils",
-    "solana-svm/conformance",
-]
 dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
@@ -89,8 +82,6 @@ log = { workspace = true }
 mockall = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
-prost = { workspace = true, optional = true }
-protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
@@ -134,10 +125,11 @@ solana-hard-forks = { workspace = true, features = ["serde", "wincode"] }
 solana-hash = { workspace = true, features = ["atomic", "wincode", "rand"] }
 solana-inflation = { workspace = true, features = ["serde", "wincode"] }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-lattice-hash = { workspace = true }
 solana-leader-schedule = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }

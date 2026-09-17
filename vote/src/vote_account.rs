@@ -12,7 +12,7 @@ use {
     log::*,
     serde::{Deserialize, Deserializer, Serialize, ser::Serializer},
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_transaction::SchemaWrite,
     std::{
@@ -289,6 +289,13 @@ impl VoteAccounts {
         self.vote_accounts
             .iter()
             .map(|(vote_pubkey, (_stake, vote_account))| (vote_pubkey, vote_account))
+    }
+
+    /// Helper used if some other kind of iterator is needed directly on the
+    /// inner HashMap. In general, prefer using any other getter, such as
+    /// `iter()`, `delegated_starkes()`, `get()`, or `get_delegated_stake()`
+    pub fn inner(&self) -> &VoteAccountsHashMap {
+        &self.vote_accounts
     }
 
     pub fn delegated_stakes(&self) -> impl Iterator<Item = (&Pubkey, u64)> {

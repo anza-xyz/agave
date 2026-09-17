@@ -617,12 +617,13 @@ impl SplitFile {
     /// Returns a vec of account data sizes for each account in `sorted_offsets`.
     pub fn get_account_data_lens(
         &self,
-        sorted_offsets: &[LogicalOffset],
+        sorted_offsets: impl IntoIterator<Item = LogicalOffset, IntoIter: ExactSizeIterator>,
     ) -> Result<Vec<usize>, SplitFileError> {
-        let mut data_lens = Vec::with_capacity(sorted_offsets.len());
-        for offset in sorted_offsets {
+        let offsets = sorted_offsets.into_iter();
+        let mut data_lens = Vec::with_capacity(offsets.len());
+        for offset in offsets {
             let data_len =
-                self.get_account_without_data(*offset, |stored_account| stored_account.data_len)?;
+                self.get_account_without_data(offset, |stored_account| stored_account.data_len)?;
             data_lens.push(data_len);
         }
         Ok(data_lens)
@@ -1346,7 +1347,9 @@ mod tests {
             split.write_accounts(&(slot, accounts.as_slice())).unwrap();
 
         let offsets = [written_offsets[2], written_offsets[3], written_offsets[4]];
-        let data_lens = split.get_account_data_lens(offsets.as_slice()).unwrap();
+        let data_lens = split
+            .get_account_data_lens(offsets.iter().copied())
+            .unwrap();
         assert_eq!(data_lens.len(), offsets.len());
         assert_eq!(data_lens[0], accounts[2].1.data().len());
         assert_eq!(data_lens[1], accounts[3].1.data().len());

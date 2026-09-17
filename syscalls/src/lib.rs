@@ -21,7 +21,8 @@ use {
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
     solana_hash_512::Hash512,
-    solana_instruction::{AccountMeta, ProcessedSiblingInstruction, error::InstructionError},
+    solana_instruction::{AccountMeta, ProcessedSiblingInstruction},
+    solana_instruction_error::InstructionError,
     solana_keccak_hasher as keccak, solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS},
     solana_program_runtime::{

@@ -7,7 +7,7 @@ use {
         vm_slice::VmSlice,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     std::{
         cell::{Cell, UnsafeCell},
@@ -600,7 +600,7 @@ impl DerefMut for AccountRefMut<'_> {
 mod tests {
     use {
         crate::transaction_accounts::TransactionAccounts, solana_account::AccountSharedData,
-        solana_instruction::error::InstructionError, solana_pubkey::Pubkey,
+        solana_instruction_error::InstructionError, solana_pubkey::Pubkey,
     };
 
     #[test]

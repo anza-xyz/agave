@@ -12,7 +12,7 @@ use {
     solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         deploy::deploy_program,

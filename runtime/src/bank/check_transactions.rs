@@ -20,7 +20,6 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
     },
     solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
-    solana_transaction::versioned::TransactionVersion,
     solana_transaction_error::{TransactionError, TransactionResult},
 };
 
@@ -33,8 +32,6 @@ impl Bank {
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<Option<Pubkey>> {
-        self.check_v1_enabled(tx)?;
-
         let hash_queue = self.blockhash_queue.read().unwrap();
         let next_durable_nonce = hash_queue.next_durable_nonce();
 
@@ -85,8 +82,6 @@ impl Bank {
     }
 
     // The heart of runtime transaction checking. We perform these operations, in sequence:
-    // * Reject V1 transactions until the feature is active.
-    //   This can be deleted after the feature is live on all clusters.
     // * Parse and validate the compute budget and limits, producing the struct for SVM,
     //   or reject the transaction if the compute budget is malformed.
     // * Check the transaction lifetime specifier, in this order:
@@ -120,8 +115,6 @@ impl Bank {
                     let tx = tx.borrow();
                     lock_result.clone()?;
 
-                    self.check_v1_enabled(tx)?;
-
                     let compute_budget_and_limits =
                         self.check_compute_budget_and_limits(tx, error_counters)?;
 
@@ -150,16 +143,6 @@ impl Bank {
         };
 
         self.check_status_cache(txs, check_results, collect_processed_slots, error_counters)
-    }
-
-    fn check_v1_enabled(&self, tx: &impl SVMStaticMessage) -> TransactionResult<()> {
-        let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
-
-        if !enable_tx_v1 && tx.version() == TransactionVersion::Number(1) {
-            Err(TransactionError::UnsupportedVersion)
-        } else {
-            Ok(())
-        }
     }
 
     fn check_compute_budget_and_limits(
@@ -343,7 +326,7 @@ mod tests {
         },
         solana_transaction::{
             sanitized::{MessageHash, SanitizedTransaction},
-            versioned::VersionedTransaction,
+            versioned::{TransactionVersion, VersionedTransaction},
         },
         std::collections::HashSet,
     };
@@ -703,7 +686,7 @@ mod tests {
         assert_eq!(check_result, Ok(None));
     }
 
-    fn filter_v1_transactions<Tx: TransactionWithMeta>(
+    fn check_transactions_for_tests<Tx: TransactionWithMeta>(
         bank: &Bank,
         txs: &[Tx],
         lock_results: &[TransactionResult<()>],
@@ -720,7 +703,7 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_v1_transactions_keeps_existing_errors() {
+    fn test_check_transactions_keeps_existing_errors() {
         let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
         let bank = Bank::new_for_tests(&genesis_config);
         let txs = vec![
@@ -734,41 +717,36 @@ mod tests {
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
         ];
 
-        let filtered = filter_v1_transactions(&bank, &txs, &lock_results);
+        let filtered = check_transactions_for_tests(&bank, &txs, &lock_results);
 
         assert_eq!(filtered, lock_results);
     }
 
     #[test]
-    fn test_filter_v1_transactions_rejects_v1_with_ok_lock_result() {
+    fn test_check_transactions_keeps_v1() {
         let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
         let bank = Bank::new_for_tests(&genesis_config);
-        let txs = vec![make_test_tx(TransactionVersion::Number(1))];
-        let lock_results = vec![Ok(())];
-
-        let filtered = filter_v1_transactions(&bank, &txs, &lock_results);
-
-        assert_eq!(filtered, [Err(TransactionError::UnsupportedVersion)]);
-    }
-
-    #[test]
-    fn test_filter_v1_transactions_keeps_v1_when_feature_enabled() {
-        let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.activate_feature(&agave_feature_set::enable_tx_v1::id());
         let txs = vec![make_test_tx_with_blockhash(
             TransactionVersion::Number(1),
             bank.last_blockhash(),
         )];
         let lock_results = vec![Ok(())];
 
-        let filtered = filter_v1_transactions(&bank, &txs, &lock_results);
+        let filtered = check_transactions_for_tests(&bank, &txs, &lock_results);
 
         assert_eq!(filtered, [Ok(())]);
+        assert_eq!(
+            bank.check_transaction_without_status_cache(
+                &txs[0],
+                bank.max_processing_age(),
+                &mut TransactionErrorMetrics::default(),
+            ),
+            Ok(None),
+        );
     }
 
     #[test]
-    fn test_filter_v1_transactions_keeps_legacy_and_v0_ok() {
+    fn test_check_transactions_keeps_legacy_and_v0_ok() {
         let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
         let bank = Bank::new_for_tests(&genesis_config);
         let blockhash = bank.last_blockhash();
@@ -778,13 +756,13 @@ mod tests {
         ];
         let lock_results = vec![Ok(()), Ok(())];
 
-        let filtered = filter_v1_transactions(&bank, &txs, &lock_results);
+        let filtered = check_transactions_for_tests(&bank, &txs, &lock_results);
 
         assert_eq!(filtered, [Ok(()), Ok(())]);
     }
 
     #[test]
-    fn test_filter_v1_transactions_mixed_results() {
+    fn test_check_transactions_mixed_results() {
         let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
         let bank = Bank::new_for_tests(&genesis_config);
         let blockhash = bank.last_blockhash();
@@ -801,13 +779,13 @@ mod tests {
             Err(TransactionError::TooManyAccountLocks),
         ];
 
-        let filtered = filter_v1_transactions(&bank, &txs, &lock_results);
+        let filtered = check_transactions_for_tests(&bank, &txs, &lock_results);
 
         assert_eq!(
             filtered,
             [
                 Ok(()),
-                Err(TransactionError::UnsupportedVersion),
+                Ok(()),
                 Err(TransactionError::AccountInUse),
                 Err(TransactionError::TooManyAccountLocks),
             ]

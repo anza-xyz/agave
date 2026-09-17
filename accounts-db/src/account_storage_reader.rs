@@ -194,7 +194,6 @@ mod tests {
         crate::{
             ObsoleteAccounts,
             account_storage_entry::AccountStorageEntry,
-            accounts_db::get_temp_accounts_paths,
             accounts_file::{AccountsFile, AccountsFileProvider},
             append_vec,
             utils::create_account_shared_data,
@@ -209,29 +208,18 @@ mod tests {
         solana_account::AccountSharedData,
         solana_pubkey::Pubkey,
         std::{collections::HashMap, fs::File, iter},
+        tempfile::TempDir,
         test_case::test_case,
     };
 
-    fn create_storage_for_storage_reader(
-        slot: Slot,
-        provider: AccountsFileProvider,
-    ) -> (AccountStorageEntry, Vec<tempfile::TempDir>) {
-        let id = 0;
-        let (temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
-        let file_size = 1024 * 1024;
-        (
-            AccountStorageEntry::new(&paths[0], slot, id, file_size, provider),
-            temp_dirs,
-        )
-    }
-
     #[test_case(AccountsFileProvider::AppendVec)]
     fn test_account_storage_reader_no_obsolete_accounts(provider: AccountsFileProvider) {
-        let (storage, _temp_dirs) = create_storage_for_storage_reader(0, provider);
+        let slot = 0;
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, provider);
 
         let account = AccountSharedData::new(1, 10, &Pubkey::default());
         let account2 = AccountSharedData::new(1, 10, &Pubkey::default());
-        let slot = 0;
 
         let accounts = [
             (&Pubkey::new_unique(), &account),
@@ -278,10 +266,15 @@ mod tests {
         num_obsolete: usize,
         tombstones_filter: TombstonesFilter,
     ) {
-        let (storage, _temp_dirs) =
-            create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec);
-
         let slot = 0;
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AccountStorageEntry::new(
+            temp_dir.path(),
+            slot,
+            11,
+            1_000_000,
+            AccountsFileProvider::AppendVec,
+        );
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -334,7 +327,9 @@ mod tests {
         storage.batch_insert_tombstone_offsets(tombstone_offsets);
 
         // Mark the obsolete accounts in storage
-        let data_lens = storage.accounts.get_account_data_lens(&obsolete_offsets);
+        let data_lens = storage
+            .accounts
+            .get_account_data_lens(obsolete_offsets.iter().copied());
         storage
             .obsolete_accounts()
             .write()
@@ -432,11 +427,16 @@ mod tests {
 
     #[test]
     fn test_account_storage_reader_filter_by_slot() {
-        let (storage, _temp_dirs) =
-            create_storage_for_storage_reader(10, AccountsFileProvider::AppendVec);
-        let total_accounts = 30;
-
         let slot = 0;
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AccountStorageEntry::new(
+            temp_dir.path(),
+            slot,
+            11,
+            1_000_000,
+            AccountsFileProvider::AppendVec,
+        );
+        let total_accounts = 30;
 
         // Create a bunch of accounts and add them to the storage
         let accounts: Vec<_> =
@@ -486,7 +486,7 @@ mod tests {
         // Mark the obsolete accounts in storage at different slots
         let mut slot_marked_dead = 0;
         obsolete_account_offset.into_iter().for_each(|offset| {
-            let mut size = storage.accounts.get_account_data_lens(&[offset]);
+            let mut size = storage.accounts.get_account_data_lens([offset]);
             storage
                 .obsolete_accounts()
                 .write()

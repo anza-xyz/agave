@@ -42,6 +42,7 @@ solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["curve25519"] }

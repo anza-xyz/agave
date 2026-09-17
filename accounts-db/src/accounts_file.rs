@@ -76,14 +76,6 @@ impl AccountsFile {
         }
     }
 
-    /// Return the total number of bytes of the zero lamport accounts in the storage.
-    /// Those bytes are "dead" and can be shrunk away.
-    pub(crate) fn dead_bytes_due_to_zero_lamport_accounts(&self, count: usize) -> usize {
-        match self {
-            Self::AppendVec(av) => av.dead_bytes_due_to_zero_lamport_accounts(count),
-        }
-    }
-
     /// Flushes contents to disk
     pub fn flush(&self) -> Result<()> {
         match self {
@@ -202,9 +194,9 @@ impl AccountsFile {
     }
 
     /// Returns the account data size for each account in `offsets`.
-    pub(crate) fn get_account_data_lens<'a>(
+    pub(crate) fn get_account_data_lens(
         &self,
-        offsets: impl IntoIterator<Item = &'a Offset, IntoIter: ExactSizeIterator>,
+        offsets: impl IntoIterator<Item = Offset, IntoIter: ExactSizeIterator>,
     ) -> Vec<usize> {
         match self {
             Self::AppendVec(av) => av.get_account_data_lens(offsets),

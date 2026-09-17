@@ -36,7 +36,7 @@ use {
     solana_genesis_config as genesis_config,
     solana_gossip::{crds::Cursor, node::Node},
     solana_hash::Hash,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS as NUM_CONSECUTIVE_LEADER_SLOTS_NZ,
     solana_ledger::{

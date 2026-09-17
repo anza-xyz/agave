@@ -77,7 +77,6 @@ pub struct FeatureSnapshot {
     pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
-    pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
 }
@@ -176,7 +175,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
-            enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
         }
@@ -1436,7 +1434,7 @@ pub mod limit_instruction_accounts {
 }
 
 pub mod block_revenue_sharing {
-    solana_pubkey::declare_id!("B1ockRevenueSharing111111111111111111111111");
+    solana_pubkey::declare_id!("7MYx95UBiJufqnumyN7HfskJ9vKdcGMmhreVguqrE97K");
 }
 
 pub mod vote_account_initialize_v2 {
