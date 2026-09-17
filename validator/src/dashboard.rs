@@ -96,8 +96,20 @@ impl Dashboard {
                 println_name_value("Genesis Hash:", &genesis_hash.to_string());
             }
 
-            if let Ok(version) = rpc_client.get_version() {
-                println_name_value("Version:", &version.to_string());
+            if let Some(version) = contact_info
+                .as_ref()
+                .and_then(|contact_info| contact_info.version.as_deref())
+            {
+                println_name_value("Version:", version);
+            } else if let Ok(version) = rpc_client.get_version() {
+                let feature_set = version
+                    .feature_set
+                    .map(|feature_set| format!("{feature_set:08x}"))
+                    .unwrap_or_else(|| "unknown".to_string());
+                println_name_value(
+                    "Version:",
+                    &format!("{version} (src:unknown; feat:{feature_set}, client:unknown)"),
+                );
             }
             if let Some(admin_rpc_service::AdminRpcContactInfo {
                 gossip,
@@ -105,11 +117,9 @@ impl Dashboard {
                 rpc_pubsub,
                 shred_version,
                 tpu_quic,
-                git_commit,
                 ..
             }) = contact_info
             {
-                println_name_value("Git Commit:", git_commit.as_deref().unwrap_or("unknown"));
                 println_name_value("Shred Version:", &shred_version.to_string());
                 println_name_value("Gossip Address:", &gossip.to_string());
                 if let Some(tpu_quic) = tpu_quic {
@@ -399,26 +409,21 @@ mod tests {
         std::sync::atomic::AtomicUsize,
     };
 
-    #[test_case::test_case(None; "legacy")]
-    #[test_case::test_case(Some("0123456789abcdef0123456789abcdef01234567"); "server_build")]
-    fn test_wait_for_validator_startup_retries_legacy_contact_info(git_commit: Option<&str>) {
+    #[test]
+    fn test_wait_for_validator_startup_retries_legacy_contact_info() {
         let ledger_path = tempfile::tempdir().unwrap();
         let rpc_addr = "127.0.0.1:8899".parse::<SocketAddr>().unwrap();
         let start_time = SystemTime::now();
         let keypair = Keypair::new();
-        let mut contact_info = serde_json::to_value(admin_rpc_service::AdminRpcContactInfo::from(
-            ContactInfo::new(keypair.pubkey(), 0, 0),
-        ))
-        .unwrap();
-        if let Some(git_commit) = git_commit {
-            assert_ne!(Some(git_commit), solana_version::git_commit());
-            contact_info["git_commit"] = serde_json::json!(git_commit);
-        }
-        contact_info
-            .as_object_mut()
-            .unwrap()
-            .remove("tpu_quic")
-            .unwrap();
+        let contact_info = ContactInfo::new(keypair.pubkey(), 0, 0);
+        let expected_version = contact_info.version().as_detailed_string();
+        let mut contact_info =
+            serde_json::to_value(admin_rpc_service::AdminRpcContactInfo::from(contact_info))
+                .unwrap();
+        let contact_info_object = contact_info.as_object_mut().unwrap();
+        contact_info_object.remove("tpu_quic").unwrap();
+        let version = contact_info_object.remove("version").unwrap();
+        assert_eq!(version.as_str(), Some(expected_version.as_str()));
         let contact_info_attempts = Arc::new(AtomicUsize::new(0));
 
         let mut io = IoHandler::default();
@@ -456,7 +461,7 @@ mod tests {
 
         let contact_info = contact_info.unwrap();
         assert!(contact_info.tpu_quic.is_none());
-        assert_eq!(contact_info.git_commit.as_deref(), git_commit);
+        assert!(contact_info.version.is_none());
         assert_eq!(contact_info_attempts.load(Ordering::Relaxed), 2);
         server.close();
     }

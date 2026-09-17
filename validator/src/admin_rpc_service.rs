@@ -107,7 +107,7 @@ pub struct AdminRpcContactInfo {
     pub last_updated_timestamp: u64,
     pub shred_version: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub git_commit: Option<String>,
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -150,7 +150,7 @@ impl From<ContactInfo> for AdminRpcContactInfo {
             rpc_pubsub: unwrap_socket!(rpc_pubsub),
             serve_repair: unwrap_socket!(serve_repair, Protocol::UDP),
             shred_version: node.shred_version(),
-            git_commit: None,
+            version: Some(node.version().as_detailed_string()),
         }
     }
 }
@@ -644,12 +644,7 @@ impl AdminRpc for AdminRpcImpl {
     }
 
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo> {
-        meta.with_post_init(|post_init| {
-            Ok(AdminRpcContactInfo {
-                git_commit: solana_version::git_commit().map(str::to_owned),
-                ..post_init.cluster_info.my_contact_info().into()
-            })
-        })
+        meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
     }
 
     fn vat_status(&self, meta: Self::Metadata) -> Result<AdminRpcValidatorAdmissionTicketStatus> {
@@ -1341,7 +1336,6 @@ mod tests {
         });
 
         let RpcHandler { io, meta, .. } = rpc;
-        assert!(meta.rpc_addr.is_none());
 
         let expected_validator_id = Keypair::new();
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
@@ -1375,10 +1369,6 @@ mod tests {
         assert_eq!(
             actual_validator_id,
             expected_validator_id.pubkey().to_string()
-        );
-        assert_eq!(
-            parsed_response["result"]["git_commit"].as_str(),
-            solana_version::git_commit()
         );
         let event = votor_event_receiver
             .recv()
