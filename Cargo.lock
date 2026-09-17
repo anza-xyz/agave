@@ -9325,7 +9325,6 @@ dependencies = [
  "assert_matches",
  "bencher",
  "bincode",
- "criterion",
  "crossbeam-channel",
  "log",
  "qualifier_attr",
