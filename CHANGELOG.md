@@ -48,7 +48,7 @@ Release channels have their own copy of this changelog:
   are expressed as `workers.auto`, `workers.cpus`, or `workers.bindings`, and each module selects
   `tx.queues = "all"` or hardware queue ids on the sole interface. `--print-default-config` prints
   the embedded reference policy. `--no-xdp-zero-copy` can override a file's strict zero-copy
-  request.
+  request. `xdp.enabled` controls XDP globally; `--no-xdp` disables it.
 * `--xdp-cpu-cores` now preserves module-specific queue scoping instead of silently assigning every
   CLI-created sender to every XDP-enabled module. A CLI worker replacement that could reinterpret
   user-authored numeric queue ids is rejected; use `tx.queues = "all"` for portable policy.
