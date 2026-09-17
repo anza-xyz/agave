@@ -160,7 +160,7 @@ solana-stake-history = "=1.1.0"
 solana-svm = { path = "../../svm", version = "=4.4.0-alpha.4" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.4.0-alpha.4" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.4.0-alpha.4" }
-solana-svm-transaction = "=5.0.0"
+solana-svm-transaction = "=6.0.0"
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.4.0-alpha.4" }
 solana-system-interface = { version = "=3.3.0", features = ["bincode"] }
 solana-sysvar = "=4.3.0"
