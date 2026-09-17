@@ -2,6 +2,7 @@
 //! and provides an interface for sending data which is restricted by the
 //! server's flow control.
 use {
+    arc_swap::ArcSwapOption,
     async_lock::Mutex,
     async_trait::async_trait,
     futures::future::TryFutureExt,
@@ -32,7 +33,10 @@ use {
         time::Duration,
     },
     thiserror::Error,
-    tokio::{sync::OnceCell, time::timeout},
+    tokio::{
+        sync::{OnceCell, mpsc},
+        time::timeout,
+    },
 };
 
 const QUIC_KEEP_ALIVE: Duration = Duration::from_secs(1);
@@ -232,6 +236,9 @@ pub struct QuicClient {
     connection: Arc<Mutex<Option<QuicNewConnection>>>,
     addr: SocketAddr,
     stats: Arc<ClientStats>,
+    /// Registration slot for this peer's send-queue driver.
+    /// Lock-free so the caller can enqueue without ever blocking.
+    pub pkt_tx: ArcSwapOption<mpsc::Sender<Arc<Vec<u8>>>>,
 }
 
 const CONNECTION_CLOSE_CODE_APPLICATION_CLOSE: u32 = 0u32;
@@ -261,6 +268,7 @@ impl QuicClient {
             connection: Arc::new(Mutex::new(None)),
             addr,
             stats: Arc::new(ClientStats::default()),
+            pkt_tx: ArcSwapOption::empty(),
         }
     }
 
