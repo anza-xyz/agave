@@ -492,7 +492,7 @@ solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.4.0-alp
 solana-syscalls = { path = "syscalls", version = "=4.4.0-alpha.4", default-features = false, features = ["agave-unstable-api"] }
 solana-system-interface = { version = "3.3.0", features = ["alloc", "bincode", "serde", "wincode"] }
 solana-system-program = { path = "programs/system", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
-solana-system-transaction = "4.1.0"
+solana-system-transaction = "5.0.0"
 solana-sysvar = "4.3.0"
 solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "test-validator", version = "=4.4.0-alpha.4", features = ["agave-unstable-api"] }
