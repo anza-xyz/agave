@@ -2539,10 +2539,28 @@ impl ReplayStage {
         let slots_to_clear = blocks_to_switch
             .iter()
             .map(|(slot, _)| *slot)
-            .chain(original_dead_slots_to_clear.iter().copied());
+            .chain(original_dead_slots_to_clear.iter().copied())
+            .collect::<BTreeSet<_>>();
+
+        let unpersisted_leader_slot = transaction_status_sender.and_then(|_| {
+            let (_, banks_to_clear) = bank_forks
+                .read()
+                .unwrap()
+                .slots_to_clear(slots_to_clear.iter().copied());
+            banks_to_clear.into_iter().find_map(|bank| {
+                Self::leader_bank_shreds_pending(&bank, blockstore).then_some(bank.slot())
+            })
+        });
+        if let Some(slot) = unpersisted_leader_slot {
+            trace!(
+                "{my_pubkey}: Waiting for leader bank {slot} shreds to be persisted before \
+                 switching"
+            );
+            return Ok(());
+        }
 
         info!("{my_pubkey}: Clearing banks for switching: {slots_to_clear:?}");
-        Self::clear_slots(
+        let slots_to_purge = Self::clear_slots(
             slots_to_clear,
             bank_forks,
             progress,
@@ -2550,11 +2568,7 @@ impl ReplayStage {
         );
 
         if let Some(transaction_status_sender) = transaction_status_sender {
-            for slot in blocks_to_switch
-                .iter()
-                .map(|(slot, _)| *slot)
-                .chain(original_dead_slots_to_clear.iter().copied())
-            {
+            for slot in slots_to_purge {
                 transaction_status_sender
                     .send_purge_transaction_history_for_slot(
                         slot,
@@ -2587,18 +2601,23 @@ impl ReplayStage {
         Ok(())
     }
 
+    fn leader_bank_shreds_pending(bank: &Bank, blockstore: &Blockstore) -> bool {
+        !bank.should_replay_from_blockstore() && !blockstore.is_full(bank.slot())
+    }
+
     /// Clear the requested slots and their descendants from progress, bank forks, and shared
-    /// caches. Requested slots are purged from shared caches even if their banks no longer exist.
+    /// caches, and return the expanded set. Requested slots are purged from shared caches even if
+    /// their banks no longer exist.
     fn clear_slots(
         slots_to_clear: impl IntoIterator<Item = Slot>,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-    ) {
+    ) -> BTreeSet<Slot> {
         let (slots_to_purge, banks_to_clear) =
             bank_forks.read().unwrap().slots_to_clear(slots_to_clear);
         if slots_to_purge.is_empty() {
-            return;
+            return slots_to_purge;
         }
 
         // Wait for async verify to complete
@@ -2655,10 +2674,12 @@ impl ReplayStage {
         // Clear the shared caches even for requested slots whose banks were already removed.
         // Those slots can be revived by an Alpenglow switch, and stale entries from the old block
         // version must not affect replay of the new version.
-        for slot in slots_to_purge {
-            root_bank.clear_slot_signatures(slot);
-            root_bank.prune_program_cache_by_deployment_slot(slot);
+        for slot in &slots_to_purge {
+            root_bank.clear_slot_signatures(*slot);
+            root_bank.prune_program_cache_by_deployment_slot(*slot);
         }
+
+        slots_to_purge
     }
 
     fn recycle_async_verification(
@@ -5344,7 +5365,7 @@ impl ReplayStage {
                 slot,
                 response_sender,
             } => {
-                Self::clear_slots(
+                let _ = Self::clear_slots(
                     [slot],
                     &context.bank_forks,
                     progress,

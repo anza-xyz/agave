@@ -199,7 +199,7 @@ fn try_restart_slot_from_update_parent(
         send_invalid_bank(&bank, replay_vote_sender);
         bank.bank_id()
     });
-    ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
+    let _ = ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
     if let Some(transaction_status_sender) = transaction_status_sender {
         transaction_status_sender
             .enqueue_purge_transaction_history_for_slot(
@@ -427,7 +427,7 @@ pub(super) fn handle_abandoned_bank(
 
     // Clear the bank from bank_forks. It will be recreated with the correct
     // parent by generate_new_bank_forks on the next iteration.
-    ReplayStage::clear_slots(
+    let _ = ReplayStage::clear_slots(
         [bank_slot],
         bank_forks,
         progress,
