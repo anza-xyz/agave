@@ -23,6 +23,7 @@ agave-scheduler-bindings = { workspace = true }
 agave-scheduler-handshake = { workspace = true }
 rts-alloc = { workspace = true }
 shaq = { workspace = true }
+solana-clock = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

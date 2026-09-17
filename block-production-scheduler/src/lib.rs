@@ -2,6 +2,7 @@
 #![cfg(unix)]
 
 use {
+    crate::progress_tracker::SchedulerState,
     agave_scheduler_bindings::{
         CheckWorkerToPackMessage, PackToCheckWorkerMessage, ProgressMessage, TpuToPackMessage,
     },
@@ -16,6 +17,8 @@ use {
         time::Duration,
     },
 };
+
+mod progress_tracker;
 
 #[cfg(test)]
 mod tests;
@@ -54,6 +57,7 @@ pub struct Config {
     reason = "resources retained for the scheduler loop implementation"
 )]
 struct Scheduler {
+    state: SchedulerState,
     allocator: Allocator,
     tpu_receiver: shaq::spsc::Consumer<TpuToPackMessage>,
     progress_receiver: shaq::spsc::Consumer<ProgressMessage>,
@@ -78,6 +82,7 @@ impl Scheduler {
         } = check_workers.ok_or(ClientHandshakeError::ProtocolViolation)?;
 
         Ok(Self {
+            state: SchedulerState::new(),
             allocator,
             tpu_receiver: tpu_to_pack,
             progress_receiver: progress_tracker,
@@ -88,7 +93,12 @@ impl Scheduler {
     }
 
     fn run_iteration(&mut self) {
+        self.handle_leader_progress();
         std::hint::spin_loop();
+    }
+
+    fn handle_leader_progress(&mut self) {
+        self.state.drain_progress(&mut self.progress_receiver);
     }
 }
 
@@ -96,7 +106,7 @@ impl Scheduler {
 ///
 /// If exit is already set, returns without connecting. Otherwise, attempts the handshake once
 /// and returns any error to the caller. Shared resources remain alive until the loop exits.
-/// The placeholder loop spins without processing queues.
+/// The loop receives leader progress updates until exit is set.
 ///
 /// The exit flag cannot interrupt an in-progress handshake. The timeout has the syscall-level
 /// semantics of [`client::connect`], rather than imposing a deadline on the entire handshake.

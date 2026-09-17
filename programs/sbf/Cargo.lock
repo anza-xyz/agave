@@ -71,6 +71,7 @@ dependencies = [
  "agave-scheduler-handshake",
  "rts-alloc",
  "shaq",
+ "solana-clock",
 ]
 
 [[package]]
