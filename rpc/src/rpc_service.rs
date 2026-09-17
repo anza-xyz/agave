@@ -871,7 +871,7 @@ mod tests {
             net::{IpAddr, Ipv4Addr},
         },
         tokio::{
-            io::{AsyncReadExt, AsyncWriteExt},
+            io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
             runtime::Runtime,
             sync::oneshot,
             time::{advance, timeout},
@@ -982,6 +982,48 @@ mod tests {
         dropped.await.unwrap();
     }
 
+    struct WriteBlockedIo {
+        inner: DuplexStream,
+        blocked: Option<oneshot::Sender<()>>,
+    }
+
+    impl AsyncRead for WriteBlockedIo {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for WriteBlockedIo {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            let result = Pin::new(&mut self.inner).poll_write(cx, buf);
+            if result.is_pending()
+                && let Some(blocked) = self.blocked.take()
+            {
+                let _ = blocked.send(());
+            }
+            result
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_flush(cx)
+        }
+
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_shutdown(cx)
+        }
+    }
+
     #[tokio::test]
     async fn test_snapshot_stream_releases_file_with_stalled_http_client() {
         let directory = get_tmp_ledger_path_auto_delete!();
@@ -991,27 +1033,19 @@ mod tests {
         file.set_len(file_size).unwrap();
         drop(file);
         let file = RpcRequestMiddleware::open_no_follow(&path).await.unwrap();
-        let (reading, read_started) = oneshot::channel();
-        let mut reading = Some(reading);
-        let mut bytes_read = 0;
-        let (stream, dropped) = DropTrackedStream::new(
-            FramedRead::new(file, BytesCodec::new())
-                .map_ok(|b| b.freeze())
-                .inspect_ok(move |chunk| {
-                    bytes_read += chunk.len();
-                    if bytes_read >= 32 * 1024
-                        && let Some(reading) = reading.take()
-                    {
-                        let _ = reading.send(());
-                    }
-                }),
-        );
+        let (stream, dropped) =
+            DropTrackedStream::new(FramedRead::new(file, BytesCodec::new()).map_ok(|b| b.freeze()));
         let body = SnapshotStream::new(stream, Duration::from_secs(3600));
         let body = Arc::new(std::sync::Mutex::new(Some(body)));
 
         // A small, bounded transport makes socket backpressure deterministic without depending
         // on platform-specific TCP buffer sizes. Hyper serves the same streaming HTTP response.
         let (server_io, mut client_io) = tokio::io::duplex(1024);
+        let (blocked, write_blocked) = oneshot::channel();
+        let server_io = WriteBlockedIo {
+            inner: server_io,
+            blocked: Some(blocked),
+        };
         let server = tokio::spawn(async move {
             hyper::server::conn::Http::new()
                 .max_buf_size(8192)
@@ -1043,7 +1077,7 @@ mod tests {
         .await
         .unwrap();
         assert!(headers.starts_with(b"HTTP/1.1 200"));
-        timeout(Duration::from_secs(5), read_started)
+        timeout(Duration::from_secs(5), write_blocked)
             .await
             .unwrap()
             .unwrap();
@@ -1051,7 +1085,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
 
         // The client remains connected and stops reading. Advance the clock only after real
-        // file I/O has produced the headers, so it cannot auto-advance during file opening.
+        // file I/O has filled the transport, so it cannot auto-advance during file opening.
         tokio::time::pause();
         advance(Duration::from_secs(3600)).await;
         timeout(Duration::from_secs(1), dropped)
