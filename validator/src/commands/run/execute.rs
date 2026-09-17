@@ -195,7 +195,7 @@ pub fn execute(
     // parsed and validated here too. Only resolution is Linux-only, so XDP
     // settings stay inactive rather than being rejected.
     #[cfg(not(target_os = "linux"))]
-    validate_config_file_without_xdp(matches)?;
+    validate_config_file_without_xdp(matches, &operation)?;
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -1526,11 +1526,19 @@ fn resolve_xdp_source_ipv4(
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-fn validate_config_file_without_xdp(matches: &ArgMatches) -> Result<(), String> {
+#[cfg(any(not(target_os = "linux"), test))]
+fn validate_config_file_without_xdp(
+    matches: &ArgMatches,
+    operation: &Operation,
+) -> Result<(), String> {
     let user_path = matches.value_of("experimental_config_file");
     let effective = config_file::load(user_path.map(Path::new))?;
-    let application = config_file::apply_cli(effective, cli_xdp_overrides(matches)?)?;
+    let overrides = cli_xdp_overrides(matches)?;
+    if *operation == Operation::Initialize {
+        info!("ledger initialization does not start XDP; skipping XDP policy validation");
+        return Ok(());
+    }
+    let application = config_file::apply_cli(effective, overrides)?;
     for warning in &application.warnings {
         warn!("{warning}");
     }
@@ -1641,7 +1649,10 @@ mod versioned_xdp_tests {
             file.path().to_str().unwrap(),
         ]);
         let binds = BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap();
-        build_xdp_config(&matches, &operation, &binds)
+        let without_xdp = validate_config_file_without_xdp(&matches, &operation);
+        let with_xdp = build_xdp_config(&matches, &operation, &binds);
+        assert_eq!(without_xdp.as_ref().err(), with_xdp.as_ref().err());
+        with_xdp
     }
 
     #[test]
