@@ -153,7 +153,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-signature",
  "solana-signer",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "solana-slot-history",
  "solana-stake-history 2.0.0",
  "solana-stake-interface",
@@ -5659,7 +5659,7 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-rent",
  "solana-sdk-ids",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "solana-slot-history",
  "solana-stake-history 2.0.0",
  "solana-stake-interface",
@@ -5739,7 +5739,7 @@ dependencies = [
  "solana-rent",
  "solana-reward-info",
  "solana-signer",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "solana-stake-interface",
  "solana-svm-transaction",
  "solana-system-interface",
@@ -5804,7 +5804,7 @@ dependencies = [
  "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
- "solana-slot-hashes",
+ "solana-slot-hashes 3.2.0",
  "wincode",
 ]
 
@@ -6361,7 +6361,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-signer-store",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "solana-slot-history",
  "solana-streamer",
  "solana-svm",
@@ -7501,7 +7501,7 @@ dependencies = [
  "solana-rent",
  "solana-sbpf",
  "solana-sdk-ids",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "solana-stable-layout",
  "solana-stake-history 2.0.0",
  "solana-svm-callback",
@@ -7920,7 +7920,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-signer-store",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "solana-slot-history",
  "solana-stake-history 2.0.0",
  "solana-stake-interface",
@@ -8224,6 +8224,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-slot-hashes"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3da667c6de47dd04fa03cd3a29f2ce046627407f0de0dc56c5d78ed1ba23785"
+dependencies = [
+ "solana-hash",
+ "wincode",
+]
+
+[[package]]
 name = "solana-slot-history"
 version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8434,7 +8444,7 @@ dependencies = [
  "solana-rent",
  "solana-sdk-ids",
  "solana-signature",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
@@ -8657,7 +8667,7 @@ dependencies = [
  "solana-rent",
  "solana-sdk-ids",
  "solana-sdk-macro",
- "solana-slot-hashes",
+ "solana-slot-hashes 3.2.0",
  "solana-slot-history",
  "solana-stake-history 1.1.0",
  "solana-sysvar-id",
@@ -9060,7 +9070,7 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-rent",
  "solana-sdk-ids",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "solana-system-interface",
  "solana-transaction-context",
  "solana-vote-interface",
