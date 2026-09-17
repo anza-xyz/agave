@@ -635,19 +635,6 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
         return Ok(warnings);
     }
     let (label, interface) = config.interfaces.iter().next().unwrap();
-    let used: BTreeSet<&str> = config
-        .named_modules()
-        .into_iter()
-        .map(|(_, module)| module.tx.interface.as_str())
-        .collect();
-    if active && used.len() > 1 {
-        let names: Vec<_> = used.iter().map(|name| format!("{name:?}")).collect();
-        return Err(format!(
-            "XDP version 1 supports one interface, but modules use {}; point every module's \
-             tx.interface at the same label",
-            names.join(", ")
-        ));
-    }
     for (name, module) in config.named_modules() {
         if module.tx.interface == *label {
             continue;
@@ -1122,7 +1109,7 @@ tx.interface = "fast"
     }
 
     #[test]
-    fn using_more_than_one_interface_is_rejected() {
+    fn module_referencing_another_interface_is_rejected() {
         let config = user(
             r#"
 [tpu.xdp]
@@ -1130,7 +1117,11 @@ tx.interface = "other"
 "#,
         );
         let error = validate_policy(&config).unwrap_err();
-        assert!(error.contains("supports one interface"), "{error}");
+        assert_eq!(
+            error,
+            "tpu.xdp.tx.interface names \"other\", which is not a declared interface; declared: \
+             \"primary\""
+        );
     }
 
     #[test]
