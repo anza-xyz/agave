@@ -776,8 +776,8 @@ pub(crate) fn resolve_runtime(
         .into_iter()
         .filter(|binding| active_ids.contains(&binding.queue))
         .collect();
-    let active_cpus: BTreeSet<_> = active_workers.iter().map(|binding| binding.cpu).collect();
-    if !active_cpus.is_empty() && active_cpus.len() == allowed_cpus.len() {
+    // Worker CPUs are unique and belong to the allowed set.
+    if active_workers.len() == allowed_cpus.len() {
         return Err(
             "XDP workers must leave at least one process CPU unreserved for the main thread"
                 .to_string(),
@@ -788,33 +788,21 @@ pub(crate) fn resolve_runtime(
         .enumerate()
         .map(|(position, binding)| (binding.queue, position))
         .collect();
-    let module_positions = |name: &str, queues: &[u32]| -> Result<_, String> {
-        let positions = queues
+    let module_positions = |queues: &[u32]| -> Box<[usize]> {
+        queues
             .iter()
             .map(|queue| {
-                positions.get(queue).copied().ok_or_else(|| {
-                    format!(
-                        "internal XDP resolution error: module {name} selected undeclared queue \
-                         {queue}"
-                    )
-                })
+                *positions
+                    .get(queue)
+                    .expect("validated selected queue must have an active worker")
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        if positions.is_empty() {
-            return Err(format!(
-                "internal XDP resolution error: module {name} selected no queues"
-            ));
-        }
-        Ok(positions.into_boxed_slice())
+            .collect()
     };
-    if active_workers.is_empty() {
-        return Err("active XDP policy selected no workers".to_string());
-    }
     let modules = Modules {
-        gossip: module_positions("gossip", &selected.gossip)?,
-        repair: module_positions("repair", &selected.repair)?,
-        tpu: module_positions("tpu", &selected.tpu)?,
-        turbine: module_positions("turbine", &selected.turbine)?,
+        gossip: module_positions(&selected.gossip),
+        repair: module_positions(&selected.repair),
+        tpu: module_positions(&selected.tpu),
+        turbine: module_positions(&selected.turbine),
     };
     Ok((
         RuntimeXdpConfig {
@@ -1023,8 +1011,8 @@ schema_version = 2
     }
 
     #[test]
-    fn dormant_queue_error_warns() {
-        let config = user(
+    fn invalid_queue_reference_warns_when_dormant_and_fails_when_active() {
+        let mut config = user(
             r#"
 [xdp]
 enabled = false
@@ -1033,6 +1021,12 @@ tx.queues = [1]
 "#,
         );
         assert!(!validate_policy(&config).unwrap().is_empty());
+        config.xdp.enabled = true;
+        let error = resolve_runtime(&config, &BTreeSet::from([8, 9]), None).unwrap_err();
+        assert!(
+            error.contains("references queue(s) 1 not declared"),
+            "{error}"
+        );
     }
 
     #[test]
