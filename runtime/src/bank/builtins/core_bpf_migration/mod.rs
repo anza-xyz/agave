@@ -139,9 +139,8 @@ impl Bank {
         // Set up the two `LoadedProgramsForTxBatch` instances, as if
         // processing a new transaction batch.
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-        let program_runtime_environment = self
-            .transaction_processor
-            .program_runtime_environment_for_epoch(self.epoch);
+        let program_runtime_environment =
+            self.create_program_runtime_environment(&self.feature_set);
 
         // Configure a dummy `InvokeContext` from the runtime's current
         // environment, as well as the two `ProgramCacheForTxBatch`
@@ -213,7 +212,7 @@ impl Bank {
             .write()
             .unwrap()
             .merge(
-                &self.transaction_processor.program_runtime_environment,
+                &program_runtime_environment,
                 self.slot,
                 &program_cache_for_tx_batch.drain_modified_entries(),
             );
@@ -798,6 +797,17 @@ pub(crate) mod tests {
                 assert_matches!(target_entry.program, ProgramCacheEntryType::DelayVisibility);
             } else {
                 assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
+
+                // The target program entry should have the environment of the
+                // new epoch.
+                let env = target_entry.program.get_environment().unwrap();
+                assert_eq!(env, &bank.transaction_processor.program_runtime_environment);
+                assert_eq!(
+                    env,
+                    &bank
+                        .transaction_processor
+                        .program_runtime_environment_for_epoch(bank.epoch()),
+                );
             }
         }
     }
