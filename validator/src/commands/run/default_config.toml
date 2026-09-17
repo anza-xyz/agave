@@ -1,13 +1,14 @@
-# Built-in validator policy, and the reference for the config file format.
-# Print it with `agave-validator --print-default-config`.
+# Built-in validator policy and reference for the config file format.
+# Print this default config with `agave-validator --print-default-config`.
 #
-# Layers: this policy, then `--config-file`, then CLI flags, each overriding the
-# previous. Unknown fields are rejected. `device` and `workers` are single
-# choices: naming either replaces the whole choice rather than merging into it.
-# A user file containing `interfaces` replaces the built-in label set; omitted
-# labels are dropped, matching labels inherit unspecified fields, and a new
-# label must define `device`, `xdp.zero_copy` and `xdp.workers`.
+# Precedence: CLI flags override the user config file, which overrides these
+# built-in defaults. Unknown fields are errors.
 #
+# User config inherits fields it does not specify. Exceptions:
+# - `device` and `workers` are replaced as complete units.
+# - Defining `interfaces` replaces the built-in interface labels. Matching labels
+#   may inherit fields; new labels must fully define `device`, `xdp.zero_copy`,
+#   and `xdp.workers`.
 # XDP transmit is Linux-only. Other platforms validate this policy, then report
 # it as inactive. schema_version must be 1; omitting it means 1.
 #
