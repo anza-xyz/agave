@@ -7344,6 +7344,120 @@ pub(crate) fn insert_complete_update_parent_slot(
     }
 }
 
+#[test_case(vec![1, 1, 1], false; "invalid shred data")]
+#[test_case(0u64.to_le_bytes().to_vec(), true; "block aborted")]
+fn test_purge_exact_recovers_malformed_update_parent_slot(
+    malformed_component: Vec<u8>,
+    expect_block_aborted: bool,
+) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let original_parent = 103;
+    let update_parent = 100;
+    let pre_update_entries = make_slot_entries_with_transactions(1);
+    let pre_update_address = pre_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
+    let pre_update_signature =
+        write_transaction_statuses_for_entries(&blockstore, slot, &pre_update_entries)[0];
+    blockstore
+        .write_transaction_memos(&pre_update_signature, slot, "memo".to_string())
+        .unwrap();
+    let post_update_entries = make_slot_entries_with_transactions(1);
+    let post_update_address = post_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
+    let post_update_signature =
+        write_transaction_statuses_for_entries(&blockstore, slot, &post_update_entries)[0];
+    blockstore
+        .write_transaction_memos(&post_update_signature, slot, "memo".to_string())
+        .unwrap();
+
+    let fec_set_size = u32::try_from(DATA_SHREDS_PER_FEC_BLOCK).unwrap();
+    let malformed_fec_set_index = fec_set_size * 2;
+    let update_parent_fec_set_index = fec_set_size * 3;
+    let post_update_fec_set_index = fec_set_size * 4;
+    let mut shreds = create_block_header_shreds(slot, original_parent, Hash::new_unique());
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        pre_update_entries,
+        fec_set_size,
+        false,
+    ));
+    shreds.extend(
+        Shredder::new(slot, original_parent, 0, 0)
+            .unwrap()
+            .make_shreds_from_data_slice(
+                &Keypair::new(),
+                &malformed_component,
+                false,
+                Hash::new_unique(),
+                malformed_fec_set_index,
+                malformed_fec_set_index,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap(),
+    );
+    shreds.extend(create_update_parent_shreds_with_shred_parent(
+        slot,
+        original_parent,
+        update_parent,
+        Hash::new_unique(),
+        update_parent_fec_set_index,
+        false,
+    ));
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        post_update_entries,
+        post_update_fec_set_index,
+        true,
+    ));
+    blockstore.insert_shreds(shreds, true).unwrap();
+
+    assert_matches!(
+        (
+            expect_block_aborted,
+            blockstore.get_slot_component_views_with_shred_info(slot, 0, true)
+        ),
+        (true, Err(BlockstoreError::BlockAborted(_)))
+            | (false, Err(BlockstoreError::InvalidShredData(_)))
+    );
+
+    blockstore
+        .purge_slots(slot, slot, PurgeType::Exact)
+        .unwrap();
+
+    for (signature, address) in [
+        (pre_update_signature, pre_update_address),
+        (post_update_signature, post_update_address),
+    ] {
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, slot)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((address, slot, 0, signature))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
 #[test]
 fn test_complete_block_skips_pre_update_parent_entries() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
