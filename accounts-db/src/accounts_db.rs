@@ -1122,8 +1122,25 @@ impl AccountsDb {
     }
 
     /// Queue every slot whose storage is worth shrinking. Returns the number of slots enqueued
-    pub(crate) fn queue_shrink_candidates_for_all_slots(&self) -> usize {
+    fn queue_shrink_candidates_for_all_slots(&self) -> usize {
         self.queue_shrink_candidates(self.all_slots_in_storage())
+    }
+
+    /// Startup work that does not have to block index generation. Called once, when the
+    /// validator starts its background services
+    pub fn finish_startup(&self) {
+        // The storages loaded from the snapshot have never been considered for shrinking
+        let (num_shrink_candidates, queue_shrink_candidates_us) =
+            measure_us!(self.queue_shrink_candidates_for_all_slots());
+        datapoint_info!(
+            "accounts_db_finish_startup",
+            (
+                "queue_shrink_candidates_us",
+                queue_shrink_candidates_us,
+                i64
+            ),
+            ("num_shrink_candidates", num_shrink_candidates, i64),
+        );
     }
 
     /// Purges each key in `removed_keys` from the enabled secondary indexes, unless the key is
