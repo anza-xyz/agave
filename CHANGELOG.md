@@ -40,6 +40,12 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* The validator now fails to start when the startup blockstore cleanup would purge a slot that
+  the blockstore has already rooted, rather than purging it and continuing. Purging a root left
+  the cached `max_root` above every slot still in the blockstore, which silently rejected all
+  incoming shreds and prevented the node from catching up. This is normally caused by a previous
+  cluster restart attempt that rooted slots before the node was restarted at a lower slot.
+
 ### CLI
 
 #### Breaking
