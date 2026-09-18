@@ -1,8 +1,8 @@
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
-        IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
-        MAX_ACCOUNTS_PER_TRANSACTION,
+        DropOnBailOut, IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
+        MAX_ACCOUNT_DATA_LEN, MAX_ACCOUNTS_PER_TRANSACTION,
         instruction::{InstructionContext, InstructionFrame},
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
         vm_addresses::{
@@ -89,7 +89,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
         number_of_top_level_instructions: usize,
-        disable_leader_bail_out: bool,
+        drop_on_bail_out: DropOnBailOut,
     ) -> Self {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
@@ -123,7 +123,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Self {
             accounts: Rc::new(TransactionAccounts::new_with_feature_flags(
                 transaction_accounts,
-                disable_leader_bail_out,
+                drop_on_bail_out,
             )),
             instruction_stack_capacity,
             instruction_trace_capacity,
@@ -154,7 +154,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_stack_capacity,
             instruction_trace_capacity,
             number_of_top_level_instructions,
-            true,
+            DropOnBailOut::Disabled,
         )
     }
 

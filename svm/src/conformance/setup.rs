@@ -29,7 +29,7 @@ use {
     solana_svm_log_collector::LogCollector,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_syscalls::create_program_runtime_environment,
-    solana_transaction_context::transaction::TransactionContext,
+    solana_transaction_context::{DropOnBailOut, transaction::TransactionContext},
     std::{cell::RefCell, rc::Rc},
 };
 
@@ -162,7 +162,7 @@ pub(crate) fn compile_transaction_context(
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
         sanitized_message.num_instructions(),
-        true,
+        DropOnBailOut::Disabled,
     );
     (sanitized_message, transaction_context)
 }

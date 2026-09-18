@@ -59,7 +59,10 @@ use {
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_svm_type_overrides::sync::{Arc, RwLock, RwLockReadGuard},
-    solana_transaction_context::transaction::{ExecutionRecord, TransactionContext},
+    solana_transaction_context::{
+        DropOnBailOut,
+        transaction::{ExecutionRecord, TransactionContext},
+    },
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{
         collections::HashSet,
@@ -1103,7 +1106,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             tx.num_instructions(),
-            !config.drop_bail_out_transactions,
+            if config.drop_bail_out_transactions {
+                DropOnBailOut::Enabled
+            } else {
+                DropOnBailOut::Disabled
+            },
         );
 
         let relax_post_exec_min_balance_check =

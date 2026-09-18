@@ -2,7 +2,8 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
+        DropOnBailOut, IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
+        MAX_ACCOUNT_DATA_LEN,
         vm_addresses::{GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_REGION_SIZE},
         vm_slice::VmSlice,
     },
@@ -238,14 +239,14 @@ pub struct TransactionAccounts {
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
     lamports_delta: Cell<i128>,
-    _disable_leader_bail_out: bool,
+    _drop_on_bail_out: DropOnBailOut,
 }
 
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl TransactionAccounts {
     pub(crate) fn new_with_feature_flags(
         accounts: Vec<KeyedAccountSharedData>,
-        disable_leader_bail_out: bool,
+        drop_on_bail_out: DropOnBailOut,
     ) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
@@ -283,13 +284,13 @@ impl TransactionAccounts {
             touched_flags,
             resize_delta: Cell::new(0),
             lamports_delta: Cell::new(0),
-            _disable_leader_bail_out: disable_leader_bail_out,
+            _drop_on_bail_out: drop_on_bail_out,
         }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new(accounts: Vec<KeyedAccountSharedData>) -> TransactionAccounts {
-        TransactionAccounts::new_with_feature_flags(accounts, true)
+        TransactionAccounts::new_with_feature_flags(accounts, DropOnBailOut::Disabled)
     }
 
     pub(crate) fn len(&self) -> usize {

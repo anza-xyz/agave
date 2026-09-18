@@ -26,7 +26,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_svm_callback::InvokeContextCallback,
-    solana_transaction_context::transaction::TransactionContext,
+    solana_transaction_context::{DropOnBailOut, transaction::TransactionContext},
     source_buffer::SourceBuffer,
     std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
     target_builtin::TargetBuiltin,
@@ -165,7 +165,7 @@ impl Bank {
                 compute_budget.max_instruction_stack_depth,
                 compute_budget.max_instruction_trace_length,
                 1,
-                true,
+                DropOnBailOut::Disabled,
             );
 
             struct MockCallback {}
