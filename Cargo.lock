@@ -497,6 +497,7 @@ dependencies = [
  "bitvec",
  "bytes",
  "crossbeam-channel",
+ "derive_more 2.1.1",
  "itertools 0.15.0",
  "log",
  "parking_lot 0.12.5",
