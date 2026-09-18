@@ -14,7 +14,7 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
-    std::{collections::HashMap, time::Instant},
+    std::{collections::HashMap, sync::Arc, time::Instant},
 };
 
 const REWARDS_CHANNEL: &str = "channel_to_rewards";
@@ -102,7 +102,7 @@ pub(super) fn send_sig_verified_batch_to_pool(
 
 pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
-    votes: HashMap<Slot, Vec<Pubkey>>,
+    votes: HashMap<Slot, Arc<Vec<Pubkey>>>,
     channel: &EvictingSender<VerifiedVotorSlotsMessage>,
     stats: &mut VoteSenderStats,
 ) {
