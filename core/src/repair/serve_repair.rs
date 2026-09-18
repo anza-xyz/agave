@@ -403,6 +403,7 @@ struct ServeRepairStats {
     dropped_requests_outbound_bandwidth: usize,
     dropped_requests_load_shed: usize,
     dropped_requests_load_shed_sigverify: usize,
+    dropped_requests_pong_budget: usize,
     dropped_requests_low_stake: usize,
     whitelisted_requests: usize,
     total_dropped_response_packets: usize,
@@ -434,6 +435,7 @@ struct ServeRepairStats {
     err_sig_verify: usize,
     err_unsigned: usize,
     err_id_mismatch: usize,
+    err_unmatched_pong: usize,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, PartialEq))]
@@ -601,6 +603,13 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
 
 const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + SIGNATURE_BYTES;
 const REPAIR_REQUEST_MIN_BYTES: usize = REPAIR_REQUEST_PONG_SERIALIZED_BYTES;
+
+/// Upper bound on Pongs admitted to decoding in one `run_listen` iteration.
+/// Legitimate Pong volume is bounded by the ping challenges this node issued, which
+/// should not be too many.
+const MAX_PONGS_PER_ITERATION: usize = 128;
+
+const MIN_RESPONSE_SIZE: usize = PACKET_DATA_SIZE + SIZE_OF_NONCE;
 
 fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStats) -> bool {
     let well_formed = packet
@@ -905,7 +914,6 @@ impl ServeRepair {
         from_addr: &SocketAddr,
         request: RepairProtocol,
         stats: &mut ServeRepairStats,
-        ping_cache: &mut PingCache,
     ) -> Option<PacketBatch> {
         let now = Instant::now();
         let (res, label) = {
@@ -979,9 +987,10 @@ impl ServeRepair {
                         (None, "AncestorHashes")
                     }
                 }
-                RepairProtocol::Pong(pong) => {
+                RepairProtocol::Pong(_) => {
+                    // The challenge was already registered in ping cache
+                    // and its signature verified in `decode_request`.
                     stats.pong += 1;
-                    ping_cache.add(pong, *from_addr, Instant::now());
                     (None, "Pong")
                 }
                 RepairProtocol::ParentAndFecSetCount {
@@ -1083,19 +1092,31 @@ impl ServeRepair {
 
     fn decode_request(
         remote_request: BytesPacket,
+        request: RepairProtocol,
         epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
+        ping_cache: &mut PingCache,
     ) -> Result<RepairRequestWithMeta> {
-        let Ok(request) = deserialize_request::<RepairProtocol>(&remote_request) else {
-            return Err(Error::from(RepairVerifyError::Malformed));
-        };
         let from_addr = remote_request.meta().socket_addr();
         if !ContactInfo::is_valid_address(&from_addr, socket_addr_space) {
             return Err(Error::from(RepairVerifyError::Malformed));
         }
-        Self::verify_signed_packet(my_id, remote_request.buffer(), &request)?;
+        match &request {
+            // Match the pong against an outstanding challenge before
+            // running a signature verification on it.
+            RepairProtocol::Pong(pong) => {
+                if !ping_cache.has_matching_ping(pong, from_addr) {
+                    return Err(Error::from(RepairVerifyError::UnmatchedPong));
+                }
+                if !pong.verify() {
+                    return Err(Error::from(RepairVerifyError::SigVerify));
+                }
+                ping_cache.add(pong, from_addr, Instant::now());
+            }
+            _ => Self::verify_signed_packet(my_id, remote_request.buffer(), &request)?,
+        }
         if request.sender() == Some(my_id) {
             error!("self repair: from_addr={from_addr} my_id={my_id} request={request:?}");
             return Err(Error::from(RepairVerifyError::SelfRepair));
@@ -1138,6 +1159,9 @@ impl ServeRepair {
             Error::RepairVerify(RepairVerifyError::Unsigned) => {
                 stats.err_unsigned += 1;
             }
+            Error::RepairVerify(RepairVerifyError::UnmatchedPong) => {
+                stats.err_unmatched_pong += 1;
+            }
             _ => {
                 debug_assert!(false, "unhandled error {error:?}");
             }
@@ -1151,20 +1175,35 @@ impl ServeRepair {
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
         mut remaining_budget_estimate: usize,
+        ping_cache: &mut PingCache,
         stats: &mut ServeRepairStats,
     ) -> Vec<RepairRequestWithMeta> {
-        const MIN_RESPONSE_SIZE: usize = PACKET_DATA_SIZE + SIZE_OF_NONCE;
-        let decode_request = |request| {
-            if remaining_budget_estimate < MIN_RESPONSE_SIZE {
+        let mut remaining_pong_budget = MAX_PONGS_PER_ITERATION;
+        let decode_request = |remote_request: BytesPacket| {
+            let Ok(request) = deserialize_request::<RepairProtocol>(&remote_request) else {
+                stats.err_malformed += 1;
+                return None;
+            };
+            // Pongs are never replied to, so they get their own budget instead
+            // of drawing on the response-size estimate.
+            if matches!(request, RepairProtocol::Pong(_)) {
+                if remaining_pong_budget == 0 {
+                    stats.dropped_requests_pong_budget += 1;
+                    return None;
+                }
+                remaining_pong_budget -= 1;
+            } else if remaining_budget_estimate < MIN_RESPONSE_SIZE {
                 stats.dropped_requests_load_shed_sigverify += 1;
                 return None;
             }
             let result = Self::decode_request(
+                remote_request,
                 request,
                 epoch_staked_nodes,
                 whitelist,
                 my_id,
                 socket_addr_space,
+                ping_cache,
             );
             match &result {
                 Ok(req) => {
@@ -1175,7 +1214,9 @@ impl ServeRepair {
                     }
                     // assuming we will reply to the request, we need to update the budget estimate
                     // some responses may be larger, but we have to be conservative here
-                    remaining_budget_estimate -= MIN_RESPONSE_SIZE;
+                    if req.request.max_response_packets() > 0 {
+                        remaining_budget_estimate -= MIN_RESPONSE_SIZE;
+                    }
                 }
                 Err(e) => {
                     Self::record_request_decode_error(e, stats);
@@ -1271,6 +1312,7 @@ impl ServeRepair {
                 &my_id,
                 &socket_addr_space,
                 effective_data_budget_estimate,
+                ping_cache,
                 stats,
             )
         };
@@ -1324,6 +1366,11 @@ impl ServeRepair {
             (
                 "dropped_requests_load_shed_sigverify",
                 stats.dropped_requests_load_shed_sigverify,
+                i64
+            ),
+            (
+                "dropped_requests_pong_budget",
+                stats.dropped_requests_pong_budget,
                 i64
             ),
             (
@@ -1401,6 +1448,7 @@ impl ServeRepair {
             ("err_sig_verify", stats.err_sig_verify, i64),
             ("err_unsigned", stats.err_unsigned, i64),
             ("err_id_mismatch", stats.err_id_mismatch, i64),
+            ("err_unmatched_pong", stats.err_unmatched_pong, i64),
         );
 
         *stats = ServeRepairStats::default();
@@ -1469,10 +1517,12 @@ impl ServeRepair {
             | RepairProtocol::LegacyAncestorHashes => {
                 return Err(Error::from(RepairVerifyError::Unsigned));
             }
-            RepairProtocol::Pong(pong) => {
-                if !pong.verify() {
-                    return Err(Error::from(RepairVerifyError::SigVerify));
-                }
+            RepairProtocol::Pong(_) => {
+                debug_assert!(
+                    false,
+                    "Pong is correlated and verified in decode_request, not here"
+                );
+                return Err(Error::from(RepairVerifyError::SigVerify));
             }
             RepairProtocol::WindowIndex { header, .. }
             | RepairProtocol::HighestWindowIndex { header, .. }
@@ -1616,8 +1666,7 @@ impl ServeRepair {
                 }
             }
             stats.processed += 1;
-            let Some(rsp) = self.handle_repair(recycler, &from_addr, request, stats, ping_cache)
-            else {
+            let Some(rsp) = self.handle_repair(recycler, &from_addr, request, stats) else {
                 data_budget.add_tokens(max_response_cost as u64);
                 continue;
             };
@@ -3403,5 +3452,199 @@ mod tests {
                 fec_set_proof: shortened_proof,
             })
         );
+    }
+
+    fn ping_cache_for_tests() -> PingCache {
+        PingCache::new(
+            REPAIR_PING_CACHE_TTL,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            REPAIR_PING_CACHE_CAPACITY,
+        )
+    }
+
+    /// Drives `check_ping_cache` to mint a real challenge for `remote_keypair`
+    /// at `from_addr`, and returns the Pong answering it.
+    fn mint_pong(
+        ping_cache: &mut PingCache,
+        identity_keypair: &Keypair,
+        remote_keypair: &Keypair,
+        from_addr: &SocketAddr,
+    ) -> Pong {
+        let request = RepairProtocol::WindowIndex {
+            header: RepairRequestHeader::new(
+                remote_keypair.pubkey(),
+                identity_keypair.pubkey(),
+                timestamp(),
+                0,
+            ),
+            slot: 1,
+            shred_index: 0,
+        };
+        let (check, ping_packet) =
+            ServeRepair::check_ping_cache(ping_cache, &request, from_addr, identity_keypair);
+        assert!(!check, "node must be unverified before the handshake");
+        let ping_packet = ping_packet.expect("an unverified peer must be challenged");
+        let RepairResponse::Ping(ping) = deserialize_slice_from_packet(&ping_packet, ..).unwrap();
+        Pong::new(&ping, remote_keypair)
+    }
+
+    fn pong_packet(pong: Pong, from_addr: &SocketAddr) -> BytesPacket {
+        let packet = packet_from_data(Some(from_addr), RepairProtocol::Pong(pong)).unwrap();
+        make_remote_request(&packet)
+    }
+
+    fn signed_window_index_packet(
+        identity_keypair: &Keypair,
+        remote_keypair: &Keypair,
+        from_addr: &SocketAddr,
+    ) -> BytesPacket {
+        let request = RepairProtocol::WindowIndex {
+            header: RepairRequestHeader::new(
+                remote_keypair.pubkey(),
+                identity_keypair.pubkey(),
+                timestamp(),
+                42,
+            ),
+            slot: 9,
+            shred_index: 5,
+        };
+        let bytes = ServeRepair::repair_proto_to_bytes(&request, remote_keypair).unwrap();
+        BytesPacket::from_bytes(Some(from_addr), bytes)
+    }
+
+    #[test]
+    fn test_unmatched_pong_dropped_before_sigverify() {
+        let mut rng = rand::rng();
+        let identity_keypair = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
+        let mut ping_cache = ping_cache_for_tests();
+
+        // Correctly self-signed, but answers no challenge this node issued.
+        let pong = Pong::new(&Ping::new(rng.random(), &remote_keypair), &remote_keypair);
+        assert!(pong.verify());
+        let packet = pong_packet(pong, &from_addr);
+
+        let mut stats = ServeRepairStats::default();
+        let decoded = ServeRepair::decode_requests(
+            vec![packet],
+            &None,
+            &HashSet::default(),
+            &identity_keypair.pubkey(),
+            &SocketAddrSpace::Unspecified,
+            usize::MAX,
+            &mut ping_cache,
+            &mut stats,
+        );
+        assert!(decoded.is_empty(), "unmatched pong must not be handled");
+        assert_eq!(stats.err_unmatched_pong, 1);
+        assert_eq!(stats.err_sig_verify, 0, "no signature may be verified");
+    }
+
+    #[test]
+    fn test_matched_pong_is_verified_and_recorded() {
+        let mut rng = rand::rng();
+        let identity_keypair = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
+        let mut ping_cache = ping_cache_for_tests();
+        let remote_node = (remote_keypair.pubkey(), from_addr);
+
+        let pong = mint_pong(
+            &mut ping_cache,
+            &identity_keypair,
+            &remote_keypair,
+            &from_addr,
+        );
+        let mut stats = ServeRepairStats::default();
+        let decoded = ServeRepair::decode_requests(
+            vec![pong_packet(pong, &from_addr)],
+            &None,
+            &HashSet::default(),
+            &identity_keypair.pubkey(),
+            &SocketAddrSpace::Unspecified,
+            usize::MAX,
+            &mut ping_cache,
+            &mut stats,
+        );
+        assert_eq!(decoded.len(), 1);
+        assert!(matches!(decoded[0].request, RepairProtocol::Pong(_)));
+        assert_eq!(stats.err_unmatched_pong, 0);
+        assert_eq!(stats.err_sig_verify, 0);
+
+        let (check, _) = ping_cache.check(&mut rng, &identity_keypair, Instant::now(), remote_node);
+        assert!(check, "the peer must now be a verified node");
+    }
+
+    #[test]
+    fn test_pong_rate_cap() {
+        let mut rng = rand::rng();
+        let identity_keypair = Keypair::new();
+        let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
+        let mut ping_cache = ping_cache_for_tests();
+
+        const EXCESS: usize = 5;
+        let packets = (0..MAX_PONGS_PER_ITERATION + EXCESS)
+            .map(|_| {
+                let keypair = Keypair::new();
+                let pong = Pong::new(&Ping::new(rng.random(), &keypair), &keypair);
+                pong_packet(pong, &from_addr)
+            })
+            .collect();
+
+        let mut stats = ServeRepairStats::default();
+        let decoded = ServeRepair::decode_requests(
+            packets,
+            &None,
+            &HashSet::default(),
+            &identity_keypair.pubkey(),
+            &SocketAddrSpace::Unspecified,
+            usize::MAX,
+            &mut ping_cache,
+            &mut stats,
+        );
+        assert!(decoded.is_empty());
+        assert_eq!(stats.dropped_requests_pong_budget, EXCESS);
+        assert_eq!(stats.err_unmatched_pong, MAX_PONGS_PER_ITERATION);
+    }
+
+    #[test]
+    fn test_pong_does_not_consume_response_estimate() {
+        let identity_keypair = Keypair::new();
+        let pong_keypair = Keypair::new();
+        let requester_keypair = Keypair::new();
+        let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
+        let mut ping_cache = ping_cache_for_tests();
+
+        let pong = mint_pong(
+            &mut ping_cache,
+            &identity_keypair,
+            &pong_keypair,
+            &from_addr,
+        );
+        let requests = vec![
+            pong_packet(pong, &from_addr),
+            signed_window_index_packet(&identity_keypair, &requester_keypair, &from_addr),
+        ];
+
+        // Enough estimate for exactly one response. The Pong produces none, so
+        // the window index request must still fit.
+        let mut stats = ServeRepairStats::default();
+        let decoded = ServeRepair::decode_requests(
+            requests,
+            &None,
+            &HashSet::default(),
+            &identity_keypair.pubkey(),
+            &SocketAddrSpace::Unspecified,
+            MIN_RESPONSE_SIZE,
+            &mut ping_cache,
+            &mut stats,
+        );
+        assert_eq!(decoded.len(), 2);
+        assert!(matches!(
+            decoded[1].request,
+            RepairProtocol::WindowIndex { .. }
+        ));
+        assert_eq!(stats.dropped_requests_load_shed_sigverify, 0);
     }
 }

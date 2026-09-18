@@ -183,24 +183,35 @@ impl<const N: usize> PingCache<N> {
         }
     }
 
-    /// Checks if the pong hash matches a ping message sent out previously.
-    /// If so records current timestamp for the remote node and returns true.
-    /// Note: Does not verify the signature.
-    pub fn add(&mut self, pong: &Pong, socket: SocketAddr, now: Instant) -> bool {
+    /// Index into `self.pings` of the outstanding challenge this pong answers.
+    fn matching_ping_index(&self, pong: &Pong, socket: SocketAddr) -> Option<usize> {
         let remote_node = (pong.pubkey(), socket);
         // We can not just pop an entry from self.pings based on remote_node
         // contents - that value is attacker controlled and could invalidate an
         // in-flight ping.
-        let Some((index, _, (_timeout, hash))) = self.pings.get_full(&remote_node) else {
+        let (index, _, (_timeout, hash)) = self.pings.get_full(&remote_node)?;
+        // check only hash, a late Pong is still perfectly valid.
+        (*hash == pong.hash).then_some(index)
+    }
+
+    /// Returns true if this pong answers a ping this node has outstanding.
+    /// Does NOT verify the signature, caller should verify sender signature
+    /// before fully confirming the Pong.
+    pub fn has_matching_ping(&self, pong: &Pong, socket: SocketAddr) -> bool {
+        self.matching_ping_index(pong, socket).is_some()
+    }
+
+    /// Checks if the pong hash matches a ping message sent out previously.
+    /// If found, it marks remote node as verified at current timestamp and returns true.
+    /// Returns false iff pong hash is not found in the ping cache.
+    /// Note: Does not verify the signature. Caller MUST have called `pong.verify()` to
+    /// confirm sender's identity first.
+    pub fn add(&mut self, pong: &Pong, socket: SocketAddr, now: Instant) -> bool {
+        let Some(index) = self.matching_ping_index(pong, socket) else {
             return false;
         };
-        // check only hash, a late Pong is still perfectly valid.
-        if *hash != pong.hash {
-            return false;
-        }
-        // at this point we are certain the pong is valid.
         self.pings.swap_remove_index(index);
-        self.pongs.put(remote_node, now);
+        self.pongs.put((pong.pubkey(), socket), now);
         if let Some(sent_time) = self.ping_times.pop(&socket.ip())
             && should_report_message_signature(
                 pong.signature(),
@@ -590,6 +601,69 @@ mod tests {
             cap,
             "Net size unchanged: one evicted, one inserted"
         );
+    }
+
+    #[test]
+    fn test_add_consumes_challenge_but_has_matching_ping_does_not() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let now = Instant::now();
+        let mut cache = PingCache::<32>::new(
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            /*cap=*/ 1000,
+        );
+        let socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 10, 10, 10), 8000));
+        let keypair = Keypair::new();
+        let node = (keypair.pubkey(), socket);
+
+        let stray = Pong::new(&Ping::<32>::new(rng.random(), &keypair), &keypair);
+        assert!(!cache.has_matching_ping(&stray, socket));
+        assert!(!cache.add(&stray, socket, now));
+        assert!(
+            cache.pongs.get(&node).is_none(),
+            "a pong answering no issued challenge must not verify the node"
+        );
+
+        let (check, ping) = cache.check(&mut rng, &this_node, now, node);
+        assert!(!check);
+        let pong = Pong::new(&ping.expect("first check must issue a ping"), &keypair);
+        assert_eq!(cache.pings.len(), 1);
+
+        let other_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(12, 12, 12, 12), 8001));
+        assert!(
+            !cache.add(&pong, other_socket, now),
+            "the pong must only match the socket it was challenged on"
+        );
+        assert_eq!(
+            cache.pings.len(),
+            1,
+            "a miss must not consume the challenge"
+        );
+
+        assert!(cache.has_matching_ping(&pong, socket));
+        assert_eq!(
+            cache.pings.len(),
+            1,
+            "a peek must leave the challenge outstanding for the verified pong"
+        );
+        assert!(
+            cache.pongs.get(&node).is_none(),
+            "node must stay unverified until add is called"
+        );
+
+        assert!(cache.add(&pong, socket, now));
+        assert_eq!(cache.pings.len(), 0, "matching ping must be consumed");
+        assert!(
+            cache.check(&mut rng, &this_node, now, node).0,
+            "add must mark the node verified"
+        );
+
+        assert!(
+            !cache.has_matching_ping(&pong, socket),
+            "the consumed challenge must not match a replay"
+        );
+        assert!(!cache.add(&pong, socket, now));
     }
 
     #[test]
