@@ -11,7 +11,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
-    std::{collections::BTreeMap, num::NonZero},
+    std::{collections::HashMap, num::NonZero},
 };
 
 #[derive(Debug)]
@@ -20,7 +20,7 @@ pub(crate) struct SlotStakeCounters {
     total_stake: NonZero<Stake>,
     skip_total: Stake,
     notarize_total: Stake,
-    notarize_entry_total: BTreeMap<Hash, Stake>,
+    notarize_entry_total: HashMap<Hash, Stake>,
     top_notarized_stake: Stake,
     safe_to_notar_sent: Vec<Hash>,
     safe_to_skip_sent: bool,
@@ -33,7 +33,7 @@ impl SlotStakeCounters {
             total_stake,
             skip_total: 0,
             notarize_total: 0,
-            notarize_entry_total: BTreeMap::new(),
+            notarize_entry_total: HashMap::new(),
             top_notarized_stake: 0,
             safe_to_notar_sent: vec![],
             safe_to_skip_sent: false,
