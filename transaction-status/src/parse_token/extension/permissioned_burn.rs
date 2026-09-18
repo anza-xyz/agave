@@ -115,7 +115,15 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(2) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -125,7 +133,15 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -135,7 +151,15 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             {
                 map.insert(
                     "ciphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -145,7 +169,15 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -153,7 +185,15 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             if offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "permissionedBurnAuthority".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }

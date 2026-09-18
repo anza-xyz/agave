@@ -74,12 +74,28 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 if rotate_supply_data.proof_instruction_offset == 0 {
                     map.insert(
                         "proofContextStateAccount".to_string(),
-                        json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                        json!(
+                            account_key(
+                                account_keys,
+                                account_indexes,
+                                offset,
+                                ParsableProgram::SplToken
+                            )?
+                            .to_string()
+                        ),
                     );
                 } else {
                     map.insert(
                         "instructionsSysvar".to_string(),
-                        json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                        json!(
+                            account_key(
+                                account_keys,
+                                account_indexes,
+                                offset,
+                                ParsableProgram::SplToken
+                            )?
+                            .to_string()
+                        ),
                     );
                 }
             }
@@ -121,7 +137,15 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -131,7 +155,15 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -140,7 +172,15 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "ciphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -149,7 +189,15 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -191,7 +239,15 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -201,7 +257,15 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -210,7 +274,15 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "ciphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
@@ -219,7 +291,15 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(
+                            account_keys,
+                            account_indexes,
+                            offset,
+                            ParsableProgram::SplToken
+                        )?
+                        .to_string()
+                    ),
                 );
                 offset += 1;
             }
