@@ -1,5 +1,5 @@
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
     arc_swap::ArcSwap,
     log::*,
@@ -9,7 +9,7 @@ use {
 };
 
 pub struct SlotStatusNotifierImpl {
-    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
 }
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
@@ -43,17 +43,17 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
 }
 
 impl SlotStatusNotifierImpl {
-    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginHost>>) -> Self {
         Self { plugin_manager }
     }
 
     pub fn notify_slot_status(&self, slot: Slot, parent: Option<Slot>, slot_status: SlotStatus) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             match plugin.update_slot_status(slot, parent, &slot_status) {
                 Err(err) => {
                     error!(
@@ -82,11 +82,11 @@ impl SlotStatusNotifierImpl {
         bank_id: BankId,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             match plugin.update_bank_status(slot, parent, &slot_status, bank_id) {
                 Err(err) => {
                     error!(
@@ -112,7 +112,7 @@ impl SlotStatusNotifierImpl {
 mod tests {
     use {
         super::*,
-        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_host::{GeyserPluginHost, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
         arc_swap::ArcSwap,
         libloading::Library,
@@ -120,15 +120,30 @@ mod tests {
     };
 
     type SlotStatusUpdate = (Slot, Option<Slot>, SlotStatus, BankId);
+    type SlotUpdate = (Slot, Option<Slot>, SlotStatus);
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     struct TestSlotStatusPlugin {
         updates: Arc<Mutex<Vec<SlotStatusUpdate>>>,
+        slot_updates: Arc<Mutex<Vec<SlotUpdate>>>,
     }
 
     impl GeyserPlugin for TestSlotStatusPlugin {
         fn name(&self) -> &'static str {
             "test-slot-status-plugin"
+        }
+
+        fn update_slot_status(
+            &self,
+            slot: Slot,
+            parent: Option<Slot>,
+            status: &SlotStatus,
+        ) -> Result<()> {
+            self.slot_updates
+                .lock()
+                .unwrap()
+                .push((slot, parent, status.clone()));
+            Ok(())
         }
 
         fn update_bank_status(
@@ -160,9 +175,12 @@ mod tests {
     }
 
     fn create_notifier(updates: Arc<Mutex<Vec<SlotStatusUpdate>>>) -> SlotStatusNotifierImpl {
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded_test_plugin(TestSlotStatusPlugin { updates })],
-        })));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![loaded_test_plugin(TestSlotStatusPlugin {
+                updates,
+                ..TestSlotStatusPlugin::default()
+            })],
+        ))));
         SlotStatusNotifierImpl::new(plugin_manager)
     }
 
@@ -179,6 +197,28 @@ mod tests {
             vec![
                 (42, Some(41), SlotStatus::CreatedBank, 9),
                 (42, Some(41), SlotStatus::Processed, 9),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_notify_slot_lifecycle() {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let manager =
+            GeyserPluginHost::from_plugins(vec![loaded_test_plugin(TestSlotStatusPlugin {
+                slot_updates: Arc::clone(&updates),
+                ..TestSlotStatusPlugin::default()
+            })]);
+        let notifier = SlotStatusNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)));
+        notifier.notify_first_shred_received(42);
+        notifier.notify_completed(42);
+        notifier.notify_slot_dead(43, 42, "dead fork".to_owned());
+        assert_eq!(
+            *updates.lock().unwrap(),
+            [
+                (42, None, SlotStatus::FirstShredReceived),
+                (42, None, SlotStatus::Completed),
+                (43, Some(42), SlotStatus::Dead("dead fork".to_owned())),
             ]
         );
     }
