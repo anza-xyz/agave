@@ -309,7 +309,7 @@ impl TransactionStatusService {
                         TransactionHistoryPurgeInput::SwitchBank => {
                             blockstore.purge_transaction_history_for_switch_bank_slot_exact(slot)
                         }
-                        TransactionHistoryPurgeInput::Bcl(transactions) => blockstore
+                        TransactionHistoryPurgeInput::Leader(transactions) => blockstore
                             .purge_transaction_history_for_leader_slot_exact(
                                 slot,
                                 transactions.as_slice(),

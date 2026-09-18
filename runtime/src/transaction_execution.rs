@@ -62,7 +62,7 @@ pub enum TransactionStatusMessage {
 pub enum TransactionHistoryPurgeInput {
     ReplayStage,
     SwitchBank,
-    Bcl(Arc<Vec<VersionedTransaction>>),
+    Leader(Arc<Vec<VersionedTransaction>>),
 }
 
 /// The validator path that requested transaction-history cleanup for a slot.

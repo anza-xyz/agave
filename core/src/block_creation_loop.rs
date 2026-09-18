@@ -1032,7 +1032,7 @@ fn handle_parent_ready(
             .enqueue_purge_transaction_history_for_slot(
                 slot,
                 TransactionHistoryPurgeSource::LeaderWindow,
-                TransactionHistoryPurgeInput::Bcl(Arc::clone(&accumulated_txs)),
+                TransactionHistoryPurgeInput::Leader(Arc::clone(&accumulated_txs)),
             )
             .map_err(|err| PohRecorderError::PurgeTransactionHistory(slot, err))?;
     }
@@ -2115,8 +2115,8 @@ mod tests {
         let (purge_slot, purge_source, purge_input) = purge_response_thread.join().unwrap();
         assert_eq!(purge_slot, leader_slot);
         assert_eq!(purge_source, TransactionHistoryPurgeSource::LeaderWindow);
-        let TransactionHistoryPurgeInput::Bcl(purge_transactions) = purge_input else {
-            panic!("expected BCL transactions in purge request");
+        let TransactionHistoryPurgeInput::Leader(purge_transactions) = purge_input else {
+            panic!("expected leader transactions in purge request");
         };
         assert_eq!(
             purge_transactions.as_slice(),

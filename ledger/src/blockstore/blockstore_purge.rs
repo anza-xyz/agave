@@ -596,7 +596,7 @@ impl Blockstore {
         Ok(stats)
     }
 
-    /// Removes transaction history for the ordered transactions BCL recorded
+    /// Removes transaction history for the ordered transactions the leader recorded
     /// before producing an UpdateParent marker.
     pub fn purge_transaction_history_for_leader_slot_exact(
         &self,
@@ -1344,7 +1344,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_purge_transaction_history_exact_bcl_uses_transactions() {
+    fn test_purge_transaction_history_exact_leader_uses_transactions() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let slot = 42;
