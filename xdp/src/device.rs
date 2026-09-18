@@ -6,7 +6,7 @@ use {
     },
     libc::{
         AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, SYS_ioctl,
-        ifreq, mmap, munmap, socket, syscall, xdp_ring_offset,
+        XDP_RING_NEED_WAKEUP, ifreq, mmap, munmap, sendto, socket, syscall, xdp_ring_offset,
     },
     std::{
         ffi::{CStr, CString, c_char},
@@ -393,7 +393,7 @@ pub struct RxFillRing<F: Frame> {
     mmap: RingMmap<u64>,
     producer: RingProducer,
     size: u32,
-    _fd: RawFd,
+    fd: RawFd,
     _frame: PhantomData<F>,
 }
 
@@ -404,7 +404,7 @@ impl<F: Frame> RxFillRing<F> {
             producer: RingProducer::new(mmap.producer, mmap.consumer, size),
             mmap,
             size,
-            _fd: fd,
+            fd,
             _frame: PhantomData,
         }
     }
@@ -429,6 +429,18 @@ impl<F: Frame> RxFillRing<F> {
 
     pub fn sync(&mut self, commit: bool) {
         self.producer.sync(commit);
+    }
+
+    pub fn needs_wakeup(&self) -> bool {
+        unsafe { (*self.mmap.flags).load(Ordering::Relaxed) & XDP_RING_NEED_WAKEUP != 0 }
+    }
+
+    pub fn wake(&self) -> Result<u64, io::Error> {
+        let result = unsafe { sendto(self.fd, ptr::null(), 0, libc::MSG_DONTWAIT, ptr::null(), 0) };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(result as u64)
     }
 }
 
