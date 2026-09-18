@@ -1142,7 +1142,8 @@ mod tests {
         votes: Vec<Transaction>,
         sharable_banks: &SharableBanks,
     ) -> (Vec<Transaction>, Vec<PacketBatch>) {
-        let (worker_sender, _worker_receiver) = bounded(1024);
+        let (worker_sender, _worker_receiver) =
+            agave_wake_channel::bounded(1024, Arc::new(agave_wake_channel::WakeGroup::default()));
         let (verified_vote_sender, verified_vote_receiver) = bounded(1024);
         let mut gossip_sigverify_handle =
             GossipSigVerifyHandle::new_for_tests(worker_sender, verified_vote_receiver);

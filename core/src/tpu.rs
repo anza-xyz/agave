@@ -26,6 +26,7 @@ use {
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::VerifiedVotorSlotsMessage,
+    agave_wake_channel::WakeGroup,
     agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded},
     solana_clock::Slot,
@@ -174,8 +175,13 @@ impl Tpu {
             vote_forwarding_client: vote_forwarding_client_socket,
         } = sockets;
 
-        let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
-        let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
+        // Both sigverify lanes share one wake group so every worker can wait on either lane
+        // without crossbeam's select!; the gossip lane joins the group inside SigVerifyStage.
+        let sigverify_wake_group = Arc::new(WakeGroup::default());
+        let (packet_sender, packet_receiver) =
+            agave_wake_channel::bounded(TPU_CHANNEL_SIZE, sigverify_wake_group.clone());
+        let (vote_packet_sender, vote_packet_receiver) =
+            agave_wake_channel::bounded(TPU_VOTE_CHANNEL_SIZE, sigverify_wake_group);
         let evicting_vote_sender =
             EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
         let (forwarded_packet_sender, forwarded_packet_receiver) =

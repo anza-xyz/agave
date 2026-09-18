@@ -12,6 +12,7 @@ use {
         },
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
+    agave_wake_channel::Receiver as LaneReceiver,
     core::time::Duration,
     crossbeam_channel::{Receiver, Sender, unbounded},
     solana_perf::{deduper::Deduper, packet::PacketBatch},
@@ -146,9 +147,13 @@ impl SigVerifierStats {
 }
 
 impl SigVerifyStage {
+    /// Both packet receivers must share one wake group, dedicated to this stage's workers. The
+    /// stage adds its gossip lane to that group, and every worker polls all three lanes.
+    ///
+    /// Panics if the packet receivers belong to different wake groups.
     pub fn new(
-        packet_receiver: Receiver<PacketBatch>,
-        vote_packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: LaneReceiver<PacketBatch>,
+        vote_packet_receiver: LaneReceiver<PacketBatch>,
         non_vote_sender: BankingPacketSender,
         tpu_vote_sender: BankingPacketSender,
         forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
@@ -305,7 +310,7 @@ impl Drop for SigVerifyStage {
 impl GossipSigVerifyHandle {
     #[cfg(test)]
     pub(crate) fn new_for_tests(
-        worker_sender: Sender<crate::sigverify::GossipVerifyTask>,
+        worker_sender: agave_wake_channel::Sender<crate::sigverify::GossipVerifyTask>,
         verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
     ) -> Self {
         Self {
@@ -353,6 +358,7 @@ mod tests {
     use {
         super::*,
         crate::banking_trace::BankingTracer,
+        agave_wake_channel::WakeGroup,
         crossbeam_channel::bounded,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -413,8 +419,9 @@ mod tests {
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = bounded(1024);
-        let (vote_packet_s, vote_packet_r) = bounded(1024);
+        let wake_group = Arc::new(WakeGroup::default());
+        let (packet_s, packet_r) = agave_wake_channel::bounded(1024, wake_group.clone());
+        let (vote_packet_s, vote_packet_r) = agave_wake_channel::bounded(1024, wake_group);
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
@@ -479,8 +486,9 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = bounded(1024);
-        let (vote_packet_s, vote_packet_r) = bounded(1024);
+        let wake_group = Arc::new(WakeGroup::default());
+        let (packet_s, packet_r) = agave_wake_channel::bounded(1024, wake_group.clone());
+        let (vote_packet_s, vote_packet_r) = agave_wake_channel::bounded(1024, wake_group);
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
@@ -524,5 +532,47 @@ mod tests {
         drop(vote_packet_s);
         drop(gossip_sigverify_handle);
         stage.join().unwrap();
+    }
+
+    #[test]
+    fn test_sigverify_stage_idle_shutdown_with_live_senders() {
+        let (_, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
+        let wake_group = Arc::new(WakeGroup::default());
+        let (packet_sender, packet_receiver) = agave_wake_channel::bounded(4, wake_group.clone());
+        let (vote_sender, vote_receiver) = agave_wake_channel::bounded(4, wake_group.clone());
+        let (verified_sender, _verified_receiver) = BankingTracer::channel_for_test();
+        let (verified_vote_sender, _verified_vote_receiver) = BankingTracer::channel_for_test();
+        let (forward_sender, _forward_receiver) = bounded(4);
+        let (stage, gossip_handle) = SigVerifyStage::new(
+            packet_receiver,
+            vote_receiver,
+            verified_sender,
+            verified_vote_sender,
+            forward_sender,
+            NonZeroUsize::new(4).unwrap(),
+            false,
+            bank_forks.read().unwrap().sharable_banks(),
+            None,
+        );
+
+        // Give all workers time to exhaust their backoff and sleep on the empty lanes.
+        thread::sleep(Duration::from_millis(100));
+        let (done_sender, done_receiver) = bounded(1);
+        let join_handle = thread::spawn(move || {
+            let _ = done_sender.send(stage.join());
+        });
+        let result = done_receiver.recv_timeout(Duration::from_secs(5));
+
+        // Keep every producer alive until after the deadline: disconnect must not mask a missing
+        // wake in the pool's Drop. On failure, unblock the join thread before failing the test.
+        if result.is_err() {
+            wake_group.wake_all();
+        }
+        drop((packet_sender, vote_sender, gossip_handle));
+        result
+            .expect("idle sigverify workers did not wake for shutdown")
+            .unwrap();
+        join_handle.join().unwrap();
     }
 }
