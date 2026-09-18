@@ -68,12 +68,25 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
         )
     };
 
-    vec![
-        Arg::with_name("rpc_pubsub_enable_block_subscription")
-            .long("rpc-pubsub-enable-block-subscription")
+    let rpc_pubsub_enable_block_sub_value = Arg::with_name("rpc_pubsub_enable_block_subscription")
+        .long("rpc-pubsub-enable-block-subscription");
+
+    // enable_rpc_transaction_history is on by default in the configs
+    // for test_validator, while required by agave_validator if
+    // rpc_pubsub_enable_block_subscription is passed
+    let rpc_pubsub_enable_block_sub_value = if !test_validator {
+        rpc_pubsub_enable_block_sub_value
             .requires("enable_rpc_transaction_history")
             .takes_value(false)
-            .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
+            .help("Enable the unstable RPC PubSub `blockSubscribe` subscription")
+    } else {
+        rpc_pubsub_enable_block_sub_value
+            .takes_value(false)
+            .help("Enable the unstable RPC PubSub `blockSubscribe` subscription")
+    };
+
+    vec![
+        rpc_pubsub_enable_block_sub_value,
         Arg::with_name("rpc_pubsub_enable_vote_subscription")
             .long("rpc-pubsub-enable-vote-subscription")
             .takes_value(false)
