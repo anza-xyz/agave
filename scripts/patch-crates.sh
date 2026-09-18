@@ -26,7 +26,6 @@ update_solana_dependencies() {
     solana-entry
     solana-faucet
     solana-fee
-    agave-geyser-plugin-interface
     solana-geyser-plugin-manager
     solana-gossip
     solana-lattice-hash
@@ -110,7 +109,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-entry entry")
   crates_map+=("solana-faucet faucet")
   crates_map+=("solana-fee fee")
-  crates_map+=("agave-geyser-plugin-interface geyser-plugin-interface")
   crates_map+=("solana-geyser-plugin-manager geyser-plugin-manager")
   crates_map+=("solana-gossip gossip")
   crates_map+=("solana-lattice-hash lattice-hash")
