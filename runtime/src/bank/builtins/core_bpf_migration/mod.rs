@@ -83,7 +83,7 @@ impl Bank {
         let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
         if let UpgradeableLoaderState::Buffer {
             authority_address: buffer_authority,
-        } = bincode::deserialize(&source.buffer_account.data()[..buffer_metadata_size])?
+        } = wincode::deserialize(&source.buffer_account.data()[..buffer_metadata_size])?
         {
             if let Some(provided_authority) = upgrade_authority_address
                 && upgrade_authority_address != buffer_authority
@@ -723,7 +723,7 @@ pub(crate) mod tests {
             // Program account has the correct state, with a pointer to its program
             // data address.
             let program_account_state: UpgradeableLoaderState =
-                bincode::deserialize(program_account.data()).unwrap();
+                wincode::deserialize(program_account.data()).unwrap();
             assert_eq!(
                 program_account_state,
                 UpgradeableLoaderState::Program {
@@ -742,7 +742,7 @@ pub(crate) mod tests {
             // The slot should be the slot it was migrated at.
             let programdata_metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
             let program_data_account_state_metadata: UpgradeableLoaderState =
-                bincode::deserialize(&program_data_account.data()[..programdata_metadata_size])
+                wincode::deserialize(&program_data_account.data()[..programdata_metadata_size])
                     .unwrap();
             assert_eq!(
                 program_data_account_state_metadata,
@@ -1140,7 +1140,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&builtin_id);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            bincode::deserialize(program_data_account.data()).unwrap();
+            wincode::deserialize(program_data_account.data()).unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -1159,7 +1159,7 @@ pub(crate) mod tests {
         // up the mock Core BPF program and ensure it exists as configured.
         let programdata_address = get_program_data_address(program_address);
         let program_account = {
-            let data = bincode::serialize(&UpgradeableLoaderState::Program {
+            let data = wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address,
             })
             .unwrap();
@@ -1315,7 +1315,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&program_address);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            bincode::deserialize(program_data_account.data()).unwrap();
+            wincode::deserialize(program_data_account.data()).unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -1911,7 +1911,7 @@ pub(crate) mod tests {
                 &bpf_loader_upgradeable::id()
             );
             assert_eq!(
-                bincode::deserialize::<UpgradeableLoaderState>(
+                wincode::deserialize::<UpgradeableLoaderState>(
                     fetched_builtin_program_account.data()
                 )
                 .unwrap(),
@@ -1928,7 +1928,7 @@ pub(crate) mod tests {
                 &bpf_loader_upgradeable::id()
             );
             assert_eq!(
-                bincode::deserialize::<UpgradeableLoaderState>(
+                wincode::deserialize::<UpgradeableLoaderState>(
                     &fetched_builtin_program_data_account.data()[..program_data_metadata_size]
                 )
                 .unwrap(),

@@ -183,7 +183,7 @@ impl<'a> SnapshotMinimizer<'a> {
             .filter_map(|account| {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = bincode::deserialize(account.data())
+                }) = wincode::deserialize(account.data())
                 {
                     Some(programdata_address)
                 } else {

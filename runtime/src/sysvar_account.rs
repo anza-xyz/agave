@@ -60,25 +60,6 @@ where
     account
 }
 
-pub(crate) fn create_account_with_bincode<T>(
-    sysvar: &T,
-    fields: InheritableAccountFields,
-) -> AccountSharedData
-where
-    T: serde::Serialize + SysvarId,
-{
-    let serialized_len =
-        bincode::serialized_size(sysvar).expect("failed to get serialized sysvar size") as usize;
-    let (lamports, rent_epoch) = fields;
-    let mut account = new_account(
-        lamports,
-        rent_epoch,
-        required_data_len(&T::id(), serialized_len),
-    );
-    bincode::serialize_into(account.data_as_mut_slice(), sysvar).unwrap();
-    account
-}
-
 pub(crate) fn from_account<T>(account: &AccountSharedData) -> Option<T>
 where
     T: wincode::DeserializeOwned<Dst = T> + SysvarId,

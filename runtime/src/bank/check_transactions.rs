@@ -518,7 +518,7 @@ mod tests {
         // an advance-nonce instruction whose nonce account is passed as read-only
         let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
         #[allow(deprecated)]
-        let nonce_instruction = Instruction::new_with_bincode(
+        let nonce_instruction = Instruction::new_with_wincode(
             system_program::id(),
             &SystemInstruction::AdvanceNonceAccount,
             vec![

@@ -6773,9 +6773,6 @@ name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "smpl_jwt"
@@ -9693,6 +9690,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.20",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -10121,7 +10119,6 @@ dependencies = [
  "arrayref",
  "assert_matches",
  "base64 0.23.1",
- "bincode",
  "bitvec",
  "bytemuck",
  "bytes",
@@ -10146,7 +10143,6 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
- "serde_with",
  "shuttle",
  "smallvec",
  "solana-account",

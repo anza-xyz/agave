@@ -46,7 +46,6 @@ use {
     itertools::Itertools,
     rand::Rng,
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
-    serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, ReadableAccount, WritableAccount,
         state_traits::StateMutWincode as StateMut,
@@ -176,6 +175,7 @@ use {
         time::{Duration, Instant},
     },
     test_case::{test_case, test_matrix},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Keypair) {
@@ -1898,7 +1898,7 @@ fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_sema
     let transaction = Transaction::new_unsigned(Message::new_with_blockhash(
         &[
             system_instruction::advance_nonce_account(&nonce_pubkey, &fee_payer),
-            Instruction::new_with_bincode(missing_program_id, &0, vec![]),
+            Instruction::new_with_wincode(missing_program_id, &0, vec![]),
         ],
         Some(&fee_payer),
         &nonce_data.blockhash(),
@@ -1977,7 +1977,7 @@ fn test_load_and_execute_commit_transactions_failure() {
     let transaction = Transaction::new_unsigned(Message::new_with_blockhash(
         &[
             system_instruction::transfer(&fee_payer, &recipient, transfer_amount),
-            Instruction::new_with_bincode(system_program::id(), &(), vec![]),
+            Instruction::new_with_wincode(system_program::id(), &(), vec![]),
         ],
         Some(&fee_payer),
         &bank.last_blockhash(),
@@ -4720,7 +4720,7 @@ fn test_check_ro_durable_nonce_fails() {
         AccountMeta::new_readonly(sysvar::recent_blockhashes::id(), false),
         AccountMeta::new_readonly(nonce_pubkey, true),
     ];
-    let nonce_instruction = Instruction::new_with_bincode(
+    let nonce_instruction = Instruction::new_with_wincode(
         system_program::id(),
         &system_instruction::SystemInstruction::AdvanceNonceAccount,
         account_metas,
@@ -4924,7 +4924,7 @@ fn test_transaction_with_duplicate_accounts_in_instruction() {
         AccountMeta::new(dup_pubkey, false),
     ];
     let instruction =
-        Instruction::new_with_bincode(mock_program_id, &(10 * LAMPORTS_PER_SOL), account_metas);
+        Instruction::new_with_wincode(mock_program_id, &(10 * LAMPORTS_PER_SOL), account_metas);
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -4963,7 +4963,7 @@ fn test_transaction_with_program_ids_passed_to_programs() {
         AccountMeta::new(dup_pubkey, false),
         AccountMeta::new(mock_program_id, false),
     ];
-    let instruction = Instruction::new_with_bincode(mock_program_id, &10, account_metas);
+    let instruction = Instruction::new_with_wincode(mock_program_id, &10, account_metas);
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -4989,7 +4989,7 @@ fn test_account_ids_after_program_ids() {
         AccountMeta::new(to_pubkey, false),
     ];
 
-    let instruction = Instruction::new_with_bincode(solana_vote_program::id(), &10, account_metas);
+    let instruction = Instruction::new_with_wincode(solana_vote_program::id(), &10, account_metas);
     let mut tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -5062,7 +5062,7 @@ fn test_duplicate_account_key() {
         AccountMeta::new(to_pubkey, false),
     ];
 
-    let instruction = Instruction::new_with_bincode(solana_vote_program::id(), &10, account_metas);
+    let instruction = Instruction::new_with_wincode(solana_vote_program::id(), &10, account_metas);
     let mut tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -5093,7 +5093,7 @@ fn test_process_transaction_with_too_many_account_locks() {
         AccountMeta::new(to_pubkey, false),
     ];
 
-    let instruction = Instruction::new_with_bincode(solana_vote_program::id(), &10, account_metas);
+    let instruction = Instruction::new_with_wincode(solana_vote_program::id(), &10, account_metas);
     let mut tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -5126,7 +5126,7 @@ fn test_program_id_as_payer() {
 
     bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::register);
 
-    let instruction = Instruction::new_with_bincode(solana_vote_program::id(), &10, account_metas);
+    let instruction = Instruction::new_with_wincode(solana_vote_program::id(), &10, account_metas);
     let mut tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -5176,7 +5176,7 @@ fn test_ref_account_key_after_program_id() {
         .insert(bank)
         .clone_without_scheduler();
 
-    let instruction = Instruction::new_with_bincode(solana_vote_program::id(), &10, account_metas);
+    let instruction = Instruction::new_with_wincode(solana_vote_program::id(), &10, account_metas);
     let mut tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -5856,7 +5856,7 @@ fn test_same_program_id_uses_unique_executable_accounts() {
     program2_account.set_executable(true);
     bank.store_account(&program2_pubkey, &program2_account);
 
-    let instruction = Instruction::new_with_bincode(program2_pubkey, &10, vec![]);
+    let instruction = Instruction::new_with_wincode(program2_pubkey, &10, vec![]);
     let tx = Transaction::new_signed_with_payer(
         &[instruction.clone(), instruction],
         Some(&mint_keypair.pubkey()),
@@ -6374,7 +6374,7 @@ fn test_bank_load_program() {
         programdata_data_offset + elf.len(),
         &bpf_loader_upgradeable::id(),
     );
-    bincode::serialize_into(
+    wincode::serialize_into(
         programdata_account.data_as_mut_slice(),
         &UpgradeableLoaderState::ProgramData {
             slot: 42,
@@ -6483,7 +6483,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
         );
-        bincode::serialize_into(
+        wincode::serialize_into(
             account.data_as_mut_slice(),
             &UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
@@ -6601,7 +6601,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         post_program_account.data().len(),
         UpgradeableLoaderState::size_of_program()
     );
-    let state: UpgradeableLoaderState = bincode::deserialize(post_program_account.data()).unwrap();
+    let state: UpgradeableLoaderState = wincode::deserialize(post_program_account.data()).unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Program {
@@ -6615,7 +6615,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         &bpf_loader_upgradeable::id()
     );
     let state: UpgradeableLoaderState =
-        bincode::deserialize(post_programdata_account.data()).unwrap();
+        wincode::deserialize(post_programdata_account.data()).unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -7835,7 +7835,7 @@ fn test_program_is_native_loader() {
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let tx = Transaction::new_signed_with_payer(
-        &[Instruction::new_with_bincode(
+        &[Instruction::new_with_wincode(
             native_loader::id(),
             &(),
             vec![],
@@ -9235,7 +9235,7 @@ fn test_transfer_sysvar() {
         AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new(blockhash_sysvar, false),
     ];
-    let ix = Instruction::new_with_bincode(program_id, &0, accounts);
+    let ix = Instruction::new_with_wincode(program_id, &0, accounts);
     let message = Message::new(&[ix], Some(&mint_keypair.pubkey()));
     let tx = Transaction::new(&[&mint_keypair], message, blockhash);
     assert_eq!(
@@ -9404,7 +9404,7 @@ fn test_compute_budget_program_noop() {
                 execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
             ),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
-            Instruction::new_with_bincode(program_id, &0, vec![]),
+            Instruction::new_with_wincode(program_id, &0, vec![]),
         ],
         Some(&mint_keypair.pubkey()),
     );
@@ -9456,7 +9456,7 @@ fn test_compute_request_instruction() {
                 execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
             ),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
-            Instruction::new_with_bincode(program_id, &0, vec![]),
+            Instruction::new_with_wincode(program_id, &0, vec![]),
         ],
         Some(&mint_keypair.pubkey()),
     );
@@ -9513,7 +9513,7 @@ fn test_failed_compute_request_instruction() {
     let message0 = Message::new(
         &[
             ComputeBudgetInstruction::request_heap_frame(1),
-            Instruction::new_with_bincode(program_id, &0, vec![]),
+            Instruction::new_with_wincode(program_id, &0, vec![]),
         ],
         Some(&payer0_keypair.pubkey()),
     );
@@ -9522,7 +9522,7 @@ fn test_failed_compute_request_instruction() {
         &[
             ComputeBudgetInstruction::set_compute_unit_limit(TEST_COMPUTE_UNIT_LIMIT),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
-            Instruction::new_with_bincode(program_id, &0, vec![]),
+            Instruction::new_with_wincode(program_id, &0, vec![]),
         ],
         Some(&payer1_keypair.pubkey()),
     );
@@ -9614,7 +9614,7 @@ fn test_verify_transactions_packet_data_size() {
     // Small transaction.
     {
         let tx = make_transaction(5);
-        assert!(bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
+        assert!(wincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
 
         let transaction_view = transaction_view_from_versioned_transaction(tx).unwrap();
         assert!(
@@ -9628,7 +9628,7 @@ fn test_verify_transactions_packet_data_size() {
     // Big transaction.
     {
         let tx = make_transaction(25);
-        assert!(bincode::serialized_size(&tx).unwrap() > PACKET_DATA_SIZE as u64);
+        assert!(wincode::serialized_size(&tx).unwrap() > PACKET_DATA_SIZE as u64);
 
         let transaction_view = transaction_view_from_versioned_transaction(tx).unwrap();
         assert_matches!(
@@ -9800,7 +9800,7 @@ fn test_verify_transactions_instruction_limit() {
         ixs,
     );
     let tx = Transaction::new(&[&keypair], message, recent_blockhash);
-    assert!(bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
+    assert!(wincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
 
     let transaction_view = transaction_view_from_versioned_transaction(tx).unwrap();
     assert_matches!(
@@ -10054,7 +10054,7 @@ fn test_calculate_fee_compute_units() {
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(requested_compute_units),
                 ComputeBudgetInstruction::set_compute_unit_price(PRIORITIZATION_FEE_RATE),
-                Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
+                Instruction::new_with_wincode(Pubkey::new_unique(), &0_u8, vec![]),
             ],
             Some(&Pubkey::new_unique()),
         ));
@@ -10248,7 +10248,7 @@ fn test_accounts_data_size_with_bad_transaction() {
     );
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(SchemaRead, SchemaWrite)]
 enum MockTransferInstruction {
     Transfer(u64),
 }
@@ -10257,7 +10257,7 @@ declare_process_instruction!(MockTransferBuiltin, 1, |invoke_context| {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
-    if let Ok(instruction) = bincode::deserialize(instruction_data) {
+    if let Ok(instruction) = wincode::deserialize(instruction_data) {
         match instruction {
             MockTransferInstruction::Transfer(amount) => {
                 instruction_context
@@ -10287,7 +10287,7 @@ fn create_mock_transfer(
         AccountMeta::new(from.pubkey(), true),
         AccountMeta::new(to.pubkey(), true),
     ];
-    let transfer_instruction = Instruction::new_with_bincode(
+    let transfer_instruction = Instruction::new_with_wincode(
         mock_program_id,
         &MockTransferInstruction::Transfer(amount),
         account_metas,
@@ -10377,7 +10377,7 @@ fn test_accounts_data_size_delta_on_chain_with_deleted_account_transaction() {
                     account_data_size as u64,
                     &mock_program_id,
                 );
-                let transfer_from_instruction = Instruction::new_with_bincode(
+                let transfer_from_instruction = Instruction::new_with_wincode(
                     mock_program_id,
                     &MockTransferInstruction::Transfer(rent_exempt_minimum),
                     vec![
@@ -10569,7 +10569,7 @@ fn test_drained_created_account() {
         AccountMeta::new(created_keypair.pubkey(), true),
         AccountMeta::new(mint_keypair.pubkey(), false),
     ];
-    let transfer_from_instruction = Instruction::new_with_bincode(
+    let transfer_from_instruction = Instruction::new_with_wincode(
         mock_program_id,
         &MockTransferInstruction::Transfer(lamports_to_transfer),
         account_metas,
@@ -10600,7 +10600,7 @@ fn test_drained_created_account() {
         AccountMeta::new(created_keypair.pubkey(), true),
         AccountMeta::new(mint_keypair.pubkey(), false),
     ];
-    let transfer_from_instruction = Instruction::new_with_bincode(
+    let transfer_from_instruction = Instruction::new_with_wincode(
         mock_program_id,
         &MockTransferInstruction::Transfer(lamports_to_transfer),
         account_metas,
@@ -10921,7 +10921,7 @@ fn test_update_accounts_data_size() {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(SchemaRead, SchemaWrite)]
 enum MockReallocInstruction {
     Realloc(usize, u64, Pubkey),
 }
@@ -10930,7 +10930,7 @@ declare_process_instruction!(MockReallocBuiltin, 1, |invoke_context| {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
-    if let Ok(instruction) = bincode::deserialize(instruction_data) {
+    if let Ok(instruction) = wincode::deserialize(instruction_data) {
         match instruction {
             MockReallocInstruction::Realloc(new_size, new_balance, _) => {
                 // Set data length
@@ -10980,7 +10980,7 @@ fn create_mock_realloc_tx(
         AccountMeta::new(funder.pubkey(), false),
         AccountMeta::new(*reallocd, false),
     ];
-    let instruction = Instruction::new_with_bincode(
+    let instruction = Instruction::new_with_wincode(
         mock_program_id,
         &MockReallocInstruction::Realloc(new_size, new_balance, Pubkey::new_unique()),
         account_metas,
@@ -12548,7 +12548,7 @@ fn test_system_instruction_unsigned_transaction() {
         AccountMeta::new(alice_pubkey, false),
         AccountMeta::new(mallory_pubkey, true),
     ];
-    let malicious_instruction = Instruction::new_with_bincode(
+    let malicious_instruction = Instruction::new_with_wincode(
         system_program::id(),
         &system_instruction::SystemInstruction::Transfer { lamports: amount },
         account_metas,
@@ -12669,7 +12669,7 @@ fn test_failed_simulation_compute_units() {
     });
 
     let message = Message::new(
-        &[Instruction::new_with_bincode(program_id, &0, vec![])],
+        &[Instruction::new_with_wincode(program_id, &0, vec![])],
         Some(&mint_keypair.pubkey()),
     );
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
@@ -12692,7 +12692,7 @@ fn test_failed_simulation_load_error() {
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let missing_program_id = Pubkey::new_unique();
     let message = Message::new(
-        &[Instruction::new_with_bincode(
+        &[Instruction::new_with_wincode(
             missing_program_id,
             &0,
             vec![],
@@ -13079,7 +13079,7 @@ fn test_genesis_deprecate_rent_exemption_enabled() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     let rent_account = bank.get_account(&Rent::id()).unwrap();
-    let accounts_db_rent = bincode::deserialize::<Rent>(rent_account.data()).unwrap();
+    let accounts_db_rent = wincode::deserialize::<Rent>(rent_account.data()).unwrap();
     let rent_collector_rent = bank.rent_collector.rent.clone();
     let tx_processor_rent = bank
         .transaction_processor
@@ -13099,7 +13099,7 @@ fn test_genesis_deprecate_rent_exemption_disabled() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     let rent_account = bank.get_account(&Rent::id()).unwrap();
-    let accounts_db_rent = bincode::deserialize::<Rent>(rent_account.data()).unwrap();
+    let accounts_db_rent = wincode::deserialize::<Rent>(rent_account.data()).unwrap();
     let rent_collector_rent = bank.rent_collector.rent.clone();
     let tx_processor_rent = bank
         .transaction_processor
@@ -13169,7 +13169,7 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
         );
-        bincode::serialize_into(
+        wincode::serialize_into(
             account.data_as_mut_slice(),
             &UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
@@ -13237,7 +13237,7 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
                 UpgradeableLoaderState::size_of_program() as u64,
                 &bpf_loader_upgradeable::id(),
             ),
-            Instruction::new_with_bincode(
+            Instruction::new_with_wincode(
                 bpf_loader_upgradeable::id(),
                 &UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len },
                 deploy_ix_accounts,
@@ -13643,15 +13643,15 @@ fn test_new_for_txn_tests_system_transfer() {
         ),
         (
             sysvar::clock::id(),
-            make_sysvar(bincode::serialize(&clock).unwrap()),
+            make_sysvar(wincode::serialize(&clock).unwrap()),
         ),
         (
             sysvar::epoch_schedule::id(),
-            make_sysvar(bincode::serialize(&epoch_schedule).unwrap()),
+            make_sysvar(wincode::serialize(&epoch_schedule).unwrap()),
         ),
         (
             sysvar::rent::id(),
-            make_sysvar(bincode::serialize(&rent).unwrap()),
+            make_sysvar(wincode::serialize(&rent).unwrap()),
         ),
         (
             solana_sdk_ids::sysvar::slot_hashes::id(),
@@ -13816,15 +13816,15 @@ fn test_new_for_block_tests_with_vote_account() {
         ),
         (
             sysvar::clock::id(),
-            make_sysvar(bincode::serialize(&clock).unwrap()),
+            make_sysvar(wincode::serialize(&clock).unwrap()),
         ),
         (
             sysvar::epoch_schedule::id(),
-            make_sysvar(bincode::serialize(&epoch_schedule).unwrap()),
+            make_sysvar(wincode::serialize(&epoch_schedule).unwrap()),
         ),
         (
             sysvar::rent::id(),
-            make_sysvar(bincode::serialize(&rent).unwrap()),
+            make_sysvar(wincode::serialize(&rent).unwrap()),
         ),
         (
             solana_sdk_ids::sysvar::slot_hashes::id(),

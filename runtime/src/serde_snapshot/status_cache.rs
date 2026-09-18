@@ -7,12 +7,11 @@ use std::sync::Mutex;
 use {
     crate::{bank::BankSlotDelta, serde_snapshot, snapshot_utils, status_cache::KeySlice},
     agave_fs::io_setup::IoSetupState,
-    serde::Serialize,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_instruction_error::InstructionError,
     solana_transaction_error::TransactionError,
-    std::{collections::HashMap, path::Path, sync::Arc},
+    std::{collections::HashMap, io::Write, path::Path, sync::Arc},
     wincode::{SchemaRead, SchemaWrite},
 };
 
@@ -28,6 +27,48 @@ type SerdeBankSlotDelta = SerdeSlotDelta<Result<(), SerdeTransactionError>>;
 type SerdeSlotDelta<T> = (Slot, bool, SerdeStatus<T>);
 type SerdeStatus<T> = ahash::HashMap<Hash, (usize, Vec<(KeySlice, T)>)>;
 
+/// Wire shape for one slot delta. The read side builds [`SerdeBankSlotDelta`] instead; only
+/// the map's hasher differs.
+type SnapshotSlotDelta = (
+    Slot,
+    bool,
+    HashMap<Hash, (usize, Vec<(KeySlice, Result<(), SerdeTransactionError>)>)>,
+);
+
+fn to_snapshot_slot_deltas(slot_deltas: &[BankSlotDelta]) -> Vec<SnapshotSlotDelta> {
+    slot_deltas
+        .iter()
+        .map(|slot_delta| {
+            let status_map = slot_delta.2.lock().unwrap();
+            let snapshot_status_map = status_map
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        *key,
+                        (
+                            value.0,
+                            value
+                                .1
+                                .iter()
+                                .map(|(key_slice, result)| {
+                                    (
+                                        *key_slice,
+                                        result
+                                            .as_ref()
+                                            .map(|_| ())
+                                            .map_err(SerdeTransactionError::from),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        ),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            (slot_delta.0, slot_delta.1, snapshot_status_map)
+        })
+        .collect()
+}
+
 /// Serializes the status cache's `slot_deltas` to file at `status_cache_path`
 ///
 /// This fn serializes the status cache into the binary format required by snapshots.
@@ -37,40 +78,17 @@ pub fn serialize_status_cache(
     io_setup: &IoSetupState,
 ) -> agave_snapshots::Result<u64> {
     snapshot_utils::serialize_snapshot_data_file(status_cache_path, io_setup, |stream| {
-        let snapshot_slot_deltas = slot_deltas
-            .iter()
-            .map(|slot_delta| {
-                let status_map = slot_delta.2.lock().unwrap();
-                let snapshot_status_map = status_map
-                    .iter()
-                    .map(|(key, value)| {
-                        (
-                            *key,
-                            (
-                                value.0,
-                                value
-                                    .1
-                                    .iter()
-                                    .map(|(key_slice, result)| {
-                                        (
-                                            *key_slice,
-                                            result
-                                                .as_ref()
-                                                .map(|_| ())
-                                                .map_err(SerdeTransactionError::from),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>();
-                (slot_delta.0, slot_delta.1, snapshot_status_map)
-            })
-            .collect::<Vec<_>>();
-        serde_snapshot::serialize_into(stream, &snapshot_slot_deltas)?;
+        serialize_status_cache_into(stream, slot_deltas)?;
         Ok(())
     })
+}
+
+/// Serializes the status cache's `slot_deltas` into `stream`.
+pub fn serialize_status_cache_into(
+    stream: &mut dyn Write,
+    slot_deltas: &[BankSlotDelta],
+) -> wincode::WriteResult<()> {
+    serde_snapshot::serialize_into(stream, &to_snapshot_slot_deltas(slot_deltas))
 }
 
 /// Deserializes the status cache from file at `status_cache_path`
@@ -123,7 +141,7 @@ pub fn deserialize_status_cache(
     ),
     derive(StableAbi, StableAbiSample)
 )]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
+#[derive(Debug, PartialEq, Eq, Clone, SchemaRead, SchemaWrite)]
 enum SerdeTransactionError {
     AccountInUse,
     AccountLoadedTwice,
@@ -317,7 +335,7 @@ impl From<SerdeTransactionError> for TransactionError {
 /// contains a string.
 #[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
+#[derive(Debug, PartialEq, Eq, Clone, SchemaRead, SchemaWrite)]
 enum SerdeInstructionError {
     GenericError,
     InvalidArgument,

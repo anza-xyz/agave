@@ -1,7 +1,6 @@
 #![cfg(feature = "dev-context-only-utils")]
 use {
     crate::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
-    serde::Serialize,
     solana_account::{AccountSharedData, WritableAccount},
     solana_client_traits::{Client, SyncClient},
     solana_clock::Clock,
@@ -94,7 +93,7 @@ pub fn create_buffer_with_elf(bank: &Bank, authority_address: &Pubkey, elf: &[u8
         size,
         &bpf_loader_upgradeable::id(),
     );
-    bincode::serialize_into(
+    wincode::serialize_into(
         account.data_as_mut_slice(),
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(*authority_address),
@@ -306,11 +305,11 @@ pub fn set_upgrade_authority<T: Client>(
 
 // Return an Instruction that invokes `program_id` with `data` and required
 // a signature from `from_pubkey`.
-pub fn create_invoke_instruction<T: Serialize>(
+pub fn create_invoke_instruction<T: wincode::Serialize<Src = T>>(
     from_pubkey: Pubkey,
     program_id: Pubkey,
     data: &T,
 ) -> Instruction {
     let account_metas = vec![AccountMeta::new(from_pubkey, true)];
-    Instruction::new_with_bincode(program_id, data, account_metas)
+    Instruction::new_with_wincode(program_id, data, account_metas)
 }

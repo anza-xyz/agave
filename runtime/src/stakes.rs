@@ -11,7 +11,6 @@ use {
     log::error,
     num_derive::ToPrimitive,
     rayon::{ThreadPool, prelude::*},
-    serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
@@ -41,9 +40,6 @@ mod serde_stakes;
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) use serde_stakes::DeserializableDelegationStakes;
 pub use serde_stakes::SerdeStakesToStakeFormat;
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
-
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Invalid delegation: {0}")]
@@ -210,7 +206,7 @@ impl StakesCache {
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Default, Clone, PartialEq, Debug, Serialize, SchemaWrite)]
+#[derive(Default, Clone, PartialEq, Debug, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(
@@ -236,7 +232,6 @@ pub struct Stakes<T: Clone> {
 
     /// current effective stake delegated to each vote account pubkey
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
-    #[serde(skip)]
     #[wincode(skip)]
     delegated_stakes: DelegatedStakes,
 

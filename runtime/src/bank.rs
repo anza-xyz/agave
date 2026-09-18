@@ -74,7 +74,7 @@ use {
             SerdeStakesToStakeFormat, Stakes, StakesCache,
         },
         status_cache::{SlotDelta, StatusCache},
-        sysvar_account::{create_account, create_account_with_bincode, from_account},
+        sysvar_account::{create_account, from_account},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::AccountsLtHashAsyncProgress,
@@ -1162,7 +1162,7 @@ pub struct ProcessedTransactionCounts {
 /// This struct is serialized and stored in the snapshot.
 #[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BankHashStats {
     pub num_updated_accounts: u64,
     pub num_removed_accounts: u64,
@@ -2713,10 +2713,10 @@ impl Bank {
 
     pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
     where
-        T: Serialize + SysvarId,
+        T: wincode::Serialize<Src = T> + SysvarId,
     {
         self.update_sysvar_account(&T::id(), |account| {
-            create_account_with_bincode(
+            create_account(
                 sysvar,
                 self.inherit_specially_retained_account_fields(account),
             )

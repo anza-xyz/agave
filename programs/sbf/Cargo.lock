@@ -1850,7 +1850,6 @@ dependencies = [
  "once_cell",
  "parking_lot_core 0.9.8",
  "rayon",
- "serde",
 ]
 
 [[package]]
@@ -3163,7 +3162,6 @@ dependencies = [
  "rand_core 0.9.3",
  "rand_xoshiro",
  "rayon",
- "serde_core",
  "version_check",
  "wide",
 ]
@@ -5593,9 +5591,6 @@ name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "smpl_jwt"
@@ -7798,6 +7793,7 @@ dependencies = [
  "spl-memo-interface",
  "thiserror 2.0.20",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -8119,7 +8115,6 @@ dependencies = [
  "arrayref",
  "assert_matches",
  "base64 0.23.1",
- "bincode",
  "bitvec",
  "bytemuck",
  "bytes",
@@ -8141,7 +8136,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "serde_with",
  "smallvec",
  "solana-account",
  "solana-account-decoder",
@@ -9493,6 +9487,7 @@ dependencies = [
  "solana-transaction-error",
  "spl-generic-token",
  "thiserror 2.0.20",
+ "wincode",
 ]
 
 [[package]]
