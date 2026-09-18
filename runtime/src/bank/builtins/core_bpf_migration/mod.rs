@@ -206,18 +206,6 @@ impl Bank {
             load_program_metrics.submit_datapoint(&mut dummy_invoke_context.timings);
         }
 
-        // Update the program cache by merging with `programs_modified`, which
-        // should have been updated by the deploy function.
-        self.transaction_processor
-            .global_program_cache
-            .write()
-            .unwrap()
-            .merge(
-                &self.transaction_processor.program_runtime_environment,
-                self.slot,
-                &program_cache_for_tx_batch.drain_modified_entries(),
-            );
-
         Ok(())
     }
 
