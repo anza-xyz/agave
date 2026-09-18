@@ -369,7 +369,6 @@ impl<F: Frame> TxRing<F> {
 }
 
 pub struct RxRing {
-    #[allow(dead_code)]
     mmap: RingMmap<XdpDesc>,
     consumer: RingConsumer,
     size: u32,
@@ -402,6 +401,16 @@ impl RxRing {
 
     pub fn sync(&mut self, commit: bool) {
         self.consumer.sync(commit);
+    }
+
+    /// Consumes a single descriptor from the ring.
+    ///
+    /// Returns `None` when no descriptor is available. Call [`RxRing::sync`] to
+    /// refresh the cached producer index before draining the ring.
+    pub fn read(&mut self) -> Option<XdpDesc> {
+        let index = self.consumer.consume()? & self.size.saturating_sub(1);
+        // Safety: index is masked to the ring size so the pointer is in bounds
+        Some(unsafe { ptr::read(self.mmap.desc.add(index as usize)) })
     }
 }
 
