@@ -52,6 +52,7 @@ pub enum SubscriptionParams {
     SlotsUpdates,
     Root,
     Vote,
+    TransactionReceived,
 }
 
 impl SubscriptionParams {
@@ -66,6 +67,7 @@ impl SubscriptionParams {
             SubscriptionParams::Block(_) => "blockNotification",
             SubscriptionParams::Root => "rootNotification",
             SubscriptionParams::Vote => "voteNotification",
+            SubscriptionParams::TransactionReceived => "transactionReceivedNotification",
         }
     }
 
@@ -79,7 +81,8 @@ impl SubscriptionParams {
             SubscriptionParams::Slot
             | SubscriptionParams::SlotsUpdates
             | SubscriptionParams::Root
-            | SubscriptionParams::Vote => None,
+            | SubscriptionParams::Vote
+            | SubscriptionParams::TransactionReceived => None,
         }
     }
 
@@ -93,7 +96,8 @@ impl SubscriptionParams {
             SubscriptionParams::Root
             | SubscriptionParams::Slot
             | SubscriptionParams::SlotsUpdates
-            | SubscriptionParams::Vote => return false,
+            | SubscriptionParams::Vote
+            | SubscriptionParams::TransactionReceived => return false,
         };
         !commitment.is_confirmed()
     }
@@ -108,7 +112,8 @@ impl SubscriptionParams {
             SubscriptionParams::Root
             | SubscriptionParams::Slot
             | SubscriptionParams::SlotsUpdates
-            | SubscriptionParams::Vote => return false,
+            | SubscriptionParams::Vote
+            | SubscriptionParams::TransactionReceived => return false,
         };
         commitment.is_confirmed()
     }
@@ -120,6 +125,7 @@ impl SubscriptionParams {
                 | SubscriptionParams::SlotsUpdates
                 | SubscriptionParams::Root
                 | SubscriptionParams::Vote
+                | SubscriptionParams::TransactionReceived
         )
     }
 }
