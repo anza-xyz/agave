@@ -1096,9 +1096,9 @@ impl AccountsDb {
             .fetch_add(reclaim_us, Ordering::Relaxed);
     }
 
-    /// Deduplicate slots and and enqueue any slots tht are worth shrinking to the shrinking
-    /// candidate set
-    fn queue_shrink_candidates(&self, slots: impl IntoIterator<Item = Slot>) {
+    /// Deduplicate slots and enqueue any slots that are worth shrinking to the shrinking
+    /// candidate set. Returns the number of slots enqueued
+    fn queue_shrink_candidates(&self, slots: impl IntoIterator<Item = Slot>) -> usize {
         let candidates = slots
             .into_iter()
             .collect::<IntSet<_>>()
@@ -1111,12 +1111,19 @@ impl AccountsDb {
                     })
             })
             .collect::<Vec<_>>();
+        let num_candidates = candidates.len();
         if !candidates.is_empty() {
             self.shrink_candidate_slots
                 .lock()
                 .unwrap()
                 .extend(candidates);
         }
+        num_candidates
+    }
+
+    /// Queue every slot whose storage is worth shrinking. Returns the number of slots enqueued
+    pub(crate) fn queue_shrink_candidates_for_all_slots(&self) -> usize {
+        self.queue_shrink_candidates(self.all_slots_in_storage())
     }
 
     /// Purges each key in `removed_keys` from the enabled secondary indexes, unless the key is
@@ -5364,9 +5371,7 @@ impl AccountsDb {
                         &stats,
                         MarkAccountsObsolete::Yes(slot_marked_obsolete),
                     );
-                    self.queue_shrink_candidates(reclaims.iter().map(|(slot, _)| *slot));
                 }
-
                 ObsoleteAccountsStats {
                     accounts_marked_obsolete: reclaims.len() as u64,
                     slots_removed: stats.num_stored_slots_removed.load(Ordering::Relaxed) as u64,

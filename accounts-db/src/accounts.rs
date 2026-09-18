@@ -18,6 +18,7 @@ use {
         self as address_lookup_table, error::AddressLookupError, state::AddressLookupTable,
     },
     solana_clock::{BankId, Slot},
+    solana_measure::measure_us,
     solana_message::v0::LoadedAddresses,
     solana_pubkey::Pubkey,
     solana_slot_hashes::SlotHashes,
@@ -537,6 +538,23 @@ impl Accounts {
     /// Add a slot to root.  Root slots cannot be purged
     pub fn add_root(&self, slot: Slot) -> AccountsAddRootTiming {
         self.accounts_db.add_root(slot)
+    }
+
+    /// Startup work that does not have to block index generation. Called once, when the
+    /// validator starts its background services
+    pub fn finish_startup(&self) {
+        // The storages loaded from the snapshot have never been considered for shrinking
+        let (num_shrink_candidates, queue_shrink_candidates_us) =
+            measure_us!(self.accounts_db.queue_shrink_candidates_for_all_slots());
+        datapoint_info!(
+            "accounts_finish_startup",
+            (
+                "queue_shrink_candidates_us",
+                queue_shrink_candidates_us,
+                i64
+            ),
+            ("num_shrink_candidates", num_shrink_candidates, i64),
+        );
     }
 }
 
