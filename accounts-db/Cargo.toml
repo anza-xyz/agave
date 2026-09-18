@@ -56,7 +56,6 @@ rand = { workspace = true }
 rayon = { workspace = true }
 semver = { workspace = true }
 seqlock = { workspace = true }
-serde = { workspace = true, features = ["rc"] }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
 solana-address-lookup-table-interface = { workspace = true, features = ["bytemuck", "wincode"] }

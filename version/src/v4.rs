@@ -161,7 +161,7 @@ impl PackedMinor {
     derive(StableAbi),
     frozen_abi(
         abi_digest = "CAvtbh3st7PCvB93NjvDDQj1tBz82BmYPL4cNXMByfLX",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
     )
 )]

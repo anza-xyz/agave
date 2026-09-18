@@ -5817,7 +5817,6 @@ dependencies = [
  "rayon",
  "semver",
  "seqlock",
- "serde",
  "smallvec",
  "solana-account",
  "solana-address-lookup-table-interface",

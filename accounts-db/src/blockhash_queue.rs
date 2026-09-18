@@ -3,7 +3,6 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes;
 use {
-    serde::{Deserialize, Serialize},
     solana_clock::MAX_RECENT_BLOCKHASHES,
     solana_fee_calculator::FeeCalculator,
     solana_hash::Hash,
@@ -15,7 +14,7 @@ use {
 
 #[repr(C)]
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Debug, PartialEq, Eq, Clone, SchemaRead, SchemaWrite)]
 pub struct HashInfo {
     fee_calculator: FeeCalculator,
     hash_index: u64,
@@ -34,11 +33,11 @@ impl HashInfo {
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BlockhashQueue {
     /// index of last hash to be registered
     last_hash_index: u64,
@@ -53,7 +52,6 @@ pub struct BlockhashQueue {
 
     /// durable nonce value for the last hash
     #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
-    #[serde(skip)]
     #[wincode(skip)]
     durable_nonce: Option<DurableNonce>,
 }

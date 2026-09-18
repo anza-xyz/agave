@@ -7101,7 +7101,6 @@ dependencies = [
  "rayon",
  "semver 1.0.28",
  "seqlock",
- "serde",
  "smallvec",
  "solana-account",
  "solana-accounts-db",
