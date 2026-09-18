@@ -442,7 +442,7 @@ impl AccountsBackgroundService {
                     let mut previous_shrink_time = Instant::now();
 
                     let bank = bank_forks.read().unwrap().root_bank();
-                    bank.rc.accounts.accounts_db_finish_startup();
+                    bank.rc.accounts.finish_startup();
 
                     loop {
                         if exit.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed) {
