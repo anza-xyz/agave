@@ -53,12 +53,28 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                 if proof_instruction_offset == 0 {
                     map.insert(
                         "proofContextStateAccount".to_string(),
-                        json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                        json!(
+                            account_key(
+                                account_keys,
+                                account_indexes,
+                                offset,
+                                ParsableProgram::SplToken
+                            )?
+                            .to_string()
+                        ),
                     );
                 } else {
                     map.insert(
                         "instructionsSysvar".to_string(),
-                        json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
+                        json!(
+                            account_key(
+                                account_keys,
+                                account_indexes,
+                                offset,
+                                ParsableProgram::SplToken
+                            )?
+                            .to_string()
+                        ),
                     );
                 }
                 offset += 1;
@@ -98,12 +114,18 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
-                    json!(account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?
+                            .to_string()
+                    ),
                 );
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string()),
+                    json!(
+                        account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?
+                            .to_string()
+                    ),
                 );
             }
             let source_accounts: Vec<String> = account_indexes

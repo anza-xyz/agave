@@ -1,6 +1,7 @@
 use {
     crate::parse_instruction::{
-        ParsableProgram, ParseInstructionError, ParsedInstructionEnum, account_key, check_num_accounts,
+        ParsableProgram, ParseInstructionError, ParsedInstructionEnum, account_key,
+        check_num_accounts,
     },
     extension::{
         confidential_mint_burn::*, confidential_transfer::*, confidential_transfer_fee::*,

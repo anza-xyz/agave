@@ -265,11 +265,25 @@ mod test {
 
         // position -> account index -> key
         assert_eq!(
-            account_key(&account_keys, &account_indexes, 0, ParsableProgram::SplToken).unwrap(),
+            account_key(
+                &account_keys,
+                &account_indexes,
+                0,
+                ParsableProgram::SplToken
+            )
+            .unwrap(),
             &keys[1],
         );
         // position past the end of the instruction's account list
-        assert!(account_key(&account_keys, &account_indexes, 2, ParsableProgram::SplToken).is_err());
+        assert!(
+            account_key(
+                &account_keys,
+                &account_indexes,
+                2,
+                ParsableProgram::SplToken
+            )
+            .is_err()
+        );
         // account index that points past account_keys
         assert!(account_key(&account_keys, &[9u8], 0, ParsableProgram::SplToken).is_err());
     }
