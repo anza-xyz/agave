@@ -39,7 +39,16 @@ pub mod storable_accounts;
 pub mod utils;
 pub mod waitable_condvar;
 
-pub use obsolete_accounts::{ObsoleteAccountItem, ObsoleteAccounts};
+pub use {
+    // These two append vec functions are temporarily required by
+    // the runtime crate for serialization/deserialization of
+    // ObsoleteAccounts, since its impl uses append vec file offsets.
+    append_vec::{
+        file_offset_from_logical as append_vec_file_offset_from_logical,
+        logical_offset_from_file as append_vec_logical_offset_from_file,
+    },
+    obsolete_accounts::{ObsoleteAccountItem, ObsoleteAccounts},
+};
 
 #[macro_use]
 extern crate solana_metrics;

@@ -5,7 +5,7 @@ use {
     crate::conformance::{account_state::account_to_proto, err::serialized_error_code},
     protosol::protos::InstrEffects as ProtoInstrEffects,
 };
-use {solana_account::Account, solana_instruction::error::InstructionError, solana_pubkey::Pubkey};
+use {solana_account::Account, solana_instruction_error::InstructionError, solana_pubkey::Pubkey};
 
 /// Represents the effects of a single instruction.
 pub struct InstrEffects {

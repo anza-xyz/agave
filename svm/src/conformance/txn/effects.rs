@@ -5,7 +5,7 @@ use {
     crate::conformance::{account_state::account_to_proto, err::serialized_error_code},
     agave_precompiles::is_precompile,
     protosol::protos::{FeeDetails as ProtoFeeDetails, TxnResult as ProtoTxnResult},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_message::SanitizedMessage,
 };
 use {

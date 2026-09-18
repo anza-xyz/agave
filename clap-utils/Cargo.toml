@@ -25,7 +25,7 @@ agave-unstable-api = []
 bip39 = { workspace = true }
 bs58 = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["default"] }
-clap = { version = "2.33.0", default-features = false, features = ["suggestions"] }
+clap = { workspace = true }
 rpassword = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-cli-config = { workspace = true }

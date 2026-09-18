@@ -87,7 +87,8 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_inflation::Inflation,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{AccountMeta, Instruction},
+    solana_instruction_error::InstructionError,
     solana_keypair::{Keypair, keypair_from_seed},
     solana_lattice_hash::lt_hash::LtHash,
     solana_loader_v3_interface::{
@@ -5825,7 +5826,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "5p7xBUhUKy4oNr9JXCVjM8UMnkyAdkbdoFfSgQQEQRNb",
+        "5GXcDfGkYCetjtxmyvAXQkmB1s9Vzc5J6aN62G2Z3TQq",
     );
 }
 
@@ -9656,11 +9657,10 @@ fn test_verify_transactions_packet_data_size() {
 }
 
 #[test]
-fn test_verify_transactions_tx_v1_size_gate_does_not_relax_legacy_or_v0() {
+fn test_verify_transactions_tx_v1_size_limit_does_not_relax_legacy_or_v0() {
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::enable_tx_v1::id());
+    let bank = Bank::new_for_tests(&genesis_config);
 
     let recent_blockhash = Hash::new_unique();
     let keypair = Keypair::new();
@@ -9737,8 +9737,7 @@ fn test_verify_transactions_tx_v1_size_gate_does_not_relax_legacy_or_v0() {
 fn test_verify_transactions_tx_v1_precompile_program_id_index_above_packet_limit() {
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::enable_tx_v1::id());
+    let bank = Bank::new_for_tests(&genesis_config);
 
     let recent_blockhash = Hash::new_unique();
     let keypair = Keypair::new();
@@ -11393,7 +11392,7 @@ fn test_cap_accounts_data_allocations_per_transaction() {
         result,
         Err(TransactionError::InstructionError(
             NUM_MAX_SIZE_ALLOCATIONS_PER_TRANSACTION as u8,
-            solana_instruction::error::InstructionError::MaxAccountsDataAllocationsExceeded,
+            solana_instruction_error::InstructionError::MaxAccountsDataAllocationsExceeded,
         )),
     );
 }

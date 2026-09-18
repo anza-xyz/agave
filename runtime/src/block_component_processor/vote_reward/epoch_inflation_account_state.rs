@@ -23,9 +23,8 @@ static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        digest = "DwwQZJF7Epufk6MN9W6bfJ1z1DkjGfMZUsXDMWNv86jb",
         abi_digest = "CrSvqX8ZAYxjZ6XoTp9Z1ED6McdnqhXq8zYFWBDkCwJs",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
@@ -64,9 +63,8 @@ impl EpochInflationState {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        digest = "HR1JbQp4gVU7fcsG4ji1fe28j8uNJRmuptdQz4PDkKoC",
         abi_digest = "FeEFnXTk7DxHkCamcHDpRRjRDfSyMh3DGnefbwSvA8Kc",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",

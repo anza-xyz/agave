@@ -275,10 +275,6 @@ static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
 });
 
 pub type BankStatusCache = StatusCache<Result<()>>;
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "2RGYA9GpP1epajQ4CxQpCHMJPnLLBoseMbAyLJhTjsGS")
-)]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
@@ -1165,7 +1161,7 @@ pub struct ProcessedTransactionCounts {
 /// Account stats for computing the bank hash
 /// This struct is serialized and stored in the snapshot.
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BankHashStats {
     pub num_updated_accounts: u64,
@@ -5704,13 +5700,8 @@ impl Bank {
     where
         D: TransactionData,
     {
-        // Discard v1 transactions until feature gate is activated.
-        let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
-        if !enable_tx_v1 && matches!(tx.version(), TransactionVersion::V1) {
-            return Err(TransactionError::UnsupportedVersion);
-        }
         let max_transaction_size = match tx.version() {
-            TransactionVersion::V1 if enable_tx_v1 => solana_message::v1::MAX_TRANSACTION_SIZE,
+            TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
             _ => PACKET_DATA_SIZE,
         };
 
@@ -7398,7 +7389,7 @@ pub mod test_utils {
         super::Bank,
         crate::installed_scheduler_pool::BankWithScheduler,
         solana_account::{ReadableAccount, WritableAccount, state_traits::StateMutWincode as _},
-        solana_instruction::error::LamportsError,
+        solana_instruction_error::LamportsError,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hashv,
         solana_vote_interface::state::VoteStateV4,

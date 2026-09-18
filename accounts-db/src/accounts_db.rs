@@ -1047,14 +1047,12 @@ impl AccountsDb {
         &self,
         pubkey: &Pubkey,
         max_clean_root_inclusive: Slot,
-    ) -> ReclaimsWithNewestSlot<AccountInfo> {
+        reclaims: &mut ReclaimsWithNewestSlot<AccountInfo>,
+    ) {
         let mut clean_rooted = Measure::start("clean_old_root-ms");
-        let mut reclaims = ReclaimsWithNewestSlot::new();
-        let removed_from_index = self.accounts_index.clean_rooted_entries(
-            pubkey,
-            &mut reclaims,
-            max_clean_root_inclusive,
-        );
+        let removed_from_index =
+            self.accounts_index
+                .clean_rooted_entries(pubkey, reclaims, max_clean_root_inclusive);
         clean_rooted.stop();
         if removed_from_index {
             self.clean_accounts_stats
@@ -1065,7 +1063,6 @@ impl AccountsDb {
         self.clean_accounts_stats
             .clean_old_root_us
             .fetch_add(clean_rooted.as_us(), Ordering::Relaxed);
-        reclaims
     }
 
     /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
@@ -1524,6 +1521,12 @@ impl AccountsDb {
                 // Take the bin so its allocation is freed by this thread once the bin is
                 // scanned, rather than serially after every bin completes.
                 let candidates_bin = mem::take(&mut *candidates_bin.write().unwrap());
+
+                // Sized for one reclaim per candidate. During startup this should be fairly
+                // accurate, but during normal operation, resizes will likely be needed
+                let mut reclaims_local =
+                    ReclaimsWithNewestSlot::with_capacity(candidates_bin.len());
+
                 for candidate_pubkey in candidates_bin {
                     let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
@@ -1584,12 +1587,15 @@ impl AccountsDb {
                         ScanFilter::All,
                     );
                     if should_collect_reclaims {
-                        let reclaims_new =
-                            self.collect_reclaims(&candidate_pubkey, max_clean_root_inclusive);
-                        if !reclaims_new.is_empty() {
-                            reclaims.lock().unwrap().extend(reclaims_new);
-                        }
+                        self.collect_reclaims(
+                            &candidate_pubkey,
+                            max_clean_root_inclusive,
+                            &mut reclaims_local,
+                        );
                     }
+                }
+                if !reclaims_local.is_empty() {
+                    reclaims.lock().unwrap().append(&mut reclaims_local);
                 }
                 found_not_zero_accum.fetch_add(found_not_zero, Ordering::Relaxed);
                 not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
@@ -1602,10 +1608,12 @@ impl AccountsDb {
             .active_stats
             .activate(ActiveStatItem::CleanScanCandidates);
         let mut accounts_scan = Measure::start("accounts_scan");
-        if is_startup {
-            do_clean_scan();
-        } else {
-            self.thread_pool_background.install(do_clean_scan);
+        if num_candidates > 0 {
+            if is_startup {
+                do_clean_scan();
+            } else {
+                self.thread_pool_background.install(do_clean_scan);
+            }
         }
         accounts_scan.stop();
         drop(active_guard);
@@ -2181,7 +2189,9 @@ impl AccountsDb {
         if let Some(storage) = self
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
-            && let Some(new_storage) = storage.reopen_as_readonly()
+            && let Some(new_storage) = storage
+                .reopen_as_readonly()
+                .expect("reopen storage as readonly")
         {
             // consider here the race condition of tx processing having looked up something in the index,
             // which could return (slot, append vec id). We want the lookup for the storage to get a storage
@@ -4284,7 +4294,9 @@ impl AccountsDb {
                         let mut offsets = offsets.iter().cloned().collect::<Vec<_>>();
                         // sort so offsets are in order. This improves efficiency of loading the accounts.
                         offsets.sort_unstable();
-                        let data_lens = store.accounts.get_account_data_lens(&offsets);
+                        let data_lens = store
+                            .accounts
+                            .get_account_data_lens(offsets.iter().copied());
                         let dead_bytes = data_lens
                             .iter()
                             .map(|len| store.accounts.calculate_stored_size(*len))

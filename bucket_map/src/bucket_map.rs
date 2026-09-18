@@ -209,7 +209,11 @@ mod tests {
     use {
         super::*,
         rand::{Rng, rng},
-        std::{collections::HashMap, sync::RwLock},
+        std::{
+            collections::HashMap,
+            sync::{Barrier, RwLock, mpsc::sync_channel},
+            thread,
+        },
     };
 
     #[test]
@@ -232,21 +236,112 @@ mod tests {
             if pass == 0 {
                 index.insert(&key, &[0, 1]);
             } else {
-                let result = index.try_insert(&key, &[0, 1]);
-                assert!(result.is_err());
+                let err = index.try_insert(&key, &[0, 1]).unwrap_err();
                 assert_eq!(index.read_value::<Vec<_>>(&key), None);
-                if pass == 2 {
+                let second_err = if pass == 2 {
                     // another call to try insert again - should still return an error
-                    let result = index.try_insert(&key, &[0, 1]);
-                    assert!(result.is_err());
+                    let err = index.try_insert(&key, &[0, 1]).unwrap_err();
                     assert_eq!(index.read_value::<Vec<_>>(&key), None);
+                    Some(err)
+                } else {
+                    None
+                };
+                bucket.grow(err);
+                if let Some(err) = second_err {
+                    bucket.grow(err);
                 }
-                bucket.grow(result.unwrap_err());
                 let result = index.try_insert(&key, &[0, 1]);
                 assert!(result.is_ok());
             }
             assert_eq!(index.read_value(&key), Some(vec![0, 1]));
         }
+    }
+
+    fn assert_concurrent_grow_retries(
+        index: BucketMap<u64>,
+        first_value: &[u64],
+        second_value: &[u64],
+        expected_attempts: usize,
+    ) {
+        // A single configured bucket makes both writers share one BucketApi.
+        let first_key = Pubkey::new_unique();
+        let second_key = Pubkey::new_unique();
+        let both_full = Barrier::new(2);
+        let (first_grow_done_sender, first_grow_done_receiver) = sync_channel(0);
+
+        thread::scope(|scope| {
+            let first_index = &index;
+            let first_both_full = &both_full;
+            scope.spawn(move || {
+                let err = first_index.try_insert(&first_key, first_value).unwrap_err();
+                first_both_full.wait();
+                first_index.get_bucket(&first_key).grow(err);
+                // Prevent the second grow from racing with a write that applies this grow.
+                first_grow_done_sender.send(()).unwrap();
+            });
+
+            let second_index = &index;
+            let second_both_full = &both_full;
+            scope.spawn(move || {
+                let err = second_index
+                    .try_insert(&second_key, second_value)
+                    .unwrap_err();
+                second_both_full.wait();
+                first_grow_done_receiver.recv().unwrap();
+                second_index.get_bucket(&second_key).grow(err);
+
+                // Follow the production retry loop; another grow may still be needed.
+                let mut attempts = 0;
+                loop {
+                    attempts += 1;
+                    match second_index.try_insert(&second_key, second_value) {
+                        Ok(()) => break,
+                        Err(err) => second_index.get_bucket(&second_key).grow(err),
+                    }
+                }
+                assert_eq!(attempts, expected_attempts);
+            });
+        });
+
+        assert_eq!(
+            index.read_value::<Vec<_>>(&second_key),
+            Some(second_value.to_vec()),
+        );
+    }
+
+    #[test]
+    fn bucket_map_test_concurrent_grow() {
+        // Both values use the same internal data bucket, so the first grow is enough.
+        assert_concurrent_grow_retries(
+            BucketMap::new(BucketMapConfig::new(1)),
+            &[0, 1],
+            &[2, 3],
+            1,
+        );
+    }
+
+    #[test]
+    fn bucket_map_test_concurrent_grow_again() {
+        // The second value uses a larger internal data bucket and needs another grow.
+        assert_concurrent_grow_retries(
+            BucketMap::new(BucketMapConfig::new(1)),
+            &[0, 1],
+            &[0, 1, 2, 3],
+            2,
+        );
+    }
+
+    #[test]
+    fn bucket_map_test_concurrent_index_grow() {
+        let index = BucketMap::new(BucketMapConfig::new(1));
+        loop {
+            let result = index.try_insert(&Pubkey::new_unique(), &[0]);
+            if result.is_err() {
+                assert!(matches!(result, Err(BucketMapError::IndexNoSpace(_))));
+                break;
+            }
+        }
+        assert_concurrent_grow_retries(index, &[0], &[1], 1);
     }
 
     #[test]

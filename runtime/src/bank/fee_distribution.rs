@@ -61,6 +61,10 @@ impl FeeDistribution {
     }
 }
 
+pub(crate) fn default_system_account() -> AccountSharedData {
+    AccountSharedData::new(0, 0, &system_program::id())
+}
+
 fn report_deposit_error(slot: u64, destination: &Pubkey, deposit: u64, err: DepositFeeError) {
     debug!("Burned {deposit} lamport tx fee instead of sending to {destination} due to {err}");
     datapoint_warn!(
@@ -244,7 +248,7 @@ impl Bank {
     fn deposit_fees(&self, collector_id: &Pubkey, fees: u64) -> Result<u64, DepositFeeError> {
         let mut account = self
             .get_account_with_fixed_root_no_cache(collector_id)
-            .unwrap_or_default();
+            .unwrap_or_else(default_system_account);
 
         let feature_snapshot = self.feature_set.snapshot();
         if feature_snapshot.custom_commission_collector {

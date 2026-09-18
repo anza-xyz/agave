@@ -163,7 +163,7 @@ mod tests {
         solana_account::{AccountSharedData, ReadableAccount},
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_keypair::{Keypair, keypair_from_seed},
         solana_message::{Message, compiled_instruction::CompiledInstruction},
         solana_nonce::{

@@ -208,7 +208,7 @@ mod tests {
         solana_account::ReadableAccount,
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_message::{
             AddressLookupTableAccount, Message as LegacyMessage, VersionedMessage, v0,
         },

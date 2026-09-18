@@ -11,7 +11,7 @@ use {
         program_cache_entry::ProgramCacheEntry,
         serialization, stable_log,
     },
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_sbpf::{
         ebpf::{self, MM_HEAP_START, MM_RODATA_START, MM_STACK_START},

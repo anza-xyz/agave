@@ -1648,7 +1648,7 @@ mod tests {
                     i,
                     0,
                     vec![],
-                    vec![u16::MAX; num_transaction_accounts],
+                    vec![u8::MAX; num_transaction_accounts],
                     Cow::Owned(vec![i as u8]),
                     None,
                 )

@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     solana_account::{
         AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
@@ -41,6 +43,7 @@ fn new_account(lamports: u64, rent_epoch: Epoch, data_len: usize) -> AccountShar
     account
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn create_account<T>(sysvar: &T, fields: InheritableAccountFields) -> AccountSharedData
 where
     T: wincode::Serialize<Src = T> + SysvarId,

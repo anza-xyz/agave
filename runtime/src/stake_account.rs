@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_stake_interface::{
         program as stake_program,
@@ -14,7 +14,7 @@ use {
 };
 #[cfg(feature = "frozen-abi")]
 use {
-    solana_frozen_abi::{abi_example::AbiExample, stable_abi::StableAbi},
+    solana_frozen_abi::stable_abi::StableAbi,
     solana_stake_interface::{stake_flags::StakeFlags, state::Meta},
 };
 
@@ -145,19 +145,5 @@ impl<S, T> PartialEq<StakeAccount<S>> for StakeAccount<T> {
             _phantom,
         } = other;
         account == &self.account && stake_state == &self.stake_state
-    }
-}
-
-#[cfg(feature = "frozen-abi")]
-impl AbiExample for StakeAccount<Delegation> {
-    fn example() -> Self {
-        use solana_account::Account;
-        let stake_state =
-            StakeStateV2::Stake(Meta::example(), Stake::example(), StakeFlags::example());
-        let mut account = Account::example();
-        account.data.resize(200, 0u8);
-        account.owner = stake_program::id();
-        account.set_state(&stake_state).unwrap();
-        Self::try_from(AccountSharedData::from(account)).unwrap()
     }
 }

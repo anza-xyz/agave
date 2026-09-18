@@ -75,8 +75,8 @@ impl AccountStorageEntry {
     }
 
     /// open a new instance of the storage that is readonly
-    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
-        self.accounts.reopen_as_readonly().map(|accounts| Self {
+    pub(crate) fn reopen_as_readonly(&self) -> Result<Option<Self>, AccountsFileError> {
+        Ok(self.accounts.reopen_as_readonly()?.map(|accounts| Self {
             id: self.id,
             slot: self.slot,
             num_alive_accounts: AtomicUsize::new(self.count()),
@@ -84,7 +84,7 @@ impl AccountStorageEntry {
             accounts,
             tombstone_offsets: RwLock::new(self.tombstone_offsets.read().unwrap().clone()),
             obsolete_accounts: RwLock::new(self.obsolete_accounts.read().unwrap().clone()),
-        })
+        }))
     }
 
     pub fn new_existing(
@@ -133,11 +133,7 @@ impl AccountStorageEntry {
         let obsolete_bytes: usize = self
             .obsolete_accounts_read_lock()
             .filter_obsolete_accounts(slot)
-            .map(|(offset, data_len)| {
-                self.accounts
-                    .calculate_stored_size(data_len)
-                    .min(self.accounts.len() - offset as usize)
-            })
+            .map(|(_offset, data_len)| self.accounts.calculate_stored_size(data_len))
             .sum();
         obsolete_bytes
     }
@@ -178,9 +174,8 @@ impl AccountStorageEntry {
     /// Return the "alive_bytes" minus the bytes of this storage's tombstones
     /// (zero-lamport accounts already purged from the index).
     pub(crate) fn alive_bytes_exclude_zero_lamport_accounts(&self) -> usize {
-        let zero_lamport_dead_bytes = self
-            .accounts
-            .dead_bytes_due_to_zero_lamport_accounts(self.num_tombstones());
+        let zero_lamport_dead_bytes =
+            self.num_tombstones() * self.accounts.calculate_stored_size(0);
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 
@@ -347,7 +342,7 @@ mod tests {
         // Mark account 1 obsolete and record account 3 as a tombstone.
         let obsolete_offset = offsets[1];
         let tombstone_offset = offsets[3];
-        let data_lens = storage.accounts.get_account_data_lens(&[obsolete_offset]);
+        let data_lens = storage.accounts.get_account_data_lens([obsolete_offset]);
         storage
             .obsolete_accounts()
             .write()

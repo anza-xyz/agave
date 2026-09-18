@@ -12,7 +12,7 @@ use {
     serde_json::{Value, from_value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_message::{
         MessageHeader,
         compiled_instruction::CompiledInstruction,

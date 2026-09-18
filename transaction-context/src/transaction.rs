@@ -11,7 +11,7 @@ use {
         },
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
@@ -72,7 +72,7 @@ pub struct TransactionContext<'ix_data> {
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
     /// Each entry in `deduplication_maps` represents the deduplication map for each instruction.
-    deduplication_maps: Vec<Box<[u16]>>,
+    deduplication_maps: Vec<Box<[u8]>>,
     /// Each entry in `instruction_accounts` represents the array of accounts for each instruction.
     instruction_accounts: Vec<Box<[InstructionAccount]>>,
     /// Each entry in `instruction_data` represents the data for instruction at the corresponding
@@ -290,7 +290,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_index: usize,
         program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
-        deduplication_map: Vec<u16>,
+        deduplication_map: Vec<u8>,
         instruction_data: Cow<'ix_data, [u8]>,
         caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
@@ -343,9 +343,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
     fn deduplicate_accounts_for_tests(
         &self,
         instruction_accounts: &[InstructionAccount],
-    ) -> Vec<u16> {
+    ) -> Vec<u8> {
         let mut dedup_map = vec![
-            u16::MAX;
+            u8::MAX;
             usize::from(self.get_number_of_accounts())
                 .min(MAX_ACCOUNTS_PER_TRANSACTION)
         ];
@@ -353,8 +353,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
             let index_in_instruction = dedup_map
                 .get_mut(account.index_in_transaction as usize)
                 .unwrap();
-            if *index_in_instruction == u16::MAX {
-                *index_in_instruction = idx as u16;
+            if *index_in_instruction == u8::MAX {
+                *index_in_instruction = idx as u8;
             }
         }
         dedup_map
@@ -367,7 +367,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+        debug_assert!(instruction_accounts.len() <= u8::MAX as usize);
         let dedup_map = self.deduplicate_accounts_for_tests(&instruction_accounts);
 
         self.configure_instruction_at_index(
@@ -388,7 +388,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+        debug_assert!(instruction_accounts.len() <= u8::MAX as usize);
         let dedup_map = self.deduplicate_accounts_for_tests(&instruction_accounts);
         let caller_index = self.get_current_instruction_index()?;
         let cpi_index = self.get_instruction_trace_length();
@@ -854,7 +854,7 @@ mod tests {
                     .dedup_map
                     .get(acc.index_in_transaction as usize)
                     .unwrap(),
-                idx_in_ix as u16
+                idx_in_ix as u8
             );
         }
 
@@ -875,7 +875,7 @@ mod tests {
                     .dedup_map
                     .get(acc.index_in_transaction as usize)
                     .unwrap(),
-                idx_in_ix as u16
+                idx_in_ix as u8
             );
         }
 
@@ -905,7 +905,7 @@ mod tests {
                         .dedup_map
                         .get(acc.index_in_transaction as usize)
                         .unwrap(),
-                    idx_in_ix as u16
+                    idx_in_ix as u8
                 );
             }
         }
@@ -1372,7 +1372,7 @@ mod tests {
                     InstructionAccount::new(0, false, false),
                     InstructionAccount::new(1, false, false),
                 ],
-                vec![u16::MAX; 3],
+                vec![u8::MAX; 3],
                 Cow::Owned(Vec::new()),
                 None,
             )
@@ -1387,7 +1387,7 @@ mod tests {
                     InstructionAccount::new(0, false, false),
                     InstructionAccount::new(1, false, true),
                 ],
-                vec![u16::MAX; 3],
+                vec![u8::MAX; 3],
                 Cow::Owned(Vec::new()),
                 None,
             )

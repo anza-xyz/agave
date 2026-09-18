@@ -2,7 +2,7 @@ use {
     crate::{StoredExtendedRewards, StoredTransactionError, StoredTransactionStatusMeta},
     solana_account_decoder::parse_token::{UiTokenAmount, real_number_string_trimmed},
     solana_hash::{HASH_BYTES, Hash},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_message::{
         MessageHeader, VersionedMessage,
         compiled_instruction::CompiledInstruction,
@@ -886,6 +886,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                 51 => InstructionError::MaxAccountsExceeded,
                 52 => InstructionError::MaxInstructionTraceLengthExceeded,
                 53 => InstructionError::BuiltinProgramsMustConsumeComputeUnits,
+                54 => InstructionError::BailOut,
                 _ => return Err("Invalid InstructionError"),
             };
 
@@ -953,6 +954,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
             36 => TransactionError::UnbalancedTransaction,
             37 => TransactionError::ProgramCacheHitMaxLimit,
             38 => TransactionError::CommitCancelled,
+            39 => TransactionError::BailOut,
             _ => return Err("Invalid TransactionError"),
         })
     }
@@ -1077,6 +1079,11 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 TransactionError::CommitCancelled => {
                     tx_by_addr::TransactionErrorType::CommitCancelled
                 }
+                TransactionError::BailOut => tx_by_addr::TransactionErrorType::BailOutTx,
+                // `TransactionError` is `#[non_exhaustive]`, so the match needs a
+                // wildcard. `test_error_tags` walks `VARIANTS` and fails if any variant
+                // reaches it, which is what makes this unreachable.
+                _ => unreachable!("no tx_by_addr tag for {transaction_error:?}"),
             } as i32,
             instruction_error: match transaction_error {
                 TransactionError::InstructionError(index, ref instruction_error) => {
@@ -1244,6 +1251,11 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                             InstructionError::BuiltinProgramsMustConsumeComputeUnits => {
                                 tx_by_addr::InstructionErrorType::BuiltinProgramsMustConsumeComputeUnits
                             }
+                            InstructionError::BailOut => {
+                                tx_by_addr::InstructionErrorType::BailOut
+                            }
+                            // See the `TransactionErrorType` wildcard note above.
+                            _ => unreachable!("no tx_by_addr tag for {instruction_error:?}"),
                         } as i32,
                         custom: match instruction_error {
                             InstructionError::Custom(custom) => {
@@ -2033,6 +2045,20 @@ mod test {
             transaction_error,
             tx_by_addr_transaction_error.try_into().unwrap()
         );
+    }
+
+    /// Every variant must reach a tag of its own rather than the `#[non_exhaustive]`
+    /// wildcard. This is what lets that wildcard be `unreachable!()`, so a variant
+    /// without a tag panics here instead of in a warehouse node.
+    #[test]
+    fn test_error_tags() {
+        for error in TransactionError::VARIANTS {
+            let _: tx_by_addr::TransactionError = error.into();
+        }
+        for ix_error in InstructionError::VARIANTS {
+            let _: tx_by_addr::TransactionError =
+                TransactionError::InstructionError(0, ix_error).into();
+        }
     }
 
     #[test]

@@ -22,7 +22,8 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_hash::Hash,
-    solana_instruction::{Instruction, error::InstructionError},
+    solana_instruction::Instruction,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -355,7 +356,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let transaction_callee_map_len = (self.transaction_context.get_number_of_accounts()
             as usize)
             .min(MAX_ACCOUNTS_PER_TRANSACTION);
-        let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; transaction_callee_map_len];
+        let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; transaction_callee_map_len];
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
 
@@ -398,7 +399,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                     };
                     instruction_accounts.push(cloned_account);
                 } else {
-                    *index_in_callee = instruction_accounts.len() as u16;
+                    *index_in_callee = instruction_accounts.len() as u8;
                     instruction_accounts.push(InstructionAccount::new(
                         index_in_transaction,
                         account_meta.is_signer,
@@ -563,7 +564,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 .account_keys()
                 .len()
                 .min(MAX_ACCOUNTS_PER_TRANSACTION);
-            let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; transaction_callee_map_len];
+            let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; transaction_callee_map_len];
 
             let mut instruction_accounts: Vec<InstructionAccount> =
                 Vec::with_capacity(instruction.accounts.len());
@@ -573,7 +574,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                     .expect("Invalid index in transaction");
 
                 if (*index_in_callee as usize) > instruction_accounts.len() {
-                    *index_in_callee = instruction_accounts.len() as u16;
+                    *index_in_callee = instruction_accounts.len() as u8;
                 }
 
                 let index_in_transaction = *index_in_transaction as usize;
@@ -1423,7 +1424,7 @@ mod tests {
                 0,
                 0,
                 vec![InstructionAccount::new(0, false, false)],
-                vec![u16::MAX; num_transaction_accounts],
+                vec![u8::MAX; num_transaction_accounts],
                 Cow::Owned(Vec::new()),
                 None,
             )
@@ -1434,7 +1435,7 @@ mod tests {
                 1,
                 0,
                 vec![InstructionAccount::new(0, false, false)],
-                vec![u16::MAX; num_transaction_accounts],
+                vec![u8::MAX; num_transaction_accounts],
                 Cow::Owned(Vec::new()),
                 None,
             )

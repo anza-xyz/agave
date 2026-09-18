@@ -1254,6 +1254,11 @@ mod test {
             .is_err()
         );
         let keys = message.account_keys.clone();
+        // The builder appends the system program so the deposit can invoke a
+        // transfer, but the program reads only the vote and source accounts, so
+        // the two-account form parses too.
+        message.instructions[0].accounts.pop();
+        assert!(parse_vote(&message.instructions[0], &AccountKeys::new(&keys, None)).is_ok());
         message.instructions[0].accounts.pop();
         assert!(parse_vote(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
     }

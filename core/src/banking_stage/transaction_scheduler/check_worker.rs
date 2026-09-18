@@ -375,23 +375,30 @@ pub(crate) mod external {
                     continue;
                 }
 
+                // txs and max_ages include successfully translated transactions even
+                // when their scheduling details fail. Consume those entries before
+                // skipping, or a later response will use an earlier transaction's data.
+                let resolved_transaction = parsing_and_resolve_results.is_ok().then(|| {
+                    let transaction = resolved_transaction_iter.next().expect(
+                        "resolved_transaction_iter must contain an element for each successfully \
+                         translated transaction",
+                    );
+                    let max_age = max_age_iter.next().expect(
+                        "max_age_iter must contain an element for each successfully translated \
+                         transaction",
+                    );
+                    (transaction, max_age)
+                });
+
                 let response = &mut responses[transaction_index];
                 if response.scheduling_details_flags & scheduling_details_flags::FAILED != 0 {
                     continue;
                 }
                 response.resolve_flags |= resolve_flags::PERFORMED;
-                if parsing_and_resolve_results.is_err() {
+                let Some((transaction, max_age)) = resolved_transaction else {
                     response.resolve_flags |= resolve_flags::FAILED;
                     continue;
-                }
-
-                let transaction = resolved_transaction_iter.next().expect(
-                    "resolved_transaction_iter iterator must contain element for each sent parsed \
-                     transaction",
-                );
-                let max_age = max_age_iter.next().expect(
-                    "max_age_iter iterator must contain element for each sent parsed transaction",
-                );
+                };
 
                 // Address table lookups are sanitized to contain at least one account, so there
                 // are loaded keys exactly when account keys outnumber static account keys.
@@ -828,19 +835,25 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::tests::create_slow_genesis_config,
             agave_scheduler_bindings::{SharableTransactionBatchRegion, SharableTransactionRegion},
-            agave_scheduler_handshake::{ClientLogon, client, server::Server},
-            agave_scheduling_utils::responses_region::CheckResponsesPtr,
+            agave_scheduler_handshake::{ClientLogon, setup_local_session},
+            agave_scheduling_utils::{
+                pubkeys_ptr::PubkeysPtr, responses_region::CheckResponsesPtr,
+            },
             solana_account::AccountSharedData,
+            solana_address_lookup_table_interface::{
+                program,
+                state::{AddressLookupTable, LookupTableMeta},
+            },
             solana_compute_budget_interface::ComputeBudgetInstruction,
             solana_keypair::Keypair,
             solana_leader_schedule::SlotLeader,
             solana_ledger::genesis_utils::GenesisConfigInfo,
-            solana_message::Message,
+            solana_message::{AddressLookupTableAccount, Message, VersionedMessage, v0},
             solana_runtime::{bank::Bank, bank_forks::BankForks},
             solana_sdk_ids::system_program,
             solana_signer::Signer,
             solana_system_transaction::transfer,
-            solana_transaction::Transaction,
+            solana_transaction::{Transaction, versioned::VersionedTransaction},
             std::{
                 sync::{Arc, RwLock},
                 time::Duration,
@@ -992,9 +1005,8 @@ pub(crate) mod external {
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
             };
-            let (_agave_session, files) = Server::setup_session(logon).unwrap();
-            let mut client_session = client::setup_session(&logon, files).unwrap();
-            let allocator = client_session.allocators.pop().unwrap();
+            let (_agave_session, client_session) = setup_local_session(logon).unwrap();
+            let allocator = client_session.allocator;
 
             let (pack_to_check_worker, receiver) = shaq::mpmc::pair(16).unwrap();
             let (check_worker_to_pack, response_receiver) = shaq::mpmc::pair(16).unwrap();
@@ -1177,15 +1189,52 @@ pub(crate) mod external {
         fn test_scheduling_details_failure_skips_pubkey_resolution() {
             let mut test_frame = setup_check_worker_test_frame();
             let fee_payer = Keypair::new();
+            let blockhash = test_frame.bank.confirmed_last_blockhash();
             let transaction = Transaction::new(
                 &[&fee_payer],
                 Message::new(
                     &[ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0)],
                     Some(&fee_payer.pubkey()),
                 ),
-                test_frame.bank.confirmed_last_blockhash(),
+                blockhash,
             );
-            let batch = test_frame.allocate_batch(&[wincode::serialize(&transaction).unwrap()]);
+
+            // Follow the scheduling failure with a transaction that loads one address.
+            let recipient = Pubkey::new_unique();
+            let table_key = Pubkey::new_unique();
+            let table_data = AddressLookupTable {
+                meta: LookupTableMeta::default(),
+                addresses: vec![recipient].into(),
+            }
+            .serialize_for_tests()
+            .unwrap();
+            let mut table_account = AccountSharedData::new(1, table_data.len(), &program::id());
+            table_account.set_data_from_slice(&table_data);
+            test_frame.bank.store_account(&table_key, &table_account);
+            let next_transaction = VersionedTransaction::try_new(
+                VersionedMessage::V0(
+                    v0::Message::try_compile(
+                        &fee_payer.pubkey(),
+                        &[solana_system_interface::instruction::transfer(
+                            &fee_payer.pubkey(),
+                            &recipient,
+                            1,
+                        )],
+                        &[AddressLookupTableAccount {
+                            key: table_key,
+                            addresses: vec![recipient],
+                        }],
+                        blockhash,
+                    )
+                    .unwrap(),
+                ),
+                &[&fee_payer],
+            )
+            .unwrap();
+            let batch = test_frame.allocate_batch(&[
+                wincode::serialize(&transaction).unwrap(),
+                wincode::serialize(&next_transaction).unwrap(),
+            ]);
 
             test_frame.send_message(PackToCheckWorkerMessage {
                 flags: check_message_flags::CALCULATE_SCHEDULING_DETAILS
@@ -1195,8 +1244,9 @@ pub(crate) mod external {
             test_frame.iterate().unwrap();
             let response = test_frame.recv_response();
             let responses = test_frame.check_responses(&response.responses);
+            test_frame.free_batch(batch);
 
-            assert_eq!(responses.len(), 1);
+            assert_eq!(responses.len(), 2);
             assert_eq!(
                 responses[0].scheduling_details_flags,
                 scheduling_details_flags::REQUESTED
@@ -1206,7 +1256,20 @@ pub(crate) mod external {
             assert_eq!(responses[0].resolve_flags, resolve_flags::REQUESTED);
             assert_eq!(responses[0].resolved_pubkeys.num_pubkeys, 0);
 
-            test_frame.free_batch(batch);
+            assert_eq!(
+                responses[1].scheduling_details_flags,
+                scheduling_details_flags::REQUESTED | scheduling_details_flags::PERFORMED
+            );
+            assert_eq!(responses[1].resolved_pubkeys.num_pubkeys, 1);
+            // SAFETY: this response exclusively owns the worker's pubkey allocation.
+            unsafe {
+                let keys = PubkeysPtr::from_sharable_pubkeys(
+                    &responses[1].resolved_pubkeys,
+                    &test_frame.allocator,
+                );
+                assert_eq!(keys.as_slice(), &[recipient]);
+                keys.free(&test_frame.allocator);
+            }
         }
 
         #[test]

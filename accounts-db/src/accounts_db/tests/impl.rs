@@ -134,7 +134,7 @@ fn create_store_for_shrink_tests(
     ));
     accounts_db.storage.insert(Arc::clone(&store));
     store.add_accounts(num_tombstones.max(1), alive_bytes);
-    store.batch_insert_tombstone_offsets(0..num_tombstones as u64);
+    store.batch_insert_tombstone_offsets(0..num_tombstones as Offset);
     (temp_dir, store)
 }
 
@@ -5418,7 +5418,9 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
     let offsets = storage.accounts.write_accounts(&(slot0, &account_list[..]));
 
     let offsets = offsets.unwrap().offsets;
-    let data_lens = storage.accounts.get_account_data_lens(&offsets);
+    let data_lens = storage
+        .accounts
+        .get_account_data_lens(offsets.iter().copied());
     let mut offsets: Vec<_> = offsets.into_iter().zip(data_lens).collect();
 
     // Randomize the accounts that get marked obsolete
