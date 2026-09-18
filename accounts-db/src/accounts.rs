@@ -542,7 +542,7 @@ impl Accounts {
 
     /// Startup work that does not have to block index generation. Called once, when the
     /// validator starts its background services
-    pub fn finish_startup(&self) {
+    pub fn accounts_db_finish_startup(&self) {
         // The storages loaded from the snapshot have never been considered for shrinking
         let (num_shrink_candidates, queue_shrink_candidates_us) =
             measure_us!(self.accounts_db.queue_shrink_candidates_for_all_slots());
