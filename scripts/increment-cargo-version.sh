@@ -24,6 +24,8 @@ ignores=(
   target
   node_modules
   ci/xtask
+  # This crate versions its plugin ABI independently from the workspace.
+  geyser-plugin-interface
 )
 
 not_paths=()

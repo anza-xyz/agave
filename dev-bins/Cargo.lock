@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "agave-geyser-plugin-interface"
-version = "4.4.0-alpha.4"
+version = "5.0.0"
 dependencies = [
  "log",
  "solana-bls-signatures",

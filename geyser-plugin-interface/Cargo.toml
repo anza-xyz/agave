@@ -2,7 +2,8 @@
 name = "agave-geyser-plugin-interface"
 description = "The Solana Geyser plugin interface."
 documentation = "https://docs.rs/agave-geyser-plugin-interface"
-version = { workspace = true }
+# The plugin ABI is versioned independently from the Agave workspace.
+version = "5.0.0"
 authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }

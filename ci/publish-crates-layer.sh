@@ -5,14 +5,12 @@
 #
 # Required env vars:
 #   CARGO_REGISTRY_TOKEN  Short-lived crates.io token from rust-lang/crates-io-auth-action
-#   CRATE_VERSION         Version expected on crates.io (used for already-published check)
 #   DOCKER_IMAGE          CI Docker image (rust + C deps for rocksdb, etc.)
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 : "${CARGO_REGISTRY_TOKEN:?required}"
-: "${CRATE_VERSION:?required}"
 : "${DOCKER_IMAGE:?required}"
 
 is_published() {
@@ -24,11 +22,19 @@ is_published() {
     | jq -e 'has("version")' >/dev/null 2>&1
 }
 
+metadata=$(docker run --rm \
+  -v "${PWD}:/solana" -w /solana \
+  "${DOCKER_IMAGE}" \
+  cargo metadata --no-deps --format-version 1)
+
 while IFS= read -r crate_name; do
   [[ -z "${crate_name}" ]] && continue
 
-  if is_published "${crate_name}" "${CRATE_VERSION}"; then
-    echo "${crate_name} ${CRATE_VERSION} already on crates.io, skipping"
+  crate_version=$(jq -er --arg name "${crate_name}" \
+    '.packages[] | select(.name == $name) | .version' <<<"${metadata}")
+
+  if is_published "${crate_name}" "${crate_version}"; then
+    echo "${crate_name} ${crate_version} already on crates.io, skipping"
     continue
   fi
 
