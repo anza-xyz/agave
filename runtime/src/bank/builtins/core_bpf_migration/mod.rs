@@ -581,6 +581,11 @@ pub(crate) mod tests {
         elf
     }
 
+    pub(crate) enum ExpectedCacheEntry {
+        DelayVisibility,
+        Loaded,
+    }
+
     pub(crate) struct TestContext {
         target_program_address: Pubkey,
         source_buffer_address: Pubkey,
@@ -699,7 +704,6 @@ pub(crate) mod tests {
         //   its program data address.
         // * The source buffer account is cleared.
         // * The bank's builtin IDs do not contain the target program address.
-        // * The cache contains the target program, and the entry is updated.
         pub(crate) fn run_program_checks(&self, bank: &Bank, migration_or_upgrade_slot: Slot) {
             // Verify the source buffer account has been cleared.
             assert!(bank.get_account(&self.source_buffer_address).is_none());
@@ -759,8 +763,20 @@ pub(crate) mod tests {
                     .unwrap()
                     .contains(&self.target_program_address)
             );
+        }
 
-            // The cache should contain the target program.
+        /// Verify the target program's program cache entry:
+        ///
+        /// * The entry is updated to the migration or upgrade slot.
+        /// * The entry is a loader v3 BPF program.
+        /// * The entry is of the kind the caller expects, carrying the bank's
+        ///   environment when it is compiled.
+        pub(crate) fn run_program_cache_checks(
+            &self,
+            bank: &Bank,
+            migration_or_upgrade_slot: Slot,
+            expected_entry: ExpectedCacheEntry,
+        ) {
             let feature_set = bank.feature_set.runtime_features();
             let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
                 None, // account_overrides
@@ -793,21 +809,25 @@ pub(crate) mod tests {
 
             // The target program entry should be a loader v3 BPF program.
             assert_eq!(target_entry.account_owner, ProgramCacheEntryOwner::LoaderV3);
-            if bank.slot() == migration_or_upgrade_slot {
-                assert_matches!(target_entry.program, ProgramCacheEntryType::DelayVisibility);
-            } else {
-                assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
 
-                // The target program entry should have the environment of the
-                // new epoch.
-                let env = target_entry.program.get_environment().unwrap();
-                assert_eq!(env, &bank.transaction_processor.program_runtime_environment);
-                assert_eq!(
-                    env,
-                    &bank
-                        .transaction_processor
-                        .program_runtime_environment_for_epoch(bank.epoch()),
-                );
+            match expected_entry {
+                ExpectedCacheEntry::DelayVisibility => {
+                    assert_matches!(target_entry.program, ProgramCacheEntryType::DelayVisibility);
+                }
+                ExpectedCacheEntry::Loaded => {
+                    assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
+
+                    // The target program entry should have the environment of
+                    // the new epoch.
+                    let env = target_entry.program.get_environment().unwrap();
+                    assert_eq!(env, &bank.transaction_processor.program_runtime_environment);
+                    assert_eq!(
+                        env,
+                        &bank
+                            .transaction_processor
+                            .program_runtime_environment_for_epoch(bank.epoch()),
+                    );
+                }
             }
         }
     }
@@ -870,6 +890,11 @@ pub(crate) mod tests {
 
         // Run the post-migration program checks.
         test_context.run_program_checks(&bank, migration_slot);
+        test_context.run_program_cache_checks(
+            &bank,
+            migration_slot,
+            ExpectedCacheEntry::DelayVisibility,
+        );
 
         // Check the bank's capitalization.
         assert_eq!(
@@ -935,6 +960,11 @@ pub(crate) mod tests {
 
         // Run the post-migration program checks.
         test_context.run_program_checks(&bank, migration_slot);
+        test_context.run_program_cache_checks(
+            &bank,
+            migration_slot,
+            ExpectedCacheEntry::DelayVisibility,
+        );
 
         // Check the bank's capitalization.
         assert_eq!(
@@ -1211,6 +1241,11 @@ pub(crate) mod tests {
 
         // Run the post-upgrade program checks.
         test_context.run_program_checks(&bank, upgrade_slot);
+        test_context.run_program_cache_checks(
+            &bank,
+            upgrade_slot,
+            ExpectedCacheEntry::DelayVisibility,
+        );
 
         // Check the bank's capitalization.
         assert_eq!(bank.capitalization(), expected_post_upgrade_capitalization);
@@ -1374,6 +1409,11 @@ pub(crate) mod tests {
         // Run the post-migration program checks.
         assert!(bank.feature_set.is_active(feature_id));
         test_context.run_program_checks(&bank, migration_slot);
+        test_context.run_program_cache_checks(
+            &bank,
+            migration_slot,
+            ExpectedCacheEntry::DelayVisibility,
+        );
 
         // The migrated program is not effective until the next slot, so invoking
         // it in the migration slot must fail (delayed visibility).
@@ -1449,8 +1489,10 @@ pub(crate) mod tests {
         );
 
         // Run the post-migration program checks again.
+        // The entry should long be effective by now.
         assert!(bank.feature_set.is_active(feature_id));
         test_context.run_program_checks(&bank, migration_slot);
+        test_context.run_program_cache_checks(&bank, migration_slot, ExpectedCacheEntry::Loaded);
 
         // Again, successfully invoke the new BPF loader v3 program.
         bank.process_transaction(&Transaction::new(
@@ -1913,6 +1955,11 @@ pub(crate) mod tests {
 
         // Run the post-upgrade program checks.
         test_context.run_program_checks(&bank, upgrade_slot);
+        test_context.run_program_cache_checks(
+            &bank,
+            upgrade_slot,
+            ExpectedCacheEntry::DelayVisibility,
+        );
 
         // Check the bank's capitalization.
         assert_eq!(bank.capitalization(), expected_post_upgrade_capitalization);
@@ -2197,6 +2244,11 @@ pub(crate) mod tests {
 
         // Run the post-upgrade program checks.
         test_context.run_program_checks(&bank, upgrade_slot);
+        test_context.run_program_cache_checks(
+            &bank,
+            upgrade_slot,
+            ExpectedCacheEntry::DelayVisibility,
+        );
 
         bank.fill_bank_with_ticks_for_tests();
         bank.set_block_id(Some(Hash::default()));
@@ -2263,6 +2315,11 @@ pub(crate) mod tests {
 
         // Run the post-upgrade program checks on the restored bank.
         test_context.run_program_checks(&roundtrip_bank, upgrade_slot);
+        test_context.run_program_cache_checks(
+            &roundtrip_bank,
+            upgrade_slot,
+            ExpectedCacheEntry::DelayVisibility,
+        );
         assert_eq!(bank, roundtrip_bank);
     }
 
