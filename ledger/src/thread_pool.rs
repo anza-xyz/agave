@@ -1,8 +1,9 @@
 use {
-    agave_wake_channel::{Sender, bounded},
+    agave_wake_channel::{Sender, WakeGroup, bounded},
     log::error,
     std::{
         mem,
+        sync::Arc,
         thread::{self, JoinHandle},
     },
 };
@@ -23,7 +24,8 @@ impl<J: WorkerJob> WorkerPool<J> {
         job_queue_capacity: usize,
     ) -> Self {
         assert_ne!(num_workers, 0, "worker pool must have at least one worker");
-        let (job_sender, job_receiver) = bounded::<J>(job_queue_capacity);
+        let (job_sender, job_receiver) =
+            bounded::<J>(job_queue_capacity, Arc::new(WakeGroup::default()));
         let worker_handles = (0..num_workers)
             .map(|index| {
                 let job_receiver = job_receiver.clone();
@@ -58,7 +60,7 @@ impl<J: WorkerJob> WorkerPool<J> {
 impl<J: WorkerJob> Drop for WorkerPool<J> {
     fn drop(&mut self) {
         // drop the sender so the workers exit
-        let (tmp, _) = bounded(1);
+        let (tmp, _) = bounded(1, Arc::new(WakeGroup::default()));
         drop(mem::replace(&mut self.job_sender, tmp));
         for worker_handle in self.worker_handles.drain(..) {
             if let Err(err) = worker_handle.join() {

@@ -29,15 +29,27 @@
 //! The fences in `register_waiter()` and `wake_*()` allow the "`wake_one()` does nothing"
 //! optimization, guaranteeing that either a receiver's second `try_recv()` observes a message, or
 //! the sender observes the registered waiter and so can wake it.
+//!
+//! # Multiple lanes
+//!
+//! [`WakeGroup::recv_with`] takes a poll closure instead of a channel, so a consumer can poll any
+//! number of lanes of different types and fold them into one result; in the protocol above, that
+//! closure takes the place of `try_recv()`. Every lane polled inside one `recv_with` call must have
+//! been created on that same group: a lane on another group never wakes this group's sleepers.
+//!
+//! Every sleeping consumer on a group must also poll every lane on that group. `wake_one()` can
+//! wake any sleeper; if that consumer does not poll the lane with new data, it can go back to sleep
+//! while the data's intended consumer remains asleep. Use separate groups for consumers that drain
+//! different sets of lanes, and only use [`Receiver::recv`] on a group with a single lane.
 
 #![cfg(feature = "agave-unstable-api")]
 
+pub use crossbeam_channel::{RecvError, SendError, TryRecvError, TrySendError};
 #[cfg(feature = "shuttle-test")]
 use shuttle::sync::atomic::AtomicUsize;
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::atomic::AtomicUsize;
 use {
-    crossbeam_channel::{RecvError, SendError, TryRecvError},
     crossbeam_utils::Backoff,
     std::{
         mem,
@@ -113,9 +125,11 @@ impl Drop for WakeWaiter<'_> {
     }
 }
 
-/// The wake point a pool of consumers sleeps on.
+/// The wake point shared by every lane feeding one pool of consumers.
 ///
-/// Consumers block in [`WakeGroup::recv_with`]; [`Receiver::recv`] is the single-channel instance.
+/// Create one per consumer pool, build the pool's lanes on it with [`bounded`], and have consumers
+/// block in [`WakeGroup::recv_with`] (or [`Receiver::recv`] for a single lane).
+/// All sleeping consumers must poll every lane on the group: a wake can go to any of them.
 #[derive(Default)]
 pub struct WakeGroup {
     wake_event: WakeEvent,
@@ -129,17 +143,20 @@ impl WakeGroup {
     }
 
     /// Wakes every sleeping receiver, if any. For conditions all receivers must observe, such as a
-    /// channel disconnect or a pool exit flag. Call it _after_ making the condition visible.
+    /// lane disconnect or a pool exit flag. Call it _after_ making the condition visible.
     pub fn wake_all(&self) {
         self.wake_event.wake_all();
     }
 
     /// Blocks until `poll` returns something other than `Err(TryRecvError::Empty)`.
     ///
-    /// `poll` must observe every condition that should end the wait: data, a disconnect, an exit
-    /// flag. Every producer of such a condition must call [`wake_one`](Self::wake_one) or
-    /// [`wake_all`](Self::wake_all) on this group after making it visible.
-    /// `Err(TryRecvError::Disconnected)` from `poll` ends the wait with `Err(RecvError)`.
+    /// `poll` must observe every condition that should end the wait: data on any lane, a
+    /// disconnected lane, an exit flag. Every producer of such a condition must call
+    /// [`wake_one`](Self::wake_one) or [`wake_all`](Self::wake_all) on this group after making it
+    /// visible. `Err(TryRecvError::Disconnected)` from `poll` ends the wait with `Err(RecvError)`.
+    ///
+    /// All consumers sleeping on this group must poll the same set of lanes. Otherwise a send can
+    /// wake a consumer that cannot receive the message, leaving the intended consumer asleep.
     pub fn recv_with<T>(
         &self,
         mut poll: impl FnMut() -> Result<T, TryRecvError>,
@@ -196,6 +213,28 @@ impl<T> Sender<T> {
         self.shared.wake_group.wake_one();
         Ok(())
     }
+
+    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+        self.inner.try_send(value)?;
+        self.shared.wake_group.wake_one();
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
+    }
+
+    pub fn wake_group(&self) -> &Arc<WakeGroup> {
+        &self.shared.wake_group
+    }
 }
 
 impl<T> Clone for Sender<T> {
@@ -226,8 +265,31 @@ pub struct Receiver<T> {
 }
 
 impl<T> Receiver<T> {
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+        self.inner.try_recv()
+    }
+
+    /// Blocking receive on this lane alone. Only use this with a group dedicated to this lane.
+    /// Consumers sharing a group across several lanes must all poll those lanes through
+    /// [`WakeGroup::recv_with`], so whichever consumer is woken can receive the queued message.
     pub fn recv(&self) -> Result<T, RecvError> {
         self.shared.wake_group.recv_with(|| self.inner.try_recv())
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
+    }
+
+    pub fn wake_group(&self) -> &Arc<WakeGroup> {
+        &self.shared.wake_group
     }
 }
 
@@ -240,11 +302,15 @@ impl<T> Clone for Receiver<T> {
     }
 }
 
-pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+/// Creates a lane of the given capacity on `group`.
+///
+/// Panics if `capacity` is zero: a zero-capacity crossbeam channel only completes a send when a
+/// receiver is blocked in `recv()`, which never happens here.
+pub fn bounded<T>(capacity: usize, group: Arc<WakeGroup>) -> (Sender<T>, Receiver<T>) {
     assert_ne!(capacity, 0, "channel capacity must be nonzero");
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
     let shared = Arc::new(Shared {
-        wake_group: Arc::new(WakeGroup::default()),
+        wake_group: group,
         num_senders: AtomicUsize::new(1),
     });
     (
@@ -290,6 +356,20 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    enum Work {
+        A(u32),
+        B(&'static str),
+    }
+
+    fn poll_both(ra: &Receiver<u32>, rb: &Receiver<&'static str>) -> Result<Work, TryRecvError> {
+        match ra.try_recv() {
+            Ok(value) => Ok(Work::A(value)),
+            Err(TryRecvError::Empty) => rb.try_recv().map(Work::B),
+            Err(err) => Err(err),
+        }
+    }
+
     #[test]
     fn test_wake_before_wait() {
         let event = WakeEvent::default();
@@ -302,10 +382,11 @@ mod tests {
     fn test_wake_receivers_and_disconnect() {
         const NUM_RECEIVERS: usize = 4;
 
-        let (sender, receiver) = bounded(NUM_RECEIVERS);
+        let group = Arc::new(WakeGroup::default());
+        let (sender, receiver) = bounded(NUM_RECEIVERS, Arc::clone(&group));
         let sender1 = sender.clone();
         drop(sender);
-        let barrier = Arc::new(Barrier::new(NUM_RECEIVERS + 1));
+        let barrier = Arc::new(Barrier::new(NUM_RECEIVERS.saturating_add(1)));
         let handles = (0..NUM_RECEIVERS)
             .map(|_| {
                 let receiver = receiver.clone();
@@ -318,7 +399,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        wait_for_waiters(&receiver.shared.wake_group, NUM_RECEIVERS);
+        wait_for_waiters(&group, NUM_RECEIVERS);
         for _ in 0..NUM_RECEIVERS {
             sender1.send(()).unwrap();
         }
@@ -336,8 +417,8 @@ mod tests {
     fn test_sleeping_receiver_is_woken_for_every_message() {
         const NUM_MESSAGES: usize = 1_000;
 
-        let (sender, receiver) = bounded(1);
-        let group = Arc::clone(&receiver.shared.wake_group);
+        let group = Arc::new(WakeGroup::default());
+        let (sender, receiver) = bounded(1, Arc::clone(&group));
         let producer = thread::spawn(move || {
             for i in 0..NUM_MESSAGES {
                 wait_for_waiters(&group, 1);
@@ -356,9 +437,63 @@ mod tests {
     }
 
     #[test]
+    fn test_recv_with_wakes_on_either_lane() {
+        let group = Arc::new(WakeGroup::default());
+        let (sa, ra) = bounded::<u32>(4, Arc::clone(&group));
+        let (sb, rb) = bounded::<&'static str>(4, Arc::clone(&group));
+
+        let spawn_consumer = || {
+            let group = Arc::clone(&group);
+            let (ra, rb) = (ra.clone(), rb.clone());
+            spawn_with_result(move || group.recv_with(|| poll_both(&ra, &rb)).unwrap())
+        };
+
+        let consumer = spawn_consumer();
+        wait_for_waiters(&group, 1);
+        sb.try_send("b").unwrap();
+        assert_eq!(
+            consumer
+                .recv_timeout(TEST_TIMEOUT)
+                .expect("consumer stranded"),
+            Work::B("b")
+        );
+
+        let consumer = spawn_consumer();
+        wait_for_waiters(&group, 1);
+        sa.try_send(7).unwrap();
+        assert_eq!(
+            consumer
+                .recv_timeout(TEST_TIMEOUT)
+                .expect("consumer stranded"),
+            Work::A(7)
+        );
+    }
+
+    #[test]
+    fn test_lane_disconnect_wakes_multi_lane_sleeper() {
+        let group = Arc::new(WakeGroup::default());
+        let (_sa, ra) = bounded::<u32>(4, Arc::clone(&group));
+        let (sb, rb) = bounded::<&'static str>(4, Arc::clone(&group));
+
+        let consumer = {
+            let group = Arc::clone(&group);
+            spawn_with_result(move || group.recv_with(|| poll_both(&ra, &rb)))
+        };
+        wait_for_waiters(&group, 1);
+        // Lane A is still connected; dropping lane B's only sender must still end the wait.
+        drop(sb);
+        assert_eq!(
+            consumer
+                .recv_timeout(TEST_TIMEOUT)
+                .expect("consumer stranded"),
+            Err(RecvError)
+        );
+    }
+
+    #[test]
     fn test_exit_flag_wakes_sleeper() {
-        let (_sender, receiver) = bounded::<()>(4);
-        let group = Arc::clone(&receiver.shared.wake_group);
+        let group = Arc::new(WakeGroup::default());
+        let (_sender, receiver) = bounded::<()>(4, Arc::clone(&group));
         let exit = Arc::new(AtomicBool::new(false));
 
         let consumer = {
@@ -394,43 +529,32 @@ mod shuttle_tests {
     fn test_disconnect_is_visible_before_wake() {
         shuttle::check_dfs(
             || {
-                let (sender, receiver) = bounded::<()>(1);
+                let group = Arc::new(WakeGroup::default());
+                let (sender, receiver) = bounded::<()>(1, Arc::clone(&group));
                 let sender1 = sender.clone();
                 let observer_receiver = receiver.clone();
-                let _waiter = receiver.shared.wake_group.wake_event.register_waiter();
+                let _waiter = group.wake_event.register_waiter();
 
                 let sender_drop = thread::spawn(move || drop(sender));
                 let sender1_drop = thread::spawn(move || drop(sender1));
-                let observer = thread::spawn(move || {
-                    // A changed cookie means wake_all() has run. The underlying channel must have
-                    // been disconnected before the wake became visible.
-                    if observer_receiver
-                        .shared
-                        .wake_group
-                        .wake_event
-                        .cookie
-                        .load(Ordering::Relaxed)
-                        != 0
-                    {
-                        assert_eq!(
-                            observer_receiver.inner.try_recv(),
-                            Err(TryRecvError::Disconnected),
-                        );
+                let observer = thread::spawn({
+                    let group = Arc::clone(&group);
+                    move || {
+                        // A changed cookie means wake_all() has run. The underlying channel must
+                        // have been disconnected before the wake became visible.
+                        if group.wake_event.cookie.load(Ordering::Relaxed) != 0 {
+                            assert_eq!(
+                                observer_receiver.inner.try_recv(),
+                                Err(TryRecvError::Disconnected),
+                            );
+                        }
                     }
                 });
 
                 sender_drop.join().unwrap();
                 sender1_drop.join().unwrap();
                 observer.join().unwrap();
-                assert_ne!(
-                    receiver
-                        .shared
-                        .wake_group
-                        .wake_event
-                        .cookie
-                        .load(Ordering::Relaxed),
-                    0
-                );
+                assert_ne!(group.wake_event.cookie.load(Ordering::Relaxed), 0);
                 assert_eq!(receiver.inner.try_recv(), Err(TryRecvError::Disconnected));
             },
             None,
