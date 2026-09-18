@@ -8,9 +8,9 @@ use {
         },
         quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
         quic_socket::QuicSocket,
-        streamer::StakedNodes,
+        streamer::{ChannelSend, StakedNodes},
     },
-    crossbeam_channel::{Receiver, Sender, bounded},
+    crossbeam_channel::{Receiver, bounded},
     quinn::{
         ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
         crypto::rustls::QuicClientConfig,
@@ -37,17 +37,18 @@ use {
 const QUIC_KEEP_ALIVE_FOR_TESTS: Duration = Duration::from_secs(5);
 
 /// Spawn a streamer instance in the current tokio runtime.
-pub fn spawn_stake_weighted_qos_server(
+pub fn spawn_stake_weighted_qos_server<S>(
     name: &'static str,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: S,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
     cancel: CancellationToken,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError>
 where
+    S: ChannelSend<PacketBatch> + Clone,
 {
     let stats = Arc::<StreamerStats>::default();
 

@@ -9358,6 +9358,7 @@ dependencies = [
 name = "solana-streamer"
 version = "4.4.0-alpha.5"
 dependencies = [
+ "agave-wake-channel",
  "agave-xdp",
  "bytes",
  "crossbeam-channel",
