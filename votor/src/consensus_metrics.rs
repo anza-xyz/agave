@@ -10,7 +10,7 @@ use {
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     std::{
-        collections::{BTreeMap, BTreeSet},
+        collections::{BTreeMap, BTreeSet, HashMap},
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -62,10 +62,10 @@ impl NodeVoteMetrics {
 #[derive(Debug, Default)]
 struct EpochMetrics {
     /// Used to track this node's view of how the other nodes on the network are voting.
-    node_metrics: BTreeMap<Pubkey, NodeVoteMetrics>,
+    node_metrics: HashMap<Pubkey, NodeVoteMetrics>,
 
     /// Used to track when this node received blocks from different leaders in the network.
-    leader_metrics: BTreeMap<Pubkey, WelfordStats>,
+    leader_metrics: HashMap<Pubkey, WelfordStats>,
 
     /// Counts number of times metrics recording failed.
     metrics_recording_failed: usize,
@@ -74,7 +74,7 @@ struct EpochMetrics {
     ///
     /// Relies on [`TimerManager`] to notify of start of slots.
     /// The manager uses parent ready event and timeouts as per the Alpenglow protocol to determine start of slots.
-    start_of_slot: BTreeMap<Slot, Instant>,
+    start_of_slot: HashMap<Slot, Instant>,
 }
 
 /// Tracks various Consensus related metrics.
