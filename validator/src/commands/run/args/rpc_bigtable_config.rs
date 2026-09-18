@@ -128,7 +128,7 @@ mod tests {
             ],
             expected_args,
         );
-        // ensure failure if --enable-bigtable-ledger-upload is used without --enable-rpc-transaction-history
+        // --enable-bigtable-ledger-upload fails if used without --enable-rpc-transaction-history
         verify_args_struct_by_command_run_is_error_with_identity_setup(
             crate::commands::run::args::RunArgs::default(),
             vec!["--enable-bigtable-ledger-upload"],
