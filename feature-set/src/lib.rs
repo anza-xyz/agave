@@ -1516,7 +1516,7 @@ pub mod upgrade_bpf_stake_program_to_v5_1 {
 }
 
 pub mod alpenglow_fast_leader_handover {
-    solana_pubkey::declare_id!("FLHoAWBDjNh6zwmJ5i1NKK4KyD8otAiv7XxvmnFnVnKH");
+    solana_pubkey::declare_id!("FastLeaderHandover11111111111111111111111111");
 }
 
 pub mod relax_fee_payer_constraint {
