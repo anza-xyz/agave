@@ -145,6 +145,10 @@ pub struct TransactionProcessingConfig<'a> {
     ///
     /// This is a leader-side filtering policy. It must not be enabled for replay.
     pub drop_noop_transactions: bool,
+    /// Drops transactions which bailed out in the program runtime.
+    ///
+    /// This is a leader-side filtering policy. It must not be enabled for replay.
+    pub drop_bail_out_transactions: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -663,14 +667,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             // If this is an all or nothing batch and we failed to process this transaction then we
             // must abort all prior/remaining transactions.
-            if config.all_or_nothing
-                && let Err(ref err) = processing_result
-            {
-                let err = err.clone();
-
+            if config.all_or_nothing && processing_result.is_err() {
                 // Abort prior transactions.
                 for res in processing_results.iter_mut() {
-                    *res = Err(err.clone());
+                    *res = Err(TransactionError::CommitCancelled);
                 }
 
                 // Preserve the failure that triggered the batch to abort.
@@ -678,7 +678,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 // Abort remaining transactions.
                 processing_results.extend(
-                    (0..sanitized_txs.len() - processing_results.len()).map(|_| Err(err.clone())),
+                    (0..sanitized_txs.len() - processing_results.len())
+                        .map(|_| Err(TransactionError::CommitCancelled)),
                 );
 
                 return LoadAndExecuteSanitizedTransactionsOutput {
@@ -1102,7 +1103,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             tx.num_instructions(),
-            !config.drop_noop_transactions,
+            !config.drop_bail_out_transactions,
         );
 
         let relax_post_exec_min_balance_check =

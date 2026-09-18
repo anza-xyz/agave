@@ -238,14 +238,14 @@ pub struct TransactionAccounts {
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
     lamports_delta: Cell<i128>,
-    _is_in_replay: bool,
+    _disable_leader_bail_out: bool,
 }
 
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl TransactionAccounts {
     pub(crate) fn new_with_feature_flags(
         accounts: Vec<KeyedAccountSharedData>,
-        is_in_replay: bool,
+        disable_leader_bail_out: bool,
     ) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
@@ -283,7 +283,7 @@ impl TransactionAccounts {
             touched_flags,
             resize_delta: Cell::new(0),
             lamports_delta: Cell::new(0),
-            _is_in_replay: is_in_replay,
+            _disable_leader_bail_out: disable_leader_bail_out,
         }
     }
 

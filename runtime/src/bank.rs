@@ -3993,6 +3993,7 @@ impl Bank {
                 all_or_nothing: false,
                 strict_nonce_size_check: true,
                 drop_noop_transactions: true,
+                drop_bail_out_transactions: true,
             },
         );
 
@@ -4784,6 +4785,7 @@ impl Bank {
                     all_or_nothing: false,
                     strict_nonce_size_check: false,
                     drop_noop_transactions: false,
+                    drop_bail_out_transactions: false,
                 },
             )
         } else {

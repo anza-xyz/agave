@@ -89,7 +89,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
         number_of_top_level_instructions: usize,
-        is_in_replay: bool,
+        disable_leader_bail_out: bool,
     ) -> Self {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
@@ -123,7 +123,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Self {
             accounts: Rc::new(TransactionAccounts::new_with_feature_flags(
                 transaction_accounts,
-                is_in_replay,
+                disable_leader_bail_out,
             )),
             instruction_stack_capacity,
             instruction_trace_capacity,
