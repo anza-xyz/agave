@@ -4,68 +4,10 @@
 */
 
 use {
-    agave_bls_sigverify::unverified_votes_batch::{UnverifiedVotePayload, verify_individual_votes},
-    agave_votor_messages::{
-        unverified_vote_message::UnverifiedVoteMessage,
-        vote::Vote,
-        wire::{VotePayloadToSign, get_vote_payload_to_sign},
-    },
-    criterion::{BatchSize, Criterion, criterion_group, criterion_main},
-    rayon::{ThreadPool, ThreadPoolBuilder},
+    criterion::{Criterion, criterion_group, criterion_main},
     solana_bls_signatures::{Keypair as BLSKeypair, PreparedHashedMessage, VerifySignature},
-    solana_genesis_config::GenesisConfig,
-    solana_keypair::Keypair,
-    solana_pubkey::Pubkey,
-    solana_runtime::bank::{Bank, SlotLeader},
-    solana_signer::Signer,
-    std::{hint::black_box, num::NonZero},
+    std::hint::black_box,
 };
-
-static BATCH_SIZES: &[usize] = &[8, 16, 32, 64, 128];
-
-fn get_thread_pool() -> ThreadPool {
-    let num_threads = 4;
-    ThreadPoolBuilder::new()
-        .num_threads(num_threads)
-        .build()
-        .unwrap()
-}
-
-fn generate_test_data(
-    shred_version: u16,
-    batch_size: usize,
-) -> (VotePayloadToSign, Vec<UnverifiedVotePayload>, Vec<Pubkey>) {
-    // Pre-calculate the payloads to ensure exact distinctness
-    let slot = 100;
-    let vote = Vote::new_unique_notar(slot);
-    let payload = get_vote_payload_to_sign(vote, shred_version);
-    let (unverified_votes, sender_vote_account_pubkeys) = (0..batch_size)
-        .map(|_| {
-            let bls_keypair = BLSKeypair::new();
-            let signature = bls_keypair.sign(&payload);
-            let vote_message = UnverifiedVoteMessage {
-                vote,
-                signature: signature.into(),
-                shred_version,
-            };
-            (
-                UnverifiedVotePayload {
-                    vote_message,
-                    sender_bls_pubkey: bls_keypair.public,
-                    sender_identity_pubkey: Keypair::new().pubkey(),
-                    rank: 0,
-                    stake: NonZero::new(1234).unwrap(),
-                },
-                Keypair::new().pubkey(),
-            )
-        })
-        .unzip();
-    (
-        VotePayloadToSign::new_from_vote(vote, shred_version),
-        unverified_votes,
-        sender_vote_account_pubkeys,
-    )
-}
 
 // Single Signature Verification
 // This is just for reference
@@ -106,63 +48,9 @@ fn bench_verify_single_signature_with_prepared_message(c: &mut Criterion) {
     group.finish();
 }
 
-// Individual Verification - verifies each signatures in parallel threads
-// Message distinctness is irrelevant.
-fn bench_verify_individual_votes(c: &mut Criterion) {
-    let shred_version = 134;
-    let mut group = c.benchmark_group("verify_votes_fallback");
-    let thread_pool = get_thread_pool();
-
-    let leader = SlotLeader::new_unique();
-    let genesis_config = GenesisConfig::default();
-    let bank = Bank::new_with_paths_for_tests(&genesis_config, None, vec![], Some(leader));
-    assert_eq!(*bank.leader(), leader);
-    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
-
-    for &batch_size in BATCH_SIZES {
-        // Distinctness doesn't affect the cost of N individual verifications.
-        let (vote_payload_to_sign, unverified_votes, sender_vote_account_pubkeys) =
-            generate_test_data(shred_version, batch_size);
-        let label = format!("batch_{batch_size}");
-
-        group.bench_function(&label, |b| {
-            b.iter_batched(
-                || {
-                    let rank_map = bank
-                        .epoch_stakes_from_slot(unverified_votes[0].vote_message.vote.slot())
-                        .unwrap()
-                        .bls_pubkey_to_rank_map();
-                    let serialized_vote = wincode::serialize(&vote_payload_to_sign).unwrap();
-                    let prepared_hash_msg = PreparedHashedMessage::new(&serialized_vote);
-                    (
-                        unverified_votes.clone(),
-                        sender_vote_account_pubkeys.clone(),
-                        prepared_hash_msg,
-                        rank_map.len(),
-                    )
-                },
-                |(votes, sender_vote_account_pubkeys, prepared_hash_map, max_validators)| {
-                    let res = verify_individual_votes(
-                        Vote::from(vote_payload_to_sign),
-                        max_validators,
-                        black_box(&votes),
-                        black_box(sender_vote_account_pubkeys),
-                        black_box(prepared_hash_map),
-                        &thread_pool,
-                    );
-                    black_box(res);
-                },
-                BatchSize::SmallInput,
-            )
-        });
-    }
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_verify_single_signature,
     bench_verify_single_signature_with_prepared_message,
-    bench_verify_individual_votes
 );
 criterion_main!(benches);

@@ -8,10 +8,7 @@ use {
     },
     agave_votor_messages::wire::VotePayloadToSign,
     agave_votor_transport::endpoint::BanSender,
-    rayon::{
-        ThreadPool,
-        iter::{IntoParallelRefMutIterator, ParallelIterator},
-    },
+    rayon::{ThreadPool, iter::IntoParallelRefMutIterator, iter::ParallelIterator},
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,

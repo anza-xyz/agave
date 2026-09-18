@@ -1,5 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use rayon::iter::Either;
+use solana_bls_signatures::HashedMessage;
 #[cfg(debug_assertions)]
 use std::collections::HashSet;
 use {
@@ -84,10 +86,9 @@ impl UnverifiedBatch {
         if let [unverified_vote] = self.batch.as_slice() {
             let ((verification_result, sender_identity_pubkey), time_us) = measure_us!({
                 let serialized_vote = wincode::serialize(&self.vote_payload_to_sign).unwrap();
-                let prepared_hash_msg = PreparedHashedMessage::new(&serialized_vote);
                 let sender_identity_pubkey = unverified_vote.sender_identity_pubkey;
                 (
-                    unverified_vote.verify(self.rank_map.len(), &prepared_hash_msg),
+                    unverified_vote.verify(self.rank_map.len(), Either::Left(&serialized_vote)),
                     sender_identity_pubkey,
                 )
             });
@@ -143,7 +144,7 @@ impl UnverifiedBatch {
                     stats,
                 )
             }
-            Err(prepared_hash_msg) => {
+            Err(hashed_msg) => {
                 // Fallback to individual verification
                 stats.optimistic_verification_failed += 1;
                 let ((verified_batch, invalid_remote_pubkeys), time_us) =
@@ -152,7 +153,7 @@ impl UnverifiedBatch {
                         self.rank_map.len(),
                         &self.batch,
                         sender_vote_account_pubkeys,
-                        prepared_hash_msg,
+                        &hashed_msg,
                         thread_pool
                     ));
                 if let Some(b) = &verified_batch {
@@ -191,19 +192,15 @@ fn ban_invalid_vote_sender(
 /// caller falls back to individual vote verification so invalid votes can be
 /// identified precisely.
 ///
-/// Returns the optimistic verification outcome together with the distinct vote
-/// messages and their prepared payloads, which can be reused by the fallback
-/// path.
-// Return the prepared message on failure so fallback verification can reuse it
-// without another hash-to-curve operation. Boxing it would add an allocation to
-// this latency-sensitive path.
+/// Returns the aggregate signature on success, or the hashed payload on failure.
+/// Pairing preparation is deferred until individual fallback verification needs it.
 #[allow(clippy::result_large_err)]
 fn verify_votes_optimistic(
     vote_payload_to_sign: &VotePayloadToSign,
     unverified_votes: &[UnverifiedVotePayload],
     stats: &mut VoteVerificationStats,
     thread_pool: &ThreadPool,
-) -> Result<SignatureProjective, PreparedHashedMessage> {
+) -> Result<SignatureProjective, HashedMessage> {
     #[cfg(debug_assertions)]
     {
         let deduped = unverified_votes
@@ -224,31 +221,31 @@ fn verify_votes_optimistic(
     //
     // By verifying the aggregated signature against the aggregated public keys,
     // the number of pairings required is reduced to (1 + number of distinct messages).
-    let (signature_result, (prepared_hash_msg, pubkey_result)) = thread_pool.join(
+    let (signature_result, (pubkey_result, hashed_msg)) = thread_pool.join(
         || aggregate_signatures(unverified_votes),
-        || aggregate_pubkeys_by_payload(vote_payload_to_sign, unverified_votes),
+        || {
+            thread_pool.join(
+                || aggregate_pubkeys_by_payload(unverified_votes),
+                || into_hashed_msg(vote_payload_to_sign),
+            )
+        },
     );
 
     let Ok(aggregate_signature) = signature_result else {
-        return Err(prepared_hash_msg);
+        return Err(hashed_msg);
     };
-
     let Ok(aggregate_pubkey) = pubkey_result else {
-        return Err(prepared_hash_msg);
+        return Err(hashed_msg);
     };
-
-    let verified = aggregate_pubkey
-        .verify_signature_prepared(&aggregate_signature, &prepared_hash_msg)
-        .is_ok();
+    let verified = aggregate_pubkey.verify_signature_pre_hashed(&aggregate_signature, &hashed_msg);
 
     measure.stop();
     stats
         .fn_verify_votes_optimistic_stats
         .add_sample(measure.as_us());
-    if verified {
-        Ok(aggregate_signature)
-    } else {
-        Err(prepared_hash_msg)
+    match verified {
+        Ok(()) => Ok(aggregate_signature),
+        Err(_) => Err(hashed_msg),
     }
 }
 
@@ -267,21 +264,18 @@ fn aggregate_signatures(votes: &[UnverifiedVotePayload]) -> Result<SignatureProj
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn aggregate_pubkeys_by_payload(
-    vote_payload_to_sign: &VotePayloadToSign,
     votes: &[UnverifiedVotePayload],
-) -> (
-    PreparedHashedMessage,
-    Result<PopVerified<PubkeyProjective>, BlsError>,
-) {
+) -> Result<PopVerified<PubkeyProjective>, BlsError> {
     debug_assert!(current_thread_index().is_some());
-    let serialized_vote = wincode::serialize(vote_payload_to_sign).unwrap();
-    let prepared_hash_msg = PreparedHashedMessage::new(&serialized_vote);
     // converting aggregate pubkey to `PopVerified` is safe here
     // since the pubkeys are all PoP verified in the vote account
-    let pubkey =
-        PubkeyProjective::par_aggregate(votes.into_par_iter().map(|v| &v.sender_bls_pubkey))
-            .map(|agg| unsafe { PopVerified::new_unchecked(*agg) });
-    (prepared_hash_msg, pubkey)
+    PubkeyProjective::par_aggregate(votes.into_par_iter().map(|v| &v.sender_bls_pubkey))
+        .map(|agg| unsafe { PopVerified::new_unchecked(*agg) })
+}
+
+fn into_hashed_msg(vote_payload_to_sign: &VotePayloadToSign) -> HashedMessage {
+    let serialized_vote = wincode::serialize(vote_payload_to_sign).unwrap();
+    HashedMessage::new(&serialized_vote)
 }
 
 /// Verifies votes individually on a thread pool.
@@ -295,9 +289,10 @@ fn verify_individual_votes(
     max_validators: usize,
     unverified_votes: &[UnverifiedVotePayload],
     sender_vote_account_pubkeys: Vec<Pubkey>,
-    prepared_hash_msg: PreparedHashedMessage,
+    hashed_msg: &HashedMessage,
     thread_pool: &ThreadPool,
 ) -> (Option<VerifiedBatch>, Vec<(Pubkey, BlsError)>) {
+    let prepared_msg = PreparedHashedMessage::from_hashed_message(hashed_msg);
     let (aggregates, sender_vote_account_pubkeys, failed) = thread_pool.install(|| {
         unverified_votes
             .into_par_iter()
@@ -307,7 +302,7 @@ fn verify_individual_votes(
                 |(mut verified, mut sender_vote_account_pubkeys, mut failed),
                  (unverified_vote, sender_vote_account_pubkey)| {
                     let sender_identity_pubkey = unverified_vote.sender_identity_pubkey;
-                    match unverified_vote.verify(max_validators, &prepared_hash_msg) {
+                    match unverified_vote.verify(max_validators, Either::Right(&prepared_msg)) {
                         Ok(aggregate) => {
                             verified.push(aggregate);
                             sender_vote_account_pubkeys.push(sender_vote_account_pubkey);
@@ -349,20 +344,22 @@ impl UnverifiedVotePayload {
     fn verify(
         &self,
         max_validators: usize,
-        prepared_hashed_message: &PreparedHashedMessage,
+        msg: Either<&[u8], &PreparedHashedMessage>,
     ) -> Result<VoteAggregate, BlsError> {
         let signature = SignatureAffine::try_from(self.vote_message.signature)?;
-        self.sender_bls_pubkey
-            .verify_signature_prepared(&signature, prepared_hashed_message)?;
+        match msg {
+            Either::Left(bytes) => self.sender_bls_pubkey.verify_signature(&signature, bytes),
+            Either::Right(prepared) => self
+                .sender_bls_pubkey
+                .verify_signature_prepared(&signature, prepared),
+        }?;
         let vote_msg = VoteMessage {
             vote: self.vote_message.vote,
             signature,
             rank: self.rank,
             stake: self.stake,
         };
-        Ok(VoteAggregate::new_from_verified_vote(
-            max_validators,
-            vote_msg,
-        ))
+        let vote_aggregate = VoteAggregate::new_from_verified_vote(max_validators, vote_msg);
+        Ok(vote_aggregate)
     }
 }
