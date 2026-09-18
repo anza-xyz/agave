@@ -7,9 +7,9 @@ use {
             swqos::{SwQos, SwQosConfig},
         },
         quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
-        streamer::StakedNodes,
+        streamer::{ChannelSend, StakedNodes},
     },
-    crossbeam_channel::{Receiver, Sender, bounded},
+    crossbeam_channel::{Receiver, bounded},
     quinn::{
         ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
         crypto::rustls::QuicClientConfig,
@@ -44,14 +44,12 @@ pub fn spawn_stake_weighted_qos_server(
     name: &'static str,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: impl ChannelSend<PacketBatch> + Clone,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
     cancel: CancellationToken,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError>
-where
-{
+) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
 
     let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());

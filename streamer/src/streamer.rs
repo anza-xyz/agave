@@ -7,7 +7,9 @@ use {
         recvmmsg::PacketBufferPool,
         sendmmsg::SendPktsError,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
+    crossbeam_channel::{
+        Receiver, RecvTimeoutError, SendError, Sender, TryRecvError, TrySendError,
+    },
     solana_measure::measure::Measure,
     solana_net_utils::{
         SocketAddrSpace,
@@ -61,6 +63,19 @@ where
     #[inline]
     fn len(&self) -> usize {
         self.len()
+    }
+}
+
+/// The receiving-side counterpart of [`ChannelSend`], for code that needs to pop from a channel it
+/// also sends to, such as [`crate::evicting_sender::EvictingSender`].
+pub trait ChannelTryRecv<T> {
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError>;
+}
+
+impl<T> ChannelTryRecv<T> for Receiver<T> {
+    #[inline]
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError> {
+        self.try_recv()
     }
 }
 

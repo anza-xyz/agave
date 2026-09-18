@@ -9,7 +9,7 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_streamer::{
         evicting_sender::EvictingSender,
-        streamer::{self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats},
+        streamer::{self, ChannelSend, PacketBatchReceiver, StreamerReceiveStats},
     },
     std::{
         net::UdpSocket,
@@ -96,11 +96,12 @@ impl FetchStage {
         )
     }
 
+    /// The stage only needs [`ChannelSend`] from its packet sinks.
     pub fn new_with_sender(
         tpu_vote_sockets: Vec<UdpSocket>,
         exit: Arc<AtomicBool>,
-        sender: &PacketBatchSender,
-        vote_sender: &EvictingSender<PacketBatch>,
+        sender: &(impl ChannelSend<PacketBatch> + Clone),
+        vote_sender: &(impl ChannelSend<PacketBatch> + Clone),
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
@@ -119,7 +120,7 @@ impl FetchStage {
 
     fn handle_forwarded_packets(
         recvr: &PacketBatchReceiver,
-        sendr: &PacketBatchSender,
+        sendr: &impl ChannelSend<PacketBatch>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         stats: &mut ForwardingStats,
     ) -> Result<()> {
@@ -168,8 +169,8 @@ impl FetchStage {
     fn new_multi_socket(
         tpu_vote_sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
-        sender: &PacketBatchSender,
-        vote_sender: &EvictingSender<PacketBatch>,
+        sender: &(impl ChannelSend<PacketBatch> + Clone),
+        vote_sender: &(impl ChannelSend<PacketBatch> + Clone),
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
