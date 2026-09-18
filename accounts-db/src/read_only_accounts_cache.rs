@@ -221,11 +221,6 @@ impl ReadOnlyAccountsCache {
         self.stats.store_us.fetch_add(store_us, Ordering::Relaxed);
     }
 
-    /// true if any pubkeys could have ever been stored into the cache at `slot`
-    pub(crate) fn can_slot_be_in_cache(&self, slot: Slot) -> bool {
-        self.highest_slot_stored.load(Ordering::Acquire) >= slot
-    }
-
     /// remove entry if it exists.
     /// Assume the entry does not exist for performance.
     pub(crate) fn remove_assume_not_present(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {

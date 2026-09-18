@@ -2161,7 +2161,7 @@ impl AccountsDb {
         let accounts = [(slot, &shrink_collect.alive_accounts.alive_accounts()[..])];
         let storable_accounts = StorableAccountsBySlot::new(slot, &accounts, self);
         stats_sub.store_accounts_stats =
-            self.store_accounts_for_shrink(storable_accounts, shrink_in_progress.new_storage());
+            self.store_accounts_for_shrink(&storable_accounts, shrink_in_progress.new_storage());
 
         let tombstone_refs: Vec<_> = shrink_collect.tombstones_to_carry_forward.iter().collect();
         let tombstone_accounts = [(slot, &tombstone_refs[..])];
@@ -4404,24 +4404,17 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a>,
         storage: &AccountStorageEntry,
     ) -> StoreAccountsForSquashStats {
-        let slot = accounts.target_slot();
+        let store_accounts_for_shrink_stats = self.store_accounts_for_shrink(&accounts, storage);
 
-        // Flush the read cache if necessary
-        let flush_read_cache_us = if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
-            let flush_read_cache_time = Measure::start("flush_read_cache");
-            (0..accounts.len()).for_each(|index| {
-                // Based on the patterns of how a validator writes accounts, it is almost always
-                // the case that there is no read only cache entry for this pubkey and slot.
-                // So, we can give that hint to the `remove` for performance.
-                self.read_only_accounts_cache
-                    .remove_assume_not_present(accounts.pubkey(index));
-            });
-            flush_read_cache_time.end_as_us()
-        } else {
-            0
-        };
+        // Drop the read cache entry for every account moved, after the index update for the
+        // same reason as in `store_accounts_for_flush`.
+        let flush_read_cache_time = Measure::start("flush_read_cache");
+        (0..accounts.len()).for_each(|index| {
+            self.read_only_accounts_cache
+                .remove_assume_not_present(accounts.pubkey(index));
+        });
+        let flush_read_cache_us = flush_read_cache_time.end_as_us();
 
-        let store_accounts_for_shrink_stats = self.store_accounts_for_shrink(accounts, storage);
         StoreAccountsForSquashStats {
             store_accounts_for_shrink_stats,
             flush_read_cache_us,
@@ -4435,7 +4428,7 @@ impl AccountsDb {
     ///   accounts are decremented for the older storage or that the old storage is removed entirely
     pub fn store_accounts_for_shrink<'a>(
         &self,
-        accounts: impl StorableAccounts<'a>,
+        accounts: &impl StorableAccounts<'a>,
         storage: &AccountStorageEntry,
     ) -> StoreAccountsForShrinkStats {
         let slot = accounts.target_slot();
@@ -4443,11 +4436,11 @@ impl AccountsDb {
 
         // Write the accounts to storage
         let write_accounts_time = Measure::start("write_accounts");
-        let infos = self.write_accounts_to_storage(slot, storage, &accounts);
+        let infos = self.write_accounts_to_storage(slot, storage, accounts);
         let write_accounts_us = write_accounts_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
-        self.update_index_for_shrink(&infos, &accounts);
+        self.update_index_for_shrink(&infos, accounts);
         let update_index_us = update_index_time.end_as_us();
 
         StoreAccountsForShrinkStats {
