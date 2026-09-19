@@ -106,6 +106,8 @@ pub struct AdminRpcContactInfo {
     pub serve_repair: SocketAddr,
     pub last_updated_timestamp: u64,
     pub shred_version: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -148,6 +150,7 @@ impl From<ContactInfo> for AdminRpcContactInfo {
             rpc_pubsub: unwrap_socket!(rpc_pubsub),
             serve_repair: unwrap_socket!(serve_repair, Protocol::UDP),
             shred_version: node.shred_version(),
+            version: Some(node.version().as_detailed_string()),
         }
     }
 }
