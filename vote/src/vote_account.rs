@@ -38,7 +38,6 @@ use {
     },
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct VoteAccount(Arc<VoteAccountInner>);
 
@@ -50,7 +49,6 @@ pub enum Error {
     InvalidOwner(/*owner:*/ Pubkey),
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
 struct VoteAccountInner {
     account: AccountSharedData,
@@ -58,7 +56,7 @@ struct VoteAccountInner {
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
