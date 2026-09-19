@@ -4,6 +4,7 @@
 //! updates, hiding the details of how leaders are retrieved and which
 //! structures are used.
 use {
+    solana_clock::Slot,
     std::{fmt, net::SocketAddr},
     thiserror::Error,
 };
@@ -22,7 +23,22 @@ pub trait LeaderUpdater: Send {
     /// If the current leader estimation is incorrect and transactions are sent to
     /// only one estimated leader, there is a risk of losing all the transactions,
     /// depending on the forwarding policy.
-    fn next_leaders(&mut self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>);
+    ///
+    /// Returns the current slot estimate, or `None` if the provider cannot supply one.
+    /// The estimate's window-end timestamp may independently be unknown.
+    fn next_leaders(
+        &mut self,
+        lookahead_leaders: usize,
+        leaders: &mut Vec<SocketAddr>,
+    ) -> Option<SlotEstimate>;
+}
+
+/// Estimated current slot and the end timestamp of its leader window.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct SlotEstimate {
+    pub slot: Slot,
+    /// Estimated window end in milliseconds since the Unix epoch; `None` when unknown.
+    pub leader_window_end_ms: Option<u64>,
 }
 
 /// Error type for [`LeaderUpdater`].
@@ -57,7 +73,12 @@ struct PinnedLeaderUpdater {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl LeaderUpdater for PinnedLeaderUpdater {
-    fn next_leaders(&mut self, _lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
+    fn next_leaders(
+        &mut self,
+        _lookahead_leaders: usize,
+        leaders: &mut Vec<SocketAddr>,
+    ) -> Option<SlotEstimate> {
         leaders.extend_from_slice(&self.address);
+        None
     }
 }

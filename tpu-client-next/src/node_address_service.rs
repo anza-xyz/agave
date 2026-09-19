@@ -73,14 +73,13 @@
 //!
 use {
     crate::{
-        leader_updater::LeaderUpdater,
+        leader_updater::{LeaderUpdater, SlotEstimate},
         node_address_service::{
             leader_tpu_cache_service::{Error as LeaderTpuCacheServiceError, LeaderUpdateReceiver},
             slot_update_service::Error as SlotUpdateServiceError,
         },
     },
     futures::StreamExt,
-    solana_clock::Slot,
     std::{net::SocketAddr, sync::Arc},
     thiserror::Error,
     tokio::join,
@@ -173,15 +172,19 @@ impl NodeAddressService {
 
 impl NodeAddressProvider {
     /// Returns the estimated current slot.
-    pub fn estimated_current_slot(&self) -> Slot {
+    pub fn estimated_current_slot(&self) -> SlotEstimate {
         self.slot_receiver.slot()
     }
 }
 
 impl LeaderUpdater for NodeAddressProvider {
-    fn next_leaders(&mut self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
+    fn next_leaders(
+        &mut self,
+        lookahead_leaders: usize,
+        leaders: &mut Vec<SocketAddr>,
+    ) -> Option<SlotEstimate> {
         self.leaders_receiver
-            .next_leaders(lookahead_leaders, leaders);
+            .next_leaders(lookahead_leaders, leaders)
     }
 }
 

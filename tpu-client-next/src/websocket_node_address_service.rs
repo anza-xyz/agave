@@ -120,9 +120,10 @@ fn websocket_slot_event_stream(
 }
 
 fn map_websocket_update_to_slot_event(update: SlotUpdate) -> Option<SlotEvent> {
+    let timestamp = solana_time_utils::timestamp();
     match update {
-        SlotUpdate::FirstShredReceived { slot, .. } => Some(SlotEvent::Start(slot)),
-        SlotUpdate::Completed { slot, .. } => Some(SlotEvent::End(slot)),
+        SlotUpdate::FirstShredReceived { slot, .. } => Some(SlotEvent::Start { slot, timestamp }),
+        SlotUpdate::Completed { slot, .. } => Some(SlotEvent::End { slot, timestamp }),
         _ => None,
     }
 }

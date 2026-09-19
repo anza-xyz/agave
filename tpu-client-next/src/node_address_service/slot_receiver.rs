@@ -1,16 +1,16 @@
 //! This module provides [`SlotReceiver`] structure.
-use {solana_clock::Slot, thiserror::Error, tokio::sync::watch};
+use {crate::leader_updater::SlotEstimate, thiserror::Error, tokio::sync::watch};
 
 /// Receiver for slot updates from slot update services.
 #[derive(Clone)]
-pub struct SlotReceiver(watch::Receiver<Slot>);
+pub struct SlotReceiver(watch::Receiver<SlotEstimate>);
 
 impl SlotReceiver {
-    pub fn new(receiver: watch::Receiver<Slot>) -> Self {
+    pub fn new(receiver: watch::Receiver<SlotEstimate>) -> Self {
         Self(receiver)
     }
 
-    pub fn slot(&self) -> Slot {
+    pub fn slot(&self) -> SlotEstimate {
         *self.0.borrow()
     }
 
