@@ -1664,6 +1664,94 @@ pub(crate) mod tests {
         );
     }
 
+    // This test lets us confirm that the program runtime environment of the
+    // "direct deploy" is in fact the environment of the new epoch.
+    //
+    // Try to migrate to an SBPFv0 program in the same epoch transition where
+    // such versions are disallowed.
+    #[test]
+    fn test_migrate_builtin_e2e_sbpf_v0_deployment() {
+        let (mut genesis_config, _mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let slots_per_epoch = 32;
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+        let mut root_bank = Bank::new_for_tests(&genesis_config);
+
+        let test_prototype = TestPrototype::Builtin(&BUILTINS[0]); // System program
+        let (builtin_id, config) = test_prototype.deconstruct();
+        let feature_id = &config.feature_id;
+        let source_buffer_address = &config.source_buffer_address;
+
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(feature_id);
+        feature_set.deactivate(&agave_feature_set::disable_sbpf_v0_execution::id());
+        feature_set.deactivate(&agave_feature_set::reenable_sbpf_v0_execution::id());
+        root_bank.feature_set = Arc::new(feature_set);
+
+        let _test_context = TestContext::new(
+            &root_bank,
+            builtin_id,
+            source_buffer_address,
+            config.upgrade_authority_address,
+        );
+
+        let (bank, bank_forks) = root_bank.wrap_with_bank_forks_for_tests();
+
+        // Submit the migration feature and `disable_sbpf_v0_execution`.
+        let features = [
+            *feature_id,
+            agave_feature_set::disable_sbpf_v0_execution::id(),
+        ];
+        for feature_id in &features {
+            bank.store_account_and_update_capitalization(
+                feature_id,
+                &feature::create_account(&Feature::default(), 42),
+            );
+        }
+
+        // Advance to the last slot of the epoch, observe the two environments.
+        goto_end_of_slot(bank.clone());
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            slots_per_epoch - 1,
+        );
+        assert_ne!(
+            bank.transaction_processor
+                .program_runtime_environment_for_epoch(0),
+            bank.transaction_processor
+                .program_runtime_environment_for_epoch(1),
+        );
+
+        // Cross the boundary, trigger the migration.
+        goto_end_of_slot(bank.clone());
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            slots_per_epoch,
+        );
+
+        // The migration was rejected, so everything about the builtin is still
+        // in tact.
+        for feature_id in &features {
+            assert!(bank.feature_set.is_active(feature_id));
+        }
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
+        assert_eq!(
+            bank.get_account(builtin_id).unwrap().owner(),
+            &native_loader::id()
+        );
+    }
+
     // Simulate creating a bank from a snapshot after a migration feature was
     // activated, but the migration failed.
     // Here we want to see that the bank recognizes the failed migration and
