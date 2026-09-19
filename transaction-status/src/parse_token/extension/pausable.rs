@@ -24,7 +24,7 @@ pub(in crate::parse_token) fn parse_pausable_instruction(
             Ok(ParsedInstructionEnum {
                 instruction_type: "initializePausableConfig".to_string(),
                 info: json!({
-                    "mint": account_keys[account_indexes[0] as usize].to_string(),
+                    "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                     "authority": authority.map(|pubkey| pubkey.to_string()),
                 }),
             })
@@ -32,7 +32,7 @@ pub(in crate::parse_token) fn parse_pausable_instruction(
         PausableInstruction::Pause => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
             });
             let map = value.as_object_mut().unwrap();
             parse_signers(
@@ -51,7 +51,7 @@ pub(in crate::parse_token) fn parse_pausable_instruction(
         PausableInstruction::Resume => {
             check_num_token_accounts(account_indexes, 2)?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
             });
             let map = value.as_object_mut().unwrap();
             parse_signers(
