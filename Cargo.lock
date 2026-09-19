@@ -9159,6 +9159,7 @@ dependencies = [
  "log",
  "nix",
  "pcap-file",
+ "quinn",
  "rand 0.9.4",
  "serde",
  "shuttle",

@@ -405,7 +405,8 @@ pub fn execute(
                             tpu: Some(all_positions.clone()),
                             turbine: Some(all_positions.clone()),
                             repair: Some(all_positions.clone()),
-                            gossip: Some(all_positions),
+                            gossip: Some(all_positions.clone()),
+                            votor: Some(all_positions),
                         },
                     },
                     XdpNetworkConfigReport {
