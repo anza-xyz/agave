@@ -1618,7 +1618,10 @@ impl ServeRepair {
             stats.processed += 1;
             let Some(rsp) = self.handle_repair(recycler, &from_addr, request, stats, ping_cache)
             else {
-                data_budget.add_tokens(max_response_cost as u64);
+                // some work was done to attempt to service the request so
+                // return 95% of the borrowed tokens
+                let partial_refund = max_response_cost.saturating_sub(max_response_cost / 20);
+                data_budget.add_tokens(partial_refund as u64);
                 continue;
             };
             let num_response_packets = rsp.len();
