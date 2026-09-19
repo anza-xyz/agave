@@ -95,11 +95,12 @@ impl UnverifiedBatch {
             return match verification_result {
                 Ok(vote_aggregate) => {
                     stats.num_individual_verified += 1;
+                    let pubkeys = std::mem::take(&mut self.sender_vote_account_pubkeys);
                     (
                         Some(VerifiedBatch::new(
                             Vote::from(self.vote_payload_to_sign),
                             vec![vote_aggregate],
-                            vec![self.sender_vote_account_pubkeys[0]],
+                            pubkeys,
                         )),
                         stats,
                     )
@@ -119,11 +120,7 @@ impl UnverifiedBatch {
             thread_pool,
         );
 
-        let mut sender_vote_account_pubkeys = vec![];
-        std::mem::swap(
-            &mut sender_vote_account_pubkeys,
-            &mut self.sender_vote_account_pubkeys,
-        );
+        let sender_vote_account_pubkeys = std::mem::take(&mut self.sender_vote_account_pubkeys);
         match res {
             Ok(signature) => {
                 stats.optimistic_verification_succeeded += 1;
