@@ -22,8 +22,9 @@ use {
     solana_ledger::{
         blockstore::{
             Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType,
-            handle_duplicate_shred,
+            RecoveredShredBatch, handle_duplicate_shred,
         },
+        blockstore_meta::BlockLocation,
         blockstore_processor::verify_ticks,
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, ReedSolomonCache,
@@ -183,16 +184,46 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         )
         .expect("handle duplicate shred");
     };
-    let shreds_iter = parsed
-        .iter()
-        .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
-    let _ = blockstore.insert_shreds_handle_duplicate(
-        shreds_iter,
-        false, // is_trusted: keep dedup + integrity checks
-        &mut recovery,
-        &handle_duplicate,
-        &mut metrics,
-    );
+    {
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch();
+        let shreds_iter = parsed.iter().map(|shred| {
+            (
+                Cow::Borrowed(shred),
+                /*is_repaired:*/ false,
+                BlockLocation::Original,
+            )
+        });
+        if let Ok((_, tasks)) = blockstore.insert_shreds_at_location_prepare_recovery(
+            shreds_iter,
+            false, // is_trusted: keep dedup + integrity checks
+            &mut pinnable_slice,
+            &mut write_batch,
+            &handle_duplicate,
+            &mut metrics,
+        ) {
+            // Finish recovery synchronously before inspecting the blockstore below.
+            let mut recovered_batches: Vec<_> = tasks
+                .into_iter()
+                .filter_map(|task| {
+                    let mut batch = RecoveredShredBatch::new(task.erasure_set());
+                    blockstore
+                        .recover_shreds_from_task(task, &mut recovery, &mut batch)
+                        .then_some(batch)
+                })
+                .collect();
+            if !recovered_batches.is_empty() {
+                let _ = blockstore.insert_recovered_shreds(
+                    &mut recovered_batches,
+                    &recovery,
+                    &mut pinnable_slice,
+                    &mut write_batch,
+                    &handle_duplicate,
+                    &mut metrics,
+                );
+            }
+        }
+    }
 
     let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
     slots.sort_unstable();
