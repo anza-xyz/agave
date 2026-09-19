@@ -6,10 +6,10 @@ use {
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
         quic_socket::{QuicSocket, QuicXdpSocketParts, QuicXdpTxSocket},
-        streamer::StakedNodes,
+        streamer::{ChannelSend, StakedNodes},
     },
     bytes::{BufMut, Bytes, BytesMut},
-    crossbeam_channel::{Sender, TrySendError},
+    crossbeam_channel::TrySendError,
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
     quinn::{
@@ -177,12 +177,15 @@ pub struct SpawnNonBlockingServerResult {
 }
 
 /// Spawn a streamer instance in the current tokio runtime.
-pub(crate) fn spawn_server<Q, C>(
+///
+/// Generic over the packet sink so callers can hand in a plain crossbeam sender or an
+/// `agave_wake_channel` lane; both implement [`ChannelSend`].
+pub(crate) fn spawn_server<Q, C, S>(
     name: &'static str,
     stats: Arc<StreamerStats>,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: S,
     quic_server_params: QuicStreamerConfig,
     qos: Q,
     cancel: CancellationToken,
@@ -190,6 +193,7 @@ pub(crate) fn spawn_server<Q, C>(
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
+    S: ChannelSend<PacketBatch> + Clone,
 {
     let sockets: Vec<_> = sockets.into_iter().collect();
     info!("Start {name} quic server on {sockets:?}");
@@ -292,10 +296,10 @@ impl ClientConnectionTracker {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_server<Q, C>(
+async fn run_server<Q, C, S>(
     name: &'static str,
     endpoints: Vec<Endpoint>,
-    packet_batch_sender: Sender<PacketBatch>,
+    packet_batch_sender: S,
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
@@ -304,6 +308,7 @@ async fn run_server<Q, C>(
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
+    S: ChannelSend<PacketBatch> + Clone,
 {
     let quic_server_params = Arc::new(quic_server_params);
     let num_shards = (quic_server_params.num_threads.get() * 2).next_power_of_two();
@@ -507,12 +512,12 @@ pub(crate) fn update_open_connections_stat<S: OpaqueStreamerCounter>(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn setup_connection<Q, C>(
+async fn setup_connection<Q, C, S>(
     connecting: Connecting,
     rate_limiter: Arc<ConnectionRateLimiter>,
     overall_connection_rate_limiter: Arc<TokenBucket>,
     client_connection_tracker: ClientConnectionTracker,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: S,
     stats: Arc<StreamerStats>,
     server_params: Arc<QuicStreamerConfig>,
     qos: Arc<Q>,
@@ -520,6 +525,7 @@ async fn setup_connection<Q, C>(
 ) where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
+    S: ChannelSend<PacketBatch> + Clone,
 {
     let from = connecting.remote_address();
     let res = timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await;
@@ -632,8 +638,8 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
     }
 }
 
-async fn handle_connection<Q, C>(
-    packet_sender: Sender<PacketBatch>,
+async fn handle_connection<Q, C, S>(
+    packet_sender: S,
     remote_address: SocketAddr,
     connection: Connection,
     stats: Arc<StreamerStats>,
@@ -644,6 +650,7 @@ async fn handle_connection<Q, C>(
 ) where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
+    S: ChannelSend<PacketBatch>,
 {
     let peer_type = context.peer_type();
     debug!(
@@ -800,7 +807,7 @@ fn handle_chunks(
     chunks: impl ExactSizeIterator<Item = Bytes>,
     accum: &mut PacketAccumulator,
     rtt: Duration,
-    packet_sender: &Sender<PacketBatch>,
+    packet_sender: &impl ChannelSend<PacketBatch>,
     stats: &StreamerStats,
     peer_type: ConnectionPeerType,
     max_stream_data_bytes: u32,

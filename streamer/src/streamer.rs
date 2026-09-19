@@ -7,7 +7,9 @@ use {
         recvmmsg::PacketBufferPool,
         sendmmsg::SendPktsError,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
+    crossbeam_channel::{
+        Receiver, RecvTimeoutError, SendError, Sender, TryRecvError, TrySendError,
+    },
     solana_measure::measure::Measure,
     solana_net_utils::{
         SocketAddrSpace,
@@ -61,6 +63,46 @@ where
     #[inline]
     fn len(&self) -> usize {
         self.len()
+    }
+}
+
+impl<T> ChannelSend<T> for agave_wake_channel::Sender<T>
+where
+    T: Send + 'static,
+{
+    #[inline]
+    fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
+        self.try_send(msg)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+/// The receiving-side counterpart of [`ChannelSend`], for code that needs to pop from a channel it
+/// also sends to, such as [`crate::evicting_sender::EvictingSender`].
+pub trait ChannelTryRecv<T> {
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError>;
+}
+
+impl<T> ChannelTryRecv<T> for Receiver<T> {
+    #[inline]
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError> {
+        self.try_recv()
+    }
+}
+
+impl<T> ChannelTryRecv<T> for agave_wake_channel::Receiver<T> {
+    #[inline]
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError> {
+        self.try_recv()
     }
 }
 

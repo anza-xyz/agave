@@ -481,6 +481,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-wake-channel"
+version = "4.4.0-alpha.5"
+dependencies = [
+ "atomic-wait",
+ "crossbeam-channel",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "agave-xdp"
 version = "4.4.0-alpha.5"
 dependencies = [
@@ -6331,6 +6340,7 @@ dependencies = [
  "agave-votor",
  "agave-votor-messages",
  "agave-votor-transport",
+ "agave-wake-channel",
  "agave-xdp",
  "ahash 0.8.12",
  "anyhow",
@@ -7131,16 +7141,15 @@ dependencies = [
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor-messages",
+ "agave-wake-channel",
  "anyhow",
  "assert_matches",
- "atomic-wait",
  "bitflags 2.13.1",
  "bytes",
  "bzip2",
  "chrono",
  "chrono-humanize",
  "crossbeam-channel",
- "crossbeam-utils",
  "dashmap",
  "eager",
  "fs_extra",
@@ -9350,6 +9359,7 @@ dependencies = [
 name = "solana-streamer"
 version = "4.4.0-alpha.5"
 dependencies = [
+ "agave-wake-channel",
  "agave-xdp",
  "bytes",
  "crossbeam-channel",
