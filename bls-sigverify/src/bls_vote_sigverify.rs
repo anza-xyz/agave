@@ -194,10 +194,9 @@ fn process_and_send_verified_votes(
         match vote {
             Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
                 let vote_slot = vote.slot();
-                let repair_msg = HashMap::from([(vote_slot, pubkeys.clone())]);
                 send_votes_to_repair(
                     my_pubkey,
-                    repair_msg,
+                    (vote_slot, pubkeys.clone()),
                     &channels.channel_to_repair,
                     &mut sender_stats,
                 );
