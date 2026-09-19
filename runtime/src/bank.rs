@@ -5848,21 +5848,6 @@ impl Bank {
             }
         });
 
-        let (_, shrink_time_us) = measure_us!({
-            let should_shrink = !skip_shrink && self.slot() > 0;
-            if should_shrink {
-                info!("Shrinking...");
-                self.rc.accounts.accounts_db.shrink_all_slots(
-                    true,
-                    // we cannot allow the snapshot slot to be shrunk
-                    Some(self.slot()),
-                );
-                info!("Shrinking... Done.");
-            } else {
-                info!("Shrinking... Skipped.");
-            }
-        });
-
         info!("Verifying bank...");
         let (verified_bank, verify_bank_time_us) = measure_us!(self.verify_hash());
         info!("Verifying bank... Done.");
@@ -5870,7 +5855,6 @@ impl Bank {
         datapoint_info!(
             "verify_snapshot_bank",
             ("clean_us", clean_time_us, i64),
-            ("shrink_us", shrink_time_us, i64),
             ("verify_accounts_us", verify_accounts_time_us, i64),
             ("verify_bank_us", verify_bank_time_us, i64),
         );

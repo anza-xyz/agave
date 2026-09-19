@@ -1123,7 +1123,7 @@ impl AccountsDb {
 
     /// Queue every slot whose storage is worth shrinking. Returns the number of slots enqueued
     fn queue_shrink_candidates_for_all_slots(&self) -> usize {
-        self.queue_shrink_candidates(self.all_slots_in_storage())
+        self.queue_shrink_candidates(self.storage.all_slots())
     }
 
     /// Startup work that does not have to block index generation. Called once, when the
@@ -2258,24 +2258,6 @@ impl AccountsDb {
             .shrinking_in_progress(slot, old_store, shrunken_store)
     }
 
-    // Reads all accounts in given slot's AppendVecs and filter only to alive,
-    // then create a minimum AppendVec filled with the alive.
-    fn shrink_slot_forced(&self, slot: Slot) {
-        debug!("shrink_slot_forced: slot: {slot}");
-
-        if let Some(store) = self
-            .storage
-            .get_slot_storage_entry_shrinking_in_progress_ok(slot)
-            && self.is_shrinking_productive(&store)
-        {
-            self.shrink_storage(store)
-        }
-    }
-
-    fn all_slots_in_storage(&self) -> Vec<Slot> {
-        self.storage.all_slots()
-    }
-
     /// Given the input `ShrinkCandidates`, this function sorts the stores by their alive ratio
     /// in increasing order with the most sparse entries in the front. It will then simulate the
     /// shrinking by working on the most sparse entries first and if the overall alive ratio is
@@ -2500,41 +2482,6 @@ impl AccountsDb {
         );
 
         num_selected
-    }
-
-    /// This is only called at startup from bank when we are being extra careful such as when we downloaded a snapshot.
-    /// Also called from tests.
-    /// `newest_slot_skip_shrink_inclusive` is used to avoid shrinking the slot we are loading a snapshot from. If we shrink that slot, we affect
-    /// the bank hash calculation verification at startup.
-    pub fn shrink_all_slots(
-        &self,
-        is_startup: bool,
-        newest_slot_skip_shrink_inclusive: Option<Slot>,
-    ) {
-        let _guard = self.active_stats.activate(ActiveStatItem::Shrink);
-        const OUTER_CHUNK_SIZE: usize = 2000;
-        let mut slots = self.all_slots_in_storage();
-        if let Some(newest_slot_skip_shrink_inclusive) = newest_slot_skip_shrink_inclusive {
-            // at startup, we cannot shrink the slot that we're about to replay and recalculate bank hash for.
-            // That storage's contents are used to verify the bank hash (and accounts delta hash) of the startup slot.
-            slots.retain(|slot| slot < &newest_slot_skip_shrink_inclusive);
-        }
-
-        if is_startup {
-            let threads = num_cpus::get();
-            let inner_chunk_size = std::cmp::max(OUTER_CHUNK_SIZE / threads, 1);
-            slots.chunks(OUTER_CHUNK_SIZE).for_each(|chunk| {
-                chunk.par_chunks(inner_chunk_size).for_each(|slots| {
-                    for slot in slots {
-                        self.shrink_slot_forced(*slot);
-                    }
-                });
-            });
-        } else {
-            for slot in slots {
-                self.shrink_slot_forced(slot);
-            }
-        }
     }
 
     /// Scans all accounts visible from `ancestors`, invoking `scan_func` for each.

@@ -664,7 +664,6 @@ mod tests {
         // its bytes stay in tombstone_slot's storage while its index entry is removed
         accounts.set_latest_full_snapshot_slot(tombstone_slot - 1);
         accounts.clean_accounts_for_tests();
-        accounts.shrink_all_slots(false, None);
         assert!(!accounts.contains(&zero_lamport_pubkey));
         assert_eq!(
             accounts
@@ -738,7 +737,6 @@ mod tests {
         // When minimize is called, it is a tombstone-only storage which should be
         // removed as a dead slot
         accounts.clean_accounts_for_tests();
-        accounts.shrink_all_slots(false, None);
         assert!(!accounts.contains(&zero_lamport_pubkey));
         assert_eq!(
             accounts
