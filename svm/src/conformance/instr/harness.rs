@@ -6,7 +6,7 @@ use {
         callback::DefaultCallback,
         setup::{
             InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
-            program_runtime_environments,
+            program_runtime_environment,
         },
     },
     solana_account::AccountSharedData,
@@ -46,8 +46,8 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
 
     let loader_key = program_loader_key(&input.accounts, &input.instruction.program_id);
 
-    let program_runtime_environments =
-        program_runtime_environments(&input.feature_set, &compute_budget);
+    let program_runtime_environment =
+        program_runtime_environment(&input.feature_set, &compute_budget);
 
     let InvokeContextFields {
         sanitized_message,
@@ -62,7 +62,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         &loader_key,
         sysvar_cache,
         &compute_budget,
-        &program_runtime_environments,
+        &program_runtime_environment,
     );
 
     let result = {

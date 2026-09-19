@@ -9,7 +9,7 @@ use {
             nonce_fields::NonceFields,
             setup::{
                 InvokeContextFields, compute_budget as default_compute_budget,
-                prepare_transaction_invoke_context_fields, program_runtime_environments,
+                prepare_transaction_invoke_context_fields, program_runtime_environment,
             },
             transaction_meta::TransactionConfiguration,
         },
@@ -86,8 +86,8 @@ pub fn execute_txn_with_callback<C: InvokeContextCallback>(
 
     let runtime_features = input.feature_set.runtime_features();
     let compute_budget = default_compute_budget(&runtime_features);
-    let program_runtime_environments =
-        program_runtime_environments(&runtime_features, &compute_budget);
+    let program_runtime_environment =
+        program_runtime_environment(&runtime_features, &compute_budget);
 
     let transaction_context = TransactionContext::new(
         transaction_accounts,
@@ -118,7 +118,7 @@ pub fn execute_txn_with_callback<C: InvokeContextCallback>(
         sysvar_cache,
         &compute_budget,
         execution_budget,
-        &program_runtime_environments,
+        &program_runtime_environment,
         NonceFields {
             blockhash,
             blockhash_lamports_per_signature,
