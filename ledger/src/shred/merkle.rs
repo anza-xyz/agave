@@ -36,30 +36,68 @@ use {
 const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, 1203);
 const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 
-// Layout: {common, data} headers | data buffer
-//     | [Merkle root of the previous erasure batch if chained]
-//     | Merkle proof
-//     | [Retransmitter's signature if resigned]
-// The slice past signature till the end of the data buffer is erasure coded.
-// The slice past signature and before the merkle proof is hashed to generate
-// the Merkle tree. The root of the Merkle tree is signed.
+/// A data shred: one MTU-sized frame of a serialized block.
+///
+/// Layout: {common, data} headers | data buffer
+///     | [Merkle root of the previous erasure batch if chained]
+///     | Merkle proof
+///     | [Retransmitter's signature if resigned]
+///
+/// The slice past signature till the end of the data buffer is erasure coded.
+/// The slice past signature and before the merkle proof is hashed to generate
+/// the Merkle tree. The root of the Merkle tree is signed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShredData {
+    /// Deserialized copy of the common header stored in the first
+    /// `SIZE_OF_COMMON_SHRED_HEADER` bytes of `payload`.
+    ///
+    /// The struct field and the `payload` bytes are two representations of the
+    /// same data and are kept in sync: `from_payload` decodes the field out of
+    /// the bytes, while shreds built in memory get their headers written back
+    /// into the payload by `finish_erasure_batch`. Mutators that touch the
+    /// header (e.g. `set_signature`) must update both.
     common_header: ShredCommonHeader,
+    /// Deserialized copy of the data header, stored in `payload` immediately
+    /// after the common header. Kept in sync with the bytes just like
+    /// `common_header`.
+    ///
+    /// For a shred recovered by erasure coding this header is re-read from the
+    /// reconstructed payload, since only the signature precedes the erasure
+    /// coded region and the header bytes themselves are recovered, not known
+    /// up front.
     data_header: DataShredHeader,
+    /// The shred exactly as it appears on the wire, always
+    /// `ShredData::SIZE_OF_PAYLOAD` bytes; longer buffers are truncated on
+    /// parse and shorter ones rejected.
+    ///
+    /// Cheaply cloneable so shred bytes can be shared by multiple consumers
+    /// without full copies.
     payload: Payload,
 }
 
-// Layout: {common, coding} headers | erasure coded shard
-//     | [Merkle root of the previous erasure batch if chained]
-//     | Merkle proof
-//     | [Retransmitter's signature if resigned]
-// The slice past signature and before the merkle proof is hashed to generate
-// the Merkle tree. The root of the Merkle tree is signed.
+/// A coding shred: one Reed-Solomon parity shard protecting an erasure batch.
+///
+/// Layout: {common, coding} headers | erasure coded shard
+///     | [Merkle root of the previous erasure batch if chained]
+///     | Merkle proof
+///     | [Retransmitter's signature if resigned]
+///
+/// The slice past signature and before the merkle proof is hashed to generate
+/// the Merkle tree. The root of the Merkle tree is signed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShredCode {
+    /// Deserialized copy of the common header stored at the front of
+    /// `payload`, kept in sync with those bytes. See
+    /// [`ShredData::common_header`].
     common_header: ShredCommonHeader,
+    /// Deserialized copy of the coding header, stored in `payload` immediately
+    /// after the common header.
+    ///
+    /// Unlike a data shred's header, this one is *not* covered by the erasure
+    /// coding — the parity bytes start after it.
     coding_header: CodingShredHeader,
+    /// The shred exactly as it appears on the wire, always
+    /// `ShredCode::SIZE_OF_PAYLOAD` bytes. See [`ShredData::payload`].
     payload: Payload,
 }
 
