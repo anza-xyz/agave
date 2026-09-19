@@ -4940,12 +4940,13 @@ impl Bank {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
 
         (0..accounts.len()).for_each(|i| {
-            accounts.account(i, |account| {
-                self.stakes_cache.check_and_store(
-                    account.pubkey(),
-                    &account,
-                    new_warmup_cooldown_rate_epoch,
-                )
+            // The unfortunately named `account_for_geyser()` is just a means to get
+            // a ref to the underlying `AccountSharedData`. The function may be
+            // `unimplemented!()`, but this is only done internally to accounts-db;
+            // every impl passed to `store_accounts()` is a wrapper over `AccountSharedData`.
+            accounts.account_for_geyser(i, |pubkey, account| {
+                self.stakes_cache
+                    .check_and_store(pubkey, account, new_warmup_cooldown_rate_epoch)
             })
         });
         self.store_accounts_without_stakes_cache(accounts, thread_pool_for_loading_accounts);
