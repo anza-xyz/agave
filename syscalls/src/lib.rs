@@ -13,6 +13,7 @@ pub use self::{
 };
 use {
     crate::mem_ops::is_nonoverlapping,
+    solana_address::{PDA_MARKER, bytes_are_curve_point},
     solana_big_mod_exp::{
         BIG_MOD_EXP_MAX_BYTES, BIG_MOD_EXP_MIN_EXPONENT_LENGTH,
         BIG_MOD_EXP_MOD_REDUCTION_COMPLEXITY_FACTOR, BigModExpParams, big_mod_exp,
@@ -890,29 +891,56 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallTryFindProgramA
             check_aligned,
         )?;
 
-        let mut bump_seed = [u8::MAX];
-        for _ in 0..u8::MAX {
-            {
-                let mut seeds_with_bump = seeds.to_vec();
-                seeds_with_bump.push(&bump_seed);
-
-                if let Ok(new_address) =
-                    Pubkey::create_program_address(&seeds_with_bump, program_id)
-                {
-                    translate_mut!(
-                        memory_mapping,
-                        check_aligned,
-                        let bump_seed_ref: (&mut MaybeUninit<u8>) = map(bump_seed_addr)?;
-                        let address: (&mut [MaybeUninit<u8>]) = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
-                    );
-                    bump_seed_ref.write(bump_seed[0]);
-                    address.write_copy_of_slice(new_address.as_ref());
-                    return Ok(0);
-                }
+        // Pre-calculate the bump seeds in reverse order, so that the first bump
+        // seed tried is the largest.
+        const BUMP_SEEDS: [u8; u8::MAX as usize] = {
+            let mut seeds = [0; u8::MAX as usize];
+            let mut i = 0;
+            while i < seeds.len() {
+                seeds[i] = u8::MAX - i as u8;
+                i += 1;
             }
-            bump_seed[0] = bump_seed[0].saturating_sub(1);
+            seeds
+        };
+
+        if seeds.len() >= MAX_SEEDS {
+            return Ok(1);
+        }
+
+        if seeds.iter().any(|seed| seed.len() > MAX_SEED_LEN) {
+            return Ok(1);
+        }
+
+        let mut seeds_with_bump: [&[u8]; MAX_SEEDS] = [&[]; MAX_SEEDS];
+        seeds_with_bump[..seeds.len()].copy_from_slice(&seeds);
+        let seeds_with_bump = &mut seeds_with_bump[..=seeds.len()];
+
+        for bump_seed in &BUMP_SEEDS {
+            seeds_with_bump[seeds.len()] = core::slice::from_ref(bump_seed);
+
+            let mut hasher = solana_sha256_hasher::Hasher::default();
+            for seed in seeds.iter() {
+                hasher.hash(seed);
+            }
+            hasher.hashv(&[program_id.as_ref(), PDA_MARKER]);
+            let hash = hasher.result();
+
+            if bytes_are_curve_point(hash.as_ref()) {
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let bump_seed_ref: (&mut MaybeUninit<u8>) = map(bump_seed_addr)?;
+                    let address: (&mut [MaybeUninit<u8>]) = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
+                );
+                bump_seed_ref.write(*bump_seed);
+                address.write_copy_of_slice(&hash.to_bytes());
+                return Ok(0);
+            }
+
+            // Charge for the cost of each iteration.
             invoke_context.compute_meter.consume_checked(cost)?;
         }
+
         Ok(1)
     }
 }
