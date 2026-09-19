@@ -380,20 +380,6 @@ impl Drop for PageAlignedMemory {
     }
 }
 
-impl Deref for PageAlignedMemory {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.ptr, self.len) }
-    }
-}
-
-impl DerefMut for PageAlignedMemory {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice::from_raw_parts_mut(self.ptr, self.len) }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
