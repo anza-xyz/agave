@@ -1,6 +1,8 @@
 use {
-    super::*, crate::blockstore::error::BlockstoreManualPurgeError, crossbeam_channel::Sender,
-    solana_message::AccountKeys,
+    super::*,
+    crate::blockstore::error::BlockstoreManualPurgeError,
+    crossbeam_channel::Sender,
+    solana_message::{AccountKeys, v0::LoadedAddresses},
 };
 
 #[derive(Default)]
@@ -8,6 +10,33 @@ pub struct PurgeStats {
     delete_range: u64,
     write_batch: u64,
     delete_file_in_range: u64,
+}
+
+/// Work performed while removing transaction history before an UpdateParent boundary.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TransactionHistoryPurgeStats {
+    pub transactions_processed: u64,
+    pub deletion_keys_staged: u64,
+    /// Time spent obtaining transactions and reconstructing deletion keys.
+    pub prepare_deletions_us: u64,
+    /// Time spent committing the deletions to Blockstore.
+    pub write_batch_us: u64,
+}
+
+impl TransactionHistoryPurgeStats {
+    pub fn report(&self, slot: Slot, source: &str, queue_wait_us: u128, request_elapsed_us: u128) {
+        datapoint_info!(
+            "transaction-status-service-purge-transaction-history",
+            "source" => source,
+            ("slot", slot, i64),
+            ("queue_wait_us", queue_wait_us, i64),
+            ("transactions_processed", self.transactions_processed, i64),
+            ("deletion_keys_staged", self.deletion_keys_staged, i64),
+            ("prepare_deletions_us", self.prepare_deletions_us, i64),
+            ("write_batch_us", self.write_batch_us, i64),
+            ("request_elapsed_us", request_elapsed_us, i64),
+        );
+    }
 }
 
 impl PurgeStats {
@@ -312,7 +341,14 @@ impl Blockstore {
         }
 
         match purge_type {
-            PurgeType::Exact => self.purge_special_columns_exact(write_batch, from_slot, to_slot),
+            PurgeType::Exact => self
+                .purge_special_columns_exact(
+                    write_batch,
+                    from_slot,
+                    to_slot,
+                    /*fail_on_slot_error:*/ false,
+                )
+                .map(|_| ()),
             PurgeType::CompactionFilter => {
                 // Relying on the compaction filter means there is no action
                 // required here. Instead, the compaction filter cleans the
@@ -446,11 +482,283 @@ impl Blockstore {
         Ok(transaction_status_empty && address_signatures_empty)
     }
 
+    fn stage_transaction_history_deletes(
+        &self,
+        write_batch: &mut WriteBatch,
+        slot: Slot,
+        transaction_index: usize,
+        signature: Signature,
+        static_account_keys: &[Pubkey],
+        loaded_addresses: Option<&LoadedAddresses>,
+        stats: &mut TransactionHistoryPurgeStats,
+    ) -> Result<()> {
+        let transaction_index = u32::try_from(transaction_index)
+            .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
+
+        self.transaction_status_cf
+            .delete_in_batch(write_batch, (signature, slot));
+        stats.deletion_keys_staged = stats.deletion_keys_staged.saturating_add(1);
+
+        self.transaction_memos_cf
+            .delete_in_batch(write_batch, (signature, slot));
+        stats.deletion_keys_staged = stats.deletion_keys_staged.saturating_add(1);
+
+        let account_keys = AccountKeys::new(static_account_keys, loaded_addresses);
+        for pubkey in account_keys.iter() {
+            self.address_signatures_cf
+                .delete_in_batch(write_batch, (*pubkey, slot, transaction_index, signature));
+            stats.deletion_keys_staged = stats.deletion_keys_staged.saturating_add(1);
+        }
+
+        Ok(())
+    }
+
+    /// Removes transaction history written before the UpdateParent boundary
+    /// recorded in SlotMeta. All deletes are staged before the write batch is
+    /// committed. A malformed or aborted component ends the prefix replay could
+    /// have executed, so deletions staged from earlier components are retained.
+    pub fn purge_transaction_history_for_replay_slot_exact(
+        &self,
+        slot: Slot,
+    ) -> Result<TransactionHistoryPurgeStats> {
+        let mut write_batch = self.get_write_batch();
+        let mut stats = TransactionHistoryPurgeStats::default();
+        let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
+
+        let (mut completed_ranges, slot_meta) = self.get_completed_ranges(slot, 0)?;
+        let slot_meta =
+            slot_meta.ok_or(BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(slot))?;
+        if !slot_meta.has_update_parent() {
+            return Err(BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(slot));
+        }
+        completed_ranges.retain(|range| range.end <= slot_meta.replay_fec_set_index);
+        let mut transaction_index = 0usize;
+        // Decode each completed component separately so malformed data does not
+        // discard transactions reconstructed from earlier valid components.
+        for completed_range in completed_ranges {
+            let slot_components = match self.get_slot_component_views_in_block(
+                slot,
+                &vec![completed_range.clone()],
+                Some(&slot_meta),
+            ) {
+                Ok(slot_components) => slot_components,
+                Err(
+                    error @ (BlockstoreError::InvalidShredData(_)
+                    | BlockstoreError::BlockAborted(_)),
+                ) => {
+                    warn!(
+                        "Stopping transaction-history purge reconstruction for slot {slot} at \
+                         shred range {completed_range:?}; transaction history from earlier \
+                         components will still be purged: {error}"
+                    );
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
+
+            for transaction in slot_components
+                .into_iter()
+                .filter_map(|component| match component {
+                    ParsedBlockComponent::EntryBatch(entries) => Some(entries),
+                    ParsedBlockComponent::BlockMarker(_) => None,
+                })
+                .flatten()
+                .flat_map(|entry| entry.transactions)
+            {
+                if let Some(&signature) = transaction.signatures().first()
+                    && let Some(meta) = self.read_transaction_status((signature, slot))?
+                {
+                    self.stage_transaction_history_deletes(
+                        &mut write_batch,
+                        slot,
+                        transaction_index,
+                        signature,
+                        transaction.static_account_keys(),
+                        Some(&meta.loaded_addresses),
+                        &mut stats,
+                    )?;
+                }
+                transaction_index = transaction_index
+                    .checked_add(1)
+                    .ok_or(BlockstoreError::TransactionIndexOverflow)?;
+                stats.transactions_processed = stats.transactions_processed.saturating_add(1);
+            }
+        }
+        prepare_deletions_timer.stop();
+        stats.prepare_deletions_us = prepare_deletions_timer.as_us();
+
+        let mut write_batch_timer = Measure::start("write_transaction_history_purge_batch");
+        let write_result = self.write_batch(write_batch);
+        write_batch_timer.stop();
+        stats.write_batch_us = write_batch_timer.as_us();
+        write_result?;
+
+        Ok(stats)
+    }
+
+    /// Removes transaction history for the ordered transactions the leader recorded
+    /// before producing an UpdateParent marker.
+    pub fn purge_transaction_history_for_leader_slot_exact(
+        &self,
+        slot: Slot,
+        accumulated_txs: &[VersionedTransaction],
+    ) -> Result<TransactionHistoryPurgeStats> {
+        if accumulated_txs.is_empty() {
+            return Ok(TransactionHistoryPurgeStats::default());
+        }
+
+        let mut write_batch = self.get_write_batch();
+        let mut stats = TransactionHistoryPurgeStats::default();
+        let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
+
+        for (transaction_index, transaction) in accumulated_txs.iter().enumerate() {
+            if let Some(&signature) = transaction.signatures.first() {
+                let meta = self
+                    .read_transaction_status((signature, slot))?
+                    .ok_or(BlockstoreError::MissingTransactionMetadata)?;
+                self.stage_transaction_history_deletes(
+                    &mut write_batch,
+                    slot,
+                    transaction_index,
+                    signature,
+                    transaction.message.static_account_keys(),
+                    Some(&meta.loaded_addresses),
+                    &mut stats,
+                )?;
+            }
+            stats.transactions_processed = stats.transactions_processed.saturating_add(1);
+        }
+        prepare_deletions_timer.stop();
+        stats.prepare_deletions_us = prepare_deletions_timer.as_us();
+
+        let mut write_batch_timer = Measure::start("write_transaction_history_purge_batch");
+        let write_result = self.write_batch(write_batch);
+        write_batch_timer.stop();
+        stats.write_batch_us = write_batch_timer.as_us();
+        write_result?;
+
+        Ok(stats)
+    }
+
+    /// Removes transaction history for the entire persisted slot.
+    pub fn purge_transaction_history_for_switch_bank_slot_exact(
+        &self,
+        slot: Slot,
+    ) -> Result<TransactionHistoryPurgeStats> {
+        let mut write_batch = self.get_write_batch();
+        let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
+        let mut stats = self.purge_special_columns_exact(
+            &mut write_batch,
+            slot,
+            slot,
+            /*fail_on_slot_error:*/ true,
+        )?;
+        prepare_deletions_timer.stop();
+        stats.prepare_deletions_us = prepare_deletions_timer.as_us();
+
+        let mut write_batch_timer = Measure::start("write_transaction_history_purge_batch");
+        let write_result = self.write_batch(write_batch);
+        write_batch_timer.stop();
+        stats.write_batch_us = write_batch_timer.as_us();
+        write_result?;
+
+        Ok(stats)
+    }
+
+    /// Removes transaction history that may not agree with a bank restored from a snapshot.
+    ///
+    /// A snapshot can be created before TransactionStatusService has processed an UpdateParent
+    /// purge. If the validator exits in that window, the snapshot skips replay of the affected
+    /// slots on restart. Fully purging their transaction history prevents the obsolete prefix
+    /// from being served as finalized history.
+    pub fn recover_transaction_history_from_snapshot(&self, snapshot_slot: Slot) -> Result<()> {
+        let safe_root = self.transaction_history_safe_root()?;
+        if safe_root.is_some_and(|safe_root| safe_root >= snapshot_slot) {
+            return Ok(());
+        }
+
+        let first_unsafe_slot = safe_root.map_or(0, |safe_root| safe_root.saturating_add(1));
+        let mut update_parent_slots = Vec::new();
+        for (slot, meta) in self
+            .slot_meta_iterator(first_unsafe_slot)?
+            .take_while(|(slot, _)| *slot <= snapshot_slot)
+        {
+            // The snapshot slot is not marked rooted in Blockstore until startup replay begins.
+            let is_canonical =
+                slot == snapshot_slot || self.roots_cf.get(slot)?.is_some_and(|is_root| is_root);
+            if is_canonical && meta.has_update_parent() {
+                update_parent_slots.push(slot);
+            }
+        }
+
+        for slot in &update_parent_slots {
+            self.purge_transaction_history_for_switch_bank_slot_exact(*slot)?;
+        }
+        self.set_transaction_history_safe_root(snapshot_slot)?;
+
+        datapoint_info!(
+            "transaction-history-startup-recovery",
+            ("snapshot_slot", snapshot_slot, i64),
+            ("safe_root", safe_root.unwrap_or_default(), i64),
+            ("update_parent_slots", update_parent_slots.len(), i64),
+        );
+        Ok(())
+    }
+
+    /// Recovers the transaction-bearing portions of a malformed slot for an exact purge.
+    fn recover_slot_components_for_exact_purge(
+        &self,
+        slot: Slot,
+    ) -> Result<Vec<ParsedBlockComponent>> {
+        let (completed_ranges, slot_meta) = self.get_completed_ranges(slot, 0)?;
+        let slot_meta = slot_meta.ok_or(BlockstoreError::SlotUnavailable)?;
+        let mut accept_entry_batches = true;
+        let mut recovered_components = vec![];
+
+        for completed_range in completed_ranges {
+            match self.get_slot_component_views_in_block(
+                slot,
+                &vec![completed_range.clone()],
+                Some(&slot_meta),
+            ) {
+                Ok(slot_components) => {
+                    for component in slot_components {
+                        match &component {
+                            ParsedBlockComponent::BlockMarker(marker)
+                                if marker.is_update_parent() =>
+                            {
+                                accept_entry_batches = true;
+                                recovered_components.push(component);
+                            }
+                            ParsedBlockComponent::EntryBatch(_) if !accept_entry_batches => {}
+                            _ => recovered_components.push(component),
+                        }
+                    }
+                }
+                Err(
+                    error @ (BlockstoreError::InvalidShredData(_)
+                    | BlockstoreError::BlockAborted(_)),
+                ) => {
+                    warn!(
+                        "Skipping malformed transaction-history purge component for slot {slot} \
+                         at shred range {completed_range:?}: {error}"
+                    );
+                    accept_entry_batches = false;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(recovered_components)
+    }
+
     /// Purges special columns (using a non-Slot primary-index) exactly, by
     /// deserializing each slot being purged and iterating through all
     /// transactions to determine the keys of individual records.
     ///
     /// The purge range applies to \[`from_slot`, `to_slot`\].
+    ///
+    /// `fail_on_slot_error` makes an unreadable slot fatal.
     ///
     /// **This method is very slow.**
     fn purge_special_columns_exact(
@@ -458,26 +766,39 @@ impl Blockstore {
         batch: &mut WriteBatch,
         from_slot: Slot,
         to_slot: Slot,
-    ) -> Result<()> {
+        fail_on_slot_error: bool,
+    ) -> Result<TransactionHistoryPurgeStats> {
+        let mut stats = TransactionHistoryPurgeStats::default();
         if self.special_columns_empty()? {
-            return Ok(());
+            return Ok(stats);
         }
 
         for slot in from_slot..=to_slot {
             let mut slot_components = self
-                .get_slot_component_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true);
-            if slot_components.is_err()
+                .get_slot_component_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
+                .map(|(components, _, _)| components);
+            if matches!(
+                &slot_components,
+                Err(BlockstoreError::InvalidShredData(_) | BlockstoreError::BlockAborted(_))
+            ) {
+                slot_components = self.recover_slot_components_for_exact_purge(slot);
+            } else if !fail_on_slot_error
+                && slot_components.is_err()
                 && let Ok(Some(slot_meta)) = self.meta(slot)
                 && slot_meta.has_update_parent()
             {
-                slot_components = self.get_slot_component_views_with_shred_info(
-                    slot,
-                    u64::from(slot_meta.replay_fec_set_index),
-                    /*allow_dead_slots:*/ true,
-                );
+                slot_components = self
+                    .get_slot_component_views_with_shred_info(
+                        slot,
+                        u64::from(slot_meta.replay_fec_set_index),
+                        /*allow_dead_slots:*/ true,
+                    )
+                    .map(|(components, _, _)| components);
             }
-            let Ok((slot_components, _, _)) = slot_components else {
-                continue;
+            let slot_components = match slot_components {
+                Ok(slot_components) => slot_components,
+                Err(error) if fail_on_slot_error => return Err(error),
+                Err(_) => continue,
             };
             let mut transaction_index = 0usize;
             for component in slot_components {
@@ -486,28 +807,20 @@ impl Blockstore {
                         for transaction in entries.into_iter().flat_map(|entry| entry.transactions)
                         {
                             if let Some(&signature) = transaction.signatures().first() {
-                                self.transaction_status_cf
-                                    .delete_in_batch(batch, (signature, slot));
-                                self.transaction_memos_cf
-                                    .delete_in_batch(batch, (signature, slot));
-
                                 let meta = self.read_transaction_status((signature, slot))?;
-                                let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
-                                let account_keys = AccountKeys::new(
+                                self.stage_transaction_history_deletes(
+                                    batch,
+                                    slot,
+                                    transaction_index,
+                                    signature,
                                     transaction.static_account_keys(),
-                                    loaded_addresses.as_ref(),
-                                );
-
-                                let transaction_index = u32::try_from(transaction_index)
-                                    .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
-                                for pubkey in account_keys.iter() {
-                                    self.address_signatures_cf.delete_in_batch(
-                                        batch,
-                                        (*pubkey, slot, transaction_index, signature),
-                                    );
-                                }
+                                    meta.as_ref().map(|meta| &meta.loaded_addresses),
+                                    &mut stats,
+                                )?;
                             }
                             transaction_index += 1;
+                            stats.transactions_processed =
+                                stats.transactions_processed.saturating_add(1);
                         }
                     }
                     ParsedBlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
@@ -518,7 +831,7 @@ impl Blockstore {
             }
         }
 
-        Ok(())
+        Ok(stats)
     }
 
     pub(crate) fn register_manual_purge_request_sender(&self, sender: Sender<Slot>) {
@@ -561,6 +874,7 @@ pub mod tests {
         crate::{
             blockstore::tests::{
                 insert_complete_update_parent_slot, make_slot_entries_with_transactions,
+                write_transaction_statuses_for_entries,
             },
             get_tmp_ledger_path_auto_delete,
         },
@@ -1069,6 +1383,276 @@ pub mod tests {
         assert_eq!(status_entry_iterator.next(), None);
     }
 
+    #[test]
+    fn test_purge_transaction_history_exact_leader_uses_transactions() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let slot = 42;
+        let entries = make_slot_entries_with_transactions(1);
+        let accumulated_txs = entries
+            .iter()
+            .flat_map(|entry| entry.transactions.iter().cloned())
+            .collect::<Vec<_>>();
+        let expected_address_deletion_keys = accumulated_txs
+            .iter()
+            .map(|transaction| transaction.message.static_account_keys().len() as u64)
+            .sum::<u64>();
+        let address = entries[0].transactions[0].message.static_account_keys()[0];
+        let shreds = entries_to_test_shreds(&entries, slot, slot - 1, true, 0);
+        blockstore.insert_shreds(shreds, true).unwrap();
+        let signatures = write_transaction_statuses_for_entries(&blockstore, slot, &entries);
+        for signature in &signatures {
+            blockstore
+                .write_transaction_memos(signature, slot, "memo".to_string())
+                .unwrap();
+        }
+
+        let error = blockstore
+            .purge_transaction_history_for_replay_slot_exact(slot)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BlockstoreError::TransactionHistoryPurgeUpdateParentNotFound(error_slot)
+                if error_slot == slot
+        ));
+
+        let signature = signatures[0];
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, slot)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((address, slot, 0, signature))
+                .unwrap()
+                .is_some()
+        );
+
+        let stats = blockstore
+            .purge_transaction_history_for_leader_slot_exact(slot, &accumulated_txs)
+            .unwrap();
+        assert_eq!(stats.transactions_processed, signatures.len() as u64);
+        assert_eq!(
+            stats.deletion_keys_staged,
+            signatures.len() as u64 * 2 + expected_address_deletion_keys
+        );
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, slot)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((address, slot, 0, signature))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_purge_transaction_history_exact_uses_update_parent_marker() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let slot = 104;
+        let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+        for signature in fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&fixture.post_update_signatures)
+        {
+            blockstore
+                .write_transaction_memos(signature, slot, "memo".to_string())
+                .unwrap();
+        }
+
+        let stats = blockstore
+            .purge_transaction_history_for_replay_slot_exact(slot)
+            .unwrap();
+        assert_eq!(
+            stats.transactions_processed,
+            fixture.pre_update_signatures.len() as u64
+        );
+
+        let pre_update_signature = fixture.pre_update_signatures[0];
+        assert!(
+            blockstore
+                .read_transaction_status((pre_update_signature, slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(pre_update_signature, slot)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((fixture.pre_update_address, slot, 0, pre_update_signature))
+                .unwrap()
+                .is_none()
+        );
+
+        let post_update_signature = fixture.post_update_signatures[0];
+        assert!(
+            blockstore
+                .read_transaction_status((post_update_signature, slot))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(post_update_signature, slot)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((fixture.post_update_address, slot, 0, post_update_signature,))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_recover_transaction_history_from_snapshot() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let update_parent_slot = 104;
+        let unrooted_update_parent_slot = 102;
+        let snapshot_slot = 105;
+        let fixture = insert_complete_update_parent_slot(&blockstore, update_parent_slot, 103, 100);
+        blockstore
+            .set_roots(std::iter::once(&update_parent_slot))
+            .unwrap();
+        let unrooted_fixture =
+            insert_complete_update_parent_slot(&blockstore, unrooted_update_parent_slot, 101, 99);
+        for signature in fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&fixture.post_update_signatures)
+        {
+            blockstore
+                .write_transaction_memos(signature, update_parent_slot, "memo".to_string())
+                .unwrap();
+        }
+        for signature in unrooted_fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&unrooted_fixture.post_update_signatures)
+        {
+            blockstore
+                .write_transaction_memos(signature, unrooted_update_parent_slot, "memo".to_string())
+                .unwrap();
+        }
+
+        let unaffected_entries = make_slot_entries_with_transactions(1);
+        blockstore
+            .insert_shreds(
+                entries_to_test_shreds(
+                    &unaffected_entries,
+                    snapshot_slot,
+                    update_parent_slot,
+                    true,
+                    0,
+                ),
+                true,
+            )
+            .unwrap();
+        let unaffected_signature =
+            write_transaction_statuses_for_entries(&blockstore, snapshot_slot, &unaffected_entries)
+                [0];
+
+        assert!(
+            blockstore
+                .transaction_history_safe_root()
+                .unwrap()
+                .is_none()
+        );
+
+        blockstore
+            .recover_transaction_history_from_snapshot(snapshot_slot)
+            .unwrap();
+
+        for signature in fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&fixture.post_update_signatures)
+        {
+            assert!(
+                blockstore
+                    .read_transaction_status((*signature, update_parent_slot))
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                blockstore
+                    .read_transaction_memos(*signature, update_parent_slot)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        for signature in unrooted_fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&unrooted_fixture.post_update_signatures)
+        {
+            assert!(
+                blockstore
+                    .read_transaction_status((*signature, unrooted_update_parent_slot))
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                blockstore
+                    .read_transaction_memos(*signature, unrooted_update_parent_slot)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert!(
+            blockstore
+                .read_transaction_status((unaffected_signature, snapshot_slot))
+                .unwrap()
+                .is_some()
+        );
+        assert!(blockstore.meta(update_parent_slot).unwrap().is_some());
+        assert!(
+            blockstore
+                .get_data_shred(update_parent_slot, 0)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            blockstore.transaction_history_safe_root().unwrap(),
+            Some(snapshot_slot)
+        );
+        blockstore.set_transaction_history_safe_root(100).unwrap();
+        assert_eq!(
+            blockstore.transaction_history_safe_root().unwrap(),
+            Some(snapshot_slot)
+        );
+    }
+
     #[test_case(false; "valid prefix")]
     #[test_case(true; "invalid prefix")]
     fn test_purge_update_parent_transaction_indexes(invalid_prefix: bool) {
@@ -1111,6 +1695,31 @@ pub mod tests {
                 .get(address_signature)
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn test_purge_switch_bank_without_original_block() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let history_slot = 103;
+        let switch_slot = 104;
+        let entries = make_slot_entries_with_transactions(1);
+        let signature =
+            write_transaction_statuses_for_entries(&blockstore, history_slot, &entries)[0];
+
+        assert!(blockstore.meta(switch_slot).unwrap().is_none());
+        let stats = blockstore
+            .purge_transaction_history_for_switch_bank_slot_exact(switch_slot)
+            .unwrap();
+        assert_eq!(stats.transactions_processed, 0);
+        assert_eq!(stats.deletion_keys_staged, 0);
+        assert!(
+            blockstore
+                .read_transaction_status((signature, history_slot))
+                .unwrap()
+                .is_some()
         );
     }
 
@@ -1190,7 +1799,12 @@ pub mod tests {
 
         let mut write_batch = blockstore.get_write_batch();
         blockstore
-            .purge_special_columns_exact(&mut write_batch, slot, slot + 1)
+            .purge_special_columns_exact(
+                &mut write_batch,
+                slot,
+                slot + 1,
+                /*fail_on_slot_error:*/ false,
+            )
             .unwrap();
     }
 

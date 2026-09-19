@@ -22,10 +22,10 @@ use {
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
-    std::{borrow::Cow, sync::Arc},
+    std::{borrow::Cow, sync::Arc, time::Instant},
 };
 
 type WorkSequence = u64;
@@ -47,6 +47,47 @@ pub struct TransactionStatusBatch {
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
     Freeze(Arc<Bank>),
+    PurgeTransactionHistory {
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+        requested_at: Instant,
+        dependency_work: Option<WorkSequence>,
+        done_sender: Option<crossbeam_channel::Sender<()>>,
+    },
+    Root(Slot, Option<WorkSequence>),
+}
+
+/// Data used to reconstruct the transaction-history keys removed by a purge.
+#[derive(Debug)]
+pub enum TransactionHistoryPurgeInput {
+    ReplayStage,
+    SwitchBank,
+    Leader(Arc<Vec<VersionedTransaction>>),
+}
+
+/// The validator path that requested transaction-history cleanup for a slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionHistoryPurgeSource {
+    LeaderWindow,
+    SoftDeadSlot,
+    UpdateParentSignal,
+    AbandonedBank,
+    SwitchBank,
+    StartupReplay,
+}
+
+impl TransactionHistoryPurgeSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LeaderWindow => "leader_window",
+            Self::SoftDeadSlot => "soft_dead_slot",
+            Self::UpdateParentSignal => "update_parent_signal",
+            Self::AbandonedBank => "abandoned_bank",
+            Self::SwitchBank => "switch_bank",
+            Self::StartupReplay => "startup_replay",
+        }
+    }
 }
 
 pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
@@ -270,6 +311,9 @@ impl TransactionStatusSender {
             work_sequence,
         ))) {
             trace!("Slot {slot} transaction_status send batch failed: {e:?}");
+            if let Some(dependency_tracker) = self.dependency_tracker.as_ref() {
+                dependency_tracker.close();
+            }
         }
     }
 
@@ -280,7 +324,98 @@ impl TransactionStatusSender {
         {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
+            if let Some(dependency_tracker) = self.dependency_tracker.as_ref() {
+                dependency_tracker.close();
+            }
         }
+    }
+
+    /// Requests removal of transaction history for `slot` and waits until the
+    /// TransactionStatusService has finished processing the request.
+    pub fn send_purge_transaction_history_for_slot(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+    ) -> Result<(), String> {
+        let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
+        self.send_purge_transaction_history_request(
+            slot,
+            source,
+            purge_input,
+            Some(done_sender),
+            None,
+        )?;
+
+        done_receiver.recv().map_err(|err| err.to_string())
+    }
+
+    /// Queues removal of transaction history for `slot` without waiting for
+    /// TransactionStatusService to process the request.
+    pub fn enqueue_purge_transaction_history_for_slot(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+    ) -> Result<(), String> {
+        let dependency_work = self
+            .dependency_tracker
+            .as_ref()
+            .map(|tracker| tracker.declare_work());
+
+        self.send_purge_transaction_history_request(
+            slot,
+            source,
+            purge_input,
+            None,
+            dependency_work,
+        )
+    }
+
+    fn send_purge_transaction_history_request(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+        done_sender: Option<crossbeam_channel::Sender<()>>,
+        dependency_work: Option<WorkSequence>,
+    ) -> Result<(), String> {
+        let result = self
+            .sender
+            .send(TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                source,
+                purge_input,
+                requested_at: Instant::now(),
+                dependency_work,
+                done_sender,
+            })
+            .map_err(|err| err.to_string());
+        if result.is_err()
+            && let Some(dependency_tracker) = self.dependency_tracker.as_ref()
+        {
+            dependency_tracker.close();
+        }
+        result
+    }
+
+    /// Queues a barrier for a canonical root and returns the work id used by RPC consumers.
+    #[must_use]
+    pub fn send_transaction_status_root(&self, slot: Slot) -> Option<u64> {
+        let work_id = self
+            .dependency_tracker
+            .as_ref()
+            .map(|dependency_tracker| dependency_tracker.declare_work());
+        if let Err(err) = self
+            .sender
+            .send(TransactionStatusMessage::Root(slot, work_id))
+        {
+            warn!("Slot {slot} transaction status root send failed: {err:?}");
+            if let Some(dependency_tracker) = self.dependency_tracker.as_ref() {
+                dependency_tracker.close();
+            }
+        }
+        work_id
     }
 }
 

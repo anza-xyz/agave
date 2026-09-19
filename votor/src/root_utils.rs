@@ -19,6 +19,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks, bank_forks_controller::BankForksController,
         installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
+        transaction_execution::TransactionStatusSender,
     },
     solana_time_utils::timestamp,
     std::{
@@ -32,6 +33,7 @@ use {
 pub(crate) struct RootContext {
     pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub(crate) bank_forks_controller: Arc<dyn BankForksController>,
+    pub(crate) transaction_status_sender: Option<TransactionStatusSender>,
 }
 
 /// Sets the root for the votor event handling loop. Handles rooting all things
@@ -57,6 +59,11 @@ pub(crate) fn set_root(
     });
     *received_shred = received_shred.split_off(&new_root_slot);
 
+    let dependency_work = rctx
+        .transaction_status_sender
+        .as_ref()
+        .and_then(|sender| sender.send_transaction_status_root(new_root_slot));
+
     rctx.bank_forks_controller.enqueue_set_root(new_root);
 
     if let Err(e) = ctx.blockstore.insert_optimistic_slot(
@@ -71,6 +78,7 @@ pub(crate) fn set_root(
         my_pubkey,
         CommitmentType::Rooted,
         new_root_slot,
+        dependency_work,
         &vctx.commitment_sender,
     );
 
@@ -78,12 +86,8 @@ pub(crate) fn set_root(
     // the RPC API. Additionally the PrioritizationFeeCache relies on this notification
     // in order to perform cleanup. In the future we will look to deprecate OC and remove
     // these code paths.
-    if let Some(config) = &rctx.bank_notification_sender {
-        let dependency_work = config
-            .dependency_tracker
-            .as_ref()
-            .map(|s| s.get_current_declared_work());
-        if let Err(chanel_name) = nonblocking_send(
+    if let Some(config) = &rctx.bank_notification_sender
+        && let Err(chanel_name) = nonblocking_send(
             my_pubkey,
             &config.sender,
             (
@@ -91,9 +95,9 @@ pub(crate) fn set_root(
                 dependency_work,
             ),
             "bank_notification_sender",
-        ) {
-            info!("{my_pubkey}: channel {chanel_name} disconnected");
-        }
+        )
+    {
+        info!("{my_pubkey}: channel {chanel_name} disconnected");
     }
 }
 

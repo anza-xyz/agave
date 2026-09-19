@@ -784,6 +784,7 @@ impl EventHandler {
             my_pubkey,
             CommitmentType::Notarize,
             slot,
+            None,
             &voting_context.commitment_sender,
         );
         pending_blocks.remove(&slot);
@@ -1242,6 +1243,7 @@ mod tests {
         let root_context = RootContext {
             bank_notification_sender: None,
             bank_forks_controller,
+            transaction_status_sender: None,
         };
 
         let local_context = LocalContext {
@@ -1559,6 +1561,7 @@ mod tests {
             let commitment = self.commitment_receiver.try_recv().unwrap();
             assert_eq!(commitment.commitment_type, expected_type);
             assert_eq!(commitment.slot, expected_slot);
+            assert_eq!(commitment.dependency_work, None);
         }
 
         fn check_no_vote_or_commitment(&mut self) {
@@ -2036,6 +2039,7 @@ mod tests {
         let dropped_banks = test_context.drop_bank_receiver.try_recv().unwrap();
         assert_eq!(dropped_banks.len(), 1);
         assert_eq!(dropped_banks[0].slot(), 0);
+        test_context.check_for_commitment(CommitmentType::Rooted, 1);
         // The bank forks root should be updated to 1
         assert_eq!(test_context.bank_forks.read().unwrap().root(), 1);
     }

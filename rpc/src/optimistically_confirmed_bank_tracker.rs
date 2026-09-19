@@ -304,8 +304,9 @@ impl OptimisticallyConfirmedBankTracker {
 
         if let Some(tracker) = dependency_tracker.as_ref()
             && let Some(dependency_work) = dependency_work
+            && !tracker.wait_for_dependency(dependency_work)
         {
-            tracker.wait_for_dependency(dependency_work);
+            return;
         }
         match notification {
             BankNotification::OptimisticallyConfirmed(slot, hash) => {
@@ -805,8 +806,8 @@ mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let dependency_tracker: Arc<DependencyTracker> =
             Arc::new(dependency_tracker::DependencyTracker::default());
-        let work_id_1 = 345;
-        let work_id_2 = 678;
+        let work_id_1 = dependency_tracker.declare_work();
+        let work_id_2 = dependency_tracker.declare_work();
         let tracker_clone = dependency_tracker.clone();
         let handle = thread::spawn(move || {
             let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
@@ -891,8 +892,8 @@ mod tests {
             assert_eq!(pending_optimistically_confirmed_banks.len(), 0);
         });
 
-        dependency_tracker.mark_this_and_all_previous_work_processed(work_id_1);
-        dependency_tracker.mark_this_and_all_previous_work_processed(work_id_2);
+        dependency_tracker.mark_work_processed(work_id_2);
+        dependency_tracker.mark_work_processed(work_id_1);
 
         handle.join().unwrap();
     }

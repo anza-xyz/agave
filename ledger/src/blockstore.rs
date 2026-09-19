@@ -425,6 +425,7 @@ pub struct Blockstore {
     blocktime_cf: LedgerColumn<cf::Blocktime>,
     rewards_cf: LedgerColumn<cf::Rewards>,
     transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
+    transaction_history_safe_root_cf: LedgerColumn<cf::TransactionHistorySafeRoot>,
     transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
     address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
@@ -745,6 +746,7 @@ impl Blockstore {
         let blocktime_cf = db.column();
         let rewards_cf = db.column();
         let transaction_status_cf = db.column();
+        let transaction_history_safe_root_cf = db.column();
         let transaction_memos_cf = db.column();
         let address_signatures_cf = db.column();
         let perf_samples_cf = db.column();
@@ -782,6 +784,7 @@ impl Blockstore {
             roots_cf,
             transaction_memos_cf,
             transaction_status_cf,
+            transaction_history_safe_root_cf,
             alt_meta_cf,
             alt_index_cf,
             alt_data_shred_cf,
@@ -1646,6 +1649,8 @@ impl Blockstore {
         self.blocktime_cf.submit_rocksdb_cf_metrics();
         self.rewards_cf.submit_rocksdb_cf_metrics();
         self.transaction_status_cf.submit_rocksdb_cf_metrics();
+        self.transaction_history_safe_root_cf
+            .submit_rocksdb_cf_metrics();
         self.transaction_memos_cf.submit_rocksdb_cf_metrics();
         self.address_signatures_cf.submit_rocksdb_cf_metrics();
         self.perf_samples_cf.submit_rocksdb_cf_metrics();
@@ -4139,6 +4144,20 @@ impl Blockstore {
 
     pub fn set_block_height(&self, slot: Slot, block_height: u64) -> Result<()> {
         self.block_height_cf.put(slot, &block_height)
+    }
+
+    pub fn transaction_history_safe_root(&self) -> Result<Option<Slot>> {
+        self.transaction_history_safe_root_cf.get(0)
+    }
+
+    pub fn set_transaction_history_safe_root(&self, slot: Slot) -> Result<()> {
+        if self
+            .transaction_history_safe_root()?
+            .is_some_and(|safe_root| safe_root >= slot)
+        {
+            return Ok(());
+        }
+        self.transaction_history_safe_root_cf.put(0, &slot)
     }
 
     /// The first complete block that is available in the Blockstore ledger
