@@ -1,6 +1,9 @@
 use {
-    crate::cli::CliError, solana_cli_output::display::build_balance_message,
-    solana_commitment_config::CommitmentConfig, solana_message::Message, solana_pubkey::Pubkey,
+    crate::cli::CliError,
+    solana_cli_output::display::build_balance_message,
+    solana_commitment_config::CommitmentConfig,
+    solana_message::{Message, VersionedMessage},
+    solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::client_error::Result as ClientResult,
 };
@@ -122,7 +125,9 @@ pub async fn get_fee_for_messages(
 ) -> Result<u64, CliError> {
     let mut total_fee = 0u64;
     for message in messages {
-        let fee = rpc_client.get_fee_for_message(*message).await?;
+        let fee = rpc_client
+            .get_fee_for_versioned_message(&VersionedMessage::Legacy((*message).clone()))
+            .await?;
         total_fee = total_fee
             .checked_add(fee)
             .ok_or(CliError::BadParameter("Fee overflow".to_string()))?;

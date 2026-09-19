@@ -22,7 +22,7 @@ use {
         instruction::{self as loader_v3_instruction, MINIMUM_EXTEND_PROGRAM_BYTES},
         state::UpgradeableLoaderState,
     },
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -2310,7 +2310,7 @@ async fn test_cli_program_write_buffer() {
         .await
         .unwrap()
         .lamports;
-    let mut close_message = Message::new(
+    let close_message = VersionedMessage::Legacy(Message::new_with_blockhash(
         &[loader_v3_instruction::close_any(
             &new_buffer_pubkey,
             &keypair.pubkey(),
@@ -2318,10 +2318,10 @@ async fn test_cli_program_write_buffer() {
             None,
         )],
         Some(&keypair.pubkey()),
-    );
-    close_message.recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+        &rpc_client.get_latest_blockhash().await.unwrap(),
+    ));
     let close_fee = rpc_client
-        .get_fee_for_message(&close_message)
+        .get_fee_for_versioned_message(&close_message)
         .await
         .unwrap();
     config.signers = vec![&keypair];

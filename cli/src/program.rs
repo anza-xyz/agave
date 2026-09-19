@@ -1649,7 +1649,9 @@ async fn process_program_upgrade(
         )
         .await?;
 
-        let fee = rpc_client.get_fee_for_message(&message).await?;
+        let fee = rpc_client
+            .get_fee_for_versioned_message(&VersionedMessage::Legacy(message.clone()))
+            .await?;
         check_account_for_spend_and_fee_with_commitment(
             &rpc_client,
             &fee_payer_signer.pubkey(),
@@ -3115,17 +3117,21 @@ async fn check_payer(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut fee = Saturating(0);
     if let Some(message) = initial_message {
-        fee += rpc_client.get_fee_for_message(message).await?;
+        fee += rpc_client
+            .get_fee_for_versioned_message(&VersionedMessage::Legacy(message.clone()))
+            .await?;
     }
     // Assume all write messages cost the same
     if let Some(message) = write_messages.first() {
         fee += rpc_client
-            .get_fee_for_message(message)
+            .get_fee_for_versioned_message(&VersionedMessage::Legacy(message.clone()))
             .await?
             .saturating_mul(write_messages.len() as u64);
     }
     if let Some(message) = final_message {
-        fee += rpc_client.get_fee_for_message(message).await?;
+        fee += rpc_client
+            .get_fee_for_versioned_message(&VersionedMessage::Legacy(message.clone()))
+            .await?;
     }
     check_account_for_spend_and_fee_with_commitment(
         rpc_client,

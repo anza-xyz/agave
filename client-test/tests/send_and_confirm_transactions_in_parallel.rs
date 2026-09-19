@@ -75,10 +75,10 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
 
     let original_alice_balance = rpc_client.get_balance(&alice.pubkey()).unwrap();
     let (messages, sum) = create_messages(alice_pubkey, bob_pubkey);
-    let mut fee_message = messages.first().unwrap().clone();
-    fee_message.recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let mut fee_message = VersionedMessage::Legacy(messages.first().unwrap().clone());
+    fee_message.set_recent_blockhash(rpc_client.get_latest_blockhash().unwrap());
     let total_fees = rpc_client
-        .get_fee_for_message(&fee_message)
+        .get_fee_for_versioned_message(&fee_message)
         .unwrap()
         .saturating_mul(messages.len() as u64);
 
@@ -138,10 +138,10 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
 
     let original_alice_balance = rpc_client.get_balance(&alice.pubkey()).unwrap();
     let (messages, sum) = create_messages(alice_pubkey, bob_pubkey);
-    let mut fee_message = messages.first().unwrap().clone();
-    fee_message.recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let mut fee_message = VersionedMessage::Legacy(messages.first().unwrap().clone());
+    fee_message.set_recent_blockhash(rpc_client.get_latest_blockhash().unwrap());
     let total_fees = rpc_client
-        .get_fee_for_message(&fee_message)
+        .get_fee_for_versioned_message(&fee_message)
         .unwrap()
         .saturating_mul(messages.len() as u64);
     let ws_url = test_validator.rpc_pubsub_url();

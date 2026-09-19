@@ -33,6 +33,7 @@ use {
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, TransactionDetails, UiTransactionEncoding,
     },
@@ -79,8 +80,13 @@ fn test_rpc_client() {
 
     let blockhash = client.get_latest_blockhash().unwrap();
 
-    let tx = system_transaction::transfer(&alice, &bob_pubkey, 20 * LAMPORTS_PER_SOL, blockhash);
-    let fee = client.get_fee_for_message(tx.message()).unwrap();
+    let tx = VersionedTransaction::from(system_transaction::transfer(
+        &alice,
+        &bob_pubkey,
+        20 * LAMPORTS_PER_SOL,
+        blockhash,
+    ));
+    let fee = client.get_fee_for_versioned_message(&tx.message).unwrap();
     let signature = client.send_transaction(&tx).unwrap();
 
     let mut confirmed_tx = false;
