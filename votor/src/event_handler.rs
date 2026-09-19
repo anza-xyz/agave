@@ -279,23 +279,29 @@ impl EventHandler {
             VotorEvent::Block(CompletedBlock { slot, bank }) => {
                 debug_assert!(bank.is_frozen());
                 let now = Instant::now();
-                let mut consensus_metrics_events =
-                    vec![ConsensusMetricsEvent::StartOfSlot { slot }];
                 if slot == first_of_consecutive_leader_slots(slot) {
-                    // all slots except the first in the window would typically start when the block is seen so the recording would essentially record 0.
-                    // hence we skip it.
-                    consensus_metrics_events.push(ConsensusMetricsEvent::BlockHashSeen {
+                    // the first slot in the window starts when its parent ready event is seen.
+                    let event = ConsensusMetricsEvent::BlockHashSeen {
                         leader: *bank.leader_id(),
                         slot,
-                    });
+                    };
+                    nonblocking_send(
+                        &local_context.my_pubkey,
+                        &vctx.consensus_metrics_sender,
+                        (now, event),
+                        "consensus_metrics_sender",
+                    )
+                    .map_err(EventLoopError::ChannelDisconnected)?;
+                } else {
+                    // the other slots in the window start when the block was seen.
+                    nonblocking_send(
+                        &local_context.my_pubkey,
+                        &vctx.consensus_metrics_sender,
+                        (now, ConsensusMetricsEvent::StartOfSlot { slot }),
+                        "consensus_metrics_sender",
+                    )
+                    .map_err(EventLoopError::ChannelDisconnected)?;
                 }
-                nonblocking_send(
-                    &local_context.my_pubkey,
-                    &vctx.consensus_metrics_sender,
-                    (now, consensus_metrics_events),
-                    "consensus_metrics_sender",
-                )
-                .map_err(EventLoopError::ChannelDisconnected)?;
                 let (block, parent_block) = Self::get_block_parent_block(&bank);
                 info!(
                     "{}: Block {block:?} parent {parent_block:?}",
@@ -374,7 +380,7 @@ impl EventHandler {
                 nonblocking_send(
                     &local_context.my_pubkey,
                     &vctx.consensus_metrics_sender,
-                    (now, vec![ConsensusMetricsEvent::StartOfSlot { slot }]),
+                    (now, ConsensusMetricsEvent::StartOfSlot { slot }),
                     "consensus_metrics_sender",
                 )
                 .map_err(EventLoopError::ChannelDisconnected)?;
@@ -406,10 +412,7 @@ impl EventHandler {
                     nonblocking_send(
                         &local_context.my_pubkey,
                         &vctx.consensus_metrics_sender,
-                        (
-                            now,
-                            vec![ConsensusMetricsEvent::StartOfSlot { slot: next_slot }],
-                        ),
+                        (now, ConsensusMetricsEvent::StartOfSlot { slot: next_slot }),
                         "consensus_metrics_sender",
                     )
                     .map_err(EventLoopError::ChannelDisconnected)?;
@@ -522,7 +525,7 @@ impl EventHandler {
                     &vctx.consensus_metrics_sender,
                     (
                         Instant::now(),
-                        vec![ConsensusMetricsEvent::SlotFinalized { slot: block.slot }],
+                        ConsensusMetricsEvent::SlotFinalized { slot: block.slot },
                     ),
                     "consensus_metrics_sender",
                 )
@@ -1625,8 +1628,7 @@ mod tests {
                 .consensus_metrics_receiver
                 .try_recv()
                 .expect("Should receive metrics event");
-            assert_eq!(event.1.len(), 1);
-            assert_eq!(event.1[0], expected);
+            assert_eq!(event.1, expected);
         }
 
         fn crate_vote_history_storage_and_switch_identity(

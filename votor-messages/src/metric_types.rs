@@ -38,9 +38,9 @@ pub enum ConsensusMetricsEvent {
 }
 
 /// Send side of the channel to send metrics events on.
-pub type ConsensusMetricsEventSender = Sender<(Instant, Vec<ConsensusMetricsEvent>)>;
+pub type ConsensusMetricsEventSender = Sender<(Instant, ConsensusMetricsEvent)>;
 /// Receive side of the channel to receive metrics events on.
-pub type ConsensusMetricsEventReceiver = Receiver<(Instant, Vec<ConsensusMetricsEvent>)>;
+pub type ConsensusMetricsEventReceiver = Receiver<(Instant, ConsensusMetricsEvent)>;
 
 /// Even at 10 events per slot, this supports 1000 slots in flight
 /// With 2000 active validators, we can't have more than:
