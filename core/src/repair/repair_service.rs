@@ -17,7 +17,9 @@ use {
             },
         },
     },
-    agave_votor_messages::{VoteAccountPubkeys, VerifiedVotorSlotsMessage, migration::MigrationStatus},
+    agave_votor_messages::{
+        VerifiedVotorSlotsMessage, VoteAccountPubkeys, migration::MigrationStatus,
+    },
     ahash::AHashMap,
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
