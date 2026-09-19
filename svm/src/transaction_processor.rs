@@ -207,6 +207,11 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// ProgramRuntimeEnvironment of the current epoch
     pub program_runtime_environment: ProgramRuntimeEnvironment,
 
+    /// In the final slot of an epoch where we've activated a program runtime
+    /// feature, this override protects us from an `epoch_boundary_preparation`
+    /// environment that is outdated or otherwise incorrect.
+    deployment_env_override: Option<ProgramRuntimeEnvironment>,
+
     /// Builtin program ids for this fork.
     /// Used to see the `builtin_program_cache` between slots via
     /// `new_from()`.
@@ -248,6 +253,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             program_runtime_environment: ProgramRuntimeEnvironment::from(
                 BuiltinProgram::new_loader(VmConfig::default()),
             ),
+            deployment_env_override: None,
             builtin_program_ids: RwLock::new(HashSet::new()),
             builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
             execution_cost: SVMTransactionExecutionCost::default(),
@@ -378,6 +384,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             epoch_boundary_preparation: self.epoch_boundary_preparation.clone(),
             global_program_cache: self.global_program_cache.clone(),
             program_runtime_environment: environments,
+            deployment_env_override: None,
             builtin_program_ids: RwLock::new(builtin_program_ids),
             builtin_program_cache: RwLock::new(builtin_program_cache),
             execution_cost: self.execution_cost,
@@ -421,6 +428,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap()
             .get_upcoming_environment_for_epoch(epoch)
             .unwrap_or_else(|| ProgramRuntimeEnvironment::clone(&self.program_runtime_environment))
+    }
+
+    pub fn deployment_env_override(&self) -> Option<&ProgramRuntimeEnvironment> {
+        self.deployment_env_override.as_ref()
+    }
+
+    pub fn set_deployment_env_override(&mut self, environment: ProgramRuntimeEnvironment) {
+        self.deployment_env_override = Some(environment);
     }
 
     pub fn sysvar_cache(&self) -> RwLockReadGuard<'_, SysvarCache> {

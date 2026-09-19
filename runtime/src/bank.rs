@@ -148,7 +148,7 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
         loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -1676,7 +1676,7 @@ impl Bank {
             .set_fork_graph(fork_graph);
     }
 
-    fn prepare_program_cache_for_upcoming_feature_set(&self) {
+    fn prepare_program_cache_for_upcoming_feature_set(&self) -> FeatureSet {
         let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
         let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
@@ -1737,6 +1737,37 @@ impl Bank {
             epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
             epoch_boundary_preparation.upcoming_environment = Some(upcoming_environment);
         }
+
+        upcoming_feature_set
+    }
+
+    // In an epoch where we've activated a program runtime feature, it's
+    // possible that EBPP (above) could have latched on the *incorrect*
+    // environment, depending on which fork entered the window first.
+    //
+    // This function stages an override for `do_load_and_execute_transactions`
+    // to ensure the correct deployment environment is picked up for the
+    // epoch's final slot.
+    //
+    // Only called on the final slot of an epoch.
+    fn set_deployment_env_override(
+        &mut self,
+        upcoming_feature_set: &FeatureSet,
+        effective_epoch_of_deployments: Epoch,
+    ) {
+        let upcoming_env = self.create_program_runtime_environment(upcoming_feature_set);
+        let predicted_env = self
+            .transaction_processor
+            .program_runtime_environment_for_epoch(effective_epoch_of_deployments);
+        let deployment_env = if *upcoming_env == *predicted_env {
+            // EBPP was correct; use it.
+            predicted_env
+        } else {
+            // EBPP was wrong; override it.
+            upcoming_env
+        };
+        self.transaction_processor
+            .set_deployment_env_override(deployment_env);
     }
 
     pub fn prune_program_cache(&self, bank_forks: &BankForks) {
@@ -2064,8 +2095,15 @@ impl Bank {
         let (_, distribute_rewards_time_us) =
             measure_us!(self.distribute_partitioned_epoch_rewards());
 
-        let (_, cache_preparation_time_us) =
+        let (upcoming_feature_set, cache_preparation_time_us) =
             measure_us!(self.prepare_program_cache_for_upcoming_feature_set());
+
+        let effective_epoch_of_deployments = self
+            .epoch_schedule()
+            .get_epoch(self.slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET));
+        if self.epoch() != effective_epoch_of_deployments {
+            self.set_deployment_env_override(&upcoming_feature_set, effective_epoch_of_deployments);
+        }
 
         // Update sysvars before processing transactions
         let (_, update_sysvars_time_us) = measure_us!({
@@ -4204,10 +4242,17 @@ impl Bank {
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
-        let effective_epoch_of_deployments =
-            self.epoch_schedule().get_epoch(self.slot.saturating_add(
-                solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
-            ));
+
+        let execution_env = self
+            .transaction_processor
+            .program_runtime_environment
+            .clone();
+        let deployment_env = self
+            .transaction_processor
+            .deployment_env_override()
+            .cloned()
+            .unwrap_or_else(|| execution_env.clone());
+
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
@@ -4215,11 +4260,8 @@ impl Bank {
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
             program_runtime_environments: ProgramRuntimeEnvironments::new(
-                self.transaction_processor
-                    .program_runtime_environment
-                    .clone(),
-                self.transaction_processor
-                    .program_runtime_environment_for_epoch(effective_epoch_of_deployments),
+                execution_env,
+                deployment_env,
             ),
             rent: self.rent_collector.rent.clone(),
         };
