@@ -65,7 +65,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         shred::filter::TurbineMode,
     },
-    solana_net_utils::PinnedXdpSender,
+    solana_net_utils::{PinnedXdpSender, quic_socket::QuicSocket},
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -81,7 +81,7 @@ use {
         validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_streamer::{evicting_sender::EvictingSender, quic_socket::QuicSocket},
+    solana_streamer::evicting_sender::EvictingSender,
     solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
     solana_validator_exit::Exit,
     std::{

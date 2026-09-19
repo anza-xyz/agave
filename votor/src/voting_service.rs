@@ -384,7 +384,9 @@ mod tests {
         },
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
-        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+        solana_net_utils::{
+            SocketAddrSpace, quic_socket::QuicSocket, sockets::bind_to_localhost_unique,
+        },
         solana_perf::packet::packet_config,
         solana_pubkey::Pubkey,
         solana_runtime::{
@@ -395,7 +397,6 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_streamer::quic_socket::QuicSocket,
         std::{
             collections::HashMap,
             net::SocketAddr,

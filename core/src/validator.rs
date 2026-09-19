@@ -99,7 +99,10 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
-    solana_net_utils::{PinnedXdpSender, SocketAddrSpace},
+    solana_net_utils::{
+        PinnedXdpSender, SocketAddrSpace,
+        quic_socket::{into_quic_socket, into_quic_sockets},
+    },
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::PohRecorder,
@@ -146,7 +149,6 @@ use {
         evicting_sender::EvictingSender,
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
-        quic_socket::{into_quic_socket, into_quic_sockets},
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,

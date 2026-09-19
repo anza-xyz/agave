@@ -5,7 +5,6 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
-        quic_socket::{QuicSocket, create_endpoint},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
@@ -16,7 +15,9 @@ use {
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
-    solana_net_utils::token_bucket::TokenBucket,
+    solana_net_utils::{
+        quic_socket::QuicSocket, quic_socket::create_endpoint, token_bucket::TokenBucket,
+    },
     solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,

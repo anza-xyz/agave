@@ -15,9 +15,12 @@ use {
     log::{error, warn},
     qualifier_attr::qualifiers,
     solana_keypair::{Keypair, Signer},
-    solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
+    solana_net_utils::{
+        SocketAddrSpace,
+        quic_socket::{QuicSocket, create_endpoint},
+        token_bucket::TokenBucket,
+    },
     solana_pubkey::Pubkey,
-    solana_streamer::quic_socket::{QuicSocket, create_endpoint},
     solana_tls_utils::NotifyKeyUpdate,
     std::{
         net::SocketAddr,
@@ -391,13 +394,13 @@ mod tests {
         solana_keypair::{Keypair, Signer},
         solana_net_utils::{
             SocketAddrSpace,
+            quic_socket::QuicSocket,
             sockets::{
                 SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
                 unique_port_range_for_tests,
             },
         },
         solana_pubkey::Pubkey,
-        solana_streamer::quic_socket::QuicSocket,
         solana_tls_utils::NotifyKeyUpdate,
         std::{
             collections::HashMap,

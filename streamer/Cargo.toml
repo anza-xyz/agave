@@ -21,7 +21,7 @@ name = "solana_streamer"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
+dev-context-only-utils = ["solana-net-utils/dev-context-only-utils"]
 
 [dependencies]
 agave-xdp = { workspace = true }

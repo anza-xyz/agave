@@ -32,6 +32,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
+    solana_net_utils::quic_socket::{QuicSocket, into_quic_sockets},
     solana_poh::{
         poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankMessage},
         transaction_recorder::TransactionRecorder,
@@ -53,7 +54,6 @@ use {
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
             spawn_simple_qos_server, spawn_stake_weighted_qos_server,
         },
-        quic_socket::{QuicSocket, into_quic_sockets},
         streamer::StakedNodes,
     },
     solana_turbine::{

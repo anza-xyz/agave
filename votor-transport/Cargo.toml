@@ -26,7 +26,6 @@ solana-keypair = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-streamer = { workspace = true }
 solana-tls-utils = { workspace = true, features = ["agave-unstable-api"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
