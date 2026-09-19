@@ -953,18 +953,11 @@ pub(crate) fn make_shreds_from_data(
     let now = Instant::now();
     let proof_size = PROOF_ENTRIES_FOR_32_32_BATCH;
 
-    // unsigned data_buffer size
+    // EXPERIMENT: retransmitter-signed ("resigned") shreds are not produced at
+    // all, so every erasure batch, including the last one of the slot, uses
+    // the unsigned layout.
     let data_buffer_per_shred_size = ShredData::capacity(proof_size, false)?;
     let data_buffer_total_size = DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size;
-
-    // signed data_buffer size
-    let data_buffer_per_shred_size_signed = if is_last_in_slot {
-        ShredData::capacity(proof_size, true)?
-    } else {
-        0
-    };
-    let data_buffer_total_size_signed =
-        DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size_signed;
 
     // Common header for the data shreds.
     let mut common_header_data = ShredCommonHeader {
@@ -1003,28 +996,10 @@ pub(crate) fn make_shreds_from_data(
         }
     };
 
-    let (mut unsigned_data, signed_data) = if is_last_in_slot {
-        // Reserve at least one signed batch (may be empty) at the end.
-        if data.len() > data_buffer_total_size_signed {
-            // sign everything except the last batch
-            let split_at = data.len() - data_buffer_total_size_signed;
-            data.split_at(split_at)
-        } else {
-            // only enough data for one fec set, sign the whole thing
-            (&[][..], data)
-        }
-    } else {
-        // not last fec set, so don't sign
-        (data, &[][..])
-    };
-    stats.data_bytes += unsigned_data.len() + signed_data.len();
+    let mut unsigned_data = data;
+    stats.data_bytes += unsigned_data.len();
 
-    let unsigned_sets = unsigned_data.len().div_ceil(data_buffer_total_size);
-    let number_of_fec_sets = if is_last_in_slot {
-        unsigned_sets + 1
-    } else {
-        unsigned_sets
-    };
+    let number_of_fec_sets = unsigned_data.len().div_ceil(data_buffer_total_size).max(1);
     let mut shreds = Vec::<Shred>::with_capacity(SHREDS_PER_FEC_BLOCK * number_of_fec_sets);
 
     // Split the data into full erasure batches and initialize data and coding
@@ -1056,26 +1031,12 @@ pub(crate) fn make_shreds_from_data(
     // 2.) Shreds is_empty, which only happens when we entered w/ zero data.
     //
     // In either case, we want to generate empty data shreds.
-    if !unsigned_data.is_empty() || (shreds.is_empty() && !is_last_in_slot) {
+    if !unsigned_data.is_empty() || shreds.is_empty() {
         stats.padding_bytes += data_buffer_total_size - unsigned_data.len();
         shred_leftover_data(
             proof_size,
-            false,
             unsigned_data,
             data_buffer_per_shred_size,
-            &mut common_header_data,
-            &mut common_header_code,
-            data_header,
-            &mut shreds,
-        );
-    }
-    if !signed_data.is_empty() || (shreds.is_empty() && is_last_in_slot) {
-        stats.padding_bytes += data_buffer_total_size_signed - signed_data.len();
-        shred_leftover_data(
-            proof_size,
-            true,
-            signed_data,
-            data_buffer_per_shred_size_signed,
             &mut common_header_data,
             &mut common_header_code,
             data_header,
@@ -1119,7 +1080,6 @@ pub(crate) fn make_shreds_from_data(
 #[allow(clippy::too_many_arguments)]
 fn shred_leftover_data(
     proof_size: u8,
-    resigned: bool,
     data: &[u8],
     data_buffer_per_shred_size: usize,
     common_header_data: &mut ShredCommonHeader,
@@ -1129,11 +1089,11 @@ fn shred_leftover_data(
 ) {
     common_header_data.shred_variant = ShredVariant::MerkleData {
         proof_size,
-        resigned,
+        resigned: false,
     };
     common_header_code.shred_variant = ShredVariant::MerkleCode {
         proof_size,
-        resigned,
+        resigned: false,
     };
     common_header_data.fec_set_index = common_header_data.index;
     common_header_code.fec_set_index = common_header_data.fec_set_index;
