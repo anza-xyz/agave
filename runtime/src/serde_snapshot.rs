@@ -77,7 +77,9 @@ mod types;
 
 pub use startup_hints::StartupHints;
 pub(crate) use {
-    obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
+    obsolete_accounts::{
+        LegacyObsoleteAccountsMap, SerdeObsoleteAccounts, SerdeObsoleteAccountsMap,
+    },
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
     storages_list::{StorageListItem, StoragesList},
