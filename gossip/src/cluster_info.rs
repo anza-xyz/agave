@@ -1520,9 +1520,17 @@ impl ClusterInfo {
         Builder::new()
             .name("solGossip".to_string())
             .spawn(move || {
-                let mut last_push = 0;
-                let mut last_contact_info_trace = timestamp();
-                let mut last_contact_info_save = timestamp();
+                // These are all elapsed-time checks, so they are kept on the
+                // monotonic clock: timestamp() is wall-clock and can step
+                // backwards (NTP), which would underflow the subtractions.
+                const GOSSIP_SLEEP: Duration = Duration::from_millis(GOSSIP_SLEEP_MILLIS);
+                let push_interval = Duration::from_millis(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2);
+                let contact_debug_interval = Duration::from_millis(self.contact_debug_interval);
+                let contact_save_interval = Duration::from_millis(self.contact_save_interval);
+                // None means "never pushed", which fires on the first round.
+                let mut last_push: Option<Instant> = None;
+                let mut last_contact_info_trace = Instant::now();
+                let mut last_contact_info_save = Instant::now();
                 let mut entrypoints_processed = false;
                 let recycler = PacketBatchRecycler::default();
 
@@ -1530,9 +1538,9 @@ impl ClusterInfo {
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    let start = timestamp();
+                    let start = Instant::now();
                     if self.contact_debug_interval != 0
-                        && start - last_contact_info_trace > self.contact_debug_interval
+                        && start.duration_since(last_contact_info_trace) > contact_debug_interval
                     {
                         // Log contact info
                         info!(
@@ -1544,7 +1552,7 @@ impl ClusterInfo {
                     }
 
                     if self.contact_save_interval != 0
-                        && start - last_contact_info_save > self.contact_save_interval
+                        && start.duration_since(last_contact_info_save) > contact_save_interval
                     {
                         self.save_contact_info();
                         last_contact_info_save = start;
@@ -1567,7 +1575,7 @@ impl ClusterInfo {
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
-                    if start - last_push > CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2 {
+                    if last_push.is_none_or(|last| start.duration_since(last) > push_interval) {
                         self.refresh_my_gossip_contact_info();
                         self.refresh_push_active_set(
                             &recycler,
@@ -1575,12 +1583,10 @@ impl ClusterInfo {
                             gossip_validators.as_ref(),
                             &sender,
                         );
-                        last_push = timestamp();
+                        last_push = Some(Instant::now());
                     }
-                    let elapsed = timestamp() - start;
-                    if GOSSIP_SLEEP_MILLIS > elapsed {
-                        let time_left = GOSSIP_SLEEP_MILLIS - elapsed;
-                        sleep(Duration::from_millis(time_left));
+                    if let Some(time_left) = GOSSIP_SLEEP.checked_sub(start.elapsed()) {
+                        sleep(time_left);
                     }
                 }
             })
