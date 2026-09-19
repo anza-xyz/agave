@@ -3609,6 +3609,11 @@ impl AccountsDb {
                 flush_stats.store_accounts_total_us.0,
                 i64
             ),
+            (
+                "flush_read_cache_us",
+                flush_stats.flush_read_cache_us.0,
+                i64
+            ),
             ("write_accounts_us", flush_stats.write_accounts_us.0, i64),
             ("update_index_us", flush_stats.update_index_us.0, i64),
             ("handle_reclaims_us", flush_stats.handle_reclaims_us.0, i64),
@@ -4552,6 +4557,15 @@ impl AccountsDb {
         let reclaims = self.update_index_for_flush(&infos, &accounts, reclaim_handling);
         let update_index_us = update_index_time.end_as_us();
 
+        // Drop the read cache entry for every account written to storage. The read cached version
+        // stale as it was superseded by the new version in storage
+        let flush_read_cache_time = Measure::start("flush_read_cache");
+        (0..accounts.len()).for_each(|index| {
+            self.read_only_accounts_cache
+                .remove_assume_not_present(accounts.pubkey(index));
+        });
+        let flush_read_cache_us = flush_read_cache_time.end_as_us();
+
         // If there are any reclaims then they should be handled. Reclaims affect
         // all storages, and may result in the removal of dead storages.
         let handle_reclaims_time = Measure::start("handle_reclaims");
@@ -4588,6 +4602,7 @@ impl AccountsDb {
         }
 
         StoreAccountsForFlushStats {
+            flush_read_cache_us,
             write_accounts_us,
             update_index_us,
             handle_reclaims_us,

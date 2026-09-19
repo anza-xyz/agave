@@ -134,6 +134,7 @@ impl StoreAccountsForSquashStats {
 /// Stats from storing accounts for flush (i.e. flushing the write cache to a storage file)
 #[derive(Debug, Default)]
 pub struct StoreAccountsForFlushStats {
+    pub flush_read_cache_us: u64,
     pub write_accounts_us: u64,
     pub update_index_us: u64,
     pub handle_reclaims_us: u64,
@@ -236,6 +237,7 @@ pub struct FlushStats {
     pub num_bytes_skipped: Saturating<u64>,
     pub num_zero_lamport_accounts_skipped: Saturating<usize>,
     pub store_accounts_total_us: Saturating<u64>,
+    pub flush_read_cache_us: Saturating<u64>,
     pub write_accounts_us: Saturating<u64>,
     pub update_index_us: Saturating<u64>,
     pub handle_reclaims_us: Saturating<u64>,
@@ -252,6 +254,7 @@ impl FlushStats {
         &mut self,
         store_accounts_stats: StoreAccountsForFlushStats,
     ) {
+        self.flush_read_cache_us += Saturating(store_accounts_stats.flush_read_cache_us);
         self.write_accounts_us += Saturating(store_accounts_stats.write_accounts_us);
         self.update_index_us += Saturating(store_accounts_stats.update_index_us);
         self.handle_reclaims_us += Saturating(store_accounts_stats.handle_reclaims_us);
@@ -269,6 +272,7 @@ impl FlushStats {
         self.num_bytes_skipped += other.num_bytes_skipped;
         self.num_zero_lamport_accounts_skipped += other.num_zero_lamport_accounts_skipped;
         self.store_accounts_total_us += other.store_accounts_total_us;
+        self.flush_read_cache_us += other.flush_read_cache_us;
         self.write_accounts_us += other.write_accounts_us;
         self.update_index_us += other.update_index_us;
         self.handle_reclaims_us += other.handle_reclaims_us;
