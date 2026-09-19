@@ -137,7 +137,11 @@ impl StreamLoadEMA {
         }
     }
 
-    fn ema_function(current_ema: u128, recent_load: u128) -> u128 {
+    /// Advances the EMA by one interval carrying `recent_load`.
+    ///
+    /// The result is a weighted average of the two inputs and never exceeds
+    /// the larger of them.
+    fn ema_function(current_ema: u64, recent_load: u64) -> u64 {
         // Using the EMA multiplier helps in avoiding the floating point math during EMA related calculations
         const STREAM_LOAD_EMA_MULTIPLIER: u128 = 1024;
         let multiplied_smoothing_factor: u128 =
@@ -148,9 +152,13 @@ impl StreamLoadEMA {
         // To avoid floating point math, we are using STREAM_LOAD_EMA_MULTIPLIER
         //    updated_ema = (recent_load * multiplied_smoothing_factor
         //                   + current_ema * (multiplier - multiplied_smoothing_factor)) / multiplier
-        (recent_load * multiplied_smoothing_factor
-            + current_ema * (STREAM_LOAD_EMA_MULTIPLIER - multiplied_smoothing_factor))
-            / STREAM_LOAD_EMA_MULTIPLIER
+        let updated_ema = (u128::from(recent_load) * multiplied_smoothing_factor
+            + u128::from(current_ema) * (STREAM_LOAD_EMA_MULTIPLIER - multiplied_smoothing_factor))
+            / STREAM_LOAD_EMA_MULTIPLIER;
+        match u64::try_from(updated_ema) {
+            Ok(updated_ema) => updated_ema,
+            Err(_) => unreachable!("EMA {updated_ema} must fit into u64"),
+        }
     }
 
     fn update_ema(&self, time_since_last_update_ms: u128) {
@@ -168,58 +176,44 @@ impl StreamLoadEMA {
             .unstaked_load_in_recent_interval
             .swap(0, Ordering::Relaxed);
 
-        if let Some(staked_load_ema) = self.advance_ema(
+        let staked_load_ema = Self::advance_ema(
             &self.staked_load_ema,
             staked_load_in_recent_interval,
             num_extra_updates,
-        ) {
-            if self.staked_throttling_on_load_threshold > 0 {
-                self.staked_throttling_enabled.store(
-                    staked_load_ema >= self.staked_throttling_on_load_threshold,
-                    Ordering::Relaxed,
-                );
-            }
-            self.stats
-                .staked_stream_load_ema
-                .store(staked_load_ema as usize, Ordering::Relaxed);
+        );
+        if self.staked_throttling_on_load_threshold > 0 {
+            self.staked_throttling_enabled.store(
+                staked_load_ema >= self.staked_throttling_on_load_threshold,
+                Ordering::Relaxed,
+            );
         }
+        self.stats
+            .staked_stream_load_ema
+            .store(staked_load_ema as usize, Ordering::Relaxed);
 
-        if let Some(unstaked_load_ema) = self.advance_ema(
+        let unstaked_load_ema = Self::advance_ema(
             &self.unstaked_load_ema,
             unstaked_load_in_recent_interval,
             num_extra_updates,
-        ) {
-            if self.unstaked_throttling_on_load_threshold > 0 {
-                // Unstaked throttling is decided on total load, since that is
-                // what saturates the pipeline.
-                let total_load_ema = self
-                    .staked_load_ema
-                    .load(Ordering::Relaxed)
-                    .saturating_add(unstaked_load_ema);
-                self.unstaked_throttling_enabled.store(
-                    total_load_ema >= self.unstaked_throttling_on_load_threshold,
-                    Ordering::Relaxed,
-                );
-            }
-            self.stats
-                .unstaked_stream_load_ema
-                .store(unstaked_load_ema as usize, Ordering::Relaxed);
+        );
+        if self.unstaked_throttling_on_load_threshold > 0 {
+            // Unstaked throttling is decided on total load, since that is
+            // what saturates the pipeline.
+            let total_load_ema = staked_load_ema.saturating_add(unstaked_load_ema);
+            self.unstaked_throttling_enabled.store(
+                total_load_ema >= self.unstaked_throttling_on_load_threshold,
+                Ordering::Relaxed,
+            );
         }
+        self.stats
+            .unstaked_stream_load_ema
+            .store(unstaked_load_ema as usize, Ordering::Relaxed);
     }
 
     /// Advances `ema` by one interval carrying `recent_load`, followed by
-    /// `num_extra_updates` empty intervals. Returns the new value, or `None`
-    /// if it does not fit in a u64, in which case `ema` is left unchanged.
-    fn advance_ema(
-        &self,
-        ema: &AtomicU64,
-        recent_load: u64,
-        num_extra_updates: u128,
-    ) -> Option<u64> {
-        let mut updated_ema = Self::ema_function(
-            u128::from(ema.load(Ordering::Relaxed)),
-            u128::from(recent_load),
-        );
+    /// `num_extra_updates` empty intervals. Returns the new value.
+    fn advance_ema(ema: &AtomicU64, recent_load: u64, num_extra_updates: u128) -> u64 {
+        let mut updated_ema = Self::ema_function(ema.load(Ordering::Relaxed), recent_load);
 
         for _ in 0..num_extra_updates {
             updated_ema = Self::ema_function(updated_ema, 0);
@@ -228,19 +222,8 @@ impl StreamLoadEMA {
             }
         }
 
-        match u64::try_from(updated_ema) {
-            Ok(updated_ema) => {
-                ema.store(updated_ema, Ordering::Relaxed);
-                Some(updated_ema)
-            }
-            Err(_) => {
-                error!("Failed to convert EMA {updated_ema} to a u64. Not updating the load EMA");
-                self.stats
-                    .stream_load_ema_overflow
-                    .fetch_add(1, Ordering::Relaxed);
-                None
-            }
-        }
+        ema.store(updated_ema, Ordering::Relaxed);
+        updated_ema
     }
 
     pub(crate) fn update_ema_if_needed(&self) {
@@ -589,10 +572,17 @@ pub mod test {
             StreamLoadEMA::ema_function(StreamLoadEMA::ema_function(100, 100), 0),
             0,
         );
-        assert_eq!(
-            load_ema.staked_load_ema.load(Ordering::Relaxed),
-            u64::try_from(expected).unwrap()
-        );
+        assert_eq!(load_ema.staked_load_ema.load(Ordering::Relaxed), expected);
+    }
+
+    #[test]
+    fn test_ema_never_exceeds_its_inputs() {
+        // The weights sum to the multiplier, so the EMA is a weighted average
+        // and fits in a u64 for any u64 inputs, including the extremes.
+        assert_eq!(StreamLoadEMA::ema_function(u64::MAX, u64::MAX), u64::MAX);
+        assert!(StreamLoadEMA::ema_function(u64::MAX, 0) < u64::MAX);
+        assert!(StreamLoadEMA::ema_function(0, u64::MAX) < u64::MAX);
+        assert_eq!(StreamLoadEMA::ema_function(0, 0), 0);
     }
 
     #[test]
@@ -627,8 +617,8 @@ pub mod test {
             0
         );
 
-        let expected_staked = u64::try_from(StreamLoadEMA::ema_function(0, 100)).unwrap();
-        let expected_unstaked = u64::try_from(StreamLoadEMA::ema_function(0, 1000)).unwrap();
+        let expected_staked = StreamLoadEMA::ema_function(0, 100);
+        let expected_unstaked = StreamLoadEMA::ema_function(0, 1000);
         assert_eq!(
             load_ema.staked_load_ema.load(Ordering::Relaxed),
             expected_staked
