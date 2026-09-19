@@ -82,6 +82,8 @@ use {
         path::{Path, PathBuf},
         str::{self, FromStr},
         sync::{Arc, RwLock, atomic::AtomicBool},
+        thread,
+        time::{Duration, Instant},
     },
 };
 #[cfg(target_os = "linux")]
@@ -564,13 +566,15 @@ pub fn execute(
     } else {
         AccountShrinkThreshold::IndividualStore { shrink_ratio }
     };
-    // TODO: Once entrypoints are updated to return shred-version, this should
-    // abort if it fails to obtain a shred-version, so that nodes always join
-    // gossip with a valid shred-version. The code to adopt entrypoint shred
-    // version can then be deleted from gossip and get_rpc_node above.
-    let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
-        .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
+    let expected_shred_version = match value_t!(matches, "expected_shred_version", u16).ok() {
+        None if !entrypoint_addrs.is_empty() => Some(
+            get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()).ok_or(
+                "failed to obtain a shred-version from any entrypoint; verify --entrypoint or set \
+                 --expected-shred-version",
+            )?,
+        ),
+        shred_version => shred_version,
+    };
 
     let tower_path = value_t!(matches, "tower", PathBuf)
         .ok()
@@ -1195,23 +1199,40 @@ fn validators_set(
     }
 }
 
+const SHRED_VERSION_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+const SHRED_VERSION_QUERY_RETRY_DELAY: Duration = Duration::from_secs(2);
+
 fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -> Option<u16> {
-    let entrypoints = {
-        let mut index: Vec<_> = (0..entrypoints.len()).collect();
-        index.shuffle(&mut rand::rng());
-        index.into_iter().map(|i| &entrypoints[i])
-    };
-    for entrypoint in entrypoints {
-        match solana_net_utils::get_cluster_shred_version_with_binding(entrypoint, bind_address) {
-            Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
-            Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
-            Ok(shred_version) => {
-                info!("obtained shred-version {shred_version} from {entrypoint}");
-                return Some(shred_version);
+    if entrypoints.is_empty() {
+        return None;
+    }
+    let mut entrypoints = entrypoints.to_vec();
+    entrypoints.shuffle(&mut rng());
+    // Entrypoints may be transiently unreachable this early in startup, e.g. while
+    // the NIC re-initializes after an XDP program was attached to it, so keep
+    // retrying for a while before giving up.
+    let deadline = Instant::now() + SHRED_VERSION_QUERY_TIMEOUT;
+    loop {
+        for entrypoint in &entrypoints {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            match solana_net_utils::get_cluster_shred_version_with_binding(entrypoint, bind_address)
+            {
+                Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
+                Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
+                Ok(shred_version) => {
+                    info!("obtained shred-version {shred_version} from {entrypoint}");
+                    return Some(shred_version);
+                }
             }
         }
+        warn!(
+            "no entrypoint returned a shred-version, retrying in \
+             {SHRED_VERSION_QUERY_RETRY_DELAY:?}"
+        );
+        thread::sleep(SHRED_VERSION_QUERY_RETRY_DELAY);
     }
-    None
 }
 
 fn new_snapshot_config(
