@@ -665,6 +665,46 @@ impl Blockstore {
         Ok(stats)
     }
 
+    /// Removes transaction history that may not agree with a bank restored from a snapshot.
+    ///
+    /// A snapshot can be created before TransactionStatusService has processed an UpdateParent
+    /// purge. If the validator exits in that window, the snapshot skips replay of the affected
+    /// slots on restart. Fully purging their transaction history prevents the obsolete prefix
+    /// from being served as finalized history.
+    pub fn recover_transaction_history_from_snapshot(&self, snapshot_slot: Slot) -> Result<()> {
+        let safe_root = self.transaction_history_safe_root()?;
+        if safe_root.is_some_and(|safe_root| safe_root >= snapshot_slot) {
+            return Ok(());
+        }
+
+        let first_unsafe_slot = safe_root.map_or(0, |safe_root| safe_root.saturating_add(1));
+        let mut update_parent_slots = Vec::new();
+        for (slot, meta) in self
+            .slot_meta_iterator(first_unsafe_slot)?
+            .take_while(|(slot, _)| *slot <= snapshot_slot)
+        {
+            // The snapshot slot is not marked rooted in Blockstore until startup replay begins.
+            let is_canonical =
+                slot == snapshot_slot || self.roots_cf.get(slot)?.is_some_and(|is_root| is_root);
+            if is_canonical && meta.has_update_parent() {
+                update_parent_slots.push(slot);
+            }
+        }
+
+        for slot in &update_parent_slots {
+            self.purge_transaction_history_for_switch_bank_slot_exact(*slot)?;
+        }
+        self.set_transaction_history_safe_root(snapshot_slot)?;
+
+        datapoint_info!(
+            "transaction-history-startup-recovery",
+            ("snapshot_slot", snapshot_slot, i64),
+            ("safe_root", safe_root.unwrap_or_default(), i64),
+            ("update_parent_slots", update_parent_slots.len(), i64),
+        );
+        Ok(())
+    }
+
     /// Recovers the transaction-bearing portions of a malformed slot for an exact purge.
     fn recover_slot_components_for_exact_purge(
         &self,
@@ -1490,6 +1530,126 @@ pub mod tests {
                 .get((fixture.post_update_address, slot, 0, post_update_signature,))
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn test_recover_transaction_history_from_snapshot() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let update_parent_slot = 104;
+        let unrooted_update_parent_slot = 102;
+        let snapshot_slot = 105;
+        let fixture = insert_complete_update_parent_slot(&blockstore, update_parent_slot, 103, 100);
+        blockstore
+            .set_roots(std::iter::once(&update_parent_slot))
+            .unwrap();
+        let unrooted_fixture =
+            insert_complete_update_parent_slot(&blockstore, unrooted_update_parent_slot, 101, 99);
+        for signature in fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&fixture.post_update_signatures)
+        {
+            blockstore
+                .write_transaction_memos(signature, update_parent_slot, "memo".to_string())
+                .unwrap();
+        }
+        for signature in unrooted_fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&unrooted_fixture.post_update_signatures)
+        {
+            blockstore
+                .write_transaction_memos(signature, unrooted_update_parent_slot, "memo".to_string())
+                .unwrap();
+        }
+
+        let unaffected_entries = make_slot_entries_with_transactions(1);
+        blockstore
+            .insert_shreds(
+                entries_to_test_shreds(
+                    &unaffected_entries,
+                    snapshot_slot,
+                    update_parent_slot,
+                    true,
+                    0,
+                ),
+                true,
+            )
+            .unwrap();
+        let unaffected_signature =
+            write_transaction_statuses_for_entries(&blockstore, snapshot_slot, &unaffected_entries)
+                [0];
+
+        assert!(
+            blockstore
+                .transaction_history_safe_root()
+                .unwrap()
+                .is_none()
+        );
+
+        blockstore
+            .recover_transaction_history_from_snapshot(snapshot_slot)
+            .unwrap();
+
+        for signature in fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&fixture.post_update_signatures)
+        {
+            assert!(
+                blockstore
+                    .read_transaction_status((*signature, update_parent_slot))
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                blockstore
+                    .read_transaction_memos(*signature, update_parent_slot)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        for signature in unrooted_fixture
+            .pre_update_signatures
+            .iter()
+            .chain(&unrooted_fixture.post_update_signatures)
+        {
+            assert!(
+                blockstore
+                    .read_transaction_status((*signature, unrooted_update_parent_slot))
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                blockstore
+                    .read_transaction_memos(*signature, unrooted_update_parent_slot)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert!(
+            blockstore
+                .read_transaction_status((unaffected_signature, snapshot_slot))
+                .unwrap()
+                .is_some()
+        );
+        assert!(blockstore.meta(update_parent_slot).unwrap().is_some());
+        assert!(
+            blockstore
+                .get_data_shred(update_parent_slot, 0)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            blockstore.transaction_history_safe_root().unwrap(),
+            Some(snapshot_slot)
+        );
+        blockstore.set_transaction_history_safe_root(100).unwrap();
+        assert_eq!(
+            blockstore.transaction_history_safe_root().unwrap(),
+            Some(snapshot_slot)
         );
     }
 

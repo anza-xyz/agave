@@ -61,10 +61,8 @@ use {
     },
     solana_runtime::{
         bank::BankTestConfig,
-        bank_forks_controller::SetRootDependency,
         block_component_processor::BlockComponentProcessorError,
         commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
-        dependency_tracker::DependencyTracker,
         genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusMessage,
@@ -687,7 +685,7 @@ fn test_handle_new_root() {
 }
 
 #[test]
-fn test_process_set_root_command_requires_valid_bank_and_dependency() {
+fn test_process_set_root_command_requires_valid_bank() {
     let (mut vote_simulator, blockstore) = setup_forks_from_tree(tr(0) / tr(1), 1, None);
     let bank_forks = vote_simulator.bank_forks.clone();
     let blockstore = Arc::new(blockstore);
@@ -707,7 +705,6 @@ fn test_process_set_root_command_requires_valid_bank_and_dependency() {
 
     let missing_command = SetRootCommand {
         new_root: Block::new_unique(2),
-        dependency: None,
     };
     ReplayStage::process_set_root_command(
         missing_command,
@@ -720,7 +717,6 @@ fn test_process_set_root_command_requires_valid_bank_and_dependency() {
 
     let mismatched_command = SetRootCommand {
         new_root: Block::new_unique(1),
-        dependency: None,
     };
     ReplayStage::process_set_root_command(
         mismatched_command,
@@ -740,7 +736,6 @@ fn test_process_set_root_command_requires_valid_bank_and_dependency() {
             slot: 2,
             block_id: unfrozen_block_id,
         },
-        dependency: None,
     };
     ReplayStage::process_set_root_command(
         unfrozen_command,
@@ -752,34 +747,8 @@ fn test_process_set_root_command_requires_valid_bank_and_dependency() {
     assert!(!blockstore.is_root(2));
 
     let block_id = bank_forks.read().unwrap().block_id(1).unwrap();
-    let closed_dependency_tracker = Arc::new(DependencyTracker::default());
-    let work_id = closed_dependency_tracker.declare_work();
-    closed_dependency_tracker.close();
     let matching_command = SetRootCommand {
         new_root: Block { slot: 1, block_id },
-        dependency: Some(SetRootDependency {
-            dependency_tracker: closed_dependency_tracker,
-            work_id,
-        }),
-    };
-    ReplayStage::process_set_root_command(
-        matching_command,
-        &context,
-        &my_pubkey,
-        &mut vote_simulator.progress,
-    );
-    assert_eq!(bank_forks.read().unwrap().root(), 0);
-    assert!(!blockstore.is_root(1));
-
-    let completed_dependency_tracker = Arc::new(DependencyTracker::default());
-    let work_id = completed_dependency_tracker.declare_work();
-    completed_dependency_tracker.mark_work_processed(work_id);
-    let matching_command = SetRootCommand {
-        new_root: Block { slot: 1, block_id },
-        dependency: Some(SetRootDependency {
-            dependency_tracker: completed_dependency_tracker,
-            work_id,
-        }),
     };
     ReplayStage::process_set_root_command(
         matching_command,

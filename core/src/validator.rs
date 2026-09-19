@@ -2447,6 +2447,18 @@ fn load_blockstore(
     let original_blockstore_root = blockstore.max_root();
     process_options.halt_at_slot = blockstore.highest_slot().unwrap_or(None);
 
+    if let Some(Ok((bank_forks, _))) = bank_from_snapshot_opt.as_ref() {
+        let snapshot_slot = bank_forks.read().unwrap().root();
+        blockstore
+            .recover_transaction_history_from_snapshot(snapshot_slot)
+            .map_err(|err| {
+                format!(
+                    "Failed to recover transaction history through snapshot slot {snapshot_slot}: \
+                     {err:?}"
+                )
+            })?;
+    }
+
     let enable_rpc_transaction_history =
         config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history;
     let is_plugin_transaction_history_required = transaction_notifier.as_ref().is_some();

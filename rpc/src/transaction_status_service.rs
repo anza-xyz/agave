@@ -280,17 +280,12 @@ impl TransactionStatusService {
                     dependency_tracker.mark_work_processed(work_id);
                 }
             }
-            TransactionStatusMessage::Freeze(bank, work_id) => {
+            TransactionStatusMessage::Freeze(bank) => {
                 if !bank.is_frozen() {
                     return Err(Error::NonFrozenBank(bank.slot()));
                 }
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
-                if let Some(dependency_tracker) = dependency_tracker.as_ref()
-                    && let Some(work_id) = work_id
-                {
-                    dependency_tracker.mark_work_processed(work_id);
-                }
             }
             TransactionStatusMessage::PurgeTransactionHistory {
                 slot,
@@ -337,6 +332,16 @@ impl TransactionStatusService {
 
                 if let Some(done_sender) = done_sender {
                     let _ = done_sender.send(());
+                }
+            }
+            TransactionStatusMessage::Root(slot, work_id) => {
+                if enable_rpc_transaction_history {
+                    blockstore.set_transaction_history_safe_root(slot)?;
+                }
+                if let Some(dependency_tracker) = dependency_tracker.as_ref()
+                    && let Some(work_id) = work_id
+                {
+                    dependency_tracker.mark_work_processed(work_id);
                 }
             }
         }
@@ -427,7 +432,6 @@ pub(crate) mod tests {
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::entries_to_test_shreds, genesis_utils::create_genesis_config,
             get_tmp_ledger_path_auto_delete,
@@ -785,69 +789,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_predeclared_freeze_tracks_dependency() {
-        let genesis_config = create_genesis_config(2).genesis_config;
-        let (parent, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let bank = Arc::new(Bank::new_from_parent(parent, SlotLeader::default(), 1));
-
-        let (sender, receiver) = bounded(1);
-        let dependency_tracker = Arc::new(DependencyTracker::default());
-        let transaction_status_sender = TransactionStatusSender {
-            sender,
-            dependency_tracker: Some(Arc::clone(&dependency_tracker)),
-        };
-        let work_id = dependency_tracker.declare_work();
-        assert_eq!(dependency_tracker.get_current_declared_work(), work_id);
-
-        bank.freeze();
-        transaction_status_sender
-            .send_transaction_status_freeze_message_with_work(&bank, Some(work_id));
-
-        let message = receiver.recv().unwrap();
-        let (wait_done_sender, wait_done_receiver) = bounded(1);
-        let wait_dependency_tracker = Arc::clone(&dependency_tracker);
-        let waiter = thread::spawn(move || {
-            wait_done_sender
-                .send(wait_dependency_tracker.wait_for_dependency(work_id))
-                .unwrap();
-        });
-        assert!(matches!(
-            wait_done_receiver.recv_timeout(Duration::from_millis(50)),
-            Err(RecvTimeoutError::Timeout)
-        ));
-
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        TransactionStatusService::write_transaction_status_batch(
-            message,
-            &max_complete_transaction_status_slot,
-            true,
-            None,
-            &blockstore,
-            false,
-            Some(Arc::clone(&dependency_tracker)),
-        )
-        .unwrap();
-
-        assert!(
-            wait_done_receiver
-                .recv_timeout(Duration::from_secs(5))
-                .unwrap()
-        );
-        waiter.join().unwrap();
-        assert_eq!(
-            blockstore.get_block_height(bank.slot()).unwrap(),
-            Some(bank.block_height())
-        );
-        assert_eq!(
-            max_complete_transaction_status_slot.load(Ordering::SeqCst),
-            bank.slot()
-        );
-    }
-
-    #[test]
-    fn test_purge_transaction_history_for_switch_bank_tracks_dependency() {
+    fn test_root_waits_for_purge() {
         let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let dependency_tracker = Arc::new(DependencyTracker::default());
         let transaction_status_sender = TransactionStatusSender {
@@ -901,8 +843,10 @@ pub(crate) mod tests {
                 TransactionHistoryPurgeInput::SwitchBank,
             )
             .unwrap();
-        let dependency_work = dependency_tracker.get_current_declared_work();
-        assert_eq!(dependency_work, 1);
+        let dependency_work = transaction_status_sender
+            .send_transaction_status_root(slot)
+            .unwrap();
+        assert_eq!(dependency_work, 2);
 
         let (wait_done_sender, wait_done_receiver) = bounded(1);
         let wait_blockstore = Arc::clone(&blockstore);
@@ -917,8 +861,10 @@ pub(crate) mod tests {
                 .read_transaction_memos(signature, slot)
                 .unwrap()
                 .is_none();
+            let safe_root_persisted =
+                wait_blockstore.transaction_history_safe_root().unwrap() == Some(slot);
             wait_done_sender
-                .send(transaction_status_deleted && transaction_memo_deleted)
+                .send(transaction_status_deleted && transaction_memo_deleted && safe_root_persisted)
                 .unwrap();
         });
         assert!(

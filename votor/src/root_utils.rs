@@ -17,10 +17,9 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank_forks::BankForks,
-        bank_forks_controller::{BankForksController, SetRootDependency},
-        installed_scheduler_pool::BankWithScheduler,
-        snapshot_controller::SnapshotController,
+        bank_forks::BankForks, bank_forks_controller::BankForksController,
+        installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
+        transaction_execution::TransactionStatusSender,
     },
     solana_time_utils::timestamp,
     std::{
@@ -34,6 +33,7 @@ use {
 pub(crate) struct RootContext {
     pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub(crate) bank_forks_controller: Arc<dyn BankForksController>,
+    pub(crate) transaction_status_sender: Option<TransactionStatusSender>,
 }
 
 /// Sets the root for the votor event handling loop. Handles rooting all things
@@ -59,18 +59,12 @@ pub(crate) fn set_root(
     });
     *received_shred = received_shred.split_off(&new_root_slot);
 
-    let dependency = rctx
-        .bank_notification_sender
+    let dependency_work = rctx
+        .transaction_status_sender
         .as_ref()
-        .and_then(|config| config.dependency_tracker.as_ref())
-        .map(|dependency_tracker| SetRootDependency {
-            work_id: dependency_tracker.get_current_declared_work(),
-            dependency_tracker: Arc::clone(dependency_tracker),
-        });
-    let dependency_work = dependency.as_ref().map(|dependency| dependency.work_id);
+        .and_then(|sender| sender.send_transaction_status_root(new_root_slot));
 
-    rctx.bank_forks_controller
-        .enqueue_set_root(new_root, dependency);
+    rctx.bank_forks_controller.enqueue_set_root(new_root);
 
     if let Err(e) = ctx.blockstore.insert_optimistic_slot(
         new_root_slot,

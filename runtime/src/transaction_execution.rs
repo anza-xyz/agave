@@ -46,7 +46,7 @@ pub struct TransactionStatusBatch {
 #[derive(Debug)]
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
-    Freeze(Arc<Bank>, Option<WorkSequence>),
+    Freeze(Arc<Bank>),
     PurgeTransactionHistory {
         slot: Slot,
         source: TransactionHistoryPurgeSource,
@@ -55,6 +55,7 @@ pub enum TransactionStatusMessage {
         dependency_work: Option<WorkSequence>,
         done_sender: Option<crossbeam_channel::Sender<()>>,
     },
+    Root(Slot, Option<WorkSequence>),
 }
 
 /// Data used to reconstruct the transaction-history keys removed by a purge.
@@ -317,23 +318,10 @@ impl TransactionStatusSender {
     }
 
     pub fn send_transaction_status_freeze_message(&self, bank: &Arc<Bank>) {
-        let work_sequence = self
-            .dependency_tracker
-            .as_ref()
-            .map(|dependency_tracker| dependency_tracker.declare_work());
-
-        self.send_transaction_status_freeze_message_with_work(bank, work_sequence);
-    }
-
-    pub fn send_transaction_status_freeze_message_with_work(
-        &self,
-        bank: &Arc<Bank>,
-        work_sequence: Option<u64>,
-    ) {
-        if let Err(e) = self.sender.send(TransactionStatusMessage::Freeze(
-            bank.clone(),
-            work_sequence,
-        )) {
+        if let Err(e) = self
+            .sender
+            .send(TransactionStatusMessage::Freeze(bank.clone()))
+        {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
             if let Some(dependency_tracker) = self.dependency_tracker.as_ref() {
@@ -409,6 +397,25 @@ impl TransactionStatusSender {
             dependency_tracker.close();
         }
         result
+    }
+
+    /// Queues a barrier for a canonical root and returns the work id used by RPC consumers.
+    #[must_use]
+    pub fn send_transaction_status_root(&self, slot: Slot) -> Option<u64> {
+        let work_id = self
+            .dependency_tracker
+            .as_ref()
+            .map(|dependency_tracker| dependency_tracker.declare_work());
+        if let Err(err) = self
+            .sender
+            .send(TransactionStatusMessage::Root(slot, work_id))
+        {
+            warn!("Slot {slot} transaction status root send failed: {err:?}");
+            if let Some(dependency_tracker) = self.dependency_tracker.as_ref() {
+                dependency_tracker.close();
+            }
+        }
+        work_id
     }
 }
 
