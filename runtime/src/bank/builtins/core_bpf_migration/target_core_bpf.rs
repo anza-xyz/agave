@@ -47,7 +47,7 @@ impl TargetCoreBpf {
         }
 
         // The program account should have a pointer to its data account.
-        match program_account.deserialize_data::<UpgradeableLoaderState>()? {
+        match wincode::deserialize::<UpgradeableLoaderState>(program_account.data())? {
             UpgradeableLoaderState::Program {
                 programdata_address,
             } if programdata_address == program_data_address => (),
@@ -162,7 +162,7 @@ mod tests {
         );
         assert_matches!(
             TargetCoreBpf::new_checked(&bank, &program_address).unwrap_err(),
-            CoreBpfMigrationError::BincodeError(..)
+            CoreBpfMigrationError::WincodeReadError(..)
         );
 
         // Fail if the program account does not have the correct state.

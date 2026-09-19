@@ -353,7 +353,7 @@ fn configure_alpenglow_at_genesis(genesis_config: &mut GenesisConfig) {
             bitmap: encode_base2(&BitVec::new()).unwrap(),
         },
     };
-    let cert_size = bincode::serialized_size(&cert).unwrap();
+    let cert_size = wincode::serialized_size(&cert).unwrap();
     let lamports = Rent::default().minimum_balance(cert_size as usize);
     let certificate_account = Account::new_data(lamports, &cert, &system_program::ID).unwrap();
 

@@ -361,7 +361,9 @@ mod tests {
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         dashmap::DashSet,
-        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+        solana_account::{
+            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+        },
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_genesis_config::create_genesis_config,
         solana_hash::Hash,

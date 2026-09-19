@@ -5637,7 +5637,6 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f544a28b0ef4177dee1d0299357a39fab0e6ecc394304c80955aa7990ac077a"
 dependencies = [
- "bincode",
  "serde",
  "serde_bytes",
  "serde_derive",
@@ -5645,7 +5644,6 @@ dependencies = [
  "solana-clock 4.0.0",
  "solana-instruction-error 3.0.0",
  "solana-pubkey 4.3.0",
- "solana-sysvar",
  "wincode",
 ]
 
@@ -6646,7 +6644,6 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e429812a07f338b834f5fb14ecacc94750e1c3efcc6af8ad8d6c22ffc526af0"
 dependencies = [
- "bincode",
  "serde",
  "serde_derive",
  "solana-account",
@@ -6656,6 +6653,7 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
  "solana-system-interface",
+ "wincode",
 ]
 
 [[package]]

@@ -92,7 +92,7 @@ serde_json = { workspace = true }
 serde_with = { workspace = true }
 shuttle = { workspace = true, optional = true }
 smallvec = { workspace = true, features = ["serde"] }
-solana-account = { workspace = true, features = ["bincode", "wincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-decoder = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
@@ -114,7 +114,7 @@ solana-entry = { workspace = true }
 solana-epoch-info = { workspace = true }
 solana-epoch-rewards-hasher = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["wincode"] }
-solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
+solana-feature-gate-interface = { workspace = true, features = ["wincode"] }
 solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true, features = ["wincode"] }
 solana-fee-structure = { workspace = true, features = ["serde"] }
