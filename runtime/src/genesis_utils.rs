@@ -16,6 +16,7 @@ use {
     bincode::serialize,
     bitvec::vec::BitVec,
     log::*,
+    serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
     },
@@ -44,6 +45,7 @@ use {
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     solana_vote_program::vote_state,
     std::{borrow::Borrow, sync::Arc},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 // Default amount received by the validator
@@ -571,10 +573,61 @@ pub fn create_genesis_config_with_leader_ex(
     genesis_config
 }
 
+/// Wincode mirror of the deprecated [`StakeConfig`], since that type has no wincode schema.
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
+struct SerializableStakeConfig {
+    warmup_cooldown_rate: f64,
+    slash_penalty: u8,
+}
+
+/// Data of the stake program's config account at genesis: a `ConfigKeys` prefix, then the
+/// stake config.
+///
+/// The digest freezes this layout, since genesis writes it on chain. Both codecs digest it,
+/// so their agreement proves the mirror below.
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "FrxVmDThystn6yVz3PjV9BTxGKocrq7LcKfk4VYk5efq",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "wire_only"
+    )
+)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
+struct GenesisStakeConfigAccount {
+    /// `ConfigKeys` has no `StableAbi` of its own, so sample the key list directly.
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_config_keys(rng)")
+    )]
+    keys: ConfigKeys,
+    config: SerializableStakeConfig,
+}
+
+#[cfg(feature = "frozen-abi")]
+fn sample_config_keys(rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized)) -> ConfigKeys {
+    use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
+    ConfigKeys {
+        keys: sample_collection_sized(rng, SequenceLenMax(4)),
+    }
+}
+
 #[expect(deprecated)]
 pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u64 {
-    let mut data = serialize(&ConfigKeys { keys: vec![] }).unwrap();
-    data.extend_from_slice(&serialize(&StakeConfig::default()).unwrap());
+    let StakeConfig {
+        warmup_cooldown_rate,
+        slash_penalty,
+    } = StakeConfig::default();
+    let data = serialize(&GenesisStakeConfigAccount {
+        keys: ConfigKeys { keys: vec![] },
+        config: SerializableStakeConfig {
+            warmup_cooldown_rate,
+            slash_penalty,
+        },
+    })
+    .unwrap();
     let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
     let account = AccountSharedData::from(Account {
         lamports,
@@ -631,4 +684,33 @@ pub fn create_lockup_stake_account(
         .expect("set_state");
 
     stake_account
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The mirror must encode exactly like `StakeConfig`. Naming the two halves as one
+    /// struct must not move any bytes.
+    #[test]
+    #[expect(deprecated)]
+    fn test_genesis_stake_config_account_layout() {
+        let config = StakeConfig::default();
+        assert_eq!(
+            serialize(&config).unwrap(),
+            serialize(&SerializableStakeConfig {
+                warmup_cooldown_rate: config.warmup_cooldown_rate,
+                slash_penalty: config.slash_penalty,
+            })
+            .unwrap(),
+        );
+
+        let mut expected = serialize(&ConfigKeys { keys: vec![] }).unwrap();
+        expected.extend_from_slice(&serialize(&config).unwrap());
+
+        let mut genesis_config = GenesisConfig::default();
+        add_genesis_stake_config_account(&mut genesis_config);
+        let account = &genesis_config.accounts[&solana_stake_interface::config::id()];
+        assert_eq!(account.data, expected);
+    }
 }
