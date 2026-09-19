@@ -4940,12 +4940,9 @@ impl Bank {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
 
         (0..accounts.len()).for_each(|i| {
-            accounts.account(i, |account| {
-                self.stakes_cache.check_and_store(
-                    account.pubkey(),
-                    &account,
-                    new_warmup_cooldown_rate_epoch,
-                )
+            accounts.account_for_geyser(i, |pubkey, account| {
+                self.stakes_cache
+                    .check_and_store(pubkey, account, new_warmup_cooldown_rate_epoch)
             })
         });
         self.store_accounts_without_stakes_cache(accounts, thread_pool_for_loading_accounts);
