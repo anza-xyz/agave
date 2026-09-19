@@ -185,6 +185,41 @@ pub fn discover_peers(
     Vec<ContactInfo>, // all gossip peers
     Vec<ContactInfo>, // tvu peers (validators)
 )> {
+    let (all_peers, tvu_peers, ()) = discover_peers_and_inspect(
+        keypair,
+        entrypoints,
+        num_nodes,
+        timeout,
+        find_nodes_by_pubkey,
+        find_nodes_by_gossip_addr,
+        my_gossip_addr,
+        my_shred_version,
+        socket_addr_space,
+        |_| (),
+    )?;
+    Ok((all_peers, tvu_peers))
+}
+
+/// Same as [`discover_peers`], but additionally runs `inspect` against the spy
+/// node's `ClusterInfo` once discovery ends, so that CRDS contents other than
+/// contact infos can be extracted before the node is torn down.
+#[allow(clippy::too_many_arguments)]
+pub fn discover_peers_and_inspect<T>(
+    keypair: Option<Keypair>,
+    entrypoints: &[SocketAddr],
+    num_nodes: Option<usize>, // num_nodes only counts validators, excludes spy nodes
+    timeout: Duration,
+    find_nodes_by_pubkey: Option<&[Pubkey]>,
+    find_nodes_by_gossip_addr: &[SocketAddr],
+    my_gossip_addr: Option<&SocketAddr>,
+    my_shred_version: u16,
+    socket_addr_space: SocketAddrSpace,
+    inspect: impl FnOnce(&ClusterInfo) -> T,
+) -> std::io::Result<(
+    Vec<ContactInfo>, // all gossip peers
+    Vec<ContactInfo>, // tvu peers (validators)
+    T,                // result of inspecting the spy node's CRDS
+)> {
     let keypair = keypair.unwrap_or_else(Keypair::new);
     let exit = Arc::new(AtomicBool::new(false));
     let (gossip_service, ip_echo, spy_ref) = make_node(
@@ -219,6 +254,8 @@ pub fn discover_peers(
         find_nodes_by_gossip_addr,
     );
 
+    let inspected = inspect(&spy_ref);
+
     exit.store(true, Ordering::Relaxed);
     gossip_service.join().unwrap();
 
@@ -228,7 +265,7 @@ pub fn discover_peers(
             elapsed.as_secs(),
             spy_ref.contact_info_trace()
         );
-        return Ok((all_peers, tvu_peers));
+        return Ok((all_peers, tvu_peers, inspected));
     }
 
     if !tvu_peers.is_empty() {
@@ -236,7 +273,7 @@ pub fn discover_peers(
             "discover failed to match criteria by timeout...\n{}",
             spy_ref.contact_info_trace()
         );
-        return Ok((all_peers, tvu_peers));
+        return Ok((all_peers, tvu_peers, inspected));
     }
 
     info!("discover failed...\n{}", spy_ref.contact_info_trace());

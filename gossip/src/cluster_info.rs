@@ -1035,6 +1035,30 @@ impl ClusterInfo {
         txs
     }
 
+    /// Returns the slots of all votes currently in CRDS, keyed by the identity
+    /// pubkey of the node which gossiped them. Slots are sorted ascending.
+    /// Only staked nodes' votes are retained in CRDS, so this covers the
+    /// staked set as seen by this node.
+    pub fn get_all_vote_slots(&self) -> HashMap<Pubkey, Vec<Slot>> {
+        let mut cursor = Cursor::default();
+        let mut slots: HashMap<Pubkey, Vec<Slot>> = HashMap::new();
+        for value in self
+            .time_gossip_read_lock("get_votes", &self.stats.get_votes)
+            .get_votes(&mut cursor)
+        {
+            let CrdsData::Vote(_, vote) = value.value.data() else {
+                panic!("the votes index of CRDS must only contain votes");
+            };
+            if let Some(slot) = vote.slot() {
+                slots.entry(value.value.pubkey()).or_default().push(slot);
+            }
+        }
+        for slots in slots.values_mut() {
+            slots.sort_unstable();
+        }
+        slots
+    }
+
     /// Returns votes and the associated labels inserted since the given cursor.
     pub fn get_votes_with_labels(
         &self,
