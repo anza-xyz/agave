@@ -1,5 +1,6 @@
 use {
     criterion::{Criterion, criterion_group, criterion_main},
+    parking_lot::RwLock,
     rand::{Rng, rng},
     rayon::ThreadPoolBuilder,
     solana_gossip::{
@@ -8,7 +9,6 @@ use {
         crds_value::CrdsValue,
     },
     solana_hash::Hash,
-    std::sync::RwLock,
 };
 
 fn bench_hash_as_u64(c: &mut Criterion) {
