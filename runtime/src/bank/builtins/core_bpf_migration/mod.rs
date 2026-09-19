@@ -26,7 +26,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_svm_callback::InvokeContextCallback,
-    solana_transaction_context::transaction::TransactionContext,
+    solana_transaction_context::{DropOnBailOut, transaction::TransactionContext},
     source_buffer::SourceBuffer,
     std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
     target_builtin::TargetBuiltin,
@@ -158,12 +158,13 @@ impl Bank {
                 }
             });
 
-            let mut dummy_transaction_context = TransactionContext::new(
+            let mut dummy_transaction_context = TransactionContext::new_with_feature_flags(
                 vec![],
                 self.rent_collector.rent.clone(),
                 compute_budget.max_instruction_stack_depth,
                 compute_budget.max_instruction_trace_length,
                 1,
+                DropOnBailOut::Disabled,
             );
 
             struct MockCallback {}

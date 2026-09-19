@@ -25,6 +25,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
+    solana_instruction_error::InstructionError,
     solana_message::{
         compiled_instruction::CompiledInstruction,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -58,7 +59,10 @@ use {
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_svm_type_overrides::sync::{Arc, RwLock, RwLockReadGuard},
-    solana_transaction_context::transaction::{ExecutionRecord, TransactionContext},
+    solana_transaction_context::{
+        DropOnBailOut,
+        transaction::{ExecutionRecord, TransactionContext},
+    },
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{
         collections::HashSet,
@@ -144,6 +148,10 @@ pub struct TransactionProcessingConfig<'a> {
     ///
     /// This is a leader-side filtering policy. It must not be enabled for replay.
     pub drop_noop_transactions: bool,
+    /// Drops transactions which bailed out in the program runtime.
+    ///
+    /// This is a leader-side filtering policy. It must not be enabled for replay.
+    pub drop_bail_out_transactions: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -632,6 +640,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                             Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                         }
+                        // If it bailed out then this transaction will be dropped from the batch.
+                        (
+                            Err(TransactionError::InstructionError(_, InstructionError::BailOut)),
+                            _,
+                        ) => Err(TransactionError::BailOut),
                         // If the transaction failed & drop on failure is set then we don't want to
                         // update the accounts as this transaction will be dropped from the batch.
                         (Err(err), true) => Err(err.clone()),
@@ -1087,12 +1100,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let compute_budget = loaded_transaction.compute_budget;
 
-        let mut transaction_context = TransactionContext::new(
+        let mut transaction_context = TransactionContext::new_with_feature_flags(
             transaction_accounts,
             environment.rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             tx.num_instructions(),
+            if config.drop_bail_out_transactions {
+                DropOnBailOut::Enabled
+            } else {
+                DropOnBailOut::Disabled
+            },
         );
 
         let relax_post_exec_min_balance_check =
