@@ -776,10 +776,12 @@ pub(crate) mod tests {
         }
     }
 
-    //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
-    pub(crate) fn create_staked_node_accounts(
+    //  set up some dummies for a staked node
+    pub(crate) fn create_staked_node_accounts_with_activation_and_deactivation_epochs(
         stake: u64,
         rent: &Rent,
+        activation_epoch: Epoch,
+        deactivation_epoch: Epoch,
     ) -> ((Pubkey, AccountSharedData), (Pubkey, AccountSharedData)) {
         let vote_pubkey = solana_pubkey::new_rand();
         let node_pubkey = solana_pubkey::new_rand();
@@ -792,15 +794,67 @@ pub(crate) mod tests {
             &vote_pubkey,
             0,
             &node_pubkey,
-            1,
+            rent.minimum_balance(VoteStateV4::size_of()),
         );
         let stake_pubkey = solana_pubkey::new_rand();
         (
             (vote_pubkey, vote_account),
             (
                 stake_pubkey,
-                create_stake_account(stake, &vote_pubkey, &stake_pubkey, rent),
+                create_stake_account_with_activation_and_deactivation_epochs(
+                    stake,
+                    &vote_pubkey,
+                    &stake_pubkey,
+                    rent,
+                    activation_epoch,
+                    deactivation_epoch,
+                ),
             ),
+        )
+    }
+
+    //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
+    pub(crate) fn create_staked_node_accounts(
+        stake: u64,
+        rent: &Rent,
+    ) -> ((Pubkey, AccountSharedData), (Pubkey, AccountSharedData)) {
+        create_staked_node_accounts_with_activation_and_deactivation_epochs(
+            stake,
+            rent,
+            Epoch::MAX,
+            Epoch::MAX,
+        )
+    }
+
+    //   add stake to a vote_pubkey
+    pub(crate) fn create_stake_account_with_activation_and_deactivation_epochs(
+        stake: u64,
+        vote_pubkey: &Pubkey,
+        stake_pubkey: &Pubkey,
+        rent: &Rent,
+        activation_epoch: Epoch,
+        deactivation_epoch: Epoch,
+    ) -> AccountSharedData {
+        let node_pubkey = solana_pubkey::new_rand();
+        let lamports = rent.minimum_balance(StakeStateV2::size_of()) + stake;
+        stake_utils::create_stake_account_with_activation_and_deactivation_epochs(
+            stake_pubkey,
+            vote_pubkey,
+            &vote_state::create_v4_account_with_authorized(
+                &node_pubkey,
+                vote_pubkey,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                vote_pubkey,
+                0,
+                vote_pubkey,
+                0,
+                &node_pubkey,
+                1,
+            ),
+            rent,
+            lamports,
+            activation_epoch,
+            deactivation_epoch,
         )
     }
 
