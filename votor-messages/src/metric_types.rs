@@ -5,7 +5,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    std::time::Instant,
+    std::{sync::Arc, time::Instant},
 };
 
 /// Different types of events to notify the metrics container of.
@@ -14,7 +14,7 @@ pub enum ConsensusMetricsEvent {
     /// A vote was received from the node with `id`.
     Vote {
         /// The validator that voted.
-        ids: Vec<Pubkey>,
+        ids: Arc<Vec<Pubkey>>,
         /// The type of vote.
         vote: Vote,
     },

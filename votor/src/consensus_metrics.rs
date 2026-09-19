@@ -127,7 +127,7 @@ impl ConsensusMetrics {
                     for event in events {
                         match event {
                             ConsensusMetricsEvent::Vote { ids, vote } => {
-                                self.record_vote(ids, &vote, received);
+                                self.record_vote(&ids, &vote, received);
                             }
                             ConsensusMetricsEvent::BlockHashSeen { leader, slot } => {
                                 self.record_block_hash_seen(leader, slot, received);
@@ -158,7 +158,7 @@ impl ConsensusMetrics {
     }
 
     /// Records a `vote` from the node with `id`.
-    fn record_vote(&mut self, ids: Vec<Pubkey>, vote: &Vote, received: Instant) {
+    fn record_vote(&mut self, ids: &[Pubkey], vote: &Vote, received: Instant) {
         let slot = vote.slot();
         let epoch_metrics = self.epoch_metrics_for_slot(slot);
 
@@ -170,7 +170,7 @@ impl ConsensusMetrics {
         };
         let elapsed = received.duration_since(*start);
         for id in ids {
-            let node = epoch_metrics.node_metrics.entry(id).or_default();
+            let node = epoch_metrics.node_metrics.entry(*id).or_default();
             node.record_vote(vote, elapsed);
         }
     }
@@ -325,7 +325,7 @@ mod tests {
         let mut metrics = new_metrics();
 
         metrics.record_vote(
-            vec![Keypair::new().pubkey()],
+            &[Keypair::new().pubkey()],
             &Vote::Skip(SkipVote { slot: 42 }),
             Instant::now(),
         );
@@ -341,7 +341,7 @@ mod tests {
         metrics.record_start_of_slot(42, Instant::now());
         sleep(Duration::from_millis(1));
         metrics.record_vote(
-            vec![pubkey],
+            &[pubkey],
             &Vote::Skip(SkipVote { slot: 42 }),
             Instant::now(),
         );
