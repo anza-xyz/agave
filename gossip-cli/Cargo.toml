@@ -27,8 +27,10 @@ agave-unstable-api = []
 agave-logger = { workspace = true }
 clap = { workspace = true }
 log = { workspace = true }
+serde_json = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-gossip = { workspace = true }
+solana-keypair = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-pubkey = { version = "=4.3.0", features = ["rand"] }
 solana-version = { workspace = true }

@@ -1,4 +1,5 @@
 use {
+    crate::crds::ROUTE_LOG_TAG,
     itertools::Itertools,
     lazy_lru::LruCache,
     solana_pubkey::Pubkey,
@@ -42,17 +43,32 @@ impl ReceivedCache {
         min_ingress_nodes: usize,
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = Pubkey> + use<> {
-        match self.0.get_mut(&origin) {
-            None => None,
-            Some(entry) if entry.num_upserts < Self::MIN_NUM_UPSERTS => None,
-            Some(entry) => Some(
-                std::mem::take(entry)
+        let pruned = match self.0.get_mut(&origin) {
+            None => Vec::new(),
+            Some(entry) if entry.num_upserts < Self::MIN_NUM_UPSERTS => Vec::new(),
+            Some(entry) => {
+                // Collected rather than returned lazily only so that the
+                // tracing below can report how many ingress nodes are left.
+                let num_ingress = entry.nodes.len();
+                let mut pruned: Vec<_> = std::mem::take(entry)
                     .prune(pubkey, &origin, stake_threshold, min_ingress_nodes, stakes)
-                    .filter(move |node| node != &origin),
-            ),
-        }
-        .into_iter()
-        .flatten()
+                    .collect();
+                let min_ingress_stake = {
+                    let stake = stakes.get(pubkey).min(stakes.get(&origin));
+                    (stake.copied().unwrap_or_default() as f64 * stake_threshold) as u64
+                };
+                warn!(
+                    "{ROUTE_LOG_TAG} prune_ingress: origin={origin}, ingress={num_ingress}, \
+                     pruned={}, retained={}, min_ingress_nodes={min_ingress_nodes}, \
+                     min_ingress_stake={min_ingress_stake}",
+                    pruned.len(),
+                    num_ingress.saturating_sub(pruned.len()),
+                );
+                pruned.retain(|node| node != &origin);
+                pruned
+            }
+        };
+        pruned.into_iter()
     }
 
     #[cfg(test)]
