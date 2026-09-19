@@ -4,7 +4,6 @@ use {
     crate::{
         error::{LedgerToolError, Result},
         ledger_path::canonicalize_ledger_path,
-        ledger_utils::get_program_ids,
         output::{CliDuplicateSlotProof, SlotBounds, SlotInfo, output_ledger, output_slot},
     },
     chrono::{DateTime, Utc},
@@ -27,6 +26,8 @@ use {
         blockstore_options::AccessType,
         shred::Shred,
     },
+    solana_svm_transaction::svm_message::SVMStaticMessage,
+    solana_transaction::versioned::sanitized::SanitizedVersionedTransaction,
     std::{
         borrow::Cow,
         collections::{BTreeMap, BTreeSet},
@@ -175,8 +176,22 @@ fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
     entries
         .iter()
         .flat_map(|entry| entry.transactions.iter())
-        .flat_map(get_program_ids)
-        .any(|program_id| *program_id != solana_vote_program::id())
+        .cloned()
+        .enumerate()
+        .any(
+            |(transaction_index, tx)| match SanitizedVersionedTransaction::try_new(tx) {
+                Ok(transaction) => transaction
+                    .program_instructions_iter()
+                    .any(|(program_id, _)| *program_id != solana_vote_program::id()),
+                Err(err) => {
+                    error!(
+                        "Failed to sanitize transaction {transaction_index} in slot {slot}: \
+                         {err:?}"
+                    );
+                    true
+                }
+            },
+        )
 }
 
 type OptimisticSlotInfo = (Slot, Option<(Hash, UnixTimestamp)>, bool);
@@ -980,8 +995,98 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
 pub mod tests {
     use {
         super::*,
-        solana_ledger::{blockstore::make_many_slot_entries, get_tmp_ledger_path_auto_delete},
+        solana_entry::entry::next_versioned_entry,
+        solana_instruction::Instruction,
+        solana_ledger::{
+            blockstore::{entries_to_test_shreds, make_many_slot_entries},
+            get_tmp_ledger_path_auto_delete,
+        },
+        solana_message::{Message, VersionedMessage, v0},
+        solana_pubkey::Pubkey,
+        solana_signature::Signature,
+        solana_transaction::versioned::VersionedTransaction,
+        test_case::{test_case, test_matrix},
     };
+
+    fn new_legacy_transaction(program_id: Pubkey) -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let instructions = [Instruction::new_with_bytes(program_id, &[], vec![])];
+        VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::Legacy(Message::new(&instructions, Some(&payer))),
+        }
+    }
+
+    fn new_v0_transaction(program_id: Pubkey) -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let instructions = [Instruction::new_with_bytes(program_id, &[], vec![])];
+        VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(
+                v0::Message::try_compile(&payer, &instructions, &[], Hash::default()).unwrap(),
+            ),
+        }
+    }
+
+    #[test_case(new_legacy_transaction(solana_vote_program::id()), false)]
+    #[test_case(new_legacy_transaction(Pubkey::new_unique()), true)]
+    #[test_case(new_v0_transaction(solana_vote_program::id()), false)]
+    #[test_case(new_v0_transaction(Pubkey::new_unique()), true)]
+    fn test_slot_contains_nonvote_tx(transaction: VersionedTransaction, is_nonvote: bool) {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let entry = next_versioned_entry(&Hash::default(), 1, vec![transaction]);
+        let shreds = entries_to_test_shreds(&[entry], 1, 0, true, 0);
+
+        blockstore.insert_shreds(shreds, false).unwrap();
+
+        assert_eq!(slot_contains_nonvote_tx(&blockstore, 1), is_nonvote);
+    }
+
+    enum SanitizationFailure {
+        MissingSignatures,
+        InvalidProgramIdIndex,
+    }
+
+    #[test_matrix(
+        [
+            new_legacy_transaction(Pubkey::new_unique()),
+            new_v0_transaction(Pubkey::new_unique()),
+        ],
+        [SanitizationFailure::MissingSignatures, SanitizationFailure::InvalidProgramIdIndex]
+    )]
+    fn test_slot_contains_nonvote_tx_includes_unsanitized_transaction(
+        mut transaction: VersionedTransaction,
+        failure: SanitizationFailure,
+    ) {
+        match failure {
+            SanitizationFailure::MissingSignatures => transaction.signatures.clear(),
+            SanitizationFailure::InvalidProgramIdIndex => {
+                let instructions = match &mut transaction.message {
+                    VersionedMessage::Legacy(message) => &mut message.instructions,
+                    VersionedMessage::V0(message) => &mut message.instructions,
+                    VersionedMessage::V1(message) => &mut message.instructions,
+                };
+                instructions[0].program_id_index = u8::MAX;
+            }
+        }
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let entry = next_versioned_entry(
+            &Hash::default(),
+            1,
+            vec![
+                new_legacy_transaction(solana_vote_program::id()),
+                transaction,
+            ],
+        );
+        let shreds = entries_to_test_shreds(&[entry], 1, 0, true, 0);
+
+        blockstore.insert_shreds(shreds, false).unwrap();
+
+        assert!(slot_contains_nonvote_tx(&blockstore, 1));
+    }
 
     #[test]
     fn test_latest_optimistic_ancestors() {
