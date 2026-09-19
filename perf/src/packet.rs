@@ -72,6 +72,29 @@ where
     Ok(packet)
 }
 
+/// Serialize `data` into a freshly allocated [`BytesPacket`].
+///
+/// Like [`packet_from_data`], serialization is bounded to [`PACKET_DATA_SIZE`], so oversized
+/// payloads fail instead of producing a packet that cannot be sent.
+pub fn bytes_packet_from_data<T>(dest: Option<&SocketAddr>, data: T) -> WriteResult<BytesPacket>
+where
+    T: SchemaWrite<PacketConfig, Src = T>,
+{
+    let mut buffer = [0u8; PACKET_DATA_SIZE];
+    let mut wr = Cursor::new(buffer.as_mut_slice());
+    wincode::config::serialize_into(&mut wr, &data, packet_config_inner())?;
+    let size = wr.position() as usize;
+    let mut meta = Meta::default();
+    meta.size = size;
+    if let Some(dest) = dest {
+        meta.set_socket_addr(dest);
+    }
+    Ok(BytesPacket::new(
+        Bytes::copy_from_slice(&buffer[..size]),
+        meta,
+    ))
+}
+
 /// Representation of a packet used in TPU.
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
