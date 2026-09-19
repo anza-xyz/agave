@@ -8,7 +8,7 @@ use {
         sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_votor_messages::{VerifiedVotorSlotsMessage, migration::MigrationStatus},
+    agave_votor_messages::{VoteAccountPubkeys, VerifiedVotorSlotsMessage, migration::MigrationStatus},
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     solana_clock::{BankId, Slot},
@@ -923,7 +923,7 @@ impl ClusterInfoVoteListener {
         for slot in vote_slots
             .into_iter()
             .inspect(|&slot| {
-                verified_voter_slots.insert(slot, Arc::new(vec![*vote_pubkey]));
+                verified_voter_slots.insert(slot, VoteAccountPubkeys::Owned(vec![*vote_pubkey]));
             })
             .filter(|&slot| slot > root && slot >= *latest_vote_slot)
             .rev()
@@ -1460,9 +1460,10 @@ mod tests {
         let mut pubkey_to_slots: HashMap<Pubkey, BTreeSet<Slot>> = HashMap::new();
         for map in verified_voter_slots_receiver.try_iter() {
             for (new_slot, received_pubkeys) in map {
-                assert_eq!(received_pubkeys.len(), 1);
-                let already_received_slots =
-                    pubkey_to_slots.entry(received_pubkeys[0]).or_default();
+                assert_eq!(received_pubkeys.as_slice().len(), 1);
+                let already_received_slots = pubkey_to_slots
+                    .entry(received_pubkeys.as_slice()[0])
+                    .or_default();
                 assert!(already_received_slots.insert(new_slot));
             }
         }
@@ -1646,7 +1647,7 @@ mod tests {
                     let vote_keypair = &keypairs.vote_keypair;
                     expected_voter_slots.push(HashMap::from([(
                         i as Slot + 1,
-                        Arc::new(vec![vote_keypair.pubkey()]),
+                        VoteAccountPubkeys::Owned(vec![vote_keypair.pubkey()]),
                     )]));
                     let tower_sync =
                         TowerSync::new_from_slots(vec![(i as u64 + 1)], bank_hash, None);

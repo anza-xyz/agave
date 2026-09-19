@@ -1,20 +1,20 @@
 //! Definitions related to consensus metrics collection.
 
 use {
-    crate::vote::Vote,
+    crate::{VoteAccountPubkeys, vote::Vote},
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    std::{sync::Arc, time::Instant},
+    std::time::Instant,
 };
 
+#[derive(Debug, PartialEq, Eq)]
 /// Different types of events to notify the metrics container of.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConsensusMetricsEvent {
     /// A vote was received from the node with `id`.
     Vote {
         /// The validator that voted.
-        ids: Arc<Vec<Pubkey>>,
+        ids: VoteAccountPubkeys,
         /// The type of vote.
         vote: Vote,
     },

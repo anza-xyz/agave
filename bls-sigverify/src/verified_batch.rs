@@ -12,6 +12,7 @@ use {
         },
     },
     agave_votor_messages::{
+        VoteAccountPubkeys,
         metric_types::ConsensusMetricsEvent,
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         vote::Vote,
@@ -26,7 +27,7 @@ use {
 pub(crate) struct VerifiedBatch {
     vote: Vote,
     aggregates: Vec<VoteAggregate>,
-    sender_vote_account_pubkeys: Arc<Vec<Pubkey>>,
+    sender_vote_account_pubkeys: Vec<Pubkey>,
 }
 
 impl VerifiedBatch {
@@ -38,7 +39,7 @@ impl VerifiedBatch {
         Self {
             vote,
             aggregates,
-            sender_vote_account_pubkeys: Arc::new(sender_vote_account_pubkeys),
+            sender_vote_account_pubkeys,
         }
     }
 
@@ -68,17 +69,21 @@ impl VerifiedBatch {
             &channels.channel_to_pool,
             stats,
         )?;
-        match self.vote {
+        let pubkeys = match self.vote {
             Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
+                let pubkeys = Arc::new(self.sender_vote_account_pubkeys);
                 let vote_slot = self.vote.slot();
                 let repair_msg =
-                    HashMap::from([(vote_slot, self.sender_vote_account_pubkeys.clone())]);
+                    HashMap::from([(vote_slot, VoteAccountPubkeys::Shared(pubkeys.clone()))]);
                 send_votes_to_repair(my_pubkey, repair_msg, &channels.channel_to_repair, stats);
+                VoteAccountPubkeys::Shared(pubkeys)
             }
-            Vote::Skip(_) | Vote::SkipFallback(_) | Vote::Genesis(_) => (),
-        }
+            Vote::Skip(_) | Vote::SkipFallback(_) | Vote::Genesis(_) => {
+                VoteAccountPubkeys::Owned(self.sender_vote_account_pubkeys)
+            }
+        };
         let metrics_msg = ConsensusMetricsEvent::Vote {
-            ids: self.sender_vote_account_pubkeys,
+            ids: pubkeys,
             vote: self.vote,
         };
         send_votes_to_metrics(

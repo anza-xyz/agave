@@ -929,10 +929,8 @@ mod tests {
         let mut received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(received_verified_votes1.len(), 1);
         assert_eq!(
-            received_verified_votes1.remove(&5).unwrap(),
-            Arc::new(vec![
-                ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey()
-            ])
+            received_verified_votes1.remove(&5).unwrap().as_slice(),
+            &[ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey()]
         );
 
         let vote_rank2 = 3;
@@ -961,10 +959,8 @@ mod tests {
         let mut received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(received_verified_votes2.len(), 1);
         assert_eq!(
-            received_verified_votes2.remove(&6).unwrap(),
-            Arc::new(vec![
-                ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey()
-            ])
+            received_verified_votes2.remove(&6).unwrap().as_slice(),
+            &[ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey()]
         );
 
         let vote_rank3 = 9;
@@ -992,10 +988,8 @@ mod tests {
         let mut received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(received_verified_votes3.len(), 1);
         assert_eq!(
-            received_verified_votes3.remove(&7).unwrap(),
-            Arc::new(vec![
-                ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey()
-            ])
+            received_verified_votes3.remove(&7).unwrap().as_slice(),
+            &[ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey()]
         );
     }
 
@@ -2145,12 +2139,10 @@ mod tests {
         let mut map = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(map.len(), 1);
         assert_eq!(
-            map.remove(&max_vote_slot).unwrap(),
-            Arc::new(vec![
-                ctx.validator_keypairs[accepted_vote_rank]
-                    .vote_keypair
-                    .pubkey(),
-            ])
+            map.remove(&max_vote_slot).unwrap().as_slice(),
+            &[ctx.validator_keypairs[accepted_vote_rank]
+                .vote_keypair
+                .pubkey()]
         );
         expect_no_receive(&ctx.repair_receiver);
     }

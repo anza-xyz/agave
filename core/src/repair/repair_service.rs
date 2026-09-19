@@ -17,7 +17,7 @@ use {
             },
         },
     },
-    agave_votor_messages::{VerifiedVotorSlotsMessage, migration::MigrationStatus},
+    agave_votor_messages::{VoteAccountPubkeys, VerifiedVotorSlotsMessage, migration::MigrationStatus},
     ahash::AHashMap,
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
@@ -707,12 +707,16 @@ impl RepairService {
         let mut slot_to_vote_pubkeys = HashMap::new();
         verified_voter_slots_receiver.try_iter().for_each(|map| {
             for (slot, pubkeys) in map {
+                let mut pubkeys = match pubkeys {
+                    VoteAccountPubkeys::Shared(p) => Arc::unwrap_or_clone(p),
+                    VoteAccountPubkeys::Owned(p) => p,
+                };
                 match slot_to_vote_pubkeys.entry(slot) {
                     Entry::Vacant(e) => {
-                        e.insert(Arc::unwrap_or_clone(pubkeys));
+                        e.insert(pubkeys);
                     }
                     Entry::Occupied(e) => {
-                        e.into_mut().append(&mut Arc::unwrap_or_clone(pubkeys));
+                        e.into_mut().append(&mut pubkeys);
                     }
                 }
             }

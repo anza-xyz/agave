@@ -1,6 +1,7 @@
 use {
     agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::{
+        VoteAccountPubkeys,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventReceiver},
         vote::Vote,
     },
@@ -127,7 +128,7 @@ impl ConsensusMetrics {
                     for event in events {
                         match event {
                             ConsensusMetricsEvent::Vote { ids, vote } => {
-                                self.record_vote(&ids, &vote, received);
+                                self.record_vote(ids, &vote, received);
                             }
                             ConsensusMetricsEvent::BlockHashSeen { leader, slot } => {
                                 self.record_block_hash_seen(leader, slot, received);
@@ -158,20 +159,26 @@ impl ConsensusMetrics {
     }
 
     /// Records a `vote` from the node with `id`.
-    fn record_vote(&mut self, ids: &[Pubkey], vote: &Vote, received: Instant) {
+    fn record_vote(&mut self, ids: VoteAccountPubkeys, vote: &Vote, received: Instant) {
         let slot = vote.slot();
         let epoch_metrics = self.epoch_metrics_for_slot(slot);
 
         let Some(start) = epoch_metrics.start_of_slot.get(&slot) else {
             epoch_metrics.metrics_recording_failed = epoch_metrics
                 .metrics_recording_failed
-                .saturating_add(ids.len());
+                .saturating_add(ids.as_slice().len());
             return;
         };
         let elapsed = received.duration_since(*start);
-        for id in ids {
-            let node = epoch_metrics.node_metrics.entry(*id).or_default();
+        let mut record_vote = |id| {
+            let node = epoch_metrics.node_metrics.entry(id).or_default();
             node.record_vote(vote, elapsed);
+        };
+        match ids {
+            VoteAccountPubkeys::Owned(ids) => ids.into_iter().for_each(&mut record_vote),
+            VoteAccountPubkeys::Shared(ids) => {
+                ids.iter().copied().for_each(&mut record_vote);
+            }
         }
     }
 
@@ -325,7 +332,7 @@ mod tests {
         let mut metrics = new_metrics();
 
         metrics.record_vote(
-            &[Keypair::new().pubkey()],
+            VoteAccountPubkeys::Owned(vec![Keypair::new().pubkey()]),
             &Vote::Skip(SkipVote { slot: 42 }),
             Instant::now(),
         );
@@ -341,7 +348,7 @@ mod tests {
         metrics.record_start_of_slot(42, Instant::now());
         sleep(Duration::from_millis(1));
         metrics.record_vote(
-            &[pubkey],
+            VoteAccountPubkeys::Owned(vec![pubkey]),
             &Vote::Skip(SkipVote { slot: 42 }),
             Instant::now(),
         );
