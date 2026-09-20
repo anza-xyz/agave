@@ -7327,6 +7327,7 @@ dependencies = [
  "solana-system-program",
  "solana-sysvar-id",
  "solana-transaction-context",
+ "test-case",
  "wincode",
 ]
 
