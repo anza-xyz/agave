@@ -3053,19 +3053,22 @@ pub mod rpc_minimal {
                     );
                     if key_by_vote_account {
                         solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
-                            leader_schedule
-                                .get_slot_leaders()
-                                .map(|slot_leader| &slot_leader.id)
-                                .enumerate(),
-                        );
-                    if let Some(ref identity) = config.identity {
-                        schedule_by_identity.retain(|k, _| k == identity);
+                            slot_leaders.map(|(slot_index, slot_leader)| {
+                                (slot_index, &slot_leader.vote_address)
+                            }),
+                        )
+                    } else {
+                        solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
+                            slot_leaders
+                                .map(|(slot_index, slot_leader)| (slot_index, &slot_leader.id)),
+                        )
                     }
-                    schedule_by_identity
                 });
 
             if let Some(identity) = config.identity
-                && schedule_by_identity.is_some_and(|schedule| schedule.is_empty())
+                && schedule_by_identity
+                    .as_ref()
+                    .is_some_and(|schedule| schedule.is_empty())
             {
                 return Err(RpcCustomError::LeaderScheduleIdentityNotFound { identity }.into());
             }
