@@ -2989,8 +2989,7 @@ pub mod rpc_minimal {
                 });
 
             if let Some(identity) = config.identity
-                && let Some(scheduled_by_identity) = &schedule_by_identity
-                && scheduled_by_identity.is_empty()
+                && schedule_by_identity.is_some_and(|schedule| schedule.is_empty())
             {
                 return Err(RpcCustomError::LeaderScheduleIdentityNotFound { identity }.into());
             }
