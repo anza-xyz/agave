@@ -4804,10 +4804,14 @@ impl Bank {
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
 
         (0..accounts.len()).for_each(|i| {
-            accounts.account(i, |account| {
+            // The unfortunately named `account_for_geyser()` is just a means to get
+            // a ref to the underlying `AccountSharedData`. The function may be
+            // `unimplemented!()`, but this is only done internally to accounts-db;
+            // every impl passed to `store_accounts()` is a wrapper over `AccountSharedData`.
+            accounts.account_for_geyser(i, |pubkey, account| {
                 self.stakes_cache.check_and_store(
-                    account.pubkey(),
-                    &account,
+                    pubkey,
+                    account,
                     new_warmup_cooldown_rate_epoch,
                     use_fixed_point_stake_math,
                 )
