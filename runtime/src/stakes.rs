@@ -84,7 +84,7 @@ impl StakesCache {
     pub(crate) fn check_and_store(
         &self,
         pubkey: &Pubkey,
-        account: &impl ReadableAccount,
+        account: &AccountSharedData,
         new_rate_activation_epoch: Option<Epoch>,
     ) {
         // TODO: If the account is already cached as a vote or stake account
@@ -109,7 +109,7 @@ impl StakesCache {
         debug_assert_ne!(account.lamports(), 0u64);
         if solana_vote_program::check_id(owner) {
             if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
-                match VoteAccount::try_from(create_account_shared_data(account)) {
+                match VoteAccount::try_from(account.clone()) {
                     Ok(vote_account) => {
                         // drop the old account after releasing the lock
                         let _old_vote_account = {
@@ -133,7 +133,7 @@ impl StakesCache {
                 };
             };
         } else if stake_program::check_id(owner) {
-            match StakeAccount::try_from(create_account_shared_data(account)) {
+            match StakeAccount::try_from(account.clone()) {
                 Ok(stake_account) => {
                     let mut stakes = self.0.write().unwrap();
                     stakes.upsert_stake_delegation(
