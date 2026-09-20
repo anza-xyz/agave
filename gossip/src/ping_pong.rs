@@ -11,7 +11,7 @@ use {
     solana_signer::Signer,
     std::{
         borrow::Cow,
-        net::{IpAddr, SocketAddr},
+        net::SocketAddr,
         ops::Range,
         time::{Duration, Instant},
     },
@@ -66,7 +66,7 @@ pub struct PingCache<const N: usize> {
     // Verified pong responses from remote nodes.
     pongs: LruCache<(Pubkey, SocketAddr), Instant>,
     // Timestamp of last ping message sent to a remote IP.
-    ping_times: LruCache<IpAddr, Instant>,
+    ping_times: LruCache<SocketAddr, Instant>,
 }
 
 /// max number of slots in [`PingCache::pings`] to probe when looking for a
@@ -201,7 +201,7 @@ impl<const N: usize> PingCache<N> {
         // at this point we are certain the pong is valid.
         self.pings.swap_remove_index(index);
         self.pongs.put(remote_node, now);
-        if let Some(sent_time) = self.ping_times.pop(&socket.ip())
+        if let Some(sent_time) = self.ping_times.pop(&socket)
             && should_report_message_signature(
                 pong.signature(),
                 PONG_SIGNATURE_SAMPLE_LEADING_ZEROS,
@@ -278,7 +278,7 @@ impl<const N: usize> PingCache<N> {
         // The hash we expect to see in the Pong message
         let ping_hash = hash_ping_token(&token);
         self.pings.insert(remote_node, (expiry, ping_hash));
-        self.ping_times.put(remote_node.1.ip(), Instant::now());
+        self.ping_times.put(remote_node.1, Instant::now());
         Some(Ping::new(token, keypair))
     }
 

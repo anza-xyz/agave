@@ -961,6 +961,81 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_filter_crds_values() {
+        const SEED: [u8; 32] = [0x55; 32];
+        let mut rng = ChaChaRng::from_seed(SEED);
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let crds_gossip_pull = CrdsGossipPull::default();
+        let keypairs: Vec<_> = repeat_with(|| {
+            let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
+            rng.fill(&mut seed[..]);
+            keypair_from_seed(&seed).unwrap()
+        })
+        .take(10_000)
+        .collect();
+
+        let mut crds = Crds::default();
+        let mut num_crds_inserts = 0;
+        for _ in 0..10 {
+            let keypair = keypairs.choose(&mut rng).unwrap();
+            let value = CrdsValue::new_rand(&mut rng, Some(keypair));
+            if crds
+                .insert(value, rng.random(), GossipRoute::LocalMessage)
+                .is_ok()
+            {
+                num_crds_inserts += 1;
+            }
+        }
+        let crds = RwLock::new(crds);
+        let filters = crds_gossip_pull.build_crds_filters(
+            &thread_pool,
+            &crds,
+            992, // max_bloom_filter_bytes
+        );
+        assert_eq!(filters.len(), MIN_NUM_BLOOM_FILTERS.max(4));
+
+        let mut crds_other = Crds::default();
+        let mut num_crds_other_inserts = 0;
+        for _ in 0..100 {
+            let keypair = keypairs.choose(&mut rng).unwrap();
+            let value = CrdsValue::new_rand(&mut rng, Some(keypair));
+            if crds_other
+                .insert(value, rng.random(), GossipRoute::LocalMessage)
+                .is_ok()
+            {
+                num_crds_other_inserts += 1;
+            }
+        }
+
+        let crds_other = RwLock::new(crds_other);
+        let crds_other = crds_other.read().unwrap();
+        let purged: Vec<_> = thread_pool.install(|| crds_other.purged().collect());
+        let hash_values: Vec<_> = crds_other
+            .values()
+            .map(|v| *v.value.hash())
+            .chain(purged)
+            .collect();
+        let hash_values_len = hash_values.len();
+
+        let mut num_contains: i32 = 0;
+        for hash_value in hash_values {
+            for filter in &filters {
+                if !filter.contains(&hash_value) {
+                    num_contains += 1;
+                }
+            }
+        }
+
+        println!("num_crds_inserts:{}, num_crds_other_inserts:{}, other_hash_values:{}, num_contains:{}, rate:{}%",
+            num_crds_inserts,
+            num_crds_other_inserts,
+            hash_values_len,
+            num_contains,
+            num_contains.saturating_mul(100).saturating_div(hash_values_len as i32) as f64,
+        );
+    }
+
+    #[test]
     fn test_new_pull_request() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
         let crds = RwLock::<Crds>::default();
