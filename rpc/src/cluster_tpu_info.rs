@@ -109,10 +109,10 @@ impl TpuInfo for ClusterTpuInfo {
         let leaders = self.leader_pubkeys(max_count);
         let mut unique_leaders = vec![];
         for leader in leaders.iter() {
-            if let Some(addr) = self.recent_peers.get(leader) {
-                if !unique_leaders.contains(&addr) {
-                    unique_leaders.push(addr);
-                }
+            if let Some(addr) = self.recent_peers.get(leader)
+                && !unique_leaders.contains(&addr)
+            {
+                unique_leaders.push(addr);
             }
         }
         unique_leaders

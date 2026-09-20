@@ -11,15 +11,11 @@ use {
 };
 
 /// Returns the [`SanitizeConfig`] with current protocol limits.
-///
-/// `enable_instruction_accounts_limit` should reflect the
-/// `limit_instruction_accounts` (SIMD-406) feature activation.
-pub fn sanitize_config(enable_instruction_accounts_limit: bool) -> SanitizeConfig {
+pub fn sanitize_config() -> SanitizeConfig {
     SanitizeConfig {
         min_requested_heap_size: MIN_HEAP_FRAME_BYTES,
         max_requested_heap_size: MAX_HEAP_FRAME_BYTES,
         max_instructions: MAX_INSTRUCTION_TRACE_LENGTH,
-        max_accounts_per_instruction: enable_instruction_accounts_limit
-            .then_some(MAX_ACCOUNTS_PER_INSTRUCTION),
+        max_accounts_per_instruction: MAX_ACCOUNTS_PER_INSTRUCTION,
     }
 }

@@ -21,9 +21,7 @@ use {
         },
     },
     solana_signer::Signer,
-    solana_stake_interface::stake_history::{
-        SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
-    },
+    solana_stake_history::{SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry},
     solana_sysvar::epoch_rewards,
     solana_transaction::Transaction,
 };

@@ -172,7 +172,7 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
 
     /// Removes `inner_key` from `outer_key`'s map.
     ///
-    /// Must only be called by remove_by_inner_key(), or equiv, that is
+    /// Must only be called by remove_by_inner_key_if(), or equiv, that is
     /// holding a lock on self.reverse_index.
     fn remove_index_entries(&self, outer_key: &Pubkey, inner_key: &Pubkey) -> bool {
         let Some(inner_keys) = self.index.get_mut(outer_key) else {
@@ -209,14 +209,27 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
         was_removed
     }
 
-    /// Removes `inner_key` from the secondary index.
-    pub fn remove_by_inner_key(&self, inner_key: &Pubkey) {
+    /// Removes `inner_key` from the secondary index, if the closure `should_remove` returns true.
+    ///
+    /// `should_remove` is evaluated while holding `inner_key`'s reverse-index entry lock. Because
+    /// `insert()` acquires that same lock before adding a mapping, holding it across the check
+    /// serializes this removal against a concurrent `insert(_, inner_key)`. This only yields a
+    /// correct decision if writers update the state that `should_remove` reads before calling
+    /// `insert()`; otherwise the check can pass against stale state and remove a mapping that a
+    /// concurrent writer expects to survive.
+    pub fn remove_by_inner_key_if(&self, inner_key: &Pubkey, should_remove: impl Fn() -> bool) {
         // Note: Always lock the reverse-index first, so we synchronize with insert().
         let DashMapEntry::Occupied(reverse_index_entry) = self.reverse_index.entry(*inner_key)
         else {
             // if inner_key doesn't exist in the reverse-index, nothing to do here
             return;
         };
+
+        // Re-check under the reverse-index entry lock. If the caller no longer wants the key
+        // removed (e.g. it was concurrently re-added), leave its mapping in place.
+        if !should_remove() {
+            return;
+        }
 
         // First go through the reverse-index and remove inner_key from all forward-indexes.
         let num_removed = reverse_index_entry
@@ -286,7 +299,7 @@ mod tests {
             .reverse_index
             .insert(inner_key, RwLock::new(vec![outer_key]));
 
-        secondary_index.remove_by_inner_key(&inner_key);
+        secondary_index.remove_by_inner_key_if(&inner_key, || true);
     }
 
     // Ensures remove_by_inner() enforces invariant that inner_key must
@@ -310,7 +323,31 @@ mod tests {
             .unwrap()
             .remove_inner_key(&inner_key);
 
-        secondary_index.remove_by_inner_key(&inner_key);
+        secondary_index.remove_by_inner_key_if(&inner_key, || true);
+    }
+
+    // remove_by_inner_key_if() only removes when the closure returns true, and the decision
+    // is made against the state observed at removal time.
+    #[test]
+    fn test_remove_by_inner_key_if() {
+        let secondary_index =
+            SecondaryIndex::<RwLockSecondaryIndexEntry>::new("test_secondary_index");
+        let outer_key = Pubkey::new_unique();
+        let inner_key = Pubkey::new_unique();
+        secondary_index.insert(&outer_key, &inner_key);
+
+        // should_remove == false: the mapping is retained.
+        secondary_index.remove_by_inner_key_if(&inner_key, || false);
+        assert!(secondary_index.reverse_index.contains_key(&inner_key));
+        assert!(secondary_index.index.contains_key(&outer_key));
+
+        // should_remove == true: the mapping is dropped.
+        secondary_index.remove_by_inner_key_if(&inner_key, || true);
+        assert!(!secondary_index.reverse_index.contains_key(&inner_key));
+        assert!(!secondary_index.index.contains_key(&outer_key));
+
+        // Absent inner_key: closure is not consulted and nothing panics.
+        secondary_index.remove_by_inner_key_if(&inner_key, || panic!("should not be called"));
     }
 
     /// Ensures concurrent calls to insert() and remove_by_inner() don't race/panic.
@@ -348,7 +385,7 @@ mod tests {
                 while !go.load(Ordering::Relaxed) {}
                 for _ in 0..ITERATIONS {
                     for inner_key in &inner_keys {
-                        secondary_index.remove_by_inner_key(inner_key);
+                        secondary_index.remove_by_inner_key_if(inner_key, || true);
                     }
                 }
             }));
@@ -362,7 +399,7 @@ mod tests {
         // After all the concurrent insert/removals, try removing everything
         // and ensure final state is consistent.
         for inner_key in &inner_keys {
-            secondary_index.remove_by_inner_key(inner_key);
+            secondary_index.remove_by_inner_key_if(inner_key, || true);
             assert!(secondary_index.reverse_index.get(inner_key).is_none());
         }
         for outer_key in &outer_keys {

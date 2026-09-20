@@ -16,13 +16,12 @@ pub struct BucketStats {
     pub max_size: AtomicU64,
     pub resize_us: AtomicU64,
     pub new_file_us: AtomicU64,
-    pub flush_file_us: AtomicU64,
     pub mmap_us: AtomicU64,
     pub find_index_entry_mut_us: AtomicU64,
     pub file_count: AtomicU64,
     pub total_file_size: AtomicU64,
     pub startup: StartupBucketStats,
-    pub index_uses_uncommon_slot_list_len_or_refcount: AtomicBool,
+    pub index_uses_uncommon_slot_list_len: AtomicBool,
 }
 
 impl BucketStats {

@@ -5,6 +5,7 @@ use {
 };
 
 mod commands;
+mod github;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Build tasks", version)]
@@ -20,6 +21,8 @@ struct Xtask {
 enum Commands {
     #[command(about = "Hello")]
     Hello,
+    #[command(about = "Check that the toolchain and workspace Rust versions match")]
+    CheckMsrv,
     #[command(about = "Bump version")]
     BumpVersion(xtask_shared::commands::bump_version::CommandArgs),
     #[command(about = "Update crate version")]
@@ -29,7 +32,11 @@ enum Commands {
     #[command(about = "Generate Buildkite pipeline")]
     GeneratePipeline(commands::generate_pipeline::CommandArgs),
     #[command(about = "Print release channel info")]
-    ChannelInfo,
+    ChannelInfo(commands::channel_info::CommandArgs),
+    #[command(about = "Run XDP integration tests")]
+    XdpTest(commands::xdp_test::CommandArgs),
+    #[command(about = "Emit conformance fixture dispatch table as JSON")]
+    ConformanceTable(commands::conformance_table::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -68,6 +75,7 @@ async fn try_main(xtask: Xtask) -> Result<()> {
     // run the command
     match xtask.command {
         Commands::Hello => commands::hello::run()?,
+        Commands::CheckMsrv => commands::check_msrv::run()?,
         Commands::BumpVersion(args) => {
             xtask_shared::commands::bump_version::run(args)?;
         }
@@ -80,8 +88,14 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         Commands::GeneratePipeline(args) => {
             commands::generate_pipeline::run(args).await?;
         }
-        Commands::ChannelInfo => {
-            commands::channel_info::run().await?;
+        Commands::ChannelInfo(args) => {
+            commands::channel_info::run(args).await?;
+        }
+        Commands::XdpTest(args) => {
+            commands::xdp_test::run(args)?;
+        }
+        Commands::ConformanceTable(args) => {
+            commands::conformance_table::run(args).await?;
         }
     }
 

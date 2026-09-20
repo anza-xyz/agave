@@ -8,9 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -45,8 +48,8 @@ thiserror = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
+bencher = { workspace = true }
 bincode = { workspace = true }
-criterion = { workspace = true }
 rand = { workspace = true }
 solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
@@ -62,9 +65,10 @@ jemallocator = { workspace = true }
 
 [[bench]]
 name = "poh"
+harness = false
 
 [[bench]]
-name = "transaction_recorder"
+name = "poh_verify"
 harness = false
 
 [lints]

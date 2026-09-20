@@ -684,10 +684,10 @@ pub fn process_allocations(
 
     let opt_confirmations = finalize_transactions(client, &mut db, args.dry_run, exit)?;
 
-    if !args.dry_run {
-        if let Some(output_path) = &args.output_path {
-            db::write_transaction_log(&db, &output_path)?;
-        }
+    if !args.dry_run
+        && let Some(output_path) = &args.output_path
+    {
+        db::write_transaction_log(&db, &output_path)?;
     }
 
     Ok(opt_confirmations)

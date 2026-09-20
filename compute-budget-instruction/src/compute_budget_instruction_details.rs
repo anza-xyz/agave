@@ -8,7 +8,7 @@ use {
     solana_builtins_default_costs::{MIGRATING_BUILTINS_COSTS, get_migration_feature_id},
     solana_compute_budget::compute_budget_limits::*,
     solana_compute_budget_interface::ComputeBudgetInstruction,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},

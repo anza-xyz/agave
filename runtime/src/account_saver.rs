@@ -39,6 +39,7 @@ fn max_number_of_accounts_to_collect(
                 }
             }
             ProcessedTransaction::FeesOnly(fees_only_tx) => fees_only_tx.rollback_accounts.count(),
+            ProcessedTransaction::NoOp(_) => 0,
         })
         .sum()
 }
@@ -99,6 +100,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                     &fees_only_tx.rollback_accounts,
                 );
             }
+            ProcessedTransaction::NoOp(_) => (),
         }
     }
     (accounts, transactions)
@@ -161,7 +163,7 @@ mod tests {
         solana_account::{AccountSharedData, ReadableAccount},
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_keypair::{Keypair, keypair_from_seed},
         solana_message::{Message, compiled_instruction::CompiledInstruction},
         solana_nonce::{

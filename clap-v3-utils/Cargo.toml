@@ -8,9 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 name = "solana_clap_v3_utils"
@@ -25,6 +28,7 @@ chrono = { workspace = true, features = ["default"] }
 clap = { version = "3.2.23", default-features = false, features = ["cargo", "std", "suggestions"] }
 five8 = { workspace = true }
 rpassword = { workspace = true }
+solana-cli-config = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
@@ -49,6 +53,7 @@ url = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-clap-v3-utils = { path = ".", features = ["agave-unstable-api"] }
+solana-hash = { workspace = true, features = ["atomic"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 tempfile = { workspace = true }

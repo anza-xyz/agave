@@ -2,8 +2,7 @@ use {
     super::vote_history_storage::{
         Result, SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
     },
-    agave_votor_messages::{consensus_message::Block, vote::Vote},
-    serde::{Deserialize, Serialize},
+    agave_votor_messages::{consensus_message::Block, vote::Vote, wire::VotePayloadToSign},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -13,7 +12,11 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+// Dummy shred version used for persisted votes - will be re-signed with the
+// correct shred version when performing the refresh
+const VOTE_HISTORY_SHRED_VERSION: u16 = 0;
+
+#[derive(Debug, SchemaRead, SchemaWrite, PartialEq, Clone)]
 pub enum VoteHistoryVersions {
     Current(VoteHistory),
 }
@@ -31,10 +34,13 @@ impl VoteHistoryVersions {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "BdNXvHhpPUTEba3DfDCLqirLoLXAmja2jyhroicM63bT")
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "MYpTecggZfULsn6SC1bojefNFK1R5kjBZg7wE8H8dHF",
+        abi_serializer = "wincode"
+    )
 )]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
 pub struct VoteHistory {
     /// The validator identity that cast votes
     pub node_pubkey: Pubkey,
@@ -64,7 +70,7 @@ pub struct VoteHistory {
     its_over: HashSet<Slot>,
 
     /// All votes cast for a `slot`, for use in refresh
-    votes_cast: HashMap<Slot, Vec<Vote>>,
+    votes_cast: HashMap<Slot, Vec<VotePayloadToSign>>,
 
     /// Blocks which have a notarization certificate via the certificate pool
     notarized_blocks: HashSet<Block>,
@@ -90,6 +96,34 @@ impl VoteHistory {
     pub fn voted(&self, slot: Slot) -> bool {
         assert!(slot >= self.root);
         self.voted.contains(&slot)
+    }
+
+    /// Initialize vote history at the Alpenglow genesis block. The genesis vote
+    /// is cast and refreshed outside Votor during migration, so its voted and
+    /// notarized state is initialized without adding it to `votes_cast`.
+    pub fn initialize_genesis(&mut self, genesis_block: Block) {
+        if genesis_block.slot < self.root {
+            return;
+        }
+        if let Some(block_id) = self.voted_notar.get(&genesis_block.slot) {
+            assert_eq!(
+                *block_id, genesis_block.block_id,
+                "genesis block does not match existing notarization vote for slot {}",
+                genesis_block.slot,
+            );
+        }
+        assert!(
+            self.notarized_blocks.iter().all(|block| {
+                block.slot != genesis_block.slot || block.block_id == genesis_block.block_id
+            }),
+            "genesis block does not match existing notarized block for slot {}",
+            genesis_block.slot,
+        );
+        self.set_root(genesis_block.slot);
+        self.voted.insert(genesis_block.slot);
+        self.voted_notar
+            .insert(genesis_block.slot, genesis_block.block_id);
+        self.notarized_blocks.insert(genesis_block);
     }
 
     /// The block for which we voted notarize in slot `slot`
@@ -131,7 +165,8 @@ impl VoteHistory {
             .iter()
             .filter(|&(&s, _)| s > slot)
             .flat_map(|(_, votes)| votes.iter())
-            .cloned()
+            .copied()
+            .map(Vote::from)
             .collect()
     }
 
@@ -203,7 +238,13 @@ impl VoteHistory {
                 // votor, we do not need to insert anything here.
             }
         }
-        self.votes_cast.entry(vote.slot()).or_default().push(vote);
+        self.votes_cast
+            .entry(vote.slot())
+            .or_default()
+            .push(VotePayloadToSign::new_from_vote(
+                vote,
+                VOTE_HISTORY_SHRED_VERSION,
+            ));
     }
 
     /// Add a new notarized block
@@ -464,20 +505,65 @@ mod test {
     }
 
     #[test]
+    fn test_initialize_genesis() {
+        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
+        vote_history.add_vote(Vote::new_skip_vote(1));
+        let genesis_block = Block::new_unique(2);
+        vote_history.initialize_genesis(genesis_block);
+        vote_history.initialize_genesis(genesis_block);
+
+        assert_eq!(vote_history.root(), 2);
+        assert!(vote_history.voted(2));
+        assert_eq!(vote_history.voted_notar(2), Some(genesis_block.block_id));
+        assert!(vote_history.is_block_notarized(&genesis_block));
+        assert!(!vote_history.skipped(2));
+        assert!(vote_history.votes_cast_since(0).is_empty());
+
+        let old_genesis_block = Block::new_unique(1);
+        vote_history.initialize_genesis(old_genesis_block);
+        assert_eq!(vote_history.root(), 2);
+        assert!(vote_history.voted(2));
+        assert_eq!(vote_history.voted_notar(2), Some(genesis_block.block_id));
+        assert!(vote_history.is_block_notarized(&genesis_block));
+        assert!(!vote_history.is_block_notarized(&old_genesis_block));
+    }
+
+    #[test]
+    #[should_panic(expected = "genesis block does not match existing notarization vote")]
+    fn test_initialize_genesis_panics_on_voted_notar_mismatch() {
+        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
+        let genesis_block = Block::new_unique(2);
+        vote_history
+            .voted_notar
+            .insert(genesis_block.slot, Hash::new_unique());
+
+        vote_history.initialize_genesis(genesis_block);
+    }
+
+    #[test]
+    #[should_panic(expected = "genesis block does not match existing notarized block")]
+    fn test_initialize_genesis_panics_on_notarized_block_mismatch() {
+        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
+        let genesis_block = Block::new_unique(2);
+        vote_history
+            .voted_notar
+            .insert(genesis_block.slot, genesis_block.block_id);
+        vote_history
+            .notarized_blocks
+            .insert(Block::new_unique(genesis_block.slot));
+
+        vote_history.initialize_genesis(genesis_block);
+    }
+
+    #[test]
     fn test_add_notarized_blocks() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let block_1 = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block_1 = Block::new_unique(1);
         assert!(!vote_history.is_block_notarized(&block_1));
         vote_history.add_block_notarized(block_1);
         assert!(vote_history.is_block_notarized(&block_1));
 
-        let block_2 = Block {
-            slot: 2,
-            block_id: Hash::new_unique(),
-        };
+        let block_2 = Block::new_unique(2);
         assert!(!vote_history.is_block_notarized(&block_2));
         vote_history.add_block_notarized(block_2);
         assert!(vote_history.is_block_notarized(&block_2));
@@ -496,10 +582,7 @@ mod test {
     fn test_add_parent_ready() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
         assert_eq!(vote_history.highest_parent_ready_slot(), None);
-        let block_0 = Block {
-            slot: 0,
-            block_id: Hash::new_unique(),
-        };
+        let block_0 = Block::new_unique(0);
         vote_history.add_parent_ready(1, block_0);
         assert!(vote_history.is_parent_ready(1, &block_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
@@ -510,14 +593,8 @@ mod test {
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
 
         // Add parent ready for slot 2
-        let block_2_0 = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
-        let block_2_1 = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block_2_0 = Block::new_unique(1);
+        let block_2_1 = Block::new_unique(1);
         assert!(vote_history.add_parent_ready(2, block_2_0));
         assert!(vote_history.is_parent_ready(2, &block_2_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
@@ -552,10 +629,7 @@ mod test {
         let vote_history_storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
 
         // Add Notarize on 1 and Skip on 2
-        let vote_1 = Vote::new_notarization_vote(Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        });
+        let vote_1 = Vote::new_unique_notar(1);
         let vote_2 = Vote::new_skip_vote(2);
         vote_history.add_vote(vote_1);
         vote_history.add_vote(vote_2);

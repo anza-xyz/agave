@@ -81,6 +81,7 @@ nodes=(
     --no-restart \
     --dynamic-port-range 8200-8400
     --init-complete-file init-complete-node1.log \
+    --stake-sol 2 \
     --rpc-port 18899"
 )
 

@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 #[cfg(not(feature = "dev-context-only-utils"))]
@@ -40,15 +39,20 @@ pub mod snapshot_utils;
 mod stake_account;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod stake_account;
-mod stake_delegation;
 pub mod stake_history;
 pub mod stake_utils;
 pub mod stake_weighted_timestamp;
 pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
+#[cfg(not(feature = "dev-context-only-utils"))]
+mod sysvar_account;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod sysvar_account;
 pub mod test_utils;
+pub mod transaction_balances;
 pub mod transaction_batch;
+pub mod transaction_execution;
 pub mod validated_block_finalization;
 pub mod validated_reward_certificate;
 pub mod vote_sender_types;

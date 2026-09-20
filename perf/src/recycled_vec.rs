@@ -12,10 +12,11 @@ use {
 
 // A vector wrapper which preallocates vector to be used
 // with a recycler
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct RecycledVec<T: Default + Clone + Sized> {
     x: Vec<T>,
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
     recycler: Weak<RecyclerX<RecycledVec<T>>>,
 }
@@ -45,6 +46,13 @@ impl<'a, T: Clone + Default + Sized> IntoIterator for &'a RecycledVec<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.x.iter()
+    }
+}
+
+impl<T: Clone + Default + Sized> Extend<T> for RecycledVec<T> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.x.extend(iter);
     }
 }
 

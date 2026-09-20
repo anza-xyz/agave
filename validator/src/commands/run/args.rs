@@ -604,6 +604,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("wait_to_vote_slot")
+            .long("wait-to-vote-slot")
+            .value_name("SLOT")
+            .takes_value(true)
+            .validator(is_slot)
+            .help(
+                "Do not vote until reaching this slot. This can be used to avoid submitting \
+                 slashable votes after restoring a stale/missing Tower / VoteHistory",
+            ),
+    )
+    .arg(
         Arg::with_name("no_wait_for_vote_to_start_leader")
             .hidden(hidden_unless_forced())
             .long("no-wait-for-vote-to-start-leader")
@@ -788,6 +799,30 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("num_votor_endpoints")
+            .long("num-votor-endpoints")
+            .takes_value(true)
+            .default_value(&default_args.num_votor_endpoints)
+            .validator(is_parsable::<usize>)
+            .hidden(hidden_unless_forced())
+            .help("The number of QUIC endpoints used for the votor transport."),
+    )
+    .arg(
+        Arg::with_name("votor_peer_overrides")
+            .long("votor-peer-overrides")
+            .validator(is_pubkey)
+            .value_name("VALIDATOR IDENTITY")
+            .multiple(true)
+            .takes_value(true)
+            .hidden(hidden_unless_forced())
+            .help(
+                "A list of additional validator identities for this node to send votor consensus \
+                 messages to while staked. By default we only send consensus messages to staked \
+                 nodes, however an operator can use this flag to additionally send messages to an \
+                 unstaked RPC node for faster state. These identities are resolved from gossip.",
+            ),
+    )
+    .arg(
         Arg::with_name("staked_nodes_overrides")
             .long("staked-nodes-overrides")
             .value_name("PATH")
@@ -917,10 +952,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("accounts_db_verify_refcounts")
-            .long("accounts-db-verify-refcounts")
+        Arg::with_name("accounts_db_verify_index")
+            .long("accounts-db-verify-index")
             .help(
-                "Debug option to scan all append vecs and verify account index refcounts prior to \
+                "Debug option to scan all storages and verify account index slot lists prior to \
                  clean",
             )
             .hidden(hidden_unless_forced()),
@@ -1052,7 +1087,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
                  accounts index in memory. All index entries that are not in memory are kept in \
                  the disk-backed index. The disk-backed index has lower performance; prefer \
-                 higher explicit limits here.",
+                 higher explicit limits here. \"minimal\" is deprecated and behaves as \"25GB\".",
             ),
     )
     .arg(
@@ -1062,6 +1097,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<usize>)
             .takes_value(true)
             .help("Pre-allocate the accounts index, assuming this many accounts")
+            .long_help(
+                "Pre-allocate the accounts index, assuming this many accounts. Overrides the \
+                 account count recorded in the local snapshot directory, which is otherwise used \
+                 when starting from local snapshot state rather than a snapshot archive.",
+            )
             .hidden(hidden_unless_forced()),
     )
     .arg(
@@ -1104,6 +1144,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("allow_private_addr")
             .long("allow-private-addr")
             .takes_value(false)
+            .requires("no_xdp")
             .help("Allow contacting private ip addresses")
             .hidden(hidden_unless_forced()),
     )
@@ -1123,24 +1164,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("BYTES")
             .validator(is_parsable::<DirByteLimit>)
             .takes_value(true)
-            // Firstly, zero limit value causes tracer to be disabled
-            // altogether, intuitively. On the other hand, this non-zero
-            // default doesn't enable banking tracer unless this flag is
-            // explicitly given, similar to --limit-ledger-size.
-            // see configure_banking_trace_dir_byte_limit() for this.
             .default_value(&default_args.banking_trace_dir_byte_limit)
             .help(
-                "Enables the banking trace explicitly, which is enabled by default and writes \
-                 trace files for simulate-leader-blocks, retaining up to the default or specified \
-                 total bytes in the ledger. This flag can be used to override its byte limit.",
+                "Enables the banking trace that writes trace files for simulate-leader-blocks, \
+                 retaining up to the specified total bytes in the ledger. Banking trace is \
+                 disabled by default.",
             ),
-    )
-    .arg(
-        Arg::with_name("disable_banking_trace")
-            .long("disable-banking-trace")
-            .conflicts_with("banking_trace_dir_byte_limit")
-            .takes_value(false)
-            .help("Disables the banking trace"),
     )
     .arg(
         Arg::with_name("no_delay_leader_block_for_pending_fork")
@@ -1213,27 +1242,40 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
+        Arg::with_name("no_xdp")
+            .long("no-xdp")
+            .takes_value(false)
+            .help("Disable XDP transmit and fall back to UDP sockets"),
+    )
+    .arg(
         Arg::with_name("xdp_interface")
             .long("xdp-interface")
             .takes_value(true)
             .value_name("INTERFACE")
-            .requires("xdp_cpu_cores")
-            .help("Network interface to use for XDP"),
+            .conflicts_with("no_xdp")
+            .help(
+                "Network interface to use for XDP transmit. Auto-detected from default route if \
+                 not specified",
+            ),
     )
     .arg(
         Arg::with_name("xdp_cpu_cores")
             .long("xdp-cpu-cores")
             .takes_value(true)
             .value_name("CPU_LIST")
+            .conflicts_with("no_xdp")
             .validator(|value| validate_cpu_ranges(value, "--xdp-cpu-cores"))
-            .help("Use the specified CPU cores for XDP"),
+            .help(
+                "CPU cores to reserve for XDP transmit (e.g. \"2-4,7\"). Defaults to 1 \
+                 auto-selected core",
+            ),
     )
     .arg(
         Arg::with_name("xdp_zero_copy")
             .long("xdp-zero-copy")
             .takes_value(false)
-            .requires("xdp_cpu_cores")
-            .help("Enable XDP zero copy. Requires hardware support"),
+            .conflicts_with("no_xdp")
+            .help("Enable XDP zero copy mode. Requires hardware and driver support"),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
@@ -1253,14 +1295,14 @@ fn validators_set(
         let validators_set: Option<HashSet<Pubkey>> = values_t!(matches, matches_name, Pubkey)
             .ok()
             .map(|validators| validators.into_iter().collect());
-        if let Some(validators_set) = &validators_set {
-            if validators_set.contains(identity_pubkey) {
-                return Err(crate::commands::Error::Dynamic(
-                    Box::<dyn std::error::Error>::from(format!(
-                        "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
-                    )),
-                ));
-            }
+        if let Some(validators_set) = &validators_set
+            && validators_set.contains(identity_pubkey)
+        {
+            return Err(crate::commands::Error::Dynamic(
+                Box::<dyn std::error::Error>::from(format!(
+                    "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
+                )),
+            ));
         }
         Ok(validators_set)
     } else {
@@ -1836,7 +1878,7 @@ mod tests {
         };
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
-            vec!["--allow-private-addr"],
+            vec!["--allow-private-addr", "--no-xdp"],
             expected_args,
         );
     }

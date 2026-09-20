@@ -2,37 +2,23 @@
 
 use {
     super::{context::InstrContext, effects::InstrEffects},
-    crate::{
-        conformance::{
-            callback::DefaultCallback,
-            setup::{compile_transaction_context, program_runtime_environments, recent_blockhash},
+    crate::conformance::{
+        callback::DefaultCallback,
+        setup::{
+            InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
+            program_runtime_environments,
         },
-        message_processor::process_message,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_instruction::error::InstructionError,
+    solana_account::AccountSharedData,
+    solana_instruction_error::InstructionError,
     solana_program_runtime::{
-        invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
-    solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction_error::TransactionError,
-    std::rc::Rc,
-};
-#[cfg(feature = "conformance")]
-use {
-    crate::conformance::{
-        callback::ConformanceCallback,
-        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        setup::sysvar_cache_from_accounts,
-    },
-    prost::Message,
-    protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
-    std::ffi::c_int,
+    std::{collections::HashMap, rc::Rc},
 };
 
 /// Execute a single instruction against the Solana VM with the default
@@ -55,63 +41,47 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let mut compute_units_consumed = 0;
     let mut timings = ExecuteTimings::default();
 
-    let log_collector = LogCollector::new_ref();
-    let feature_set = input.feature_set;
-    let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-
-    let mut compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+    let mut compute_budget = compute_budget(&input.feature_set);
     compute_budget.compute_unit_limit = input.cu_avail; // Clamp budget for execution by cu_avail
 
-    let rent = sysvar_cache.get_rent().unwrap();
-    let program_id = &input.instruction.program_id;
-    let loader_key = program_cache
-        .find(program_id)
-        .expect("program not loaded in cache")
-        .account_owner();
+    let loader_key = program_loader_key(&input.accounts, &input.instruction.program_id);
 
-    let (sanitized_message, mut transaction_context) = compile_transaction_context(
-        &input.instruction,
-        &input.accounts,
-        program_id,
+    let program_runtime_environments =
+        program_runtime_environments(&input.feature_set, &compute_budget);
+
+    let InvokeContextFields {
+        sanitized_message,
+        mut transaction_context,
+        environment_config,
+        log_collector,
+        execution_budget,
+        execution_cost,
+    } = prepare_invoke_context_fields(
+        input,
+        callback,
         &loader_key,
+        sysvar_cache,
         &compute_budget,
-        (*rent).clone(),
+        &program_runtime_environments,
     );
 
-    let runtime_environments = program_runtime_environments(&input.feature_set, &compute_budget);
-
     let result = {
-        let (blockhash, blockhash_lamports_per_signature) = recent_blockhash(sysvar_cache);
-
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            blockhash_lamports_per_signature,
-            false,
-            callback,
-            &feature_set,
-            &runtime_environments,
-            sysvar_cache,
-        );
-
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
             environment_config,
             Some(log_collector.clone()),
-            compute_budget.to_budget(),
-            compute_budget.to_cost(),
+            execution_budget,
+            execution_cost,
         );
-        match process_message(
+
+        match invoke_context.process_message(
             &sanitized_message,
-            &mut invoke_context,
             &mut timings,
             &mut compute_units_consumed,
         ) {
             Ok(()) => Ok(()),
-            Err(TransactionError::InstructionError(_, err)) => Err(err),
-            // `process_message` only ever returns `InstructionError`-shaped
-            // failures.
-            Err(_) => unreachable!(),
+            Err((_, err)) => Err(err),
         }
     };
 
@@ -129,10 +99,31 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         .map(|index| {
             *transaction_context
                 .get_key_of_account_at_index(index)
-                .clone()
                 .unwrap()
         })
-        .collect::<Vec<_>>();
+        .collect();
+
+    // Post-execution state of the accounts in the compiled message.
+    let mut executed: HashMap<Pubkey, AccountSharedData> = account_keys
+        .into_iter()
+        .zip(transaction_context.deconstruct_without_keys().unwrap())
+        .collect();
+
+    // Preserve input account order, overlaying executed state for accounts
+    // present in the compiled message.
+    let resulting_accounts = input
+        .accounts
+        .iter()
+        .map(|(pubkey, account)| {
+            (
+                *pubkey,
+                executed
+                    .remove(pubkey)
+                    .map(Into::into)
+                    .unwrap_or_else(|| account.clone()),
+            )
+        })
+        .collect();
 
     InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
@@ -141,83 +132,11 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             None
         },
         result: result.err(),
-        resulting_accounts: transaction_context
-            .deconstruct_without_keys()
-            .unwrap()
-            .into_iter()
-            .zip(account_keys)
-            .map(|(account, key)| (key, account.into()))
-            .collect(),
+        resulting_accounts,
         cu_avail,
         return_data,
         logs,
     }
-}
-
-#[cfg(feature = "conformance")]
-pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
-    let instr_context = InstrContext::from(input);
-
-    // When testing with protobuf, we fill the sysvar cache from input accounts.
-    let sysvar_cache = sysvar_cache_from_accounts(&instr_context.accounts);
-
-    // When testing with protobuf, we fill the program cache from input accounts.
-    let mut program_cache = {
-        let slot = sysvar_cache.get_clock().unwrap().slot;
-        let feature_set = &instr_context.feature_set;
-        let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-        let compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
-        let environments = program_runtime_environments(feature_set, &compute_budget);
-
-        let mut cache = new_program_cache_with_builtins(slot);
-        fill_program_cache_from_accounts(
-            &mut cache,
-            environments.get_env_for_deployment(),
-            &instr_context.accounts,
-            slot,
-        )
-        .unwrap();
-
-        cache
-    };
-
-    execute_instr_with_callback(
-        &instr_context,
-        &ConformanceCallback,
-        &mut program_cache,
-        &sysvar_cache,
-    )
-    .into()
-}
-
-/// # Safety
-///
-/// `in_ptr` must point to `in_sz` initialized bytes. `out_ptr` must point
-/// to a writable buffer of at least `*out_psz` bytes. On return, `*out_psz`
-/// is updated to the number of bytes written.
-#[cfg(feature = "conformance")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn sol_compat_instr_execute_v1(
-    out_ptr: *mut u8,
-    out_psz: *mut u64,
-    in_ptr: *mut u8,
-    in_sz: u64,
-) -> c_int {
-    let in_slice = unsafe { std::slice::from_raw_parts(in_ptr, in_sz as usize) };
-    let Ok(instr_context) = ProtoInstrContext::decode(in_slice) else {
-        return 0;
-    };
-    let instr_effects = execute_instr_proto(instr_context);
-    let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
-    let out_vec = instr_effects.encode_to_vec();
-    if out_vec.len() > out_slice.len() {
-        return 0;
-    }
-    out_slice[..out_vec.len()].copy_from_slice(&out_vec);
-    unsafe {
-        *out_psz = out_vec.len() as u64;
-    }
-    1
 }
 
 #[cfg(test)]
@@ -352,14 +271,21 @@ mod tests {
     #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(); "loader_v3")]
     fn test_bpf_noop_program_exec(loader_key: Pubkey) {
         let program_id = Pubkey::new_unique();
+        let program_account = Account {
+            lamports: 1,
+            data: vec![],
+            owner: loader_key,
+            executable: true,
+            rent_epoch: u64::MAX,
+        };
         let context = InstrContext::new_with_default_budget(
             SVMFeatureSet::default(),
-            vec![],
+            vec![(program_id, program_account)],
             Instruction::new_with_bytes(program_id, &[], vec![]),
         );
         let sysvar_cache = sysvar_cache_with_rent();
 
-        let mut program_cache = new_program_cache_with_builtins(0);
+        let mut program_cache = new_program_cache_with_builtins(1);
         add_program_to_program_cache(
             &mut program_cache,
             &program_id,

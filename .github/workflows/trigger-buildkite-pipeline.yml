@@ -86,37 +86,67 @@ jobs:
       - name: Prepare Buildkite pipeline info
         id: prepare
         env:
-          BUILDKITE_PIPELINE: ${{ vars.BUILDKITE_PIPELINE }}
           COMMIT: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           COMMIT_SHORT="${COMMIT:0:8}"
           BRANCH="pull/${PR_NUMBER}/head"
           MESSAGE="PR#${PR_NUMBER} - ${COMMIT_SHORT}"
-          BUILD_META_DATA="{\"pr_number\":\"${PR_NUMBER}\"}"
 
           echo "branch=$BRANCH" | tee -a $GITHUB_OUTPUT
-          echo "build_meta_data=$BUILD_META_DATA" | tee -a $GITHUB_OUTPUT
           echo "commit=$COMMIT" | tee -a $GITHUB_OUTPUT
           echo "message=$MESSAGE" | tee -a $GITHUB_OUTPUT
-          echo "pipeline=$BUILDKITE_PIPELINE" | tee -a $GITHUB_OUTPUT
           echo "pr_number=$PR_NUMBER" | tee -a $GITHUB_OUTPUT
 
       - name: Trigger a Buildkite Build
-        uses: "buildkite/trigger-pipeline-action@909fed762c73d5ae2b5d555ab910d66b3fae2670" # v2.4.1
-        with:
-          pipeline: ${{ steps.prepare.outputs.pipeline }}
-          buildkite_api_access_token: ${{ secrets.BUILDKITE_API_ACCESS_TOKEN }}
-          branch: "${{ steps.prepare.outputs.branch }}"
-          build_meta_data: "${{ steps.prepare.outputs.build_meta_data }}"
-          commit: "${{ steps.prepare.outputs.commit }}"
-          message: "${{ steps.prepare.outputs.message }}"
-          pull_request_base_branch: "${{ github.event.pull_request.base.ref }}"
+        id: trigger
+        env:
+          PORTAL_URL: ${{ secrets.BUILDKITE_PORTAL_URL }}
+          PORTAL_TOKEN: ${{ secrets.BUILDKITE_PORTAL_TOKEN }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          COMMIT: ${{ steps.prepare.outputs.commit }}
+          MESSAGE: ${{ steps.prepare.outputs.message }}
+          PR_NUMBER: ${{ steps.prepare.outputs.pr_number }}
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg commit "$COMMIT" \
+            --arg branch "$BRANCH" \
+            --arg message "$MESSAGE" \
+            --arg prNumber "$PR_NUMBER" \
+            --arg baseEnv "BUILDKITE_PULL_REQUEST_BASE_BRANCH=${BASE_BRANCH}" \
+            '{commit: $commit, branch: $branch, message: $message, prNumber: $prNumber, baseEnv: $baseEnv}')
+
+          HTTP_OK=true
+          RESPONSE=$(curl -sS --fail-with-body -X POST "$PORTAL_URL" \
+            -H "Authorization: Bearer $PORTAL_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD") || HTTP_OK=false
+
+          echo "$RESPONSE" | jq . || echo "$RESPONSE"
+
+          if [ "$HTTP_OK" != "true" ]; then
+            echo "::error::Buildkite portal request failed"
+            exit 1
+          fi
+
+          if [ "$(echo "$RESPONSE" | jq 'has("errors")')" = "true" ]; then
+            echo "::error::Buildkite portal returned errors"
+            exit 1
+          fi
+
+          BUILD_URL=$(echo "$RESPONSE" | jq -r '.data.buildCreate.build.url // empty')
+          if [ -z "$BUILD_URL" ]; then
+            echo "::error::Buildkite portal response contained no build URL"
+            exit 1
+          fi
+
+          echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
 
       - name: Summary
         env:
           BRANCH: ${{ steps.prepare.outputs.branch }}
-          BUILDKITE_PIPELINE: ${{ vars.BUILDKITE_PIPELINE }}
+          BUILD_URL: ${{ steps.trigger.outputs.build_url }}
           COMMIT: ${{ github.event.pull_request.head.sha }}
           MESSAGE: ${{ steps.prepare.outputs.message }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -126,9 +156,9 @@ jobs:
             echo ""
             echo "| Key | Value |"
             echo "|-----|-------|"
-            echo "| Pipeline | \`$BUILDKITE_PIPELINE\` |"
             echo "| Branch | \`$BRANCH\` |"
             echo "| Commit | \`$COMMIT\` |"
             echo "| PR Number | #$PR_NUMBER |"
             echo "| Message | $MESSAGE |"
+            echo "| Build | $BUILD_URL |"
           } >> $GITHUB_STEP_SUMMARY

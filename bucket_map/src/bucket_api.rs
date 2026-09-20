@@ -2,8 +2,8 @@
 use crate::bucket_item::BucketItem;
 use {
     crate::{
-        MaxSearch, RefCount, bucket::Bucket, bucket_map::BucketMapError,
-        bucket_stats::BucketMapStats, restart::RestartableBucket,
+        MaxSearch, bucket::Bucket, bucket_map::BucketMapError, bucket_stats::BucketMapStats,
+        restart::RestartableBucket,
     },
     solana_pubkey::Pubkey,
     std::{
@@ -68,12 +68,12 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
     }
 
     /// Get the values for Pubkey `key`
-    pub fn read_value<C: for<'a> From<&'a [T]>>(&self, key: &Pubkey) -> Option<(C, RefCount)> {
-        self.bucket.read().unwrap().as_ref().and_then(|bucket| {
-            bucket
-                .read_value(key)
-                .map(|(value, ref_count)| (C::from(value), ref_count))
-        })
+    pub fn read_value<C: for<'a> From<&'a [T]>>(&self, key: &Pubkey) -> Option<C> {
+        self.bucket
+            .read()
+            .unwrap()
+            .as_ref()
+            .and_then(|bucket| bucket.read_value(key).map(|value| C::from(value)))
     }
 
     pub fn bucket_len(&self) -> u64 {
@@ -110,7 +110,7 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
         bucket
     }
 
-    pub fn insert(&self, pubkey: &Pubkey, value: (&[T], RefCount)) {
+    pub fn insert(&self, pubkey: &Pubkey, value: &[T]) {
         let mut bucket = self.get_write_bucket();
         bucket.as_mut().unwrap().insert(pubkey, value)
     }
@@ -130,7 +130,7 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
         bucket.as_mut().unwrap().set_anticipated_count(count);
     }
 
-    /// batch insert of `items`. Assumption is a single slot list element and ref_count == 1.
+    /// batch insert of `items`. Assumption is a single slot list element
     /// For any pubkeys that already exist, the index in `items` of the failed insertion and the existing data (previously put in the index) are returned.
     pub fn batch_insert_non_duplicates(&self, items: &[(Pubkey, T)]) -> Vec<(usize, T)> {
         let mut bucket = self.get_write_bucket();
@@ -139,21 +139,17 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
 
     pub fn update<F>(&self, key: &Pubkey, updatefn: F)
     where
-        F: FnMut(Option<(&[T], RefCount)>) -> Option<(Vec<T>, RefCount)>,
+        F: FnMut(Option<&[T]>) -> Option<Vec<T>>,
     {
         let mut bucket = self.get_write_bucket();
         bucket.as_mut().unwrap().update(key, updatefn)
     }
 
-    pub fn try_write(
-        &self,
-        pubkey: &Pubkey,
-        value: (&[T], RefCount),
-    ) -> Result<(), BucketMapError> {
+    pub fn try_write(&self, pubkey: &Pubkey, value: &[T]) -> Result<(), BucketMapError> {
         let mut bucket = self.get_write_bucket();
         bucket
             .as_mut()
             .unwrap()
-            .try_write(pubkey, value.0.iter(), value.0.len(), value.1)
+            .try_write(pubkey, value.iter(), value.len())
     }
 }

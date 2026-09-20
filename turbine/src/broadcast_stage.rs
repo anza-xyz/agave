@@ -24,13 +24,14 @@ use {
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         blockstore::Blockstore,
+        blockstore_db::{DBPinnableSlice, WriteBatch},
         leader_schedule_cache::LeaderScheduleCache,
         shred::{MAX_FEC_SETS_PER_SLOT, Shred},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
     solana_net_utils::SocketAddrSpace,
-    solana_poh::poh_recorder::WorkingBankEntryOrMarker,
+    solana_poh::poh_recorder::WorkingBankMessage,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
@@ -142,6 +143,8 @@ pub enum Error {
     UnknownLastIndex(Slot),
     #[error("Unknown slot meta, slot: {0}")]
     UnknownSlotMeta(Slot),
+    #[error("Window for slot {0} has already been skipped - newer window finalized")]
+    WindowSkipped(Slot),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -163,7 +166,7 @@ impl BroadcastStageType {
         &self,
         sock: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
-        receiver: Receiver<WorkingBankEntryOrMarker>,
+        receiver: Receiver<WorkingBankMessage>,
         retransmit_slots_receiver: Receiver<Slot>,
         exit_sender: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
@@ -213,11 +216,13 @@ impl BroadcastStageType {
 }
 
 trait BroadcastRun {
-    fn run(
+    fn run<'db>(
         &mut self,
         keypair: &Keypair,
-        blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntryOrMarker>,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
+        receiver: &Receiver<WorkingBankMessage>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()>;
@@ -228,7 +233,13 @@ trait BroadcastRun {
         sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
     ) -> Result<()>;
-    fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()>;
+    fn record<'db>(
+        &mut self,
+        receiver: &RecordReceiver,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
+    ) -> Result<()>;
 }
 
 // Implement a destructor for the BroadcastStage thread to signal it exited
@@ -258,15 +269,19 @@ impl BroadcastStage {
     fn run(
         cluster_info: Arc<ClusterInfo>,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntryOrMarker>,
+        receiver: &Receiver<WorkingBankMessage>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         mut broadcast_stage_run: impl BroadcastRun,
     ) -> BroadcastStageReturnType {
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch();
         loop {
             let res = broadcast_stage_run.run(
                 &cluster_info.keypair(),
                 blockstore,
+                &mut pinnable_slice,
+                &mut write_batch,
                 receiver,
                 socket_sender,
                 blockstore_sender,
@@ -316,7 +331,7 @@ impl BroadcastStage {
     fn new(
         socks: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
-        receiver: Receiver<WorkingBankEntryOrMarker>,
+        receiver: Receiver<WorkingBankMessage>,
         retransmit_slots_receiver: Receiver<Slot>,
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
@@ -410,11 +425,20 @@ impl BroadcastStage {
         // Until this changes, only a single inserter thread is necessary.
         thread_hdls.push({
             let blockstore = blockstore.clone();
-            let run_record = move || loop {
-                let res = broadcast_stage_run.record(&blockstore_receiver, &blockstore);
-                let res = Self::handle_error(res, "solana-broadcaster-record");
-                if let Some(res) = res {
-                    return res;
+            let run_record = move || {
+                let mut pinnable_slice = blockstore.new_pinnable_slice();
+                let mut write_batch = blockstore.get_write_batch();
+                loop {
+                    let res = broadcast_stage_run.record(
+                        &blockstore_receiver,
+                        &blockstore,
+                        &mut pinnable_slice,
+                        &mut write_batch,
+                    );
+                    let res = Self::handle_error(res, "solana-broadcaster-record");
+                    if let Some(res) = res {
+                        return res;
+                    }
                 }
             };
             Builder::new()
@@ -542,7 +566,6 @@ pub fn broadcast_shreds(
 ) -> Result<()> {
     let mut result = Ok(());
     // Compute destinations for each of the shreds to be sent
-    let mut shred_select = Measure::start("shred_select");
     let (root_bank, working_bank) = {
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.root_bank(), bank_forks.working_bank())
@@ -553,71 +576,61 @@ pub fn broadcast_shreds(
         next_broadcast_leader_pubkey(leader_schedule_cache, &working_bank, &my_pubkey, slot)
     };
 
-    let packets: Vec<_> = shreds
-        .iter()
-        .chunk_by(|shred| shred.slot())
-        .into_iter()
-        .flat_map(|(slot, shreds)| {
-            let cluster_nodes =
-                cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            update_peer_stats(&cluster_nodes, last_datapoint_submit);
-            let maybe_next_leader_udp = find_next_leader(slot).and_then(|leader| {
-                cluster_info
-                    .lookup_contact_info(&leader, |node| {
-                        node.tvu(Protocol::UDP)
-                            .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
-                    })
-                    .flatten()
-            });
-            shreds.flat_map(move |shred| {
-                let key = shred.id();
-                let maybe_standard_broadcast_peer = cluster_nodes
-                    .get_broadcast_peer(&key)
-                    .and_then(|ci| ci.tvu(Protocol::UDP))
-                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr));
-                // only send to next leader if not standard broadcast peer
-                let maybe_next_leader = maybe_next_leader_udp
-                    .filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
-                [maybe_next_leader, maybe_standard_broadcast_peer]
-                    .into_iter()
-                    .filter_map(move |tvu_addr: Option<SocketAddr>| {
-                        tvu_addr.map(|addr| (shred.payload(), addr))
-                    })
-            })
+    let grouped_shreds = shreds.iter().chunk_by(|shred| shred.slot());
+    let packets = grouped_shreds.into_iter().flat_map(|(slot, shreds)| {
+        let cluster_nodes = cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
+        update_peer_stats(&cluster_nodes, last_datapoint_submit);
+        let maybe_next_leader_udp = find_next_leader(slot).and_then(|leader| {
+            cluster_info
+                .lookup_contact_info(&leader, |node| {
+                    node.tvu(Protocol::UDP)
+                        .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
+                })
+                .flatten()
+        });
+        shreds.flat_map(move |shred| {
+            let key = shred.id();
+            let maybe_standard_broadcast_peer = cluster_nodes
+                .get_broadcast_peer(&key)
+                .and_then(|ci| ci.tvu(Protocol::UDP))
+                .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr));
+            // only send to next leader if not standard broadcast peer
+            let maybe_next_leader =
+                maybe_next_leader_udp.filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
+            [maybe_next_leader, maybe_standard_broadcast_peer]
+                .into_iter()
+                .filter_map(move |tvu_addr: Option<SocketAddr>| {
+                    tvu_addr.map(|addr| (shred.payload(), addr))
+                })
         })
-        .collect();
-
-    shred_select.stop();
-    transmit_stats.shred_select += shred_select.as_us();
-    let num_udp_packets = packets.len();
+    });
+    let mut num_packets = 0;
     match socket {
         BroadcastSocket::Udp(s) => {
+            let packets: Vec<_> = packets.collect();
+            let batch_len = packets.len();
+            num_packets += batch_len;
             let mut send_mmsg_time = Measure::start("send_mmsg");
             match batch_send(s, packets) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    transmit_stats.dropped_packets_udp += num_failed;
-                    result = Err(Error::Io(ioerr));
-                }
+                Ok(num_sent) => transmit_stats.dropped_packets_udp += batch_len - num_sent,
+                Err(SendPktsError::IoError(ioerr)) => result = Err(Error::Io(ioerr)),
             }
             send_mmsg_time.stop();
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
         }
         BroadcastSocket::Xdp(s) => {
-            let mut send_xdp_time = Measure::start("send_xdp");
-            for (idx, (payload, addr)) in packets.into_iter().enumerate() {
+            for (idx, (payload, addr)) in packets.enumerate() {
+                num_packets += 1;
                 if let Err(e) = s.try_send(idx, addr, payload.bytes.clone()) {
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);
                 }
             }
-            send_xdp_time.stop();
-            transmit_stats.send_xdp_elapsed += send_xdp_time.as_us();
         }
     }
 
-    transmit_stats.total_packets += num_udp_packets;
+    transmit_stats.total_packets += num_packets;
     result
 }
 
@@ -634,7 +647,7 @@ pub mod test {
         agave_votor_messages::migration::MigrationStatus,
         crossbeam_channel::bounded,
         rand::Rng,
-        solana_entry::{entry::create_ticks, entry_or_marker::EntryOrMarker},
+        solana_entry::{entry::create_ticks, recorder_message::RecorderMessage},
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -801,12 +814,8 @@ pub mod test {
         assert!(num_data_shreds >= 10);
 
         // Insert all the shreds
-        blockstore
-            .insert_shreds(all_data_shreds, None, true)
-            .unwrap();
-        blockstore
-            .insert_shreds(all_coding_shreds, None, true)
-            .unwrap();
+        blockstore.insert_shreds(all_data_shreds, true).unwrap();
+        blockstore.insert_shreds(all_coding_shreds, true).unwrap();
 
         // Insert duplicate retransmit signal, blocks should
         // only be retransmitted once
@@ -837,7 +846,7 @@ pub mod test {
     fn setup_dummy_broadcast_service(
         leader_keypair: Arc<Keypair>,
         ledger_path: &Path,
-        entry_receiver: Receiver<WorkingBankEntryOrMarker>,
+        entry_receiver: Receiver<WorkingBankMessage>,
         retransmit_slots_receiver: Receiver<Slot>,
     ) -> MockBroadcastStage {
         // Make the database ledger
@@ -939,7 +948,10 @@ pub mod test {
                 entry_sender
                     .send((
                         bank.clone(),
-                        (EntryOrMarker::Entry(tick), start_tick_height + i as u64 + 1),
+                        (
+                            RecorderMessage::Entry(tick),
+                            start_tick_height + i as u64 + 1,
+                        ),
                     ))
                     .expect("Expect successful send to broadcast service");
             }

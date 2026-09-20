@@ -10,6 +10,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -25,6 +26,7 @@ solana-account = { workspace = true }
 solana-bpf-loader-program = { path = "../bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-program-test = { path = "../../program-test", features = ["agave-unstable-api"] }
@@ -34,6 +36,7 @@ solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+test-case = { workspace = true }
 
 [lints]
 workspace = true

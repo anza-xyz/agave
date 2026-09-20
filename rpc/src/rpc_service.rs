@@ -13,6 +13,7 @@ use {
         SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::unbounded,
     jsonrpc_core::{MetaIoHandler, futures::prelude::*},
     jsonrpc_http_server::{
@@ -21,7 +22,6 @@ use {
     },
     regex::Regex,
     solana_cli_output::display::build_balance_message,
-    solana_client::connection_cache::Protocol,
     solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -32,16 +32,18 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
+    solana_net_utils::Protocol,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
-        transaction_client::{TpuClientNextClient, TransactionClient},
+        transaction_client::{TpuClient, TpuSender, create_client, create_leader_updater},
     },
     solana_storage_bigtable::CredentialType,
     solana_tls_utils::NotifyKeyUpdate,
@@ -349,48 +351,46 @@ impl RequestMiddleware for RpcRequestMiddleware {
     fn on_request(&self, request: hyper::Request<hyper::Body>) -> RequestMiddlewareAction {
         trace!("request uri: {}", request.uri());
 
-        if let Some(ref snapshot_config) = self.snapshot_config {
-            if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH
-                || request.uri().path() == INCREMENTAL_SNAPSHOT_REQUEST_PATH
-            {
-                // Convenience redirect to the latest snapshot
-                let full_snapshot_archive_info =
-                    snapshot_paths::get_highest_full_snapshot_archive_info(
-                        &snapshot_config.full_snapshot_archives_dir,
-                    );
-                let snapshot_archive_info =
-                    if let Some(full_snapshot_archive_info) = full_snapshot_archive_info {
-                        if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH {
-                            Some(full_snapshot_archive_info.snapshot_archive_info().clone())
-                        } else {
-                            snapshot_paths::get_highest_incremental_snapshot_archive_info(
-                                &snapshot_config.incremental_snapshot_archives_dir,
-                                full_snapshot_archive_info.slot(),
-                            )
-                            .map(|incremental_snapshot_archive_info| {
-                                incremental_snapshot_archive_info
-                                    .snapshot_archive_info()
-                                    .clone()
-                            })
-                        }
+        if let Some(ref snapshot_config) = self.snapshot_config
+            && (request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH
+                || request.uri().path() == INCREMENTAL_SNAPSHOT_REQUEST_PATH)
+        {
+            // Convenience redirect to the latest snapshot
+            let full_snapshot_archive_info = snapshot_paths::get_highest_full_snapshot_archive_info(
+                &snapshot_config.full_snapshot_archives_dir,
+            );
+            let snapshot_archive_info =
+                if let Some(full_snapshot_archive_info) = full_snapshot_archive_info {
+                    if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH {
+                        Some(full_snapshot_archive_info.snapshot_archive_info().clone())
                     } else {
-                        None
-                    };
-                return if let Some(snapshot_archive_info) = snapshot_archive_info {
-                    RpcRequestMiddleware::redirect(&format!(
-                        "/{}",
-                        snapshot_archive_info
-                            .path
-                            .file_name()
-                            .unwrap_or_else(|| std::ffi::OsStr::new(""))
-                            .to_str()
-                            .unwrap_or("")
-                    ))
+                        snapshot_paths::get_highest_incremental_snapshot_archive_info(
+                            &snapshot_config.incremental_snapshot_archives_dir,
+                            full_snapshot_archive_info.slot(),
+                        )
+                        .map(|incremental_snapshot_archive_info| {
+                            incremental_snapshot_archive_info
+                                .snapshot_archive_info()
+                                .clone()
+                        })
+                    }
                 } else {
-                    RpcRequestMiddleware::not_found()
-                }
-                .into();
+                    None
+                };
+            return if let Some(snapshot_archive_info) = snapshot_archive_info {
+                RpcRequestMiddleware::redirect(&format!(
+                    "/{}",
+                    snapshot_archive_info
+                        .path
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new(""))
+                        .to_str()
+                        .unwrap_or("")
+                ))
+            } else {
+                RpcRequestMiddleware::not_found()
             }
+            .into();
         }
 
         if let Some(path) = match_supply_path(request.uri().path()) {
@@ -488,6 +488,7 @@ pub struct JsonRpcServiceConfig<'a> {
     pub exit: Arc<AtomicBool>,
     pub override_health_check: Arc<AtomicBool>,
     pub optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+    pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     pub send_transaction_service_config: send_transaction_service::Config,
     pub max_slots: Arc<MaxSlots>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -532,16 +533,19 @@ impl JsonRpcService {
                 "Invalid {:?} socket address for TPU",
                 Protocol::QUIC
             ))?;
-        let client = TpuClientNextClient::new(
-            client_runtime,
+        let leader_updater = create_leader_updater(
+            leader_info,
             my_tpu_address,
             config.send_transaction_service_config.tpu_peers.clone(),
-            leader_info,
+        );
+        let (tpu_sender, client) = create_client(
+            client_runtime,
+            leader_updater,
             config.send_transaction_service_config.leader_forward_count,
             Some(identity_keypair),
             tpu_client_socket,
             cancel,
-        );
+        )?;
 
         let json_rpc_service = Self::new(
             config.rpc_addr,
@@ -557,9 +561,12 @@ impl JsonRpcService {
             config.exit,
             config.override_health_check,
             config.optimistically_confirmed_bank,
+            config.highest_finalized,
+            migration_status,
             config.send_transaction_service_config,
             config.max_slots,
             config.leader_schedule_cache,
+            tpu_sender,
             client,
             config.max_complete_transaction_status_slot,
             config.prioritization_fee_cache,
@@ -569,14 +576,7 @@ impl JsonRpcService {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new<
-        Client: TransactionClient
-            + NotifyKeyUpdate
-            + Clone
-            + std::marker::Send
-            + std::marker::Sync
-            + 'static,
-    >(
+    fn new(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -590,10 +590,13 @@ impl JsonRpcService {
         exit: Arc<AtomicBool>,
         override_health_check: Arc<AtomicBool>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+        migration_status: Arc<MigrationStatus>,
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        client: Client,
+        tpu_sender: TpuSender,
+        client: TpuClient,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<TokioRuntime>,
@@ -605,6 +608,8 @@ impl JsonRpcService {
         let health = Arc::new(RpcHealth::new(
             Arc::clone(&optimistically_confirmed_bank),
             Arc::clone(&blockstore),
+            highest_finalized,
+            migration_status,
             config.health_check_slot_distance,
             override_health_check,
         ));
@@ -658,10 +663,9 @@ impl JsonRpcService {
                             bigtable_ledger_upload_service,
                         )
                     })
-                    .unwrap_or_else(|err| {
-                        error!("Failed to initialize BigTable ledger storage: {err:?}");
-                        (None, None)
-                    })
+                    .map_err(|err| {
+                        format!("Failed to initialize BigTable ledger storage: {err:?}")
+                    })?
             } else {
                 (None, None)
             };
@@ -693,7 +697,7 @@ impl JsonRpcService {
         let _send_transaction_service = Arc::new(SendTransactionService::new(
             bank_forks.clone(),
             receiver,
-            client.clone(),
+            tpu_sender,
             send_transaction_service_config,
             exit,
         ));
@@ -876,6 +880,7 @@ mod tests {
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let migration_status = bank_forks.read().unwrap().migration_status();
         let json_rpc_config = JsonRpcConfig::default();
         let runtime = service_runtime(
             json_rpc_config.rpc_threads,
@@ -889,7 +894,7 @@ mod tests {
             ..send_transaction_service::Config::default()
         };
 
-        let client = create_client_for_tests(
+        let (tpu_sender, client) = create_client_for_tests(
             runtime.handle().clone(),
             tpu_address,
             send_transaction_service_config.tpu_peers.clone(),
@@ -909,9 +914,12 @@ mod tests {
             exit,
             Arc::new(AtomicBool::new(false)),
             optimistically_confirmed_bank,
+            Arc::default(),
+            migration_status,
             send_transaction_service_config,
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
+            tpu_sender,
             client,
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),

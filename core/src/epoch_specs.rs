@@ -1,16 +1,14 @@
 use {
-    solana_clock::Epoch,
+    agave_feature_set as feature_set,
+    solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::epoch_specs::EpochSpecs as EpochSpecsTrait,
+    solana_ledger::shred::filter::check_feature_activation_from_bank,
     solana_pubkey::Pubkey,
-    solana_runtime::{
-        bank::Bank,
-        bank_forks::{BankForks, SharableBanks},
-    },
+    solana_runtime::bank_forks::{BankForks, SharableBanks},
     std::{
         collections::HashMap,
         sync::{Arc, RwLock},
-        time::Duration,
     },
 };
 
@@ -19,7 +17,6 @@ struct EpochSpecsCache {
     epoch: Epoch,
     epoch_schedule: EpochSchedule,
     current_epoch_staked_nodes: Arc<HashMap<Pubkey, u64>>,
-    epoch_duration: Duration,
     slots_in_epoch: u64,
 }
 
@@ -35,20 +32,27 @@ impl EpochSpecsTrait for EpochSpecs {
         Arc::clone(&cache.current_epoch_staked_nodes)
     }
 
-    fn epoch_duration(&mut self) -> Duration {
-        let cache = &mut self.cache;
-        Self::maybe_refresh_cache(cache, &self.sharable_banks);
-        cache.epoch_duration
-    }
-
     fn epoch_slots(&mut self) -> u64 {
         let cache = &mut self.cache;
         Self::maybe_refresh_cache(cache, &self.sharable_banks);
         cache.slots_in_epoch
     }
 
+    fn should_enforce_correct_proof_size(&self, shred_slot: Slot) -> bool {
+        // This can not be cached, as answer depends on shred's slot.
+        check_feature_activation_from_bank(
+            &feature_set::enforce_correct_proof_size::id(),
+            shred_slot,
+            &self.sharable_banks.root(),
+        )
+    }
+
     fn clone_box(&self) -> Box<dyn EpochSpecsTrait> {
         Box::new(self.clone())
+    }
+
+    fn root_slot(&self) -> Slot {
+        self.sharable_banks.root().slot()
     }
 }
 
@@ -65,7 +69,6 @@ impl EpochSpecs {
         cache.epoch = root_bank.epoch();
         cache.epoch_schedule = root_bank.epoch_schedule().clone();
         cache.current_epoch_staked_nodes = root_bank.current_epoch_staked_nodes();
-        cache.epoch_duration = get_epoch_duration(&root_bank);
         cache.slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
     }
 }
@@ -83,16 +86,10 @@ impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
                 epoch: root_bank.epoch(),
                 epoch_schedule: root_bank.epoch_schedule().clone(),
                 current_epoch_staked_nodes: root_bank.current_epoch_staked_nodes(),
-                epoch_duration: get_epoch_duration(&root_bank),
                 slots_in_epoch: root_bank.get_slots_in_epoch(root_bank.epoch()),
             },
         }
     }
-}
-
-fn get_epoch_duration(bank: &Bank) -> Duration {
-    let num_slots = bank.get_slots_in_epoch(bank.epoch());
-    Duration::from_nanos_u128(num_slots as u128 * bank.ns_per_slot)
 }
 
 #[cfg(test)]
@@ -100,71 +97,10 @@ mod tests {
     use {
         super::*,
         solana_runtime::{
-            bank::SlotLeader,
+            bank::{Bank, SlotLeader},
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
     };
-
-    #[test]
-    fn test_get_epoch_duration() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let (mut bank, bank_forks) =
-            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        let epoch = 0;
-        let num_slots = 32;
-        assert_eq!(bank.epoch(), epoch);
-        assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
-        assert_eq!(
-            get_epoch_duration(&bank),
-            Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
-        );
-        for slot in 1..32 {
-            bank = Bank::new_from_parent_with_bank_forks(
-                bank_forks.as_ref(),
-                bank,
-                SlotLeader::new_unique(),
-                slot,
-            );
-            assert_eq!(bank.epoch(), epoch);
-            assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
-            assert_eq!(
-                get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
-            );
-        }
-        let epoch = 1;
-        let num_slots = 64;
-        for slot in 32..32 + num_slots {
-            bank = Bank::new_from_parent_with_bank_forks(
-                bank_forks.as_ref(),
-                bank,
-                SlotLeader::new_unique(),
-                slot,
-            );
-            assert_eq!(bank.epoch(), epoch);
-            assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
-            assert_eq!(
-                get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
-            );
-        }
-        let epoch = 2;
-        let num_slots = 128;
-        for slot in 96..96 + num_slots {
-            bank = Bank::new_from_parent_with_bank_forks(
-                bank_forks.as_ref(),
-                bank,
-                SlotLeader::new_unique(),
-                slot,
-            );
-            assert_eq!(bank.epoch(), epoch);
-            assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
-            assert_eq!(
-                get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
-            );
-        }
-    }
 
     fn verify_epoch_specs(epoch_specs: &mut EpochSpecs, root_bank: &Bank) {
         assert_eq!(
@@ -176,7 +112,6 @@ mod tests {
         let cache = &epoch_specs.cache;
         assert_eq!(cache.epoch, root_bank.epoch());
         assert_eq!(cache.epoch_schedule, *root_bank.epoch_schedule());
-        assert_eq!(cache.epoch_duration, get_epoch_duration(root_bank));
         assert_eq!(
             cache.slots_in_epoch,
             root_bank.get_slots_in_epoch(root_bank.epoch())

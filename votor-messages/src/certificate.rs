@@ -2,36 +2,65 @@
 
 use {
     crate::{
-        consensus_message::Block,
-        fraction::Fraction,
-        migration::GENESIS_VOTE_THRESHOLD,
-        vote::{Vote, VoteType},
+        consensus_message::Block, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD, vote::Vote,
     },
-    serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
-    wincode::{SchemaRead, SchemaWrite, pod_wrapper},
 };
 
-// Use `BLSSignature` directly once `BLSSignature` wincode support
-// is released in solana-sdk.
-pod_wrapper! {
-    unsafe struct PodBLSSignature(BLSSignature);
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A cert signature
+pub struct CertSignature {
+    /// The aggregate signature.
+    pub signature: BLSSignature,
+    /// A rank bitmap for validators' signatures included in the aggregate.
+    /// See solana-signer-store for encoding format.
+    pub bitmap: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Genesis cert
+pub struct GenesisCert {
+    /// Block the cert is for.
+    pub block: Block,
+    /// the signature on the cert
+    pub signature: CertSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A notarize cert
+pub struct NotarCert {
+    /// Block the cert is for.
+    pub block: Block,
+    /// the signature on the cert
+    pub signature: CertSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A slow finalized cert
+pub struct FinalizeCert {
+    /// Slot the cert is for.
+    pub slot: Slot,
+    /// the signature on the cert
+    pub signature: CertSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A fast finalized cert
+pub struct FastFinalizeCert {
+    /// Block the cert is for.
+    pub block: Block,
+    /// the signature on the cert
+    pub signature: CertSignature,
 }
 
 /// The actual certificate with the aggregate signature and bitmap for which validators are included in the aggregate.
 /// BLS vote message, we need rank to look up pubkey
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "5WqvPnvSnVXQFrAs9o29szFGDiCk45Pgk8K1evTZSrwo")
-)]
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,
     /// The aggregate signature.
-    #[wincode(with = "PodBLSSignature")]
     pub signature: BLSSignature,
     /// A rank bitmap for validators' signatures included in the aggregate.
     /// See solana-signer-store for encoding format.
@@ -39,25 +68,7 @@ pub struct Certificate {
 }
 
 /// The different types of certificates and their relevant state.
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "Fi1rPdeeVstWxxnnPiS7bYtXMEyX6sDGV4o3R2aDMnjt")
-)]
-#[derive(
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Deserialize,
-    Serialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),
@@ -74,6 +85,18 @@ pub enum CertificateType {
 }
 
 impl CertificateType {
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Returns a notar certificate type with the given slot and unique block id for test purposes.
+    pub fn new_unique_notar(slot: Slot) -> Self {
+        Self::Notarize(Block::new_unique(slot))
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Returns a notar fallback certificate type with the given slot and unique block id for test purposes.
+    pub fn new_unique_notar_fallback(slot: Slot) -> Self {
+        Self::NotarizeFallback(Block::new_unique(slot))
+    }
+
     /// Get the slot of the certificate
     pub fn slot(&self) -> Slot {
         match self {
@@ -83,6 +106,18 @@ impl CertificateType {
             | CertificateType::Notarize(Block { slot, block_id: _ })
             | CertificateType::Genesis(Block { slot, block_id: _ })
             | CertificateType::Skip(slot) => *slot,
+        }
+    }
+
+    /// Returns the threshold needed to complete the cert of this type.
+    pub const fn threshold(&self) -> Fraction {
+        match self {
+            Self::Finalize(_) => Fraction::from_percentage(60),
+            Self::Skip(_) => Fraction::from_percentage(60),
+            Self::Notarize(_) => Fraction::from_percentage(60),
+            Self::NotarizeFallback(_) => Fraction::from_percentage(60),
+            Self::FinalizeFast(_) => Fraction::from_percentage(80),
+            Self::Genesis(_) => GENESIS_VOTE_THRESHOLD,
         }
     }
 
@@ -177,29 +212,6 @@ impl CertificateType {
             }
             // Other certificate types do not use Base3 encoding.
             _ => None,
-        }
-    }
-
-    /// Returns the stake fraction required for certificate completion and the
-    /// `VoteType`s that contribute to this certificate.
-    ///
-    /// Must be in sync with `Vote::to_cert_types`
-    pub const fn limits_and_vote_types(&self) -> (Fraction, &'static [VoteType]) {
-        match self {
-            CertificateType::Notarize(_) => (Fraction::from_percentage(60), &[VoteType::Notarize]),
-            CertificateType::NotarizeFallback(_) => (
-                Fraction::from_percentage(60),
-                &[VoteType::Notarize, VoteType::NotarizeFallback],
-            ),
-            CertificateType::FinalizeFast(_) => {
-                (Fraction::from_percentage(80), &[VoteType::Notarize])
-            }
-            CertificateType::Finalize(_) => (Fraction::from_percentage(60), &[VoteType::Finalize]),
-            CertificateType::Skip(_) => (
-                Fraction::from_percentage(60),
-                &[VoteType::Skip, VoteType::SkipFallback],
-            ),
-            CertificateType::Genesis(_) => (GENESIS_VOTE_THRESHOLD, &[VoteType::Genesis]),
         }
     }
 }

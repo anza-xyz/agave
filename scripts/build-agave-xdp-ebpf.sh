@@ -15,7 +15,7 @@ echo "Using nightly toolchain: $rust_nightly"
 
 if ! command -v bpf-linker &> /dev/null; then
     echo "Installing bpf-linker..."
-    cargo install bpf-linker==0.9.15
+    cargo install bpf-linker --version 0.9.15
 fi
 
 rustup component add rust-src --toolchain "$rust_nightly"

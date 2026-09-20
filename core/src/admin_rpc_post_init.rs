@@ -30,10 +30,10 @@ pub enum KeyUpdaterType {
     Forward,
     /// For the RPC service
     RpcService,
-    /// BLS all-to-all streamer key updater
-    Bls,
-    /// BLS all-to-all connection cache key updater
-    BlsConnectionCache,
+    /// Votor QUIC endpoint
+    Votor,
+    /// Votor updater of peer lists
+    VotorPeerListService,
 }
 
 /// Responsible for managing the updaters for identity key change

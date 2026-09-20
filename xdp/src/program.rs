@@ -2,7 +2,10 @@
 
 use {
     crate::device::NetworkDevice,
-    aya::{Ebpf, EbpfLoader, programs::Xdp},
+    aya::{
+        Ebpf, EbpfLoader,
+        programs::{Xdp, xdp::XdpMode},
+    },
     std::io::{Cursor, Write},
 };
 
@@ -44,7 +47,7 @@ pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, Box<dyn std::error:
     let mut loader = EbpfLoader::new();
     let broken_frags = dev.driver()? == "i40e";
     let mut ebpf = if broken_frags {
-        loader.set_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
+        loader.override_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
         loader.load(agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)
     } else {
         loader.load(&generate_xdp_elf())
@@ -52,7 +55,7 @@ pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, Box<dyn std::error:
     let p: &mut Xdp = ebpf.program_mut("agave_xdp").unwrap().try_into().unwrap();
     p.load()?;
 
-    p.attach_to_if_index(dev.if_index(), aya::programs::xdp::XdpFlags::DRV_MODE)?;
+    p.attach_to_if_index(dev.if_index(), XdpMode::Driver)?;
 
     Ok(ebpf)
 }

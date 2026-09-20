@@ -1,10 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{
-        FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8,
-        validator_admission_ticket,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8},
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
@@ -36,7 +33,7 @@ use {
         GeyserPluginManagerRequest, geyser_plugin_manager::GeyserPluginManager,
     },
     solana_gossip::{
-        cluster_info::{ClusterInfo, NodeConfig},
+        cluster_info::{ClusterInfo, DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig},
         contact_info::Protocol,
         node::Node,
     },
@@ -44,7 +41,8 @@ use {
     solana_instruction::Instruction,
     solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
     solana_ledger::{
-        blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
+        blockstore::create_new_ledger,
+        blockstore_options::{BlockstoreCleanupStrategy, LedgerColumnOptions},
         create_new_tmp_ledger,
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -158,7 +156,7 @@ pub struct TestValidatorGenesis {
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
-    pub max_ledger_shreds: Option<u64>,
+    pub blockstore_cleanup_strategy: BlockstoreCleanupStrategy,
     pub max_genesis_archive_unpacked_size: Option<u64>,
     pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub enable_scheduler_bindings: bool,
@@ -167,7 +165,7 @@ pub struct TestValidatorGenesis {
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
     pub geyser_plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
-    admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
+    pub admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
 
 impl Default for TestValidatorGenesis {
@@ -193,7 +191,7 @@ impl Default for TestValidatorGenesis {
             start_progress: Arc::<RwLock<ValidatorStartProgress>>::default(),
             authorized_voter_keypairs: Arc::<RwLock<Vec<Arc<Keypair>>>>::default(),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
-            max_ledger_shreds: Option::<u64>::default(),
+            blockstore_cleanup_strategy: BlockstoreCleanupStrategy::None,
             max_genesis_archive_unpacked_size: Option::<u64>::default(),
             geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
             enable_scheduler_bindings: false,
@@ -276,8 +274,6 @@ impl TestValidatorGenesis {
 
     pub fn activate_alpenglow(&mut self) -> &mut Self {
         self.deactivate_feature_set.remove(&alpenglow::id());
-        self.deactivate_feature_set
-            .remove(&validator_admission_ticket::id());
         self
     }
 
@@ -468,11 +464,11 @@ impl TestValidatorGenesis {
                             return Err(format!("Invalid alt account data length for {address}"));
                         }
 
-                        for address_slice in
-                            raw_addresses_data.chunks_exact(std::mem::size_of::<Pubkey>())
+                        for address_array in raw_addresses_data
+                            .as_chunks::<{ std::mem::size_of::<Pubkey>() }>()
+                            .0
                         {
-                            // safe because size was checked earlier
-                            let address = Pubkey::try_from(address_slice).unwrap();
+                            let address = Pubkey::from(*address_array);
                             alt_entries.push(address);
                         }
                         self.add_account(*address, AccountSharedData::from(account));
@@ -920,11 +916,6 @@ impl TestValidator {
             }
         }
         let is_alpenglow_active = feature_set.is_active(&alpenglow::id());
-        if is_alpenglow_active && !feature_set.is_active(&validator_admission_ticket::id()) {
-            return Err(
-                "Alpenglow requires the validator_admission_ticket feature to be active".into(),
-            );
-        }
 
         let runtime_features = feature_set.runtime_features();
         let program_runtime_environment = create_program_runtime_environment(
@@ -1116,6 +1107,7 @@ impl TestValidator {
                 num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
                 num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                     .expect("Number of QUIC endpoints can not be zero"),
+                num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
             };
             let mut node =
                 Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
@@ -1170,6 +1162,7 @@ impl TestValidator {
                 }),
             log_messages_bytes_limit: config.log_messages_bytes_limit,
             transaction_account_lock_limit: config.transaction_account_lock_limit,
+            ..RuntimeConfig::default()
         };
 
         let mut validator_config = ValidatorConfig {
@@ -1206,7 +1199,7 @@ impl TestValidator {
             },
             warp_slot: config.warp_slot,
             validator_exit: config.validator_exit.clone(),
-            max_ledger_shreds: config.max_ledger_shreds,
+            blockstore_cleanup_strategy: config.blockstore_cleanup_strategy,
             no_wait_for_vote_to_start_leader: true,
             staked_nodes_overrides: config.staked_nodes_overrides.clone(),
             accounts_db_config,
@@ -1616,7 +1609,6 @@ mod test {
             alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
             agave_feature_set::vote_account_initialize_v2::id(),
-            agave_feature_set::validator_admission_ticket::id(),
         ]
         .into_iter()
         .for_each(|feature| {

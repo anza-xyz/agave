@@ -35,14 +35,11 @@ use {
     solana_gossip::ping_pong::{Ping, Pong},
     solana_keypair::signable::Signable,
     solana_ledger::{
-        blockstore::{Blockstore, BlockstoreError, CompletedSlotsReceiver},
+        blockstore::{Blockstore, BlockstoreError, CompletedSlotsReceiver, SlotMeta},
         blockstore_meta::BlockLocation,
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
-    solana_perf::{
-        packet::{PacketBatch, PacketRef, packet_config},
-        recycler::Recycler,
-    },
+    solana_perf::packet::{PacketBatch, PacketRef, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::SharableBanks,
     solana_streamer::{
@@ -68,7 +65,7 @@ use {
 type OutstandingBlockIdRepairs = OutstandingRequests<BlockIdRepairType>;
 
 const MAX_REPAIR_REQUESTS_PER_ITERATION: usize = 200;
-const MAX_ALTERNATE_BLOCKS_PER_SLOT: usize = 11;
+const MAX_ALTERNATE_BLOCKS_PER_SLOT: usize = 6;
 const MAX_PENDING_REPAIR_EVENTS: usize = 10_000;
 
 /// Idle wake-up cadence for `run_repair_iteration`'s `select!`. Bounds the worst-case
@@ -157,7 +154,7 @@ enum PendingRepairDecision {
 /// Action to perform as a result of a repair event
 enum RepairAction {
     StartRepair { block: Block },
-    QueueParent { slot: Slot, location: BlockLocation },
+    QueueParent { slot_meta: SlotMeta },
 }
 
 struct RepairState {
@@ -272,12 +269,10 @@ impl BlockIdRepairService {
             block_id_repair_socket.clone(),
             exit.clone(),
             response_sender,
-            Recycler::default(),
             Arc::new(StreamerReceiveStats::new(
                 "block_id_repair_response_receiver",
             )),
             None,  // coalesce
-            false, // use_pinned_memory
             false, // is_staked_service
         );
 
@@ -457,7 +452,7 @@ impl BlockIdRepairService {
 
         // Generate repair requests for repair actions
         for action in repair_actions {
-            Self::process_repair_decision(&my_pubkey, action, context.blockstore.as_ref(), state)?;
+            Self::process_repair_decision(&my_pubkey, action, state)?;
         }
 
         // Retry requests that have timed out
@@ -625,6 +620,7 @@ impl BlockIdRepairService {
                             slot,
                             block_id,
                             fec_set_index,
+                            fec_set_count,
                         })
                     }));
 
@@ -643,6 +639,9 @@ impl BlockIdRepairService {
                 };
                 let start_index = fec_set_index;
                 let end_index = fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32;
+                // The proof authenticates only the first 20 bytes of a leaf. Shred response
+                // verification compares that prefix, and the returned shred's leader
+                // signature authenticates its complete FEC-set root.
 
                 // Queue ShredForBlockId requests
                 state
@@ -689,7 +688,7 @@ impl BlockIdRepairService {
             return;
         }
         let pong = RepairProtocol::Pong(Pong::new(ping, keypair));
-        let pong_bytes = bincode::serialize(&pong).expect("Pong serialization should not fail");
+        let pong_bytes = wincode::serialize(&pong).expect("Pong serialization should not fail");
 
         match block_id_repair_socket.send_to(&pong_bytes, addr) {
             Ok(bytes_sent) if bytes_sent == pong_bytes.len() => {
@@ -731,12 +730,12 @@ impl BlockIdRepairService {
                     return Ok(PendingRepairDecision::Drop);
                 }
 
-                // Check if we already have the block, if so queue fetching the parent
-                // Note: when a block becomes full in blockstore -> we atomically calculate the DMR and populate location
-                if let Some(location) = blockstore.get_block_location(block.slot, block.block_id)? {
+                // Check if we already have the full block, if so queue fetching the parent.
+                if let Some((slot_meta, _location)) =
+                    blockstore.get_slot_meta_for_block_id(block.slot, block.block_id)?
+                {
                     return Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
-                        slot: block.slot,
-                        location,
+                        slot_meta,
                     }));
                 }
 
@@ -783,10 +782,15 @@ impl BlockIdRepairService {
                              fetching parent",
                             block.slot
                         );
-                        Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
-                            slot: block.slot,
-                            location: BlockLocation::Original,
-                        }))
+                        if let Some((slot_meta, _location)) =
+                            blockstore.get_slot_meta_for_block_id(block.slot, block.block_id)?
+                        {
+                            Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
+                                slot_meta,
+                            }))
+                        } else {
+                            Ok(PendingRepairDecision::KeepPending)
+                        }
                     }
                 }
             }
@@ -797,7 +801,6 @@ impl BlockIdRepairService {
     fn process_repair_decision(
         my_pubkey: &Pubkey,
         action: RepairAction,
-        blockstore: &Blockstore,
         state: &mut RepairState,
     ) -> Result<(), BlockstoreError> {
         match action {
@@ -839,29 +842,18 @@ impl BlockIdRepairService {
                 state.requested_blocks.insert(block);
                 Ok(())
             }
-            RepairAction::QueueParent { slot, location } => {
-                Self::queue_fetch_parent_block(blockstore, slot, location, state)
+            RepairAction::QueueParent { slot_meta } => {
+                Self::queue_fetch_parent_block(slot_meta, state)
             }
         }
     }
 
     /// Helper to fetch the parent block for a slot we already have
     fn queue_fetch_parent_block(
-        blockstore: &Blockstore,
-        slot: Slot,
-        location: BlockLocation,
+        meta: SlotMeta,
         state: &mut RepairState,
     ) -> Result<(), BlockstoreError> {
-        debug_assert!(
-            blockstore
-                .meta_from_location(slot, location)
-                .unwrap()
-                .unwrap()
-                .is_full()
-        );
-        let meta = blockstore
-            .meta_from_location(slot, location)?
-            .expect("SlotMeta must be populated for full slots");
+        debug_assert!(meta.is_full());
 
         state.push_pending_repair_event(RepairEvent::FetchBlock {
             block: Block {
@@ -912,14 +904,9 @@ impl BlockIdRepairService {
             return false;
         };
 
-        let location = BlockLocation::Alternate {
-            block_id: *block_id,
-        };
         blockstore
-            .get_index_from_location(*slot, location)
+            .has_alternate_data_shred(*slot, u64::from(*index), *block_id)
             .ok()
-            .flatten()
-            .map(|idx| idx.data().contains(*index as u64))
             .unwrap_or(false)
     }
 
@@ -1030,10 +1017,9 @@ impl BlockIdRepairService {
                     .iter()
                     .map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, failed)| {
+            .inspect_err(|SendPktsError::IoError(err)| {
                 error!(
-                    "{}: failed to send block_id repair packets, packets failed {failed}/{total}: \
-                     {err:?}",
+                    "{}: failed to send a batch of {total} block_id repair packets: {err:?}",
                     repair_info.cluster_info.id(),
                 )
             });
@@ -1044,10 +1030,9 @@ impl BlockIdRepairService {
                 repair_socket,
                 shred_socket_batch.iter().map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, failed)| {
+            .inspect_err(|SendPktsError::IoError(err)| {
                 error!(
-                    "{}: failed to send shred repair requests, packets failed {failed}/{total}: \
-                     {err:?}",
+                    "{}: failed to send a batch of {total} shred repair requests: {err:?}",
                     repair_info.cluster_info.id(),
                 )
             });
@@ -1066,7 +1051,7 @@ impl BlockIdRepairService {
 mod tests {
     use {
         super::*,
-        bincode::Options,
+        crate::repair::request_response::RequestResponse as _,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, ping_pong::Ping},
         solana_hash::Hash,
         solana_keypair::{Keypair, Signer},
@@ -1103,11 +1088,7 @@ mod tests {
 
     /// Serialize a response and nonce into packet format
     fn serialize_response(response: &BlockIdRepairResponse, nonce: u32) -> Vec<u8> {
-        bincode::options()
-            .with_fixint_encoding()
-            .allow_trailing_bytes()
-            .serialize(&(response, nonce))
-            .unwrap()
+        wincode::serialize(&(response, nonce)).unwrap()
     }
 
     /// Create a packet from serialized data
@@ -1178,7 +1159,7 @@ mod tests {
             }
             PendingRepairDecision::Drop => Ok(()),
             PendingRepairDecision::Act(action) => {
-                BlockIdRepairService::process_repair_decision(&my_pubkey, action, blockstore, state)
+                BlockIdRepairService::process_repair_decision(&my_pubkey, action, state)
             }
         }
     }
@@ -1190,25 +1171,16 @@ mod tests {
 
         for slot in base_slot..base_slot + MAX_PENDING_REPAIR_EVENTS as Slot {
             state.push_pending_repair_event(RepairEvent::FetchBlock {
-                block: Block {
-                    slot,
-                    block_id: Hash::new_unique(),
-                },
+                block: Block::new_unique(slot),
             });
             assert!(state.pending_repair_events.len() <= MAX_PENDING_REPAIR_EVENTS);
         }
 
         state.push_pending_repair_event(RepairEvent::FetchBlock {
-            block: Block {
-                slot: 1,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(1),
         });
         state.push_pending_repair_event(RepairEvent::FetchBlock {
-            block: Block {
-                slot: base_slot + MAX_PENDING_REPAIR_EVENTS as Slot,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(base_slot + MAX_PENDING_REPAIR_EVENTS as Slot),
         });
 
         assert_eq!(state.pending_repair_events.len(), MAX_PENDING_REPAIR_EVENTS);
@@ -1238,7 +1210,7 @@ mod tests {
             parent_proof: parent_proof.clone(),
         };
 
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
@@ -1262,7 +1234,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_fec_set_root_response() {
-        let fec_set_root = Hash::new_unique();
+        let fec_set_root = Hash::new_unique().into();
         let fec_set_proof = vec![2u8; SIZE_OF_MERKLE_PROOF_ENTRY * 3];
 
         let response = BlockIdRepairResponse::FecSetRoot {
@@ -1270,7 +1242,14 @@ mod tests {
             fec_set_proof: fec_set_proof.clone(),
         };
 
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
+        assert_eq!(
+            data.len(),
+            std::mem::size_of::<u32>()
+                + SIZE_OF_MERKLE_PROOF_ENTRY
+                + std::mem::size_of::<u64>()
+                + fec_set_proof.len()
+        );
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
@@ -1333,6 +1312,7 @@ mod tests {
             slot: 102,
             block_id: Hash::new_unique(),
             fec_set_index: 0,
+            fec_set_count: 1,
         });
         state
             .sent_requests
@@ -1342,7 +1322,7 @@ mod tests {
         let expired_shred_not_received = OutgoingMessage::Shred(ShredRepairType::ShredForBlockId {
             slot: 103,
             index: 5,
-            fec_set_merkle_root: Hash::new_unique(),
+            fec_set_merkle_root: Hash::new_unique().into(),
             block_id: Hash::new_unique(),
         });
         state
@@ -1364,7 +1344,7 @@ mod tests {
             OutgoingMessage::Shred(ShredRepairType::ShredForBlockId {
                 slot: received_slot,
                 index: received_shred_index,
-                fec_set_merkle_root: Hash::new_unique(),
+                fec_set_merkle_root: Hash::new_unique().into(),
                 block_id: received_block_id,
             });
         state
@@ -1375,7 +1355,7 @@ mod tests {
         let recent_shred = OutgoingMessage::Shred(ShredRepairType::ShredForBlockId {
             slot: 105,
             index: 15,
-            fec_set_merkle_root: Hash::new_unique(),
+            fec_set_merkle_root: Hash::new_unique().into(),
             block_id: Hash::new_unique(),
         });
         state.sent_requests.insert(recent_shred.clone(), now);
@@ -1460,6 +1440,13 @@ mod tests {
 
         // Verify: FecSetRoot requests were added to pending
         assert_eq!(state.pending_repair_requests.len(), fec_set_count_usize);
+        assert!(state.pending_repair_requests.iter().all(|request| matches!(
+            request,
+            OutgoingMessage::Metadata(BlockIdRepairType::FecSetRoot {
+                fec_set_count: count,
+                ..
+            }) if *count == fec_set_count
+        )));
 
         // Verify: request was removed from sent_requests
         assert!(
@@ -1491,7 +1478,7 @@ mod tests {
 
         // The FEC set root for fec_set_index=32 corresponds to leaf index 1 (32/32=1)
         let fec_set_leaf_index = fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
-        let fec_set_root = fec_set_roots[fec_set_leaf_index];
+        let fec_set_root = fec_set_roots[fec_set_leaf_index].into();
         let fec_set_proof = proofs[fec_set_leaf_index].clone();
 
         // Create the request that would have been sent
@@ -1499,6 +1486,7 @@ mod tests {
             slot,
             block_id,
             fec_set_index,
+            fec_set_count: u32::try_from(fec_set_count).unwrap(),
         };
 
         // Register the request in outstanding_requests and get the nonce
@@ -1509,11 +1497,11 @@ mod tests {
             .sent_requests
             .insert(OutgoingMessage::Metadata(request), timestamp());
 
-        // Build the response
         let response = BlockIdRepairResponse::FecSetRoot {
             fec_set_root,
             fec_set_proof,
         };
+        assert!(request.verify_response(&response));
 
         // Serialize and create packet
         let data = serialize_response(&response, nonce);
@@ -1612,7 +1600,7 @@ mod tests {
         let ping = Ping::new([7u8; 32], &ping_keypair);
         state.expect_ping_response(ping_keypair.pubkey(), from_addr, timestamp());
         let response = BlockIdRepairResponse::Ping { ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
 
@@ -1634,7 +1622,7 @@ mod tests {
             .unwrap();
         let mut buffer = vec![0; 2048];
         let (size, _) = pong_receiver.recv_from(&mut buffer).unwrap();
-        match bincode::deserialize(&buffer[..size]).unwrap() {
+        match wincode::deserialize(&buffer[..size]).unwrap() {
             RepairProtocol::Pong(pong) => assert!(pong.verify()),
             request => panic!("Expected Pong response, got {request:?}"),
         }
@@ -1652,7 +1640,7 @@ mod tests {
 
         let first_ping = Ping::new([1u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping: first_ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
@@ -1665,7 +1653,7 @@ mod tests {
 
         let second_ping = Ping::new([2u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping: second_ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
@@ -1690,7 +1678,7 @@ mod tests {
         let from_addr = SocketAddr::from(([127, 0, 0, 1], 1234));
         let ping = Ping::new([7u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
 
@@ -1878,10 +1866,7 @@ mod tests {
 
         // Fill up requested_blocks with MAX_ALTERNATE_BLOCKS_PER_SLOT blocks for this slot
         for _ in 0..MAX_ALTERNATE_BLOCKS_PER_SLOT {
-            state.requested_blocks.insert(Block {
-                slot,
-                block_id: Hash::new_unique(),
-            });
+            state.requested_blocks.insert(Block::new_unique(slot));
         }
 
         let new_block_id = Hash::new_unique();
@@ -1942,13 +1927,7 @@ mod tests {
             .collect();
 
         for action in actions {
-            BlockIdRepairService::process_repair_decision(
-                &my_pubkey,
-                action,
-                &blockstore,
-                &mut state,
-            )
-            .unwrap();
+            BlockIdRepairService::process_repair_decision(&my_pubkey, action, &mut state).unwrap();
         }
 
         assert_eq!(

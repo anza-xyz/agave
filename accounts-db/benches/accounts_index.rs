@@ -35,13 +35,12 @@ fn bench_accounts_index(c: &mut Criterion) {
                 pubkey,
                 AccountInfo::default(),
                 &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
         }
     }
 
     let mut fork = NUM_FORKS;
-    let mut root = 0;
     c.bench_function("accounts_index", |b| {
         b.iter(|| {
             for _p in 0..NUM_PUBKEYS {
@@ -52,12 +51,10 @@ fn bench_accounts_index(c: &mut Criterion) {
                     &pubkeys[pubkey],
                     AccountInfo::default(),
                     &mut reclaims,
-                    UpsertReclaim::PopulateReclaims,
+                    UpsertReclaim::ReclaimOldSlots,
                 );
                 reclaims.clear();
             }
-            index.add_root(root);
-            root = root.checked_add(1).expect("root overflow");
             fork = fork.checked_add(1).expect("fork overflow");
         });
     });

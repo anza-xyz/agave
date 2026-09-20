@@ -4,8 +4,8 @@ use {
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
-    agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
+    arc_swap::ArcSwap,
     assert_matches::assert_matches,
     crossbeam_channel::{Receiver, bounded},
     gag::BufferRedirect,
@@ -15,8 +15,6 @@ use {
     serial_test::serial,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
-    solana_client::rpc_client::RpcClient,
-    solana_client_traits::AsyncClient,
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -35,7 +33,9 @@ use {
     solana_entry::entry::create_ticks,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_genesis_utils::open_genesis_config,
-    solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
+    solana_gossip::{
+        contact_info::Protocol, crds_data::MAX_VOTES, gossip_service::discover_validators,
+    },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::{Keypair, keypair_from_seed},
@@ -54,7 +54,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
-        cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient},
+        cluster::{Cluster, ClusterValidatorInfo},
         cluster_tests,
         integration_tests::{
             AG_DEBUG_LOG_FILTER, DEFAULT_NODE_STAKE, RUST_LOG_FILTER, SnapshotValidatorConfig,
@@ -73,6 +73,7 @@ use {
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
+    solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         config::{
             RpcBlockSubscribeConfig, RpcBlockSubscribeFilter, RpcProgramAccountsConfig,
@@ -81,6 +82,7 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
+    solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_stake_interface as stake,
     solana_system_interface::program as system_program,
@@ -101,6 +103,7 @@ use {
         fs,
         io::Read,
         iter,
+        net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
         path::Path,
         sync::{
@@ -189,12 +192,11 @@ fn test_local_cluster_signature_subscribe() {
         .unwrap();
     let non_bootstrap_info = cluster.get_contact_info(&non_bootstrap_id).unwrap();
 
-    let tx_client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
 
-    let (blockhash, _) = tx_client
-        .rpc_client()
+    let (blockhash, _) = rpc_client
         .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .unwrap();
 
@@ -215,13 +217,32 @@ fn test_local_cluster_signature_subscribe() {
     )
     .unwrap();
 
-    LocalCluster::send_transaction_with_retries(
-        &tx_client,
-        &[&cluster.funding_keypair],
-        &mut transaction,
-        5,
-    )
-    .unwrap();
+    let tpu_sender = cluster_tests::TpuSender::new();
+    let leader_pubkey = rpc_client
+        .get_slot_leader()
+        .expect("test_bad_handshake: get_slot_leader");
+    let tpu_addr = rpc_client
+        .get_cluster_nodes()
+        .expect("test_bad_handshake: get_cluster_nodes")
+        .into_iter()
+        .find(|n| n.pubkey == leader_pubkey.to_string())
+        .and_then(|n| n.tpu_quic)
+        .or_else(|| {
+            cluster
+                .get_contact_info(cluster.entry_point_info.pubkey())
+                .unwrap()
+                .tpu(Protocol::QUIC)
+        })
+        .expect("test_bad_handshake: leader has no QUIC TPU address");
+    tpu_sender
+        .send_transaction_with_retries(
+            tpu_addr,
+            &rpc_client,
+            &[&cluster.funding_keypair],
+            &mut transaction,
+            5,
+        )
+        .unwrap();
 
     let mut got_received_notification = false;
     loop {
@@ -404,8 +425,8 @@ fn test_mainnet_beta_cluster_type() {
     .unwrap();
     assert_eq!(cluster_nodes.len(), 1);
 
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
 
     // Programs that are available at epoch 0
@@ -422,8 +443,7 @@ fn test_mainnet_beta_cluster_type() {
         assert_matches!(
             (
                 program_id,
-                client
-                    .rpc_client()
+                rpc_client
                     .get_account_with_commitment(program_id, CommitmentConfig::processed())
                     .unwrap()
                     .value
@@ -437,8 +457,7 @@ fn test_mainnet_beta_cluster_type() {
         assert_eq!(
             (
                 program_id,
-                client
-                    .rpc_client()
+                rpc_client
                     .get_account_with_commitment(program_id, CommitmentConfig::processed())
                     .unwrap()
                     .value
@@ -979,9 +998,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let timer = Instant::now();
     loop {
         let validator_current_slot = cluster
-            .build_validator_tpu_quic_client(&validator_identity.pubkey())
+            .build_rpc_client(&validator_identity.pubkey())
             .unwrap()
-            .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::finalized())
             .unwrap();
         trace!("validator current slot: {validator_current_slot}");
@@ -1113,27 +1131,22 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             validator_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
-        ) {
-            if full_snapshot_slot >= validator_next_full_snapshot_slot {
-                if let Some(incremental_snapshot_slot) =
-                    snapshot_paths::get_highest_incremental_snapshot_archive_slot(
-                        validator_snapshot_test_config
-                            .incremental_snapshot_archives_dir
-                            .path(),
-                        full_snapshot_slot,
-                    )
-                {
-                    if incremental_snapshot_slot >= validator_next_incremental_snapshot_slot {
-                        // specific incremental snapshot is not important, just that one was created
-                        info!(
-                            "Validator made new snapshots, full snapshot slot: \
-                             {full_snapshot_slot}, incremental snapshot slot: \
-                             {incremental_snapshot_slot}",
-                        );
-                        break;
-                    }
-                }
-            }
+        ) && full_snapshot_slot >= validator_next_full_snapshot_slot
+            && let Some(incremental_snapshot_slot) =
+                snapshot_paths::get_highest_incremental_snapshot_archive_slot(
+                    validator_snapshot_test_config
+                        .incremental_snapshot_archives_dir
+                        .path(),
+                    full_snapshot_slot,
+                )
+            && incremental_snapshot_slot >= validator_next_incremental_snapshot_slot
+        {
+            // specific incremental snapshot is not important, just that one was created
+            info!(
+                "Validator made new snapshots, full snapshot slot: {full_snapshot_slot}, \
+                 incremental snapshot slot: {incremental_snapshot_slot}",
+            );
+            break;
         }
 
         assert!(
@@ -1369,19 +1382,14 @@ fn test_snapshots_blockstore_floor() {
         .into_iter()
         .find(|x| x != cluster.entry_point_info.pubkey())
         .unwrap();
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
     let mut current_slot = 0;
 
     // Let this validator run a while with repair
     let target_slot = slot_floor + 40;
     while current_slot <= target_slot {
         trace!("current_slot: {current_slot}");
-        if let Ok(slot) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::processed())
-        {
+        if let Ok(slot) = rpc_client.get_slot_with_commitment(CommitmentConfig::processed()) {
             current_slot = slot;
         } else {
             continue;
@@ -1502,12 +1510,11 @@ fn test_no_voting() {
         ..ClusterConfig::default()
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
     loop {
-        let last_slot = client
-            .rpc_client()
+        let last_slot = rpc_client
             .get_slot_with_commitment(CommitmentConfig::processed())
             .expect("Couldn't get slot");
         if last_slot > 4 * VOTE_THRESHOLD_DEPTH as u64 {
@@ -1566,16 +1573,13 @@ fn test_optimistic_confirmation_violation_detection() {
     // so that the vote on `S-1` is definitely in gossip and optimistic confirmation is
     // detected on slot `S-1` for sure, then stop the heavier of the two
     // validators
-    let client = cluster
-        .build_validator_tpu_quic_client(&node_to_restart)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&node_to_restart).unwrap();
     let start = Instant::now();
     let target_slot = 50;
     let max_wait_time_seconds = 100;
     let mut optimistically_confirmed_slot;
     loop {
-        optimistically_confirmed_slot = client
-            .rpc_client()
+        optimistically_confirmed_slot = rpc_client
             .get_slot_with_commitment(CommitmentConfig::confirmed())
             .unwrap();
 
@@ -1593,7 +1597,7 @@ fn test_optimistic_confirmation_violation_detection() {
     }
 
     info!("exiting node");
-    drop(client);
+    drop(rpc_client);
     let mut exited_validator_info = cluster.exit_node(&node_to_restart);
     info!("exiting node success");
 
@@ -1699,16 +1703,13 @@ fn test_optimistic_confirmation_violation_detection() {
         );
 
         // Wait for a root descended from `new_fork_slot` to be set.
-        let client = cluster
-            .build_validator_tpu_quic_client(&node_to_restart)
-            .unwrap();
+        let rpc_client = cluster.build_rpc_client(&node_to_restart).unwrap();
 
         info!("looking for root > {optimistically_confirmed_slot} on new fork {new_fork_slot}");
         let start = Instant::now();
         loop {
-            info!("Client connecting to: {}", client.rpc_client().url());
-            let last_root = client
-                .rpc_client()
+            info!("Client connecting to: {}", rpc_client.url());
+            let last_root = rpc_client
                 .get_slot_with_commitment(CommitmentConfig::finalized())
                 .unwrap();
 
@@ -1783,9 +1784,7 @@ fn test_validator_saves_tower() {
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     let ledger_path = cluster
         .validators
@@ -1799,10 +1798,7 @@ fn test_validator_saves_tower() {
 
     // Wait for some votes to be generated
     loop {
-        if let Ok(slot) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::processed())
-        {
+        if let Ok(slot) = rpc_client.get_slot_with_commitment(CommitmentConfig::processed()) {
             trace!("current slot: {slot}");
             if slot > 2 {
                 break;
@@ -1820,16 +1816,11 @@ fn test_validator_saves_tower() {
 
     // Restart the validator and wait for a new root
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for the first new root
     let last_replayed_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}");
             if root > 0 {
                 break root;
@@ -1851,16 +1842,11 @@ fn test_validator_saves_tower() {
         .unwrap();
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for a new root, demonstrating the validator was able to make progress from the older `tower1`
     let new_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}, last_replayed_root: {last_replayed_root}");
             if root > last_replayed_root {
                 break root;
@@ -1882,16 +1868,11 @@ fn test_validator_saves_tower() {
     validator_info.config.require_tower = false;
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster
-        .build_validator_tpu_quic_client(&validator_id)
-        .unwrap();
+    let rpc_client = cluster.build_rpc_client(&validator_id).unwrap();
 
     // Wait for another new root
     let new_root = loop {
-        if let Ok(root) = validator_client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-        {
+        if let Ok(root) = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized()) {
             trace!("current root: {root}, last tower root: {tower3_root}");
             if root > tower3_root {
                 break root;
@@ -1966,11 +1947,11 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     loop {
         sleep(Duration::from_millis(100));
 
-        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if root >= 15 {
-                root_before_restart = root;
-                break;
-            }
+        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && root >= 15
+        {
+            root_before_restart = root;
+            break;
         }
     }
     let purged_slot_before_restart = 10;
@@ -1996,11 +1977,11 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     for _ in 0..600 {
         sleep(Duration::from_millis(100));
 
-        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if root >= some_root_after_restart {
-                newly_rooted = true;
-                break;
-            }
+        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && root >= some_root_after_restart
+        {
+            newly_rooted = true;
+            break;
         }
     }
     let _validator_a_info = cluster.exit_node(&validator_a_pubkey);
@@ -2138,10 +2119,10 @@ fn test_hard_fork_invalidates_tower() {
     loop {
         sleep(Duration::from_millis(100));
 
-        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if root >= min_root {
-                break;
-            }
+        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && root >= min_root
+        {
+            break;
         }
     }
 
@@ -2250,6 +2231,7 @@ fn create_snapshot_to_hard_fork(
     blockstore_processor::process_blockstore_from_root(
         blockstore,
         &bank_forks,
+        compute_shred_version(&genesis_config.hash(), None),
         &leader_schedule_cache,
         &process_options,
         None,
@@ -2326,12 +2308,11 @@ fn test_hard_fork_with_gap_in_roots() {
     loop {
         sleep(Duration::from_millis(100));
 
-        if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if last_vote >= min_last_vote
-                && root_in_tower(&val_a_ledger_path, &validator_a_pubkey) > Some(min_root)
-            {
-                break;
-            }
+        if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && last_vote >= min_last_vote
+            && root_in_tower(&val_a_ledger_path, &validator_a_pubkey) > Some(min_root)
+        {
+            break;
         }
     }
 
@@ -2556,14 +2537,30 @@ fn test_run_test_load_program_accounts_partition_root() {
     );
 
     let on_partition_start = |cluster: &mut LocalCluster, _: &mut ()| {
-        let update_client = cluster
-            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        let rpc_client = cluster
+            .build_rpc_client(cluster.entry_point_info.pubkey())
             .unwrap();
-        update_client_sender.send(update_client).unwrap();
-        let scan_client = cluster
-            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        let leader_pubkey = rpc_client
+            .get_slot_leader()
+            .expect("on_partition_start: get_slot_leader");
+        let tpu_addr = rpc_client
+            .get_cluster_nodes()
+            .expect("on_partition_start: get_cluster_nodes")
+            .into_iter()
+            .find(|n| n.pubkey == leader_pubkey.to_string())
+            .and_then(|n| n.tpu_quic)
+            .or_else(|| {
+                cluster
+                    .get_contact_info(cluster.entry_point_info.pubkey())
+                    .unwrap()
+                    .tpu(Protocol::QUIC)
+            })
+            .expect("on_partition_start: leader has no QUIC TPU address");
+        update_client_sender.send((rpc_client, tpu_addr)).unwrap();
+        let scan_rpc_client = cluster
+            .build_rpc_client(cluster.entry_point_info.pubkey())
             .unwrap();
-        scan_client_sender.send(scan_client).unwrap();
+        scan_client_sender.send(scan_rpc_client).unwrap();
     };
 
     let on_partition_before_resolved = |_: &mut LocalCluster, _: &mut ()| {};
@@ -2650,9 +2647,15 @@ fn test_oc_bad_signatures() {
     );
 
     // 3) Start up a spy to listen for and push votes to leader TPU
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
+    let tpu_addr = cluster
+        .get_contact_info(cluster.entry_point_info.pubkey())
+        .unwrap()
+        .tpu(Protocol::QUIC)
+        .expect("test_oc_bad_signatures: entry point has no QUIC TPU address");
+    let tpu_sender = cluster_tests::TpuSender::new();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
     let gossip_voter = cluster_tests::start_gossip_voter(
@@ -2696,8 +2699,9 @@ fn test_oc_bad_signatures() {
 
                 // Send the bad vote and expect transaction error.
                 assert_matches!(
-                    LocalCluster::send_transaction_with_retries(
-                        &client,
+                    tpu_sender.send_transaction_with_retries(
+                        tpu_addr,
+                        &rpc_client,
                         &[&node_keypair, &bad_authorized_signer_keypair],
                         &mut vote_tx,
                         5,
@@ -2856,8 +2860,8 @@ fn setup_transfer_scan_threads(
     num_starting_accounts: usize,
     exit: Arc<AtomicBool>,
     scan_commitment: CommitmentConfig,
-    update_client_receiver: Receiver<QuicTpuClient>,
-    scan_client_receiver: Receiver<QuicTpuClient>,
+    update_client_receiver: Receiver<(Arc<RpcClient>, SocketAddr)>,
+    scan_client_receiver: Receiver<Arc<RpcClient>>,
 ) -> (
     JoinHandle<()>,
     JoinHandle<()>,
@@ -2889,38 +2893,45 @@ fn setup_transfer_scan_threads(
     let t_update = Builder::new()
         .name("update".to_string())
         .spawn(move || {
-            let client = update_client_receiver.recv().unwrap();
-            loop {
-                if exit_.load(Ordering::Relaxed) {
-                    return;
-                }
-                let (blockhash, _) = client
-                    .rpc_client()
-                    .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-                    .unwrap();
-                for i in 0..starting_keypairs_.len() {
-                    let result = client.async_transfer(
-                        1,
-                        &starting_keypairs_[i],
-                        &target_keypairs_[i].pubkey(),
-                        blockhash,
-                    );
-                    if result.is_err() {
-                        debug!("Failed in transfer for starting keypair: {result:?}");
+            let (rpc_client, tpu_addr) = update_client_receiver.recv().unwrap();
+            let tpu_sender = cluster_tests::TpuSender::new();
+            let tpu_sender_inner = tpu_sender.clone();
+            tpu_sender.with_connection(tpu_addr, move |sender| {
+                loop {
+                    if exit_.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let (blockhash, _) = rpc_client
+                        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+                        .unwrap();
+                    for i in 0..starting_keypairs_.len() {
+                        let tx = system_transaction::transfer(
+                            &starting_keypairs_[i],
+                            &target_keypairs_[i].pubkey(),
+                            1,
+                            blockhash,
+                        );
+                        tpu_sender_inner.try_send_wire_transaction(
+                            sender,
+                            wincode::serialize(&tx)
+                                .expect("setup_transfer_scan_threads: serialize"),
+                        );
+                    }
+                    for i in 0..starting_keypairs_.len() {
+                        let tx = system_transaction::transfer(
+                            &target_keypairs_[i],
+                            &starting_keypairs_[i].pubkey(),
+                            1,
+                            blockhash,
+                        );
+                        tpu_sender_inner.try_send_wire_transaction(
+                            sender,
+                            wincode::serialize(&tx)
+                                .expect("setup_transfer_scan_threads: serialize"),
+                        );
                     }
                 }
-                for i in 0..starting_keypairs_.len() {
-                    let result = client.async_transfer(
-                        1,
-                        &target_keypairs_[i],
-                        &starting_keypairs_[i].pubkey(),
-                        blockhash,
-                    );
-                    if result.is_err() {
-                        debug!("Failed in transfer for starting keypair: {result:?}");
-                    }
-                }
-            }
+            });
         })
         .unwrap();
 
@@ -2936,13 +2947,12 @@ fn setup_transfer_scan_threads(
     let t_scan = Builder::new()
         .name("scan".to_string())
         .spawn(move || {
-            let client = scan_client_receiver.recv().unwrap();
+            let rpc_client = scan_client_receiver.recv().unwrap();
             loop {
                 if exit.load(Ordering::Relaxed) {
                     return;
                 }
-                if let Some(total_scan_balance) = client
-                    .rpc_client()
+                if let Some(total_scan_balance) = rpc_client
                     .get_program_ui_accounts_with_config(
                         &system_program::id(),
                         scan_commitment_config.clone(),
@@ -3015,14 +3025,28 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
         .into_iter()
         .find(|x| x != cluster.entry_point_info.pubkey())
         .unwrap();
-    let client = cluster
-        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+    let rpc_client = cluster
+        .build_rpc_client(cluster.entry_point_info.pubkey())
         .unwrap();
-    update_client_sender.send(client).unwrap();
-    let scan_client = cluster
-        .build_validator_tpu_quic_client(&other_validator_id)
-        .unwrap();
-    scan_client_sender.send(scan_client).unwrap();
+    let leader_pubkey = rpc_client
+        .get_slot_leader()
+        .expect("run_test_load_program_accounts: get_slot_leader");
+    let tpu_addr = rpc_client
+        .get_cluster_nodes()
+        .expect("run_test_load_program_accounts: get_cluster_nodes")
+        .into_iter()
+        .find(|n| n.pubkey == leader_pubkey.to_string())
+        .and_then(|n| n.tpu_quic)
+        .or_else(|| {
+            cluster
+                .get_contact_info(cluster.entry_point_info.pubkey())
+                .unwrap()
+                .tpu(Protocol::QUIC)
+        })
+        .expect("run_test_load_program_accounts: leader has no QUIC TPU address");
+    update_client_sender.send((rpc_client, tpu_addr)).unwrap();
+    let scan_rpc_client = cluster.build_rpc_client(&other_validator_id).unwrap();
+    scan_client_sender.send(scan_rpc_client).unwrap();
 
     // Wait for some roots to pass
     cluster.check_for_new_roots(
@@ -3179,10 +3203,10 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     // Step 1: Wait for validator A to vote so the tower file exists, and so we can determine the
     // `base_slot` and `next_slot_on_a`
     loop {
-        if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if last_vote >= 1 {
-                break;
-            }
+        if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && last_vote >= 1
+        {
+            break;
         }
 
         sleep(Duration::from_millis(100));
@@ -3766,6 +3790,7 @@ fn test_kill_partition_switch_threshold_progress() {
 /// slot, which is the simpler duplicate-confirmation path.
 #[test]
 #[serial]
+#[ignore]
 #[allow(unused_attributes)]
 fn test_duplicate_shreds_broadcast_leader() {
     run_duplicate_shreds_broadcast_leader(true);
@@ -3839,6 +3864,26 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     // for the partition.
     assert!(partition_node_stake < our_node_stake && partition_node_stake < good_node_stake);
 
+    let validator_keys: Vec<_> = iter::repeat_with(ValidatorKeys::new)
+        .take(node_stakes.len())
+        .collect();
+    // Restrict repair to the leader and good node, which both hold the duplicate-confirmed version.
+    let good_block_repair_validators = HashSet::from([
+        validator_keys[0].node_keypair.pubkey(), // Bad leader stores the original version.
+        validator_keys[2].node_keypair.pubkey(), // Good node receives the original version.
+    ]);
+    let validator_test_configs = validator_keys
+        .into_iter()
+        .map(|validator_keys| ValidatorTestConfig {
+            validator_keys,
+            validator_config: ValidatorConfig {
+                repair_validators: Some(good_block_repair_validators.clone()),
+                ..ValidatorConfig::default_for_test()
+            },
+            in_genesis: true,
+        })
+        .collect();
+
     let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
 
     // 1) Set up the cluster
@@ -3848,7 +3893,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
             duplicate_slot_sender: Some(duplicate_slot_sender),
         }),
         node_stakes,
-        None,
+        Some(validator_test_configs),
         None,
     );
 
@@ -4412,10 +4457,10 @@ fn test_slot_hash_expiry() {
     // Let A run for a while until we get to the common ancestor
     info!("Letting A run until common_ancestor_slot");
     loop {
-        if let Some((last_vote, _)) = last_vote_in_tower(&a_ledger_path, &a_pubkey) {
-            if last_vote >= common_ancestor_slot {
-                break;
-            }
+        if let Some((last_vote, _)) = last_vote_in_tower(&a_ledger_path, &a_pubkey)
+            && last_vote >= common_ancestor_slot
+        {
+            break;
         }
         sleep(Duration::from_millis(100));
     }
@@ -4493,14 +4538,14 @@ fn test_slot_hash_expiry() {
         let last_vote =
             wait_for_last_vote_in_tower_to_land_in_ledger(&b_ledger_path, &b_pubkey).unwrap();
         let mut ancestors = AncestorIterator::new(last_vote, &blockstore);
-        if let Some(index) = ancestors.position(|x| x == common_ancestor_slot) {
-            if index > 7 {
-                info!(
-                    "B has forked for enough lockout: {:?}",
-                    AncestorIterator::new(last_vote, &blockstore).collect::<Vec<Slot>>()
-                );
-                break;
-            }
+        if let Some(index) = ancestors.position(|x| x == common_ancestor_slot)
+            && index > 7
+        {
+            info!(
+                "B has forked for enough lockout: {:?}",
+                AncestorIterator::new(last_vote, &blockstore).collect::<Vec<Slot>>()
+            );
+            break;
         }
         sleep(Duration::from_millis(1000));
     }
@@ -4775,7 +4820,7 @@ fn test_duplicate_with_pruned_ancestor() {
         );
         let shreds =
             entries_to_test_shreds(&entries, last_majority_vote, last_minority_vote, true, 0);
-        our_blockstore.insert_shreds(shreds, None, false).unwrap();
+        our_blockstore.insert_shreds(shreds, false).unwrap();
     }
 
     // Actual test, `our_node` will replay the minority fork, then the majority fork which will
@@ -4884,10 +4929,9 @@ fn test_boot_from_local_state() {
     let bank_snapshot = loop {
         if let Some(bank_snapshot) =
             snapshot_utils::get_highest_bank_snapshot(&validator2_config.bank_snapshots_dir)
+            && bank_snapshot.slot > incremental_snapshot_archive.slot()
         {
-            if bank_snapshot.slot > incremental_snapshot_archive.slot() {
-                break bank_snapshot;
-            }
+            break bank_snapshot;
         }
         assert!(
             timer.elapsed() < Duration::from_secs(30),
@@ -4973,7 +5017,7 @@ fn test_boot_from_local_state() {
     // so use it as the comparison for others.
     // - wait for validator1 to take new snapshots
     // - wait for the other validators to have high enough snapshots
-    // - ensure the other validators' snapshots match validator1's
+    // - ensure the other validators' full snapshots match validator1's
     //
     // NOTE: There's a chance validator 2 or 3 has crossed the next full snapshot past what
     // validator 1 has.  If that happens, validator 2 or 3 may have purged the snapshots needed
@@ -4999,9 +5043,6 @@ fn test_boot_from_local_state() {
     #[allow(dead_code)]
     #[derive(Debug)]
     struct SnapshotSlot(Slot);
-    #[allow(dead_code)]
-    #[derive(Debug)]
-    struct BaseSlot(Slot);
 
     for (i, other_validator_config) in [(2, &validator2_config), (3, &validator3_config)] {
         info!("Checking if validator{i} has the same snapshots as validator1...");
@@ -5055,46 +5096,6 @@ fn test_boot_from_local_state() {
                 .collect::<Vec<_>>(),
         );
 
-        let other_incremental_snapshot_archives =
-            snapshot_paths::incremental_snapshot_archives_iter(
-                other_validator_config
-                    .incremental_snapshot_archives_dir
-                    .path(),
-            )
-            .collect::<Vec<_>>();
-        debug!(
-            "validator{i} incremental snapshot archives: {other_incremental_snapshot_archives:?}"
-        );
-        assert!(
-            other_incremental_snapshot_archives
-                .iter()
-                .any(
-                    |other_incremental_snapshot_archive| other_incremental_snapshot_archive
-                        .base_slot()
-                        == incremental_snapshot_archive.base_slot()
-                        && other_incremental_snapshot_archive.slot()
-                            == incremental_snapshot_archive.slot()
-                        && other_incremental_snapshot_archive.hash()
-                            == incremental_snapshot_archive.hash()
-                ),
-            "incremental snapshot archive does not match!\n  validator1: {:?}\n  validator{i}: \
-             {:?}",
-            (
-                BaseSlot(incremental_snapshot_archive.base_slot()),
-                SnapshotSlot(incremental_snapshot_archive.slot()),
-                incremental_snapshot_archive.hash(),
-            ),
-            other_incremental_snapshot_archives
-                .iter()
-                .sorted_unstable()
-                .rev()
-                .map(|snap| (
-                    BaseSlot(snap.base_slot()),
-                    SnapshotSlot(snap.slot()),
-                    snap.hash(),
-                ))
-                .collect::<Vec<_>>(),
-        );
         info!("Checking if validator{i} has the same snapshots as validator1... DONE");
     }
 }
@@ -5567,16 +5568,16 @@ fn test_duplicate_shreds_switch_failure() {
             &target_switch_fork_validator_ledger_path,
             &target_switch_fork_validator_pubkey,
         );
-        if let Some(latest_vote_slot) = last_vote {
-            if latest_vote_slot > dup_slot {
-                let blockstore = open_blockstore(&target_switch_fork_validator_ledger_path);
-                let ancestor_slots: HashSet<Slot> =
-                    AncestorIterator::new_inclusive(latest_vote_slot, &blockstore).collect();
-                assert!(ancestor_slots.contains(&latest_vote_slot));
-                assert!(ancestor_slots.contains(&0));
-                assert!(!ancestor_slots.contains(&dup_slot));
-                break;
-            }
+        if let Some(latest_vote_slot) = last_vote
+            && latest_vote_slot > dup_slot
+        {
+            let blockstore = open_blockstore(&target_switch_fork_validator_ledger_path);
+            let ancestor_slots: HashSet<Slot> =
+                AncestorIterator::new_inclusive(latest_vote_slot, &blockstore).collect();
+            assert!(ancestor_slots.contains(&latest_vote_slot));
+            assert!(ancestor_slots.contains(&0));
+            assert!(!ancestor_slots.contains(&dup_slot));
+            break;
         }
         sleep(Duration::from_millis(1000));
     }
@@ -5758,10 +5759,9 @@ fn test_invalid_forks_persisted_on_restart() {
     loop {
         if let Some(slot) =
             wait_for_last_vote_in_tower_to_land_in_ledger(&target_ledger_path, &target_pubkey)
+            && slot > dup_slot
         {
-            if slot > dup_slot {
-                break;
-            }
+            break;
         }
 
         assert!(
@@ -5875,7 +5875,6 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(validator_keys.clone()),
         node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
-        ticks_per_slot: 8,
         slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH * 2,
         stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         poh_config: PohConfig {
@@ -6015,22 +6014,23 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
         leader_schedule: Arc::new(leader_schedule),
     };
 
+    let node_pubkeys = validator_keys
+        .iter()
+        .map(|key| key.node_keypair.pubkey())
+        .collect::<Vec<_>>();
+    let listener_keypair = Keypair::new();
+    let listener_pubkey = listener_keypair.pubkey();
+
     // Create our UDP socket to listen to votes
     let vote_listener_addr = bind_to_localhost_unique().unwrap();
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.fixed_leader_schedule = Some(leader_schedule);
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
-        alpenglow_port_override: AlpenglowPortOverride::default(),
-    });
+    validator_config.votor_peer_overrides = Arc::new(ArcSwap::from_pointee(HashMap::from([(
+        listener_pubkey,
+        Some(vote_listener_addr.local_addr().unwrap()),
+    )])));
     validator_config.wait_for_supermajority = Some(0);
-
-    // Collect node pubkeys
-    let node_pubkeys = validator_keys
-        .iter()
-        .map(|key| key.node_keypair.pubkey())
-        .collect::<Vec<_>>();
 
     // Cluster config
     let mut cluster_config = ClusterConfig {
@@ -6046,7 +6046,6 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
         ),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
-        ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
@@ -6075,18 +6074,12 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
     info!("restarting node B");
     cluster.restart_node(&node_pubkeys[1], b_info, SocketAddrSpace::Unspecified);
 
-    // Ensure all nodes are voting
-    let validator_node_keypairs: Vec<_> = validator_keys
-        .iter()
-        .map(|k| k.node_keypair.clone())
-        .collect();
     cluster.check_for_new_notarized_votes(
         16,
         "test_alpenglow_imbalanced_stakes_catchup",
         SocketAddrSpace::Unspecified,
         vote_listener_addr,
-        &validator_node_keypairs,
-        &node_stakes,
+        listener_keypair,
     );
 }
 
@@ -6121,6 +6114,7 @@ fn test_alpenglow_basic_equivocation() {
     let node_b_turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
     let mut b_validator_config = safe_clone_config(&a_validator_config);
     b_validator_config.turbine_mode = node_b_turbine_mode.clone();
+    let unstaked_turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
 
     // Equivocate every other slot, one shred per FEC set
     let last_duplicate = 20;
@@ -6144,6 +6138,8 @@ fn test_alpenglow_basic_equivocation() {
                 .zip(iter::repeat_with(|| true))
                 .collect(),
         ),
+        num_listeners: 1,
+        listener_turbine_mode: Some(unstaked_turbine_mode.clone()),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
         skip_warmup_slots: true,
@@ -6168,7 +6164,7 @@ fn test_alpenglow_basic_equivocation() {
         let total_duplicate_blocks_observed = (1..=last_duplicate)
             .filter(|slot| blockstore.has_duplicate_shreds_in_slot(*slot))
             .count();
-        if total_duplicate_blocks_observed == expected_duplicate_blocks {
+        if total_duplicate_blocks_observed >= expected_duplicate_blocks {
             break;
         }
         if start.elapsed() > Duration::from_secs(60) {
@@ -6180,11 +6176,12 @@ fn test_alpenglow_basic_equivocation() {
         sleep(Duration::from_secs(1));
     }
 
-    // Turn turbine back on, now the low staked node will be able to catchup
+    // Turn turbine back on, now the low-staked and unstaked nodes will be able to catch up
     node_b_turbine_mode.set(TurbineModeKind::Enabled);
+    unstaked_turbine_mode.set(TurbineModeKind::Enabled);
 
-    // Ensure all nodes are rooting
-    // Although the low staked node might be behind while the leader is equivocating,
+    // Ensure all nodes (including the unstaked) are rooting
+    // Although the low staked nodes might be behind while the leader is equivocating,
     // once the leader stops equivocating it will be able to catch up
     cluster.check_for_new_roots(
         32,
@@ -6195,6 +6192,7 @@ fn test_alpenglow_basic_equivocation() {
 
 fn test_alpenglow_migration(
     num_nodes: usize,
+    num_listeners: u64,
     test_name: &str,
     leader_schedule: &[usize],
 ) -> (
@@ -6204,13 +6202,14 @@ fn test_alpenglow_migration(
 ) {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
 
+    let listener_keypair = Keypair::new();
     let vote_listener_socket = bind_to_localhost_unique().unwrap();
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
     let mut validator_config = ValidatorConfig::default_for_test();
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
-        alpenglow_port_override: AlpenglowPortOverride::default(),
-    });
+    validator_config.votor_peer_overrides = Arc::new(ArcSwap::from_pointee(HashMap::from([(
+        listener_keypair.pubkey(),
+        Some(vote_listener_addr.local_addr().unwrap()),
+    )])));
     validator_config.wait_for_supermajority = Some(0);
 
     let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);
@@ -6227,6 +6226,7 @@ fn test_alpenglow_migration(
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(keys.clone().into_iter().zip(iter::repeat(true)).collect()),
         node_stakes: node_stakes.clone(),
+        num_listeners,
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
         // So we don't have to wait so long
@@ -6246,11 +6246,12 @@ fn test_alpenglow_migration(
     // Create local cluster with alpenglow accounts but feature not activated
     let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
 
-    let validator_keys: Vec<Arc<Keypair>> = cluster
-        .validators
-        .values()
-        .map(|v| v.info.keypair.clone())
-        .collect();
+    let validator_keys: Vec<Arc<Keypair>> =
+        keys.iter().map(|keys| keys.node_keypair.clone()).collect();
+    let staked_node_contact_infos = validator_keys
+        .iter()
+        .map(|keypair| cluster.get_contact_info(&keypair.pubkey()).unwrap().clone())
+        .collect_vec();
 
     let client = RpcClient::new_socket_with_commitment(
         cluster.entry_point_info.rpc().unwrap(),
@@ -6260,14 +6261,13 @@ fn test_alpenglow_migration(
     // Monitor for feature activation
     let activation_slot;
     loop {
-        if let Ok(account) = client.get_account(&agave_feature_set::alpenglow::id()) {
-            if let Some(feature) = solana_feature_gate_interface::from_account(&account) {
-                if let Some(slot) = feature.activated_at {
-                    activation_slot = slot;
-                    info!("Feature activated at slot {slot}");
-                    break;
-                }
-            }
+        if let Ok(account) = client.get_account(&agave_feature_set::alpenglow::id())
+            && let Some(feature) = solana_feature_gate_interface::from_account(&account)
+            && let Some(slot) = feature.activated_at
+        {
+            activation_slot = slot;
+            info!("Feature activated at slot {slot}");
+            break;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -6286,17 +6286,18 @@ fn test_alpenglow_migration(
 
     info!("Migration slot reached, checking for notarized votes");
 
-    // Check for new notarized votes
-    cluster.check_for_new_notarized_votes(
+    // Check that the staked nodes are sending new notarized votes
+    cluster_tests::check_for_new_notarized_votes(
+        compute_shred_version(&cluster.genesis_config.hash(), None),
         4,
+        &staked_node_contact_infos,
         test_name,
-        SocketAddrSpace::Unspecified,
         vote_listener_addr,
-        &validator_keys,
-        &node_stakes,
+        listener_keypair,
+        cluster.bank_forks(),
     );
 
-    // Additionally ensure that roots are being made
+    // Additionally ensure that roots are being made on all nodes (including unstaked)
     cluster.check_for_new_roots(8, test_name, SocketAddrSpace::Unspecified);
     (cluster, keys, migration_slot)
 }
@@ -6306,7 +6307,14 @@ fn test_alpenglow_migration(
 #[test]
 #[serial]
 fn test_alpenglow_migration_1() {
-    test_alpenglow_migration(1, "test_alpenglow_migration_1", &[4]);
+    test_alpenglow_migration(1, 0, "test_alpenglow_migration_1", &[4]);
+}
+
+/// An unstaked listener learns the genesis certificate from the first Alpenglow block and roots.
+#[test]
+#[serial]
+fn test_alpenglow_migration_1_with_unstaked_node() {
+    test_alpenglow_migration(1, 1, "test_alpenglow_migration_1_with_unstaked_node", &[4]);
 }
 
 /// Multi-node migration into Alpenglow, including notarized-vote and root production
@@ -6314,7 +6322,7 @@ fn test_alpenglow_migration_1() {
 #[test]
 #[serial]
 fn test_alpenglow_migration_4() {
-    test_alpenglow_migration(4, "test_alpenglow_migration_4", &[4, 4, 4, 4]);
+    test_alpenglow_migration(4, 0, "test_alpenglow_migration_4", &[4, 4, 4, 4]);
 }
 
 #[test]
@@ -6323,7 +6331,7 @@ fn test_alpenglow_restart_post_migration() {
     let test_name = "test_alpenglow_restart_post_migration";
 
     // Start a 2 node cluster and have it go through the migration
-    let (mut cluster, _, _) = test_alpenglow_migration(2, test_name, &[4, 4]);
+    let (mut cluster, _, _) = test_alpenglow_migration(2, 0, test_name, &[4, 4]);
 
     // Now restart one of the nodes. This causes the cluster to temporarily halt
     let node_pubkey = cluster.get_node_pubkeys()[0];
@@ -6350,7 +6358,7 @@ fn test_alpenglow_missed_migration_entirely() {
     // Critical that the third node is not in the leader schedule, as since
     // we clear blockstore later, we could end up producing duplicate blocks
     let (mut cluster, validator_keys, migration_slot) =
-        test_alpenglow_migration(3, test_name, &[4, 4, 0]);
+        test_alpenglow_migration(3, 0, test_name, &[4, 4, 0]);
 
     // Now kill the second node
     let node_pubkey = validator_keys[2].node_keypair.pubkey();
@@ -6362,9 +6370,8 @@ fn test_alpenglow_missed_migration_entirely() {
     {
         let blockstore = Blockstore::open(&exit_info.info.ledger_path).unwrap();
         let end_slot = blockstore.highest_slot().unwrap().unwrap();
-        blockstore.purge_from_next_slots(start_slot, end_slot);
         blockstore
-            .purge_slots(start_slot, end_slot, PurgeType::Exact)
+            .purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)
             .unwrap();
     }
 

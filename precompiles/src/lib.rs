@@ -1,5 +1,5 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 use {
     agave_feature_set::FeatureSet, solana_message::compiled_instruction::CompiledInstruction,
     solana_precompile_error::PrecompileError, solana_pubkey::Pubkey, std::sync::LazyLock,

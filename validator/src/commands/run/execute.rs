@@ -12,6 +12,8 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
+    agave_votor_transport::MAX_ENDPOINTS,
+    arc_swap::ArcSwap,
     bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -19,9 +21,11 @@ use {
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
+        accounts_file::AccountsFileProvider,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
-            DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
+            DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold,
+            MINIMAL_THRESHOLD_NUM_BYTES, ScanFilter,
         },
         partitioned_rewards::PartitionedEpochRewardsConfig,
         utils::{
@@ -33,7 +37,6 @@ use {
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
-        banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
         resource_limits,
@@ -55,7 +58,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
-        blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
+        blockstore_options::BlockstoreCleanupStrategy,
         shred::filter::TurbineMode,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
@@ -68,7 +71,6 @@ use {
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
-    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_turbine::broadcast_stage::BroadcastStageType,
     solana_validator_exit::Exit,
     std::{
@@ -83,7 +85,11 @@ use {
     },
 };
 #[cfg(target_os = "linux")]
-use {agave_xdp::transmitter::XdpConfig, solana_clap_utils::input_parsers::parse_cpu_ranges};
+use {
+    agave_cpu_utils::cpu_affinity,
+    agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
+    solana_clap_utils::input_parsers::parse_cpu_ranges,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operation {
@@ -107,7 +113,6 @@ pub fn execute(
 
     let cli::thread_args::NumThreadConfig {
         accounts_db_background_threads,
-        accounts_db_foreground_threads,
         accounts_index_flush_threads,
         block_production_num_workers,
         ip_echo_server_threads,
@@ -164,30 +169,11 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    // XDP is not needed for init — it only initializes the ledger and exits.
+    // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config = if let Some(xdp_cpu_cores) = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
-    {
-        let xdp_interface = matches
-            .value_of("xdp_interface")
-            .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-        let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-            || matches.is_present("experimental_retransmit_xdp_zero_copy");
-        let config = XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(xdp_cpu_cores).unwrap(),
-            xdp_zero_copy,
-        );
-        if bind_addresses.len() > 1 {
-            Err(String::from(
-                "--xdp-cpu-cores cannot be used in a multihoming context",
-            ))?;
-        }
-        Some(config)
-    } else {
-        None
-    };
+    let xdp_transmit_config: Option<XdpConfig> =
+        build_xdp_config(matches, &operation, &bind_addresses)?;
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -268,6 +254,12 @@ pub fn execute(
     }
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+    let num_votor_quic_endpoints = value_t_or_exit!(matches, "num_votor_endpoints", NonZeroUsize);
+    if num_votor_quic_endpoints.get() > MAX_ENDPOINTS {
+        Err(format!(
+            "--num-votor-endpoints must be at most {MAX_ENDPOINTS}"
+        ))?;
+    }
 
     let node_config = NodeConfig {
         advertised_ip,
@@ -280,6 +272,7 @@ pub fn execute(
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
+        num_votor_quic_endpoints,
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
@@ -378,7 +371,7 @@ pub fn execute(
             .map(|mut xdp_config| {
                 use {
                     agave_xdp::{device::NetworkDevice, interface_ipv4},
-                    solana_core::validator::XdpTransmitSetup,
+                    solana_core::validator::{XdpModules, XdpTransmitSetup},
                 };
 
                 let device = if let Some(interface) = xdp_config.interface.as_ref() {
@@ -400,11 +393,20 @@ pub fn execute(
                     ),
                     _ => panic!("IPv6 not supported"),
                 };
+                // Nothing can express per-module queue assignments yet, so every
+                // module transmits over the whole queue set.
+                let all_positions: Box<[usize]> = (0..xdp_config.queues.len()).collect();
                 (
                     XdpTransmitSetup {
                         transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
                             .expect("failed to create xdp transmitter"),
                         src_ip,
+                        modules: XdpModules {
+                            tpu: Some(all_positions.clone()),
+                            turbine: Some(all_positions.clone()),
+                            repair: Some(all_positions.clone()),
+                            gossip: Some(all_positions),
+                        },
                     },
                     XdpNetworkConfigReport {
                         zero_copy,
@@ -465,22 +467,7 @@ pub fn execute(
     let do_port_check = !matches.is_present("no_port_check");
 
     let ledger_path = run_args.ledger_path;
-
-    let max_ledger_shreds = if matches.is_present("limit_ledger_size") {
-        let limit_ledger_size = match matches.value_of("limit_ledger_size") {
-            Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
-            None => DEFAULT_MAX_LEDGER_SHREDS,
-        };
-        if limit_ledger_size < DEFAULT_MIN_MAX_LEDGER_SHREDS {
-            Err(format!(
-                "The provided --limit-ledger-size value was too small, the minimum value is \
-                 {DEFAULT_MIN_MAX_LEDGER_SHREDS}"
-            ))?;
-        }
-        Some(limit_ledger_size)
-    } else {
-        None
-    };
+    let blockstore_cleanup_strategy = BlockstoreCleanupStrategy::from_clap_arg_match(matches)?;
 
     let debug_keys: Option<Arc<HashSet<_>>> = if matches.is_present("debug_key") {
         Some(Arc::new(
@@ -511,6 +498,21 @@ pub fn execute(
         "gossip_validators",
         "--gossip-validator",
     )?;
+    let votor_peer_overrides = validators_set(
+        &identity_keypair.pubkey(),
+        matches,
+        "votor_peer_overrides",
+        "--votor-peer-overrides",
+    )?;
+    // Identities named on the command line carry no address: the peer list resolves
+    // them from gossip.
+    let votor_peer_overrides = Arc::new(ArcSwap::from_pointee(
+        votor_peer_overrides
+            .unwrap_or_default()
+            .into_iter()
+            .map(|identity| (identity, None))
+            .collect(),
+    ));
 
     if bind_addresses.len() > 1 {
         for (flag, msg) in [
@@ -549,12 +551,6 @@ pub fn execute(
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
-    let tpu_connection_pool_size = matches
-        .value_of("tpu_connection_pool_size")
-        .unwrap_or("")
-        .parse()
-        .unwrap_or(DEFAULT_TPU_CONNECTION_POOL_SIZE);
-
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
         Err(format!(
@@ -588,45 +584,44 @@ pub fn execute(
 
     let accounts_index_limit =
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
-    let index_limit = {
-        enum CliIndexLimit {
-            // deprecated in v4.1.0
-            Minimal,
-            Unlimited,
-            Threshold(u64),
+    enum CliIndexLimit {
+        Unlimited,
+        Threshold(u64),
+    }
+    let cli_index_limit = match accounts_index_limit.as_str() {
+        "minimal" => {
+            warn!(
+                "Using `minimal` for `--accounts-index-limit` is deprecated. Using 25GB instead."
+            );
+            CliIndexLimit::Threshold(MINIMAL_THRESHOLD_NUM_BYTES)
         }
-        let cli_index_limit = match accounts_index_limit.as_str() {
-            "minimal" => {
-                warn!("Using `minimal` for `--accounts-index-limit` is deprecated.");
-                CliIndexLimit::Minimal
-            }
-            "unlimited" => CliIndexLimit::Unlimited,
-            "25GB" => CliIndexLimit::Threshold(25_000_000_000),
-            "50GB" => CliIndexLimit::Threshold(50_000_000_000),
-            "100GB" => CliIndexLimit::Threshold(100_000_000_000),
-            "200GB" => CliIndexLimit::Threshold(200_000_000_000),
-            "400GB" => CliIndexLimit::Threshold(400_000_000_000),
-            "800GB" => CliIndexLimit::Threshold(800_000_000_000),
-            x => {
-                // clap will enforce only the above values are possible
-                unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
-            }
-        };
-        match cli_index_limit {
-            CliIndexLimit::Minimal => IndexLimit::Minimal,
-            CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
-            CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
-                num_bytes,
-                num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
-                num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
-            }),
+        "unlimited" => CliIndexLimit::Unlimited,
+        "25GB" => CliIndexLimit::Threshold(25_000_000_000),
+        "50GB" => CliIndexLimit::Threshold(50_000_000_000),
+        "100GB" => CliIndexLimit::Threshold(100_000_000_000),
+        "200GB" => CliIndexLimit::Threshold(200_000_000_000),
+        "400GB" => CliIndexLimit::Threshold(400_000_000_000),
+        "800GB" => CliIndexLimit::Threshold(800_000_000_000),
+        x => {
+            // clap will enforce only the above values are possible
+            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
         }
     };
+
     // Note: need to still handle --enable-accounts-disk-index until it is removed
-    let index_limit = if matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::Minimal
+    let cli_index_limit = if matches.is_present("enable_accounts_disk_index") {
+        CliIndexLimit::Threshold(MINIMAL_THRESHOLD_NUM_BYTES)
     } else {
-        index_limit
+        cli_index_limit
+    };
+
+    let index_limit = match cli_index_limit {
+        CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
+        CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
+            num_bytes,
+            num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
+            num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
+        }),
     };
 
     let mut accounts_index_config = AccountsIndexConfig {
@@ -723,11 +718,11 @@ pub fn execute(
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
         skip_initial_hash_calc: false,
-        exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        verify_index: matches.is_present("accounts_db_verify_index"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
-        num_foreground_threads: Some(accounts_db_foreground_threads),
+        accounts_file_provider: AccountsFileProvider::AppendVec,
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
@@ -774,6 +769,15 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
+    let skip_transaction_signatures_in_status_cache =
+        !run_args.json_rpc_config.full_api && !snapshot_config.should_generate_snapshots();
+    if skip_transaction_signatures_in_status_cache {
+        info!(
+            "Transaction signatures will not be stored in the status cache because full RPC and \
+             snapshot generation are disabled"
+        );
+    }
+
     let mut validator_config = ValidatorConfig {
         log_config,
         require_tower: matches.is_present("require_tower"),
@@ -790,6 +794,11 @@ pub fn execute(
             .map(|s| Hash::from_str(s).unwrap()),
         expected_shred_version,
         new_hard_forks: hardforks_of(matches, "hard_forks"),
+        runtime_config: RuntimeConfig {
+            log_messages_bytes_limit: value_of(matches, "log_messages_bytes_limit"),
+            skip_transaction_signatures_in_status_cache,
+            ..RuntimeConfig::default()
+        },
         rpc_config: run_args.json_rpc_config,
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
@@ -809,9 +818,10 @@ pub fn execute(
         repair_validators,
         should_check_duplicate_instance: true,
         repair_whitelist,
+        votor_peer_overrides,
         repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
-        max_ledger_shreds,
+        blockstore_cleanup_strategy,
         blockstore_options: run_args.blockstore_options,
         run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
@@ -841,11 +851,7 @@ pub fn execute(
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
-        wait_to_vote_slot: None,
-        runtime_config: RuntimeConfig {
-            log_messages_bytes_limit: value_of(matches, "log_messages_bytes_limit"),
-            ..RuntimeConfig::default()
-        },
+        wait_to_vote_slot: value_t!(matches, "wait_to_vote_slot", Slot).ok(),
         staked_nodes_overrides: staked_nodes_overrides.clone(),
         use_snapshot_archives_at_startup,
         ip_echo_server_threads,
@@ -884,14 +890,17 @@ pub fn execute(
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
-        banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
+        banking_trace_dir_byte_limit: value_t_or_exit!(
+            matches,
+            "banking_trace_dir_byte_limit",
+            u64
+        ),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: [(
             SnapshotPackagerService::NAME.to_string(),
             Arc::new(AtomicBool::new(false)),
         )]
         .into(),
-        voting_service_test_override: None,
         snapshot_packager_niceness_adj: value_t_or_exit!(
             matches,
             "snapshot_packager_niceness_adj",
@@ -1134,7 +1143,6 @@ pub fn execute(
         run_args.socket_addr_space,
         ValidatorTpuConfig {
             vote_use_quic,
-            tpu_connection_pool_size,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1151,7 +1159,7 @@ pub fn execute(
     }
     info!("Validator initialized");
     validator.listen_for_signals()?;
-    validator.join();
+    validator.close();
     info!("Validator exiting...");
 
     Ok(())
@@ -1204,19 +1212,6 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
         }
     }
     None
-}
-
-fn parse_banking_trace_dir_byte_limit(matches: &ArgMatches) -> u64 {
-    if matches.is_present("disable_banking_trace") {
-        // disable with an explicit flag; This effectively becomes `opt-out` by resetting to
-        // DISABLED_BAKING_TRACE_DIR, while allowing us to specify a default sensible limit in clap
-        // configuration for cli help.
-        DISABLED_BAKING_TRACE_DIR
-    } else {
-        // a default value in clap configuration (BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT) or
-        // explicit user-supplied override value
-        value_t_or_exit!(matches, "banking_trace_dir_byte_limit", u64)
-    }
 }
 
 fn new_snapshot_config(
@@ -1398,4 +1393,161 @@ fn new_snapshot_config(
     }
 
     Ok(snapshot_config)
+}
+
+#[cfg(target_os = "linux")]
+fn build_xdp_config(
+    matches: &ArgMatches,
+    operation: &Operation,
+    bind_addresses: &BindIpAddrs,
+) -> Result<Option<XdpConfig>, String> {
+    if matches.is_present("no_xdp") || *operation == Operation::Initialize {
+        return Ok(None);
+    }
+    if bind_addresses.len() > 1 {
+        return Err(
+            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
+        );
+    }
+    let xdp_interface = matches.value_of("xdp_interface");
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy");
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+    let xdp_cpu_cores = matches.value_of("xdp_cpu_cores");
+    let cpus = if let Some(cpu_str) = xdp_cpu_cores {
+        let parsed =
+            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        if parsed.is_empty() {
+            return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
+        }
+        if let Some(poh_core) = poh_pinned_cpu_core
+            && parsed.contains(&poh_core)
+        {
+            return Err(format!(
+                "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a CPU \
+                 core"
+            ));
+        }
+        Some(parsed)
+    } else {
+        // Auto-select a single core, avoiding the PoH core.
+        match cpu_affinity(None) {
+            Ok(allowed) => {
+                match allowed
+                    .iter()
+                    .rev()
+                    .map(|cpu| **cpu)
+                    .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+                {
+                    Some(cpu) => Some(vec![cpu]),
+                    None => {
+                        return Err(format!(
+                            "XDP requires a dedicated CPU core separate from PoH (core \
+                             {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to \
+                             disable XDP."
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(format!(
+                    "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
+                     --xdp-cpu-cores explicitly."
+                ));
+            }
+        }
+    };
+    Ok(cpus.map(|cpus| {
+        info!("XDP enabled on CPU cores: {cpus:?}");
+        // Map the CPU list onto hardware queues sequentially (queue i -> cpus[i]).
+        let queues = cpus
+            .into_iter()
+            .enumerate()
+            .map(|(queue, cpu)| QueueCpuBinding {
+                queue: queue as u32,
+                cpu,
+            })
+            .collect();
+        XdpConfig::new(xdp_interface, queues, xdp_zero_copy)
+    }))
+}
+
+#[cfg(all(target_os = "linux", test))]
+mod xdp_tests {
+    use {
+        super::*,
+        crate::{cli::DefaultArgs, commands::run::args::add_args},
+        solana_net_utils::multihomed_sockets::BindIpAddrs,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    fn single_ip_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap()
+    }
+
+    fn multihoming_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn test_no_xdp_flag_disables_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+    }
+
+    #[test]
+    fn test_empty_xdp_cpu_cores_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("selects no CPUs"),
+            "empty XDP CPU core selection must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_init_disables_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let result = build_xdp_config(&matches, &Operation::Initialize, &single_ip_bind());
+        assert!(result.unwrap().is_none(), "init operation must disable XDP");
+    }
+
+    #[test]
+    fn test_multihoming_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &multihoming_bind());
+        assert!(
+            result.unwrap_err().contains("multihoming"),
+            "multihoming context must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_explicit_xdp_core_conflicts_with_poh_core_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE
+            .unwrap_or(0)
+            .to_string();
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", &poh_core]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("PoH core"),
+            "XDP core overlapping PoH core must produce an error"
+        );
+    }
 }

@@ -28,7 +28,7 @@ We envision the following applications for SVM
     The SVM is currently viewed as realizing two stages of the
     Transaction Engine Execution pipeline as described in Solana
     Architecture documentation
-    [https://docs.solana.com/validator/runtime#execution](https://docs.solana.com/validator/runtime#execution),
+    [https://docs.anza.xyz/validator/runtime#execution](https://docs.anza.xyz/validator/runtime#execution),
     namely ‘load accounts’ and ‘execute’ stages.
 
 - **SVM Rollups**
@@ -128,7 +128,7 @@ information.
 
 ```rust
 pub trait TransactionProcessingCallback {
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData>;
 
     fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}
 }

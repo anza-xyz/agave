@@ -381,12 +381,6 @@ confused with 3-letter acronyms.
 
 ## Design Proposals
 
-This Agave validator client's architecture is described by docs generated from markdown files in the `docs/src/`
-directory and viewable on the official [Agave Validator Client](https://docs.anza.xyz) documentation website.
-
-Current design proposals may be viewed on the docs site:
-
-1. [Accepted Proposals](https://docs.anza.xyz/proposals/accepted-design-proposals)
-2. [Implemented Proposals](https://docs.anza.xyz/implemented-proposals/implemented-proposals)
-
-New design proposals should follow this guide on [how to submit a design proposal](./docs/src/proposals.md#submit-a-design-proposal).
+Design proposals are now tracked as Solana Improvement Documents (SIMDs) in the
+[solana-foundation/solana-improvement-documents](https://github.com/solana-foundation/solana-improvement-documents)
+repository.

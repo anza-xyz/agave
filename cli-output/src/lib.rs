@@ -4,6 +4,7 @@ pub mod cli_clientid;
 mod cli_output;
 pub mod cli_version;
 pub mod display;
+pub mod stdout;
 pub use cli_output::*;
 
 pub trait QuietDisplay: std::fmt::Display {

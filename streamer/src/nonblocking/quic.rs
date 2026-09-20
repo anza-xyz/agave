@@ -27,6 +27,7 @@ use {
         array, fmt,
         iter::repeat_with,
         net::{IpAddr, SocketAddr},
+        ops::RangeInclusive,
         pin::Pin,
         sync::{
             Arc, RwLock,
@@ -46,7 +47,7 @@ use {
         // introduce any other awaits while holding the RwLock.
         select,
         task::JoinHandle,
-        time::timeout,
+        time::{sleep, timeout},
     },
     tokio_util::{sync::CancellationToken, task::TaskTracker},
 };
@@ -93,6 +94,15 @@ pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 /// extraordinary has occured (congestion control or flow control blocking)
 const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 
+// With the previous 1232-byte transaction limit, transactions were empirically
+// observed to use at most 4 chunks.
+// With the new 4096-byte limit, a max-sized transaction normally spans 3 or 4
+// full datagrams. Use 8 to allow headroom for partially filled datagrams.
+// This also sets the point at which PacketAccumulator stops retaining zero-copy
+// datagram slices and coalesces the stream into one owned buffer, so raising it
+// raises the memory a single stream can pin. See `PacketAccumulator::push`.
+const MAX_EXPECTED_TRANSACTION_CHUNKS: usize = 8;
+
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
 // packet metadata. We use this accumulator to avoid
@@ -101,9 +111,13 @@ const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 #[derive(Clone)]
 struct PacketAccumulator {
     pub meta: Meta,
-    // the capacity here should match or exceed the capacity of the chunks
-    // array used by handle_connection()
-    pub chunks: SmallVec<[Bytes; 4]>,
+    // The capacity here should match or exceed the capacity of the chunks array used
+    // by handle_connection().
+    pub chunks: SmallVec<[Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS]>,
+    // Set once a stream buffers more than MAX_EXPECTED_TRANSACTION_CHUNKS chunks: from
+    // then on incoming bytes are copied into this single owned buffer rather than
+    // retained as datagram slices. See `PacketAccumulator::push`.
+    coalesced: Option<BytesMut>,
     pub start_time: Instant,
 }
 
@@ -112,7 +126,33 @@ impl PacketAccumulator {
         Self {
             meta,
             chunks: SmallVec::default(),
+            coalesced: None,
             start_time: Instant::now(),
+        }
+    }
+
+    // Coalesce before the SmallVec spills to the heap, releasing retained datagram
+    // slices. For streams that complete successfully, this moves the allocation and
+    // copy earlier: completion reuses this buffer without another allocation or copy.
+    // Allocate to the stream cap so subsequent chunks need no reallocation;
+    // handle_chunks enforces that cap. The frozen buffer keeps that cap-sized
+    // allocation for the packet's lifetime rather than shrinking to the final stream
+    // length, which is acceptable for streams already past the expected chunk count.
+    // Allocating the full cap up front is acceptable because handle_connection reads one
+    // stream per connection at a time, so a peer can hold at most one such buffer per
+    // connection. Revisit this if streams are ever read concurrently or the cap grows
+    // well beyond a few KiB.
+    fn push(&mut self, chunk: Bytes, max_size: usize) {
+        if self.coalesced.is_none() && self.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
+            let mut buf = BytesMut::with_capacity(max_size);
+            for chunk in self.chunks.drain(..) {
+                buf.put_slice(&chunk);
+            }
+            self.coalesced = Some(buf);
+        }
+        match &mut self.coalesced {
+            Some(buf) => buf.put_slice(&chunk),
+            None => self.chunks.push(chunk),
         }
     }
 }
@@ -419,12 +459,25 @@ pub fn get_connection_stake(
 ) -> Option<(Pubkey, u64, u64)> {
     let pubkey = get_remote_pubkey(connection)?;
     debug!("Peer public key is {pubkey:?}");
+    let (stake, total_stake) = get_pubkey_stake(&pubkey, staked_nodes)?;
+    Some((pubkey, stake, total_stake))
+}
+
+pub(crate) fn get_pubkey_stake(
+    pubkey: &Pubkey,
+    staked_nodes: &RwLock<StakedNodes>,
+) -> Option<(u64, u64)> {
     let staked_nodes = staked_nodes.read().unwrap();
     Some((
-        pubkey,
-        staked_nodes.get_node_stake(&pubkey)?,
+        staked_nodes.get_node_stake(pubkey)?,
         staked_nodes.total_stake(),
     ))
+}
+
+fn stake_revalidation_interval(range: &RangeInclusive<Duration>) -> Duration {
+    Duration::from_millis(
+        rng().random_range(range.start().as_millis() as u64..=range.end().as_millis() as u64),
+    )
 }
 
 #[derive(Debug)]
@@ -523,8 +576,7 @@ async fn setup_connection<Q, C>(
                         from,
                         new_connection,
                         stats,
-                        server_params.wait_for_chunk_timeout,
-                        server_params.max_stream_data_bytes,
+                        server_params.clone(),
                         conn_context.clone(),
                         qos,
                         cancel_connection,
@@ -585,8 +637,7 @@ async fn handle_connection<Q, C>(
     remote_address: SocketAddr,
     connection: Connection,
     stats: Arc<StreamerStats>,
-    wait_for_chunk_timeout: Duration,
-    max_stream_data_bytes: u32,
+    server_params: Arc<QuicStreamerConfig>,
     context: C,
     qos: Arc<Q>,
     cancel: CancellationToken,
@@ -607,6 +658,10 @@ async fn handle_connection<Q, C>(
     // we only use that for some stats here, so if it gets stale during connection lifetime
     // it is not the end of the world.
     let rtt = connection.rtt();
+    let stake_revalidation_timer = sleep(stake_revalidation_interval(
+        &server_params.stake_revalidation_interval,
+    ));
+    tokio::pin!(stake_revalidation_timer);
     'conn: loop {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
@@ -619,6 +674,17 @@ async fn handle_connection<Q, C>(
                 }
             },
             _ = cancel.cancelled() => break,
+            _ = &mut stake_revalidation_timer, if peer_type.is_staked() => {
+                if !qos.has_sufficient_stake(&context) {
+                    debug!("Closing connection from {remote_address}: peer stake dropped");
+                    break;
+                }
+                stake_revalidation_timer.as_mut().reset(
+                    tokio::time::Instant::now()
+                        + stake_revalidation_interval(&server_params.stake_revalidation_interval),
+                );
+                continue;
+            },
         };
 
         qos.on_new_stream(&context).await;
@@ -634,15 +700,10 @@ async fn handle_connection<Q, C>(
         }
 
         let mut accum = PacketAccumulator::new(meta);
-        // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
-        // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
-        // transaction will have other protocol frames inserted in the middle. Empirically it's been
-        // observed that 4 is the maximum number of chunks txs get split into.
-        //
-        // Bytes values are small, so overall the array takes only 128 bytes, and the "cost" of
+        // Bytes values are small, so overall the array takes 256 bytes, and the "cost" of
         // overallocating a few bytes is negligible compared to the cost of having to do multiple
         // read_chunks() calls.
-        let mut chunks: [Bytes; 4] = array::from_fn(|_| Bytes::new());
+        let mut chunks: [Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS] = array::from_fn(|_| Bytes::new());
 
         loop {
             // Read the next chunks, waiting up to `wait_for_chunk_timeout`. If we don't get chunks
@@ -650,7 +711,7 @@ async fn handle_connection<Q, C>(
             // packet loss or the peer stops sending for whatever reason.
             let n_chunks = match tokio::select! {
                 chunk = tokio::time::timeout(
-                    wait_for_chunk_timeout,
+                    server_params.wait_for_chunk_timeout,
                     stream.read_chunks(&mut chunks)) => chunk,
 
                 // If the peer gets disconnected stop the task right away.
@@ -677,14 +738,15 @@ async fn handle_connection<Q, C>(
             };
 
             match handle_chunks(
-                // Bytes::clone() is a cheap atomic inc
-                chunks.iter().take(n_chunks).cloned(),
+                // Move the chunks out, so the read buffer does not keep their datagrams pinned until
+                // the slot is overwritten or the stream ends.
+                chunks.iter_mut().take(n_chunks).map(std::mem::take),
                 &mut accum,
                 rtt,
                 &packet_sender,
                 &stats,
                 peer_type,
-                max_stream_data_bytes,
+                server_params.max_stream_data_bytes,
             ) {
                 // The stream is finished, break out of the loop and close the stream.
                 Ok(StreamState::Finished) => {
@@ -753,7 +815,7 @@ fn handle_chunks(
             debug!("invalid stream size {}", accum.meta.size);
             return Err(());
         }
-        accum.chunks.push(chunk);
+        accum.push(chunk, max_stream_data_bytes as usize);
         if peer_type.is_staked() {
             stats
                 .total_staked_chunks_received
@@ -768,6 +830,20 @@ fn handle_chunks(
     // n_chunks == 0 marks the end of a stream
     if n_chunks != 0 {
         return Ok(StreamState::Receiving);
+    }
+
+    // A coalesced stream buffered more than MAX_EXPECTED_TRANSACTION_CHUNKS chunks, so it
+    // qualifies even though they have been folded into a single owned buffer.
+    if accum.coalesced.is_some() || accum.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
+        stats
+            .total_packets_at_or_above_chunk_capacity
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    // If the stream switched to coalescing mode, its single owned buffer is the whole
+    // packet; fold it back so the single-chunk (no extra copy) path below handles it.
+    if let Some(buf) = accum.coalesced.take() {
+        accum.chunks.push(buf.freeze());
     }
 
     if accum.chunks.is_empty() {
@@ -1135,14 +1211,16 @@ pub mod test {
             qos::NullStreamerCounter,
             swqos::SwQosConfig,
             testing_utilities::{
-                SpawnTestServerResult, check_multiple_streams, get_client_config,
-                make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+                SpawnTestServerResult, check_multiple_streams, create_quic_server_sockets,
+                get_client_config, make_client_endpoint, setup_quic_server,
+                spawn_stake_weighted_qos_server,
             },
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, bounded},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
+        solana_message::v1::MAX_TRANSACTION_SIZE,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
@@ -1177,24 +1255,34 @@ pub mod test {
     pub async fn check_block_multiple_connections(server_address: SocketAddr) {
         let conn1 = make_client_endpoint(&server_address, None).await;
         let conn2 = make_client_endpoint(&server_address, None).await;
-        let mut s1 = conn1.open_uni().await.unwrap();
-        let s2 = conn2.open_uni().await;
-        if let Ok(mut s2) = s2 {
-            s1.write_all(&[0u8]).await.unwrap();
-            s1.finish().unwrap();
-            // Send enough data to create more than 1 chunks.
-            // The first will try to open the connection (which should fail).
-            // The following chunks will enable the detection of connection failure.
-            let data = vec![1u8; PACKET_DATA_SIZE * 2];
-            s2.write_all(&data)
-                .await
-                .expect_err("shouldn't be able to open 2 connections");
-        } else {
-            // It has been noticed if there is already connection open against the server, this open_uni can fail
-            // with ApplicationClosed(ApplicationClose) error due to CONNECTION_CLOSE_CODE_TOO_MANY before writing to
-            // the stream -- expect it.
-            assert_matches!(s2, Err(quinn::ConnectionError::ApplicationClosed(_)));
+
+        async fn open_and_write(conn: &Connection) -> Result<(), ConnectionError> {
+            for _ in 0..3 {
+                let mut stream = conn.open_uni().await?;
+                stream
+                    .write_all(&[0u8; PACKET_DATA_SIZE])
+                    .await
+                    .map_err(|err| match err {
+                        quinn::WriteError::ConnectionLost(err) => err,
+                        err => panic!("unexpected write error on an admitted connection: {err:?}"),
+                    })?;
+                stream.finish().unwrap();
+            }
+            Ok(())
         }
+
+        let (res1, res2) = tokio::join!(open_and_write(&conn1), open_and_write(&conn2));
+        let rejected = match (res1, res2) {
+            (Ok(()), Err(err)) | (Err(err), Ok(())) => err,
+            other => {
+                panic!("expected exactly one of the two connections to be admitted, got {other:?}")
+            }
+        };
+        assert_matches!(
+            rejected,
+            ConnectionError::ApplicationClosed(_),
+            "rejected connection should be closed due to exceeding the per-peer connection limit"
+        );
     }
 
     pub async fn check_multiple_writes(
@@ -1517,6 +1605,85 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_quic_server_evicts_destaked_connection() {
+        agave_logger::setup();
+
+        let client_keypair = Keypair::new();
+        let initial_stake = 100_000;
+        let set_stake = |staked_nodes: &RwLock<StakedNodes>, stake: u64| {
+            *staked_nodes.write().unwrap() = StakedNodes::new(
+                Arc::new(HashMap::from([(client_keypair.pubkey(), stake)])),
+                HashMap::default(),
+            );
+        };
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        set_stake(&staked_nodes, initial_stake);
+
+        let sockets = create_quic_server_sockets();
+        let server_address = sockets[0].local_addr().unwrap();
+        let (sender, receiver) = bounded(1024);
+        let cancel = CancellationToken::new();
+        let SpawnNonBlockingServerResult {
+            endpoints: _,
+            stats,
+            thread,
+            max_concurrent_connections: _,
+        } = spawn_stake_weighted_qos_server(
+            "quic_streamer_test",
+            sockets,
+            &Keypair::new(),
+            sender,
+            staked_nodes.clone(),
+            QuicStreamerConfig {
+                stake_revalidation_interval: Duration::from_millis(50)..=Duration::from_millis(100),
+                ..QuicStreamerConfig::default_for_tests()
+            },
+            SwQosConfig::default(),
+            cancel.clone(),
+        )
+        .unwrap();
+
+        let connection = make_client_endpoint(&server_address, Some(&client_keypair)).await;
+        // Send one packet to make sure the connection is fully established.
+        let mut stream = connection.open_uni().await.unwrap();
+        stream.write_all(&[0u8]).await.unwrap();
+        stream.finish().unwrap();
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("packet from the staked client should be received");
+        assert_eq!(
+            stats
+                .connection_added_from_staked_peer
+                .load(Ordering::Relaxed),
+            1
+        );
+
+        // A reduction down to half of the stake cached at handshake is tolerated.
+        set_stake(&staked_nodes, initial_stake / 2);
+        assert!(
+            timeout(Duration::from_millis(500), connection.closed())
+                .await
+                .is_err(),
+            "connection should survive a reduction to half of the cached stake"
+        );
+
+        // A reduction below half of the cached stake evicts the connection.
+        set_stake(&staked_nodes, initial_stake / 2 - 1);
+        let reason = timeout(Duration::from_secs(5), connection.closed())
+            .await
+            .expect("connection should be closed after the stake dropped");
+        assert_matches!(
+            reason,
+            ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
+                if error_code == CONNECTION_CLOSE_CODE_DROPPED_ENTRY.into()
+        );
+        assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
+
+        cancel.cancel();
+        thread.await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2060,6 +2227,253 @@ pub mod test {
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
+    #[test]
+    fn test_packets_at_or_above_chunk_capacity_metric() {
+        let (sender, receiver) = bounded(1);
+        let stats = StreamerStats::default();
+        let mut accum = PacketAccumulator::new(Meta::default());
+        let chunks = (0..MAX_EXPECTED_TRANSACTION_CHUNKS)
+            .map(|byte| Bytes::from(vec![byte as u8]))
+            .collect::<Vec<_>>();
+
+        let state = handle_chunks(
+            chunks.into_iter(),
+            &mut accum,
+            Duration::from_millis(50),
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            MAX_TRANSACTION_SIZE as u32,
+        )
+        .unwrap();
+        assert!(matches!(state, StreamState::Receiving));
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            0
+        );
+
+        let state = handle_chunks(
+            std::iter::empty(),
+            &mut accum,
+            Duration::from_millis(50),
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            MAX_TRANSACTION_SIZE as u32,
+        )
+        .unwrap();
+        assert!(matches!(state, StreamState::Finished));
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert!(receiver.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_packet_accumulator_coalesces_and_releases_datagram_pins() {
+        // `origin` represents shared datagram memory retained by chunk slices.
+        let total_chunks = MAX_EXPECTED_TRANSACTION_CHUNKS + 1;
+        let origin = Bytes::from((0..total_chunks as u8).collect::<Vec<u8>>());
+        let mut accum = PacketAccumulator::new(Meta::default());
+
+        // Retain slices inline up to the expected chunk count.
+        for i in 0..MAX_EXPECTED_TRANSACTION_CHUNKS {
+            accum.meta.size += 1;
+            accum.push(origin.slice(i..i + 1), origin.len());
+        }
+        assert_eq!(accum.chunks.len(), MAX_EXPECTED_TRANSACTION_CHUNKS);
+        assert!(!accum.chunks.spilled());
+        assert!(accum.coalesced.is_none());
+
+        // The next chunk triggers coalescing before `chunks` spills to the heap.
+        let last = MAX_EXPECTED_TRANSACTION_CHUNKS;
+        accum.meta.size += 1;
+        accum.push(origin.slice(last..last + 1), origin.len());
+        assert!(accum.chunks.is_empty());
+        assert!(!accum.chunks.spilled());
+        let buf = accum.coalesced.take().expect("should have coalesced");
+        assert_eq!(&buf[..], &origin[..]);
+        // Prove the buffer is a distinct allocation, not an alias to the `origin`.
+        assert!(buf.freeze().try_into_mut().is_ok());
+    }
+
+    // Drive `handle_chunks` over a grid of stream sizes, chunk counts and batch sizes and
+    // check the invariants that hold across the single-chunk, multi-chunk and coalesced
+    // paths alike. Each stream is cut into exactly `n_chunks` near-equal chunks and handed
+    // over `batch_size` at a time, the way read_chunks() delivers them. Everything is
+    // deterministic.
+    #[test]
+    fn test_handle_chunks_stream_sizes_and_chunk_counts() {
+        const CAP: usize = MAX_TRANSACTION_SIZE;
+        const STREAM_SIZES: [usize; 13] = [
+            0,
+            1,
+            128,
+            193,
+            254,
+            511,
+            786,
+            965,
+            1024,
+            1224,
+            CAP - 1,
+            CAP,
+            CAP + 10,
+        ];
+        const CHUNK_COUNTS: [usize; 8] = [
+            1,
+            4,
+            MAX_EXPECTED_TRANSACTION_CHUNKS - 1,
+            MAX_EXPECTED_TRANSACTION_CHUNKS,
+            MAX_EXPECTED_TRANSACTION_CHUNKS + 1,
+            16,
+            64,
+            128,
+        ];
+        // Chunks per read_chunks() call. 1 is the paced sender that coalescing targets, 3
+        // and 4 are the datagrams a full-size transaction spans, 8 fills the read array.
+        // Together with 5 they also place the chunk that triggers coalescing at every
+        // position within a batch: alone, first, last and in the middle with both inline
+        // pushes before it and copies after it in the same call.
+        const BATCH_SIZES: [usize; 5] = [1, 3, 4, 5, MAX_EXPECTED_TRANSACTION_CHUNKS];
+
+        for &total in &STREAM_SIZES {
+            // A stream cannot be cut into more non-empty chunks than it has bytes, and the
+            // empty stream is delivered as zero chunks exactly once.
+            for &n_chunks in CHUNK_COUNTS.iter().filter(|&&n| n <= total.max(1)) {
+                for &batch_size in &BATCH_SIZES {
+                    check_stream(total, n_chunks, batch_size);
+                }
+            }
+        }
+    }
+
+    // Feed one stream of `total` bytes to `handle_chunks` as `n_chunks` near-equal chunks
+    // (zero chunks when `total` is 0), `batch_size` chunks per call, checking the invariants
+    // after every batch and the outcome at EOF.
+    fn check_stream(total: usize, n_chunks: usize, batch_size: usize) {
+        let shape = format!("total={total} n_chunks={n_chunks} batch_size={batch_size}");
+        let max_stream_data_bytes = MAX_TRANSACTION_SIZE as u32;
+        let cap = max_stream_data_bytes as usize;
+        let rtt = Duration::from_millis(50);
+        let (sender, receiver) = bounded(1);
+        let stats = StreamerStats::default();
+        let mut accum = PacketAccumulator::new(Meta::default());
+
+        // One shared buffer stands in for datagram memory; chunks are slices of it.
+        let payload = Bytes::from((0..total).map(|i| i as u8).collect::<Vec<_>>());
+        let n_chunks = if total == 0 { 0 } else { n_chunks };
+        let mut chunks = Vec::with_capacity(n_chunks);
+        let mut offset = 0;
+        for i in 0..n_chunks {
+            // Spread the remainder over the leading chunks so every chunk is non-empty.
+            let len = total / n_chunks + usize::from(i < total % n_chunks);
+            chunks.push(payload.slice(offset..offset + len));
+            offset += len;
+        }
+        assert_eq!(offset, total, "{shape}");
+
+        let mut delivered_bytes = 0;
+        let mut delivered_chunks = 0;
+        let mut remaining = chunks.as_slice();
+        while !remaining.is_empty() {
+            let batch_len = batch_size.min(remaining.len());
+            let (batch, rest) = remaining.split_at(batch_len);
+            remaining = rest;
+            let batch_bytes: usize = batch.iter().map(Bytes::len).sum();
+
+            let result = handle_chunks(
+                batch.iter().cloned(),
+                &mut accum,
+                rtt,
+                &sender,
+                &stats,
+                ConnectionPeerType::Unstaked,
+                max_stream_data_bytes,
+            );
+
+            // Buffered chunks are bounded and never spill, whatever the shape.
+            assert!(
+                accum.chunks.len() <= MAX_EXPECTED_TRANSACTION_CHUNKS,
+                "{shape}"
+            );
+            assert!(!accum.chunks.spilled(), "{shape}");
+
+            if delivered_bytes + batch_bytes > cap {
+                assert!(
+                    result.is_err(),
+                    "{shape}: stream over the cap must be rejected"
+                );
+                assert_eq!(
+                    stats.invalid_stream_size.load(Ordering::Relaxed),
+                    1,
+                    "{shape}"
+                );
+                assert!(
+                    receiver.try_recv().is_err(),
+                    "{shape}: rejected stream must not emit a packet"
+                );
+                return;
+            }
+            assert!(matches!(result, Ok(StreamState::Receiving)), "{shape}");
+            delivered_bytes += batch_bytes;
+            delivered_chunks += batch_len;
+
+            // Coalescing starts exactly when the expected chunk count is exceeded, and
+            // the coalesced buffer is allocated once at the cap and never regrown.
+            let coalesced = delivered_chunks > MAX_EXPECTED_TRANSACTION_CHUNKS;
+            assert_eq!(accum.coalesced.is_some(), coalesced, "{shape}");
+            if let Some(buf) = &accum.coalesced {
+                assert!(accum.chunks.is_empty(), "{shape}");
+                assert_eq!(buf.len(), delivered_bytes, "{shape}");
+                assert_eq!(buf.capacity(), cap, "{shape}");
+            }
+        }
+
+        let result = handle_chunks(
+            std::iter::empty(), // EOF
+            &mut accum,
+            rtt,
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            max_stream_data_bytes,
+        );
+        if total == 0 {
+            assert!(result.is_err(), "{shape}: empty stream must be rejected");
+            assert_eq!(
+                stats.total_packet_batches_none.load(Ordering::Relaxed),
+                1,
+                "{shape}"
+            );
+            assert!(receiver.try_recv().is_err(), "{shape}");
+            return;
+        }
+        assert!(matches!(result, Ok(StreamState::Finished)), "{shape}");
+        let PacketBatch::Single(packet) = receiver.try_recv().expect("a packet should be sent")
+        else {
+            panic!("{shape}: expected a single-packet batch");
+        };
+        assert_eq!(packet.meta().size, total, "{shape}");
+        assert_eq!(
+            packet.data(..).expect("packet data"),
+            &payload[..],
+            "{shape}"
+        );
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            usize::from(chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS),
+            "{shape}"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_client_connection_close_invalid_stream() {
         let SpawnTestServerResult {
@@ -2095,7 +2509,7 @@ pub mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_client_connection_accepts_packet_up_to_configured_max_stream_data_bytes() {
-        let max_stream_data_bytes = PACKET_DATA_SIZE as u32 * 2;
+        let max_stream_data_bytes = MAX_TRANSACTION_SIZE as u32;
         let SpawnTestServerResult {
             join_handle,
             receiver,

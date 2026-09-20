@@ -124,6 +124,7 @@ pub enum UiExtension {
     ScaledUiAmountConfig(UiScaledUiAmountConfig),
     PausableConfig(UiPausableConfig),
     PausableAccount,
+    PermissionedBurnConfig(UiPermissionedBurnConfig),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -336,4 +337,10 @@ pub struct UiScaledUiAmountConfig {
 pub struct UiPausableConfig {
     pub authority: Option<String>,
     pub paused: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UiPermissionedBurnConfig {
+    pub authority: Option<String>,
 }

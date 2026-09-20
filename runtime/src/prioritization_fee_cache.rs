@@ -522,10 +522,10 @@ mod tests {
         // wait till finalization is done
         loop {
             let cache = prioritization_fee_cache.cache.read().unwrap();
-            if let Some(slot_cache) = cache.get(&slot) {
-                if slot_cache.is_finalized() {
-                    return;
-                }
+            if let Some(slot_cache) = cache.get(&slot)
+                && slot_cache.is_finalized()
+            {
+                return;
             }
             drop(cache);
 

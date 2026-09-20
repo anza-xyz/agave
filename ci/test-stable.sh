@@ -27,7 +27,7 @@ cargo_build_sbf_sanity() {
   for program in "${rust_programs[@]}"
   do
     pushd "$program"
-    $cargo_build_sbf --arch "$1" --tools-version v1.54
+    $cargo_build_sbf --arch "$1" --tools-version v1.57
     popd
   done
   popd
@@ -49,7 +49,10 @@ source scripts/ulimit-n.sh
 source ci/common/limit-threads.sh
 
 # get channel info
-eval "$(ci/channel-info.sh)"
+channel_info="$(cargo xtask channel-info --json)"
+EDGE_CHANNEL="$(jq -r '.EDGE_CHANNEL' <<<"$channel_info")"
+BETA_CHANNEL="$(jq -r '.BETA_CHANNEL' <<<"$channel_info")"
+STABLE_CHANNEL="$(jq -r '.STABLE_CHANNEL' <<<"$channel_info")"
 
 #shellcheck source=ci/common/shared-functions.sh
 source ci/common/shared-functions.sh

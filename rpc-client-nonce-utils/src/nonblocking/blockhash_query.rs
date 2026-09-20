@@ -371,11 +371,14 @@ mod tests {
             durable_nonce,
             fee_calculator: nonce_fee_calc,
         };
-        let nonce_account = Account::new_data_with_space(
+        let mut nonce_account = Account::new(
             42,
-            &nonce::versions::Versions::new(nonce::state::State::Initialized(data)),
             nonce::state::State::size(),
             &solana_sdk_ids::system_program::id(),
+        );
+        wincode::serialize_into(
+            &mut nonce_account.data[..],
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(data)),
         )
         .unwrap();
         let nonce_pubkey = Pubkey::from([4u8; 32]);

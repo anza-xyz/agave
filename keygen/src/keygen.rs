@@ -835,10 +835,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                             format!("{}.json", keypair.pubkey()),
                                         )
                                         .unwrap();
-                                        println!(
-                                            "Wrote keypair to {}",
-                                            &format!("{}.json", keypair.pubkey())
-                                        );
+                                        println!("Wrote keypair to {}.json", keypair.pubkey());
                                     }
                                     if use_mnemonic {
                                         let divider =

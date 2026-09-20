@@ -502,11 +502,11 @@ impl ClusterSlots {
         let mut indices = Vec::with_capacity(repair_peers.len());
 
         for (index, peer) in repair_peers.iter().enumerate() {
-            if let Some(stake) = slot_peers.get_support_by_pubkey(peer.pubkey()) {
-                if stake > 0 {
-                    weights.push(stake.max(1));
-                    indices.push(index);
-                }
+            if let Some(stake) = slot_peers.get_support_by_pubkey(peer.pubkey())
+                && stake > 0
+            {
+                weights.push(stake.max(1));
+                indices.push(index);
             }
         }
         (weights, indices)

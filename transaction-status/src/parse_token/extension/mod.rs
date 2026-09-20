@@ -13,6 +13,7 @@ pub(super) mod metadata_pointer;
 pub(super) mod mint_close_authority;
 pub(super) mod pausable;
 pub(super) mod permanent_delegate;
+pub(super) mod permissioned_burn;
 pub(super) mod reallocate;
 pub(super) mod scaled_ui_amount;
 pub(super) mod token_group;

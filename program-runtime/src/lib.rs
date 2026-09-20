@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
@@ -26,7 +25,7 @@ pub mod __private {
         crate::vm::{MEMORY_POOL, calculate_heap_cost, create_vm},
         solana_account::ReadableAccount,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_rent::Rent,
         solana_transaction_context::transaction::TransactionContext,
     };

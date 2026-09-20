@@ -181,12 +181,11 @@ where
     fn extract_subscription_id(message: Message) -> Result<u64, PubsubClientError> {
         let message_text = &message.into_text().map_err(Box::new)?;
 
-        if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
-            if let Some(Number(x)) = json_msg.get("result") {
-                if let Some(x) = x.as_u64() {
-                    return Ok(x);
-                }
-            }
+        if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text)
+            && let Some(Number(x)) = json_msg.get("result")
+            && let Some(x) = x.as_u64()
+        {
+            return Ok(x);
         }
 
         Err(PubsubClientError::UnexpectedSubscriptionResponse(format!(
@@ -226,14 +225,12 @@ where
             return Ok(None);
         }
         let message_text = &message.into_text().map_err(Box::new)?;
-        if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
-            if let Some(Object(params)) = json_msg.get("params") {
-                if let Some(result) = params.get("result") {
-                    if let Ok(x) = T::deserialize(result) {
-                        return Ok(Some(x));
-                    }
-                }
-            }
+        if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text)
+            && let Some(Object(params)) = json_msg.get("params")
+            && let Some(result) = params.get("result")
+            && let Ok(x) = T::deserialize(result)
+        {
+            return Ok(Some(x));
         }
 
         Err(PubsubClientError::UnexpectedMessageError(format!(
@@ -315,28 +312,27 @@ fn connect_with_retry<R: IntoClientRequest>(
     let client_request = request.into_client_request().map_err(Box::new)?;
     loop {
         let result = connect(client_request.clone()).map(|(socket, _)| socket);
-        if let Err(tungstenite::Error::Http(response)) = &result {
-            if response.status() == StatusCode::TOO_MANY_REQUESTS && connection_retries > 0 {
-                let mut duration = Duration::from_millis(500);
-                if let Some(retry_after) = response.headers().get(header::RETRY_AFTER) {
-                    if let Ok(retry_after) = retry_after.to_str() {
-                        if let Ok(retry_after) = retry_after.parse::<u64>() {
-                            if retry_after < 120 {
-                                duration = Duration::from_secs(retry_after);
-                            }
-                        }
-                    }
-                }
-
-                connection_retries -= 1;
-                debug!(
-                    "Too many requests: server responded with {response:?}, {connection_retries} \
-                     retries left, pausing for {duration:?}"
-                );
-
-                sleep(duration);
-                continue;
+        if let Err(tungstenite::Error::Http(response)) = &result
+            && response.status() == StatusCode::TOO_MANY_REQUESTS
+            && connection_retries > 0
+        {
+            let mut duration = Duration::from_millis(500);
+            if let Some(retry_after) = response.headers().get(header::RETRY_AFTER)
+                && let Ok(retry_after) = retry_after.to_str()
+                && let Ok(retry_after) = retry_after.parse::<u64>()
+                && retry_after < 120
+            {
+                duration = Duration::from_secs(retry_after);
             }
+
+            connection_retries -= 1;
+            debug!(
+                "Too many requests: server responded with {response:?}, {connection_retries} \
+                 retries left, pausing for {duration:?}"
+            );
+
+            sleep(duration);
+            continue;
         }
         return result.map_err(Box::new);
     }

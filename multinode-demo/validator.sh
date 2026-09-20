@@ -10,6 +10,7 @@ args=(
   --max-genesis-archive-unpacked-size 1073741824
   --no-poh-speed-test
   --no-os-network-limits-test
+  --no-xdp
 )
 airdrops_enabled=1
 node_sol=500 # 500 SOL: number of SOL to airdrop the node for transaction fees and vote account rent exemption (ignored if airdrops_enabled=0)
@@ -136,6 +137,9 @@ while [[ -n $1 ]]; do
       args+=("$1" "$2")
       shift 2
     elif [[ $1 = --limit-ledger-size ]]; then
+      args+=("$1" "$2")
+      shift 2
+    elif [[ $1 = --limit-blockstore-size ]]; then
       args+=("$1" "$2")
       shift 2
     elif [[ $1 = --no-rocksdb-compaction ]]; then
@@ -337,7 +341,9 @@ setup_validator_accounts() {
         ) || return $?
       fi
       echo "Creating stake account"
-      wallet create-stake-account "$stake_account" "$stake_sol" || return $?
+      # in case partitioned epoch rewards distribution is active. retry the command to add more tlorercnce
+      retry_command 10 2 \
+        wallet create-stake-account "$stake_account" "$stake_sol" || return $?
       echo "Delegating stake"
       declare vote_pubkey
       vote_pubkey=$($solana_keygen pubkey "$vote_account") || return $?

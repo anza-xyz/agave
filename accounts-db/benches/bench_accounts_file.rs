@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_fs::FileInfo,
     criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -55,10 +56,10 @@ fn bench_write_accounts_file(c: &mut Criterion) {
                 || {
                     let path = temp_dir.path().join(format!("append_vec_{accounts_count}"));
                     let file_size = accounts.len() * (space + append_vec::STORE_META_OVERHEAD);
-                    AppendVec::new(path, true, file_size)
+                    AppendVec::new(path, file_size)
                 },
                 |append_vec| {
-                    let res = append_vec.append_accounts(&storable_accounts, 0).unwrap();
+                    let res = append_vec.append_accounts(&storable_accounts).unwrap();
                     let accounts_written_count = res.offsets.len();
                     assert_eq!(accounts_written_count, accounts_count);
                 },
@@ -95,9 +96,9 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
             .iter()
             .map(|(_, account)| AppendVec::calculate_stored_size(account.data().len()))
             .sum();
-        let append_vec = AppendVec::new(append_vec_path, true, file_size);
+        let append_vec = AppendVec::new(append_vec_path, file_size);
         let stored_accounts_info = append_vec
-            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
+            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()))
             .unwrap();
         assert_eq!(stored_accounts_info.offsets.len(), accounts_count);
         append_vec.flush().unwrap();
@@ -105,11 +106,10 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
         // lots of file handles and run out/crash.  We also need to *not* remove the backing file in
         // this new append vec because that would cause a double-free.  Wrap the append vec in
         // ManuallyDrop to *not* remove the backing file on drop.
-        let append_vec_file = ManuallyDrop::new(
-            AppendVec::new_from_file(append_vec.path(), append_vec.len())
-                .unwrap()
-                .0,
-        );
+        let append_vec_file = ManuallyDrop::new({
+            let file_info = FileInfo::new_from_path(append_vec.path()).unwrap();
+            AppendVec::new_for_startup(file_info).unwrap()
+        });
 
         group.bench_function(BenchmarkId::new("append_vec_file", accounts_count), |b| {
             b.iter(|| {
@@ -146,9 +146,9 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             .iter()
             .map(|(_, account)| AppendVec::calculate_stored_size(account.data().len()))
             .sum();
-        let append_vec = AppendVec::new(append_vec_path, true, file_size);
+        let append_vec = AppendVec::new(append_vec_path, file_size);
         let stored_accounts_info = append_vec
-            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
+            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()))
             .unwrap();
         assert_eq!(stored_accounts_info.offsets.len(), 1);
         append_vec.flush().unwrap();
@@ -156,11 +156,10 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
         // lots of file handles and run out/crash.  We also need to *not* remove the backing file in
         // this new append vec because that would cause a double-free.  Wrap the append vec in
         // ManuallyDrop to *not* remove the backing file on drop.
-        let append_vec_file = ManuallyDrop::new(
-            AppendVec::new_from_file(append_vec.path(), append_vec.len())
-                .unwrap()
-                .0,
-        );
+        let append_vec_file = ManuallyDrop::new({
+            let file_info = FileInfo::new_from_path(append_vec.path()).unwrap();
+            AppendVec::new_for_startup(file_info).unwrap()
+        });
 
         // Run the benchmarks!
         // Note, use `iter_with_large_drop()` to avoid timing how long it takes to drop the Vec of

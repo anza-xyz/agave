@@ -7,6 +7,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -21,7 +27,7 @@ bincode = { workspace = true }
 chrono-humanize = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address = { workspace = true }
@@ -38,6 +44,7 @@ solana-fee-calculator = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-message = { workspace = true }
@@ -54,9 +61,9 @@ solana-runtime = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
+solana-stake-history = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { workspace = true }
-solana-svm-timings = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }

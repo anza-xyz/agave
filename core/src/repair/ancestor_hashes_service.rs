@@ -16,16 +16,13 @@ use {
         },
         replay_stage::DUPLICATE_THRESHOLD,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, bounded},
     dashmap::{DashMap, mapref::entry::Entry::Occupied},
     solana_clock::Slot,
     solana_gossip::{contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{Keypair, Signer, signable::Signable},
     solana_ledger::blockstore::Blockstore,
-    solana_perf::{
-        packet::{PacketBatch, PacketRef, packet_config},
-        recycler::Recycler,
-    },
+    solana_perf::packet::{PacketBatch, PacketRef, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
@@ -174,12 +171,10 @@ impl AncestorHashesService {
             ancestor_hashes_request_socket.clone(),
             exit.clone(),
             response_sender.clone(),
-            Recycler::default(),
             Arc::new(StreamerReceiveStats::new(
                 "ancestor_hashes_response_receiver",
             )),
             Some(Duration::from_millis(1)), // coalesce
-            false,                          // use_pinned_memory
             false,                          // is_staked_service
         );
 
@@ -189,7 +184,8 @@ impl AncestorHashesService {
 
         let ancestor_hashes_request_statuses: Arc<DashMap<Slot, AncestorRequestStatus>> =
             Arc::new(DashMap::new());
-        let (retryable_slots_sender, retryable_slots_receiver) = unbounded();
+        // MAX_ANCESTOR_HASHES_SLOT_REQUESTS_PER_SECOND = 2, so we can buffer for > minute here.
+        let (retryable_slots_sender, retryable_slots_receiver) = bounded(128);
 
         // Listen for responses to our ancestor requests
         let t_ancestor_hashes_responses = Self::run_responses_listener(
@@ -454,7 +450,7 @@ impl AncestorHashesService {
                 }
                 stats.ping_count += 1;
                 let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = bincode::serialize(&pong) {
+                if let Ok(pong) = wincode::serialize(&pong) {
                     let _ = ancestor_socket.send_to(&pong, from_addr);
                 }
                 None
@@ -467,11 +463,13 @@ impl AncestorHashesService {
         ancestor_duplicate_slots_sender: &AncestorDuplicateSlotsSender,
         retryable_slots_sender: &RetryableSlotsSender,
     ) {
-        if ancestor_request_decision.is_retryable() {
-            let _ = retryable_slots_sender.send((
+        if ancestor_request_decision.is_retryable()
+            && let Err(TrySendError::Full(_)) = retryable_slots_sender.try_send((
                 ancestor_request_decision.slot,
                 ancestor_request_decision.request_type,
-            ));
+            ))
+        {
+            warn!("Dropping ancestor request decision - retryable_slots channel is full");
         }
 
         // TODO: In the case of DuplicateAncestorDecision::ContinueSearch
@@ -1270,7 +1268,7 @@ mod test {
                 5,
             );
             blockstore
-                .insert_shreds(shreds, None, false)
+                .insert_shreds(shreds, false)
                 .expect("Expect successful ledger write");
             let mut correct_bank_hashes = HashMap::new();
             for duplicate_confirmed_slot in
@@ -1287,10 +1285,8 @@ mod test {
                 Arc::new(responder_node.sockets.serve_repair),
                 exit.clone(),
                 requests_sender,
-                Recycler::default(),
                 Arc::new(StreamerReceiveStats::new("repair_request_receiver")),
                 Some(Duration::from_millis(1)), // coalesce
-                false,
                 false,
             );
             let t_listen =
@@ -1423,7 +1419,7 @@ mod test {
         // Create slots [slot, slot + num_ancestors) with 5 shreds apiece
         let (shreds, _) = make_many_slot_entries(dead_slot, dead_slot, 5);
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
         for duplicate_confirmed_slot in 0..(dead_slot - 1) {
             let bank_hash = correct_bank_hashes

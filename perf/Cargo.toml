@@ -8,9 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 name = "solana_perf"
@@ -32,6 +35,7 @@ dev-context-only-utils = [
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "solana-packet/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
@@ -48,18 +52,14 @@ rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 solana-clock = { workspace = true, optional = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode"] }
-solana-pubkey = { workspace = true, default-features = false }
+solana-pubkey = { workspace = true, default-features = false, features = ["rand"] }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
@@ -111,3 +111,18 @@ harness = false
 [lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = ['cfg(build_target_feature_avx)', 'cfg(build_target_feature_avx2)']
+
+# Duplicated from the root [workspace.lints.clippy]. This crate defines its own
+# [lints.rust.unexpected_cfgs] above, and cargo does not support combining
+# `lints.workspace = true` with crate-specific lints in the same manifest
+# (see https://github.com/rust-lang/cargo/issues/13157). Keep in sync with the workspace.
+[lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"

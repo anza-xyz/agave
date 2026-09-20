@@ -13,7 +13,7 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_offchain_message::OffchainMessage,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -28,7 +28,7 @@ use {
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
-    solana_vote_program::vote_state::VoteAuthorize,
+    solana_vote_program::{vote_instruction::CommissionKind, vote_state::VoteAuthorize},
     std::{
         collections::HashMap, error, io::stdout, rc::Rc, str::FromStr, sync::Arc, time::Duration,
     },
@@ -396,6 +396,34 @@ pub enum CliCommand {
         fee_payer: SignerIndex,
         compute_unit_price: Option<u64>,
     },
+    VoteUpdateCommissionBps {
+        vote_account_pubkey: Pubkey,
+        commission_kind: CommissionKind,
+        commission_bps: u16,
+        withdraw_authority: SignerIndex,
+        sign_only: bool,
+        dump_transaction_message: bool,
+        blockhash_query: BlockhashQuery,
+        nonce_account: Option<Pubkey>,
+        nonce_authority: SignerIndex,
+        memo: Option<String>,
+        fee_payer: SignerIndex,
+        compute_unit_price: Option<u64>,
+    },
+    VoteUpdateCommissionCollector {
+        vote_account_pubkey: Pubkey,
+        commission_kind: CommissionKind,
+        new_collector: Pubkey,
+        withdraw_authority: SignerIndex,
+        sign_only: bool,
+        dump_transaction_message: bool,
+        blockhash_query: BlockhashQuery,
+        nonce_account: Option<Pubkey>,
+        nonce_authority: SignerIndex,
+        memo: Option<String>,
+        fee_payer: SignerIndex,
+        compute_unit_price: Option<u64>,
+    },
     // Wallet Commands
     Address,
     Airdrop {
@@ -745,6 +773,12 @@ pub fn parse_command(
         ("vote-update-commission", Some(matches)) => {
             parse_vote_update_commission(matches, default_signer, wallet_manager)
         }
+        ("vote-update-commission-bps", Some(matches)) => {
+            parse_vote_update_commission_bps(matches, default_signer, wallet_manager)
+        }
+        ("vote-update-commission-collector", Some(matches)) => {
+            parse_vote_update_commission_collector(matches, default_signer, wallet_manager)
+        }
         ("vote-authorize-voter", Some(matches)) => parse_vote_authorize(
             matches,
             default_signer,
@@ -830,16 +864,16 @@ pub type ProcessResult = Result<String, Box<dyn std::error::Error>>;
 
 pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
     if config.verbose && config.output_format == OutputFormat::DisplayVerbose {
-        println_name_value("RPC URL:", &config.json_rpc_url);
-        println_name_value("Default Signer Path:", &config.keypair_path);
+        println_name_value("RPC URL:", &config.json_rpc_url)?;
+        println_name_value("Default Signer Path:", &config.keypair_path)?;
         if config.keypair_path.starts_with("usb://") {
             let pubkey = config
                 .pubkey()
                 .map(|pubkey| format!("{pubkey:?}"))
                 .unwrap_or_else(|_| "Unavailable".to_string());
-            println_name_value("Pubkey:", &pubkey);
+            println_name_value("Pubkey:", &pubkey)?;
         }
-        println_name_value("Commitment:", &config.commitment.commitment.to_string());
+        println_name_value("Commitment:", &config.commitment.commitment.to_string())?;
     }
 
     let rpc_client = if let Some(rpc_client) = config.rpc_client.as_ref() {
@@ -1649,6 +1683,70 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             )
             .await
         }
+        CliCommand::VoteUpdateCommissionBps {
+            vote_account_pubkey,
+            commission_kind,
+            commission_bps,
+            withdraw_authority,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority,
+            memo,
+            fee_payer,
+            compute_unit_price,
+        } => {
+            process_vote_update_commission_bps(
+                &rpc_client,
+                config,
+                vote_account_pubkey,
+                commission_kind.clone(),
+                *commission_bps,
+                *withdraw_authority,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+                *nonce_account,
+                *nonce_authority,
+                memo.as_ref(),
+                *fee_payer,
+                *compute_unit_price,
+            )
+            .await
+        }
+        CliCommand::VoteUpdateCommissionCollector {
+            vote_account_pubkey,
+            commission_kind,
+            new_collector,
+            withdraw_authority,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority,
+            memo,
+            fee_payer,
+            compute_unit_price,
+        } => {
+            process_vote_update_commission_collector(
+                &rpc_client,
+                config,
+                vote_account_pubkey,
+                commission_kind.clone(),
+                new_collector,
+                *withdraw_authority,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+                *nonce_account,
+                *nonce_authority,
+                memo.as_ref(),
+                *fee_payer,
+                *compute_unit_price,
+            )
+            .await
+        }
 
         // Wallet Commands
 
@@ -1802,10 +1900,10 @@ where
     match result {
         Err(err) => {
             let maybe_tx_err = err.get_transaction_error();
-            if let Some(TransactionError::InstructionError(_, ix_error)) = maybe_tx_err {
-                if let Some(specific_error) = error_adapter(&ix_error) {
-                    return Err(specific_error.into());
-                }
+            if let Some(TransactionError::InstructionError(_, ix_error)) = maybe_tx_err
+                && let Some(specific_error) = error_adapter(&ix_error)
+            {
+                return Err(specific_error.into());
             }
             Err(err.into())
         }

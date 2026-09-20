@@ -6,27 +6,26 @@ mod tests {
             bank::Bank,
             block_component_processor::vote_reward::{
                 VoteState, increment_credits,
-                tests::{new_bank_from_parent, set_commission},
+                tests::{new_bank_from_parent, set_commission, split_commission_checked},
             },
             genesis_utils::{
                 ValidatorVoteKeypairs, activate_all_features, create_genesis_config_with_leader_ex,
                 create_validator,
             },
-            inflation_rewards::commission_split,
             stake_utils,
+            sysvar_account::from_account,
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
-            certificate::{Certificate, CertificateType},
+            certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
         },
-        solana_account::{Account, ReadableAccount, from_account},
+        solana_account::{Account, ReadableAccount},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::GenesisConfig,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -212,7 +211,7 @@ mod tests {
                     vote_state.serialize().unwrap()
                 })
                 .collect::<Vec<_>>();
-            bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+            bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
             let slot = bank.slot() + 10;
             new_bank_from_parent(bank, slot)
         }
@@ -236,7 +235,7 @@ mod tests {
                     vote_state.serialize().unwrap()
                 })
                 .collect::<Vec<_>>();
-            bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+            bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
             let slot = bank.slot() + 10;
             new_bank_from_parent(bank, slot)
         }
@@ -282,7 +281,7 @@ mod tests {
             let first_slot_in_reward_epoch = payout_bank
                 .epoch_schedule
                 .get_first_slot_in_epoch(reward_bank.epoch());
-            let num_tower_slots = genesis_cert.cert_type.slot() - first_slot_in_reward_epoch + 1;
+            let num_tower_slots = genesis_cert.block.slot - first_slot_in_reward_epoch + 1;
             let total_slots = reward_bank.epoch_schedule.slots_per_epoch;
 
             let rent_exempt_reserve = reward_bank
@@ -355,13 +354,13 @@ mod tests {
                 let stake_weighted_ag =
                     self.pay_type.ag().map(NonZero::get).unwrap_or(0) * stake / validator_stake;
                 let stake_weighted_reward = stake_weighted_tower + stake_weighted_ag;
-                let (voter_reward, staker_reward, is_split) =
-                    commission_split(self.commission_bps, stake_weighted_reward);
-                assert!(is_split);
+                let (voter_reward, staker_reward) =
+                    split_commission_checked(self.commission_bps, stake_weighted_reward);
                 assert_eq!(
                     staker_reward,
                     final_lamports - initial_lamports,
-                    "final={final_lamports}; initial={initial_lamports}"
+                    "final={final_lamports}; initial={initial_lamports}; commission_bps={}",
+                    self.commission_bps
                 );
                 expected_validator_reward += voter_reward;
             }
@@ -411,7 +410,7 @@ mod tests {
         bank
     }
 
-    #[test_matrix([true, false], [1_000, 5_000], [0, 10], [PayType::Both{ag_credits: NonZero::new(1023).unwrap(), tower_credits:532}, PayType::Tower(383), PayType::None])]
+    #[test_matrix([true, false], [0, 1, 1_000, 5_000, 9_999, 10_000], [0, 10], [PayType::Both{ag_credits: NonZero::new(1023).unwrap(), tower_credits:532}, PayType::Tower(383), PayType::None])]
     fn test_migration_epoch(
         pay_leader: bool,
         commission_bps: u16,
@@ -437,13 +436,12 @@ mod tests {
 
         let bank_with_tower_rewards = state.add_tower_rewards(bank_at_migration0);
 
-        let genesis_cert = Certificate {
-            cert_type: CertificateType::Genesis(Block {
-                slot: bank_with_tower_rewards.slot(),
-                block_id: Hash::default(),
-            }),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
+        let genesis_cert = GenesisCert {
+            block: Block::new_unique(bank_with_tower_rewards.slot()),
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         };
         bank_with_tower_rewards.set_alpenglow_genesis_certificate(&genesis_cert);
         let bank_with_genesis_cert_slot = bank_with_tower_rewards.slot() + 10_000;

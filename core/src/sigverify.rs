@@ -272,11 +272,12 @@ impl SigVerifyWorkerPool {
         sharable_banks: &SharableBanks,
         state: &SigVerifyWorkerState,
     ) -> bool {
+        let batch_len = batch.len();
         state.stats.total_batches.fetch_add(1, Ordering::Relaxed);
         state
             .stats
             .total_packets
-            .fetch_add(batch.len(), Ordering::Relaxed);
+            .fetch_add(batch_len, Ordering::Relaxed);
 
         let (discard_or_dedup_fail, dedup_time_us) =
             measure_us!(deduper::dedup_packets_and_count_discards(
@@ -291,6 +292,10 @@ impl SigVerifyWorkerPool {
             .stats
             .total_dedup_time_us
             .fetch_add(dedup_time_us as usize, Ordering::Relaxed);
+
+        if discard_or_dedup_fail as usize == batch_len {
+            return true;
+        }
 
         let working_bank = sharable_banks.working();
 
@@ -318,11 +323,9 @@ impl SigVerifyWorkerPool {
             }
         }
 
-        let enable_tx_v1 = working_bank.feature_set.snapshot().enable_tx_v1;
         let (_, verify_time_us) = measure_us!(sigverify::ed25519_verify_serial(
             &mut batch,
             reject_non_vote,
-            enable_tx_v1,
         ));
         let num_valid_packets = sigverify::count_valid_packets(std::iter::once(&batch));
         state
@@ -334,7 +337,11 @@ impl SigVerifyWorkerPool {
             .total_verify_time_us
             .fetch_add(verify_time_us as usize, Ordering::Relaxed);
 
-        let banking_packet_batch = BankingPacketBatch::new(vec![batch]);
+        if num_valid_packets == 0 {
+            return true;
+        }
+
+        let banking_packet_batch = BankingPacketBatch::new(batch);
         // Sample backlog before the push: measures consumer health without
         // including this batch's own contribution.
         state
@@ -370,7 +377,7 @@ impl SigVerifyWorkerPool {
         verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
     ) -> bool {
         // Gossip votes are legacy Transaction values, not tx-v1 packets.
-        sigverify::ed25519_verify_serial(&mut work.batch, true, false);
+        sigverify::ed25519_verify_serial(&mut work.batch, true);
 
         if let Err(err) = verified_vote_sender.send(GossipVerifiedVoteBatch {
             transaction: work.transaction,

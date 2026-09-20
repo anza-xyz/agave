@@ -23,9 +23,11 @@ where
     }
 }
 
-declare_builtin_function!(
-    /// memcpy
-    SyscallMemcpy,
+/// memcpy
+pub struct SyscallMemcpy {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemcpy {
+    type Error = Error;
+
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         dst_addr: u64,
@@ -43,11 +45,12 @@ declare_builtin_function!(
         // host addresses can overlap so we always invoke memmove
         memmove(invoke_context, dst_addr, src_addr, n)
     }
-);
+}
 
-declare_builtin_function!(
-    /// memmove
-    SyscallMemmove,
+/// memmove
+pub struct SyscallMemmove {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemmove {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         dst_addr: u64,
@@ -59,11 +62,12 @@ declare_builtin_function!(
         mem_op_consume(invoke_context, n)?;
         memmove(invoke_context, dst_addr, src_addr, n)
     }
-);
+}
 
-declare_builtin_function!(
-    /// memcmp
-    SyscallMemcmp,
+/// memcmp
+pub struct SyscallMemcmp {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemcmp {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         s1_addr: u64,
@@ -76,18 +80,8 @@ declare_builtin_function!(
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
 
-        let s1 = translate_slice::<u8>(
-            memory_mapping,
-            s1_addr,
-            n,
-            check_aligned,
-        )?;
-        let s2 = translate_slice::<u8>(
-            memory_mapping,
-            s2_addr,
-            n,
-            check_aligned,
-        )?;
+        let s1 = translate_slice::<u8>(memory_mapping, s1_addr, n, check_aligned)?;
+        let s2 = translate_slice::<u8>(memory_mapping, s2_addr, n, check_aligned)?;
 
         debug_assert_eq!(s1.len(), n as usize);
         debug_assert_eq!(s2.len(), n as usize);
@@ -106,11 +100,13 @@ declare_builtin_function!(
 
         Ok(0)
     }
-);
+}
 
-declare_builtin_function!(
-    /// memset
-    SyscallMemset,
+/// memset
+pub struct SyscallMemset {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemset {
+    type Error = Error;
+
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         dst_addr: u64,
@@ -131,7 +127,7 @@ declare_builtin_function!(
         s.fill(MaybeUninit::new(c as u8));
         Ok(0)
     }
-);
+}
 
 fn memmove(
     invoke_context: &mut InvokeContext,

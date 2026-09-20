@@ -446,6 +446,7 @@ impl QuicClient {
         Err(last_error.expect("QuicClient::_send_buffer last_error.expect"))
     }
 
+    #[allow(clippy::result_large_err)]
     pub async fn send_buffer<T>(
         &self,
         data: T,
@@ -461,6 +462,7 @@ impl QuicClient {
         Ok(())
     }
 
+    #[allow(clippy::result_large_err)]
     pub async fn send_batch<T>(
         &self,
         buffers: &[T],

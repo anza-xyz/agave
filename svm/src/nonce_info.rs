@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
     qualifier_attr::qualifiers,
-    solana_account::state_traits::StateMut,
+    solana_account::state_traits::StateMutWincode as StateMut,
     solana_nonce::{
         state::{DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,

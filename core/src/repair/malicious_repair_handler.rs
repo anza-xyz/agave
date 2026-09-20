@@ -56,10 +56,10 @@ impl MaliciousRepairHandler {
 
     /// Check if we should respond maliciously for this slot and shred index
     fn should_respond_maliciously(&self, slot: Slot, shred_index: u64) -> bool {
-        if let Some((start, end)) = self.config.slot_range {
-            if slot < start || slot > end {
-                return false;
-            }
+        if let Some((start, end)) = self.config.slot_range
+            && (slot < start || slot > end)
+        {
+            return false;
         }
 
         let slot_matches = self
@@ -116,18 +116,16 @@ impl MaliciousRepairHandler {
         let chained_merkle_root = original_shred.chained_merkle_root().ok()?;
         let is_last_in_slot = original_shred.last_in_slot();
 
-        let shreds: Vec<Shred> = shredder
-            .make_merkle_shreds_from_entries(
-                &self.keypair,
-                &fake_entries,
-                is_last_in_slot,
-                chained_merkle_root,
-                shred_index as u32, // next_shred_index
-                0,                  // next_code_index
-                &self.reed_solomon_cache,
-                &mut ProcessShredsStats::default(),
-            )
-            .collect();
+        let shreds = shredder.make_merkle_shreds_from_entries(
+            &self.keypair,
+            &fake_entries,
+            is_last_in_slot,
+            chained_merkle_root,
+            shred_index as u32, // next_shred_index
+            0,                  // next_code_index
+            &self.reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
 
         // Return the first data shred's payload
         shreds
@@ -162,16 +160,14 @@ impl RepairHandler for MaliciousRepairHandler {
             // Parse the original shred to get its metadata
             if let Ok(original_shred) =
                 Shred::new_from_serialized_shred(original_shred_bytes.clone())
-            {
-                if let Some(equivocating_shred) =
+                && let Some(equivocating_shred) =
                     self.generate_equivocating_shred(&original_shred, shred_index)
-                {
-                    info!(
-                        "Responding with equivocating shred in slot {slot} index {shred_index} to \
-                         {dest}"
-                    );
-                    return repair_response_packet_from_bytes(equivocating_shred, dest, nonce);
-                }
+            {
+                info!(
+                    "Responding with equivocating shred in slot {slot} index {shred_index} to \
+                     {dest}"
+                );
+                return repair_response_packet_from_bytes(equivocating_shred, dest, nonce);
             }
         }
 

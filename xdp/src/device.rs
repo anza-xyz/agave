@@ -2,7 +2,7 @@ use {
     crate::{
         netlink::MacAddress,
         route::Router,
-        umem::{Frame, FrameOffset},
+        umem::{CompletedFrameOffset, Frame, FrameOffset},
     },
     libc::{
         AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, SYS_ioctl,
@@ -374,10 +374,10 @@ impl TxCompletionRing {
         }
     }
 
-    pub fn read(&mut self) -> Option<FrameOffset> {
+    pub fn read(&mut self) -> Option<CompletedFrameOffset> {
         let index = self.consumer.consume()? & self.size.saturating_sub(1);
         let index = unsafe { *self.mmap.desc.add(index as usize) } as usize;
-        Some(FrameOffset(index))
+        Some(CompletedFrameOffset(FrameOffset(index)))
     }
 
     pub fn commit(&mut self) {

@@ -1,9 +1,8 @@
-// This bench attempts to justify the value of `solana_core::poh_service::NUM_HASHES_PER_BATCH`
-
-#![feature(test)]
-extern crate test;
+// This bench attempts to justify the value of `solana_poh::poh_service::DEFAULT_HASHES_PER_BATCH`.
 
 use {
+    bencher::{Bencher, benchmark_group, benchmark_main},
+    crossbeam_channel::{Receiver, Sender, bounded, select},
     solana_entry::poh::Poh,
     solana_hash::Hash,
     solana_ledger::{
@@ -18,20 +17,59 @@ use {
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hash,
     solana_transaction::sanitized::SanitizedTransaction,
-    std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+    std::{
+        hint::black_box,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread::{self, JoinHandle},
     },
-    test::Bencher,
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
+/// Reads and discards a channel's items until dropped.
+///
+/// Useful for a bounded channel whose sender blocks when full and has no other
+/// reader.
+struct EntryDrain {
+    // Never sent on - the thread's select loop ends when this drops.
+    keep_alive: Option<Sender<()>>,
+    thread_hdl: Option<JoinHandle<()>>,
+}
+
+impl EntryDrain {
+    fn new<T: Send + 'static>(receiver: Receiver<T>) -> Self {
+        let (keep_alive, stop_receiver) = bounded::<()>(0);
+        let thread_hdl = thread::spawn(move || {
+            loop {
+                select! {
+                    recv(receiver) -> entry => if entry.is_err() { break },
+                    recv(stop_receiver) -> _ => break,
+                }
+            }
+        });
+        Self {
+            keep_alive: Some(keep_alive),
+            thread_hdl: Some(thread_hdl),
+        }
+    }
+}
+
+impl Drop for EntryDrain {
+    fn drop(&mut self) {
+        self.keep_alive.take();
+        if let Some(thread_hdl) = self.thread_hdl.take() {
+            let _ = thread_hdl.join();
+        }
+    }
+}
+
 const NUM_HASHES: u64 = 30_000; // Should require ~10ms on a 2017 MacBook Pro
 
-#[bench]
 // No locking.  Fastest.
 fn bench_poh_hash(bencher: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
@@ -40,7 +78,6 @@ fn bench_poh_hash(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 // Lock on each iteration.  Slowest.
 fn bench_arc_mutex_poh_hash(bencher: &mut Bencher) {
     let poh = Arc::new(Mutex::new(Poh::new(Hash::default(), None)));
@@ -51,7 +88,6 @@ fn bench_arc_mutex_poh_hash(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 // Acquire lock every NUM_HASHES_PER_BATCH iterations.
 // Speed should be close to bench_poh_hash() if NUM_HASHES_PER_BATCH is set well.
 fn bench_arc_mutex_poh_batched_hash(bencher: &mut Bencher) {
@@ -72,7 +108,6 @@ fn bench_arc_mutex_poh_batched_hash(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 // Worst case transaction record delay due to batch hashing at NUM_HASHES_PER_BATCH
 fn bench_poh_lock_time_per_batch(bencher: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
@@ -81,7 +116,6 @@ fn bench_poh_lock_time_per_batch(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 fn bench_poh_recorder_record(bencher: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
@@ -90,7 +124,7 @@ fn bench_poh_recorder_record(bencher: &mut Bencher) {
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let prev_hash = bank.last_blockhash();
 
-    let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+    let (mut poh_recorder, entry_receiver) = PohRecorder::new(
         0,
         prev_hash,
         bank.clone(),
@@ -101,6 +135,7 @@ fn bench_poh_recorder_record(bencher: &mut Bencher) {
         &PohConfig::default(),
         Arc::new(AtomicBool::default()),
     );
+    let _entry_drain = EntryDrain::new(entry_receiver);
     let h1 = hash(b"hello Agave, hello Anza!");
 
     poh_recorder.set_bank_for_test(bank.clone());
@@ -118,17 +153,12 @@ fn bench_poh_recorder_record(bencher: &mut Bencher) {
     let txs: Vec<_> = txs.iter().map(|tx| tx.to_versioned_transaction()).collect();
     bencher.iter(|| {
         let _record_result = poh_recorder
-            .record(
-                bank.slot(),
-                vec![test::black_box(h1)],
-                vec![test::black_box(txs.clone())],
-            )
+            .record(bank.slot(), black_box(h1), black_box(txs.clone()))
             .unwrap();
     });
     poh_recorder.tick();
 }
 
-#[bench]
 fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
@@ -137,7 +167,7 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let prev_hash = bank.last_blockhash();
 
-    let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+    let (mut poh_recorder, entry_receiver) = PohRecorder::new(
         0,
         prev_hash,
         bank.clone(),
@@ -148,9 +178,21 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
         &PohConfig::default(),
         Arc::new(AtomicBool::default()),
     );
+    let _entry_drain = EntryDrain::new(entry_receiver);
     bencher.iter(|| {
         poh_recorder.set_bank_for_test(bank.clone());
         poh_recorder.tick();
         poh_recorder.clear_bank_for_test();
     });
 }
+
+benchmark_group!(
+    benches,
+    bench_arc_mutex_poh_batched_hash,
+    bench_arc_mutex_poh_hash,
+    bench_poh_hash,
+    bench_poh_lock_time_per_batch,
+    bench_poh_recorder_record,
+    bench_poh_recorder_set_bank
+);
+benchmark_main!(benches);

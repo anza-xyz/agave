@@ -3,27 +3,17 @@ use {
         self, DATA_SHREDS_PER_FEC_BLOCK, Error, ProcessShredsStats, Shred, ShredData, ShredFlags,
     },
     lazy_lru::LruCache,
-    rayon::ThreadPool,
     reed_solomon_erasure::{Error::TooFewDataShards, galois_8::ReedSolomon},
     solana_clock::Slot,
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_rayon_threadlimit::get_thread_count,
     std::{
         fmt::Debug,
         sync::{Arc, OnceLock, RwLock},
         time::Instant,
     },
 };
-
-static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(get_thread_count())
-        .thread_name(|i| format!("solShredder{i:02}"))
-        .build()
-        .unwrap()
-});
 
 // Arc<...> wrapper so that cache entries can be initialized without locking
 // the entire cache.
@@ -74,7 +64,7 @@ impl Shredder {
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
-    ) -> impl Iterator<Item = Shred> + use<> {
+    ) -> Vec<Shred> {
         let now = Instant::now();
         let bytes = wincode::serialize(component).unwrap();
         stats.serialize_elapsed += now.elapsed().as_micros() as u64;
@@ -103,7 +93,7 @@ impl Shredder {
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
-    ) -> impl Iterator<Item = Shred> + use<> {
+    ) -> Vec<Shred> {
         stats.num_entries += entries.len();
         let now = Instant::now();
         let entries = wincode::serialize(entries).unwrap();
@@ -133,10 +123,8 @@ impl Shredder {
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
-    ) -> Result<impl Iterator<Item = Shred> + use<>, Error> {
-        let thread_pool: &ThreadPool = &PAR_THREAD_POOL;
-        let shreds = shred::merkle::make_shreds_from_data(
-            thread_pool,
+    ) -> Result<Vec<Shred>, Error> {
+        shred::merkle::make_shreds_from_data(
             keypair,
             chained_merkle_root,
             data,
@@ -149,8 +137,7 @@ impl Shredder {
             next_code_index,
             reed_solomon_cache,
             stats,
-        )?;
-        Ok(shreds.into_iter().map(Shred::from))
+        )
     }
 
     pub fn entries_to_merkle_shreds_for_tests(
@@ -177,6 +164,7 @@ impl Shredder {
             reed_solomon_cache,
             stats,
         )
+        .into_iter()
         .partition(Shred::is_data)
     }
 
@@ -204,6 +192,7 @@ impl Shredder {
             reed_solomon_cache,
             stats,
         )
+        .into_iter()
         .partition(Shred::is_data)
     }
 
@@ -226,10 +215,10 @@ impl Shredder {
                     shred::layout::get_index(shred)
                         .ok_or_else(|| Error::InvalidPayloadSize(shred.len()))?,
                 );
-                if let Some(prev) = prev {
-                    if prev.checked_add(1) != index {
-                        return Err(Error::from(TooFewDataShards));
-                    }
+                if let Some(prev) = prev
+                    && prev.checked_add(1) != index
+                {
+                    return Err(Error::from(TooFewDataShards));
                 }
                 data.extend_from_slice(shred::layout::get_data(shred)?);
                 let flags = shred::layout::get_flags(shred)?;
@@ -310,8 +299,7 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            self, CODING_SHREDS_PER_FEC_BLOCK, ShredType, max_ticks_per_n_shreds,
-            verify_test_data_shred,
+            CODING_SHREDS_PER_FEC_BLOCK, ShredType, max_ticks_per_n_shreds, verify_test_data_shred,
         },
         assert_matches::assert_matches,
         itertools::Itertools,
@@ -492,7 +480,6 @@ mod tests {
         );
         data_shreds.iter().for_each(|s| {
             assert_eq!(s.reference_tick(), 5);
-            assert_eq!(shred::layout::get_reference_tick(s.payload()).unwrap(), 5);
         });
 
         let deserialized_shred =
@@ -530,10 +517,6 @@ mod tests {
         data_shreds.iter().for_each(|s| {
             assert_eq!(
                 s.reference_tick(),
-                ShredFlags::SHRED_TICK_REFERENCE_MASK.bits()
-            );
-            assert_eq!(
-                shred::layout::get_reference_tick(s.payload()).unwrap(),
                 ShredFlags::SHRED_TICK_REFERENCE_MASK.bits()
             );
         });

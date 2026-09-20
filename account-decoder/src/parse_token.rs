@@ -173,14 +173,15 @@ pub fn get_token_account_mint(data: &[u8]) -> Option<Pubkey> {
 mod test {
     use {
         super::*,
-        crate::parse_token_extension::{UiMemoTransfer, UiMintCloseAuthority},
+        crate::parse_token_extension::{
+            UiMemoTransfer, UiMintCloseAuthority, UiPermissionedBurnConfig,
+        },
         solana_account_decoder_client_types::token::UiExtension,
-        spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022_interface::extension::{
             BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
             immutable_owner::ImmutableOwner, interest_bearing_mint::InterestBearingConfig,
             memo_transfer::MemoTransfer, mint_close_authority::MintCloseAuthority,
-            scaled_ui_amount::ScaledUiAmountConfig,
+            permissioned_burn::PermissionedBurnConfig, scaled_ui_amount::ScaledUiAmountConfig,
         },
     };
 
@@ -624,8 +625,7 @@ mod test {
         let mint_close_authority = mint_state
             .init_extension::<MintCloseAuthority>(true)
             .unwrap();
-        mint_close_authority.close_authority =
-            OptionalNonZeroPubkey::try_from(Some(owner_pubkey)).unwrap();
+        mint_close_authority.close_authority = owner_pubkey.into();
 
         mint_state.base = mint_base;
         mint_state.pack_base();
@@ -642,6 +642,50 @@ mod test {
                 extensions: vec![UiExtension::MintCloseAuthority(UiMintCloseAuthority {
                     close_authority: Some(owner_pubkey.to_string()),
                 })],
+            }),
+        );
+    }
+
+    #[test]
+    fn test_parse_token_mint_with_permissioned_burn() {
+        let owner_pubkey = Pubkey::new_from_array([3; 32]);
+        let authority_pubkey = Pubkey::new_from_array([4; 32]);
+        let mint_size =
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::PermissionedBurn])
+                .unwrap();
+        let mint_base = Mint {
+            mint_authority: COption::Some(owner_pubkey),
+            supply: 42,
+            decimals: 3,
+            is_initialized: true,
+            freeze_authority: COption::Some(owner_pubkey),
+        };
+        let mut mint_data = vec![0; mint_size];
+        let mut mint_state =
+            StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut mint_data).unwrap();
+
+        let permissioned_burn = mint_state
+            .init_extension::<PermissionedBurnConfig>(true)
+            .unwrap();
+        permissioned_burn.authority = authority_pubkey.into();
+
+        mint_state.base = mint_base;
+        mint_state.pack_base();
+        mint_state.init_account_type().unwrap();
+
+        assert_eq!(
+            parse_token_v3(&mint_data, None).unwrap(),
+            TokenAccountType::Mint(UiMint {
+                mint_authority: Some(owner_pubkey.to_string()),
+                supply: 42.to_string(),
+                decimals: 3,
+                is_initialized: true,
+                freeze_authority: Some(owner_pubkey.to_string()),
+                extensions: vec![UiExtension::PermissionedBurnConfig(
+                    UiPermissionedBurnConfig {
+                        authority: Some(authority_pubkey.to_string()),
+                    }
+                )],
             }),
         );
     }

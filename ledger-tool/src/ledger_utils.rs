@@ -26,9 +26,7 @@ use {
         bank_forks_utils::{self, BankForksUtilsError},
         blockstore::{Blockstore, BlockstoreError},
         blockstore_options::{AccessType, BlockstoreOptions, BlockstoreRecoveryMode},
-        blockstore_processor::{
-            self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
-        },
+        blockstore_processor::{self, BlockstoreProcessorError, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
@@ -42,7 +40,9 @@ use {
         bank_forks::BankForks,
         snapshot_controller::SnapshotController,
         snapshot_utils,
+        transaction_execution::TransactionStatusSender,
     },
+    solana_shred_version::compute_shred_version,
     solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
@@ -460,10 +460,15 @@ pub fn load_and_process_ledger(
     };
     let accounts_background_service =
         AccountsBackgroundService::new(bank_forks.clone(), exit.clone(), abs_request_handler);
+    let shred_version = {
+        let hard_forks = bank_forks.read().unwrap().root_bank().hard_forks();
+        compute_shred_version(&genesis_config.hash(), Some(&hard_forks))
+    };
 
     let result = blockstore_processor::process_blockstore_from_root(
         blockstore.as_ref(),
         &bank_forks,
+        shred_version,
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender.as_ref(),

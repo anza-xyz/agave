@@ -3,8 +3,8 @@
 use {
     crate::rpc_sender::*,
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
         consensus_message::Block,
+        wire::{WireBlockCertMessage, WireCertSignature},
     },
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
@@ -17,7 +17,8 @@ use {
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{TRANSACTION_LEVEL_STACK_HEIGHT, error::InstructionError},
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
+    solana_instruction_error::InstructionError,
     solana_message::MessageHeader,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
@@ -178,10 +179,12 @@ impl RpcSender for MockSender {
                 transaction_count: Some(123),
             })?,
             "getAgGenesisCert" => {
-                let cert = Certificate {
-                    cert_type: CertificateType::Genesis(Block { slot: 0, block_id: Hash::default() }),
-                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    bitmap: Vec::default(),
+                let cert = WireBlockCertMessage {
+                    block: Block { slot: 0, block_id: Hash::default() },
+                    signature: WireCertSignature {
+                        signature:  BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                        bitmap: vec![],
+                     }
                 };
                 serde_json::to_value(Some(cert))?
             }

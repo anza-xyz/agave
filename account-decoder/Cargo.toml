@@ -8,9 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -25,15 +28,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
-solana-address-lookup-table-interface = { workspace = true, features = [
-    "bincode",
-    "bytemuck",
-] }
+solana-address-lookup-table-interface = { workspace = true, features = ["bincode", "bytemuck"] }
 solana-clock = { workspace = true }
 solana-config-interface = { workspace = true, features = ["bincode"] }
-solana-epoch-schedule = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["serde"] }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-nonce = { workspace = true, features = ["serde"] }
 solana-program-option = { workspace = true }
@@ -43,9 +44,11 @@ solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-slot-history = { workspace = true, features = ["wincode"] }
-solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
-solana-sysvar = { workspace = true }
+solana-stake-history = { workspace = true, features = ["serde", "wincode"] }
+solana-stake-interface = { workspace = true, features = ["bincode"] }
+solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
+solana-zk-sdk-pod = { workspace = true }
 spl-generic-token = { workspace = true }
 spl-token-2022-interface = { workspace = true }
 spl-token-group-interface = { workspace = true }
@@ -57,10 +60,8 @@ zstd = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-spl-pod = { workspace = true }
 
 [lints]
 workspace = true

@@ -10,7 +10,8 @@ pub fn parse_legacy_message_accounts(message: &Message) -> Vec<ParsedAccount> {
     for (i, account_key) in message.account_keys.iter().enumerate() {
         accounts.push(ParsedAccount {
             pubkey: account_key.to_string(),
-            writable: message.is_maybe_writable(i, Some(&reserved_account_keys)),
+            writable: message
+                .is_maybe_writable_with_reserved_addresses(i, Some(&reserved_account_keys)),
             signer: message.is_signer(i),
             source: Some(ParsedAccountSource::Transaction),
         });
@@ -42,7 +43,8 @@ pub fn parse_v1_message_accounts(message: &solana_message::v1::Message) -> Vec<P
     for (i, account_key) in message.account_keys.iter().enumerate() {
         accounts.push(ParsedAccount {
             pubkey: account_key.to_string(),
-            writable: message.is_maybe_writable(i, Some(&reserved_account_keys)),
+            writable: message
+                .is_maybe_writable_with_reserved_addresses(i, Some(&reserved_account_keys)),
             signer: message.is_signer(i),
             source: Some(ParsedAccountSource::Transaction),
         });

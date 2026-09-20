@@ -2,7 +2,6 @@
 #[derive(Clone, Copy, Default)]
 pub struct SVMFeatureSet {
     pub move_precompile_verification_to_svm: bool,
-    pub syscall_parameter_address_restrictions: bool,
     pub virtual_address_space_adjustments: bool,
     pub account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
@@ -18,9 +17,6 @@ pub struct SVMFeatureSet {
     pub enable_big_mod_exp_syscall: bool,
     pub enable_get_epoch_stake_syscall: bool,
     pub enable_poseidon_syscall: bool,
-    pub enable_sbpf_v1_deployment_and_execution: bool,
-    pub enable_sbpf_v2_deployment_and_execution: bool,
-    pub enable_sbpf_v3_deployment_and_execution: bool,
     pub get_sysvar_syscall_enabled: bool,
     pub last_restart_slot_sysvar: bool,
     pub reenable_sbpf_v0_execution: bool,
@@ -53,13 +49,13 @@ pub struct SVMFeatureSet {
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
+    pub relax_fee_payer_constraint: bool,
 }
 
 impl SVMFeatureSet {
     pub fn all_enabled() -> Self {
         Self {
             move_precompile_verification_to_svm: true,
-            syscall_parameter_address_restrictions: true,
             virtual_address_space_adjustments: true,
             account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
@@ -75,9 +71,6 @@ impl SVMFeatureSet {
             enable_big_mod_exp_syscall: true,
             enable_get_epoch_stake_syscall: true,
             enable_poseidon_syscall: true,
-            enable_sbpf_v1_deployment_and_execution: true,
-            enable_sbpf_v2_deployment_and_execution: true,
-            enable_sbpf_v3_deployment_and_execution: true,
             get_sysvar_syscall_enabled: true,
             last_restart_slot_sysvar: true,
             reenable_sbpf_v0_execution: true,
@@ -110,6 +103,7 @@ impl SVMFeatureSet {
             enable_sha512_syscall: true,
             relax_post_exec_min_balance_check: true,
             define_ltds_fee_only_semantics: true,
+            relax_fee_payer_constraint: true,
         }
     }
 }

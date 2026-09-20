@@ -1,9 +1,7 @@
 use {
     crate::{
         blockstore::Blockstore,
-        blockstore_processor::{
-            self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
-        },
+        blockstore_processor::{self, BlockstoreProcessorError, ProcessOptions},
         entry_notifier_service::EntryNotifierSender,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
@@ -22,7 +20,10 @@ use {
         utils::move_and_async_delete_path_contents,
     },
     solana_genesis_config::GenesisConfig,
-    solana_runtime::{bank_forks::BankForks, snapshot_bank_utils, snapshot_utils},
+    solana_runtime::{
+        bank_forks::BankForks, snapshot_bank_utils, snapshot_utils,
+        transaction_execution::TransactionStatusSender,
+    },
     std::{
         path::{Path, PathBuf},
         sync::{Arc, RwLock, atomic::AtomicBool},

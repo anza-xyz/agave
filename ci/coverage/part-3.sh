@@ -21,6 +21,7 @@ echo "--- coverage: coverage (part 3)"
   --features dev-context-only-utils \
   --workspace \
   --lib \
+  --bins \
   "${exclude_packages[@]}"
 
 # Clean up

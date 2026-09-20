@@ -13,10 +13,11 @@ use {
         },
         replay_stage::{Finalizer, ReplayStage},
     },
-    agave_votor::event::LeaderWindowInfo,
+    agave_bls_sigverify::rewards::RewardInput,
+    agave_votor::{event::LeaderWindowInfo, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{AddVoteMessage, NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
@@ -25,7 +26,12 @@ use {
     },
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
-    solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
+    solana_ledger::{
+        blockstore::Blockstore,
+        entry_notifier_interface::EntryUpdateParentInfo,
+        entry_notifier_service::{EntryNotification, EntryNotifierSender},
+        leader_schedule_cache::LeaderScheduleCache,
+    },
     solana_measure::measure::Measure,
     solana_perf::packet::{BytesPacket, Meta, PacketBatch, bytes::Bytes},
     solana_poh::{
@@ -60,6 +66,23 @@ use {
 pub(crate) mod rewards;
 mod stats;
 
+// Empirically derived value estimating the time to
+// - drain and record the final batch of transactions,
+// - produce the block footer,
+// - produce the 'alpentick',
+// - freeze the bank,
+// - shred the final batches of the block,
+// - broadcast.
+// Recording stops this much before the slot timeout so block completion has time to finish before
+// the leader window deadline.
+const TIME_TO_COMPLETE_BLOCK_BROADCAST: Duration = Duration::from_millis(6);
+
+// Empirically derived value estimating the average turbine transmission time
+// over a leader window. Agave will terminate block production early such that
+// an external observer views `bank.ns_per_slot()` time between consecutive block
+// completions.
+const BLOCK_PRODUCTION_BUFFER: Duration = Duration::from_millis(50);
+
 /// Source of a leader-window notification consumed by BCL.
 enum ParentSource {
     /// Parent from ParentReady event for this leader window is already known.
@@ -74,13 +97,13 @@ pub struct BlockCreationLoop {
 }
 
 impl BlockCreationLoop {
-    pub fn new(config: BlockCreationLoopConfig) -> (Self, Sender<AddVoteMessage>) {
-        let (reward_certs_service, certs_requestor, votes_sender) = RewardCertsService::new(
-            config.cluster_info.clone(),
-            config.leader_schedule_cache.clone(),
-            config.sharable_banks.clone(),
-            config.exit.clone(),
-        );
+    pub(crate) fn new(config: BlockCreationLoopConfig) -> (Self, Sender<RewardInput>) {
+        let (reward_certs_service, certs_requestor, reward_aggregates_sender) =
+            RewardCertsService::new(
+                config.cluster_info.clone(),
+                config.sharable_banks.clone(),
+                config.exit.clone(),
+            );
         let t_block_creation_loop = Builder::new()
             .name("solBlkCreatLoop".to_string())
             .spawn(move || {
@@ -95,7 +118,7 @@ impl BlockCreationLoop {
                 t_block_creation_loop,
                 reward_certs_service,
             },
-            votes_sender,
+            reward_aggregates_sender,
         )
     }
 
@@ -111,6 +134,7 @@ pub struct BlockCreationLoopConfig {
     // Shared state
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub sharable_banks: SharableBanks,
+    pub alpenglow_slot_clock: SharedAlpenglowSlotClock,
     pub bank_forks_controller: Arc<dyn BankForksController>,
     pub blockstore: Arc<Blockstore>,
     pub cluster_info: Arc<ClusterInfo>,
@@ -121,6 +145,7 @@ pub struct BlockCreationLoopConfig {
     // Notifiers
     pub banking_tracer: Arc<BankingTracer>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
+    pub entry_notification_sender: Option<EntryNotifierSender>,
 
     // Receivers / notifications from banking stage / replay / votor
     pub leader_window_info_receiver: Receiver<LeaderWindowInfo>,
@@ -152,9 +177,12 @@ struct LeaderContext {
     poh_recorder: Arc<RwLock<PohRecorder>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     bank_forks: Arc<RwLock<BankForks>>,
+    sharable_banks: SharableBanks,
+    alpenglow_slot_clock: SharedAlpenglowSlotClock,
     bank_forks_controller: Arc<dyn BankForksController>,
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
+    entry_notification_sender: Option<EntryNotifierSender>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
     reward_certs_requestor: CertsRequestor,
@@ -163,7 +191,6 @@ struct LeaderContext {
 
     // Metrics
     metrics: LoopMetrics,
-    slot_metrics: SlotMetrics,
 
     // Migration information
     genesis_cert_block_marker: GenesisCertBlockMarker,
@@ -232,6 +259,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         rpc_subscriptions,
         banking_tracer,
         slot_status_notifier,
+        entry_notification_sender,
         record_receiver_receiver,
         leader_window_info_receiver,
         replay_highest_frozen,
@@ -239,7 +267,8 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         optimistic_parent_receiver,
         highest_finalized,
         banking_stage_sender,
-        sharable_banks: _,
+        sharable_banks,
+        alpenglow_slot_clock,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator
@@ -281,15 +310,17 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         record_receiver,
         leader_schedule_cache,
         bank_forks,
+        sharable_banks,
+        alpenglow_slot_clock,
         bank_forks_controller,
         rpc_subscriptions,
         slot_status_notifier,
+        entry_notification_sender,
         banking_tracer,
         replay_highest_frozen,
         reward_certs_requestor,
         banking_stage_sender,
         metrics: LoopMetrics::default(),
-        slot_metrics: SlotMetrics::default(),
         highest_finalized,
         genesis_cert_block_marker,
     };
@@ -378,14 +409,18 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
             continue;
         }
 
-        if let Err(e) = produce_window(
+        let mut slot_metrics = SlotMetrics::new(start_slot, fast_leader_handover);
+        let res = produce_window(
             fast_leader_handover,
             start_slot,
             end_slot,
             parent_block,
             block_timer,
             &mut ctx,
-        ) {
+            &mut slot_metrics,
+        );
+        slot_metrics.report();
+        if let Err(e) = res {
             // Give up on this leader window
             error!(
                 "{my_pubkey}: Unable to produce window {start_slot}-{end_slot}, skipping window: \
@@ -422,6 +457,8 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 fn block_timeout(bank: &Bank, slot: Slot) -> Duration {
     Duration::from_nanos_u128(bank.ns_per_slot_at_slot(slot))
         .saturating_mul((leader_slot_index(slot) as u32).saturating_add(1))
+        .saturating_sub(TIME_TO_COMPLETE_BLOCK_BROADCAST)
+        .saturating_sub(BLOCK_PRODUCTION_BUFFER)
 }
 
 /// Select the freshest leader-window notification within one source.
@@ -470,14 +507,17 @@ fn select_freshest_window(
     latest_parent_ready: Option<LeaderWindowInfo>,
     latest_optimistic_parent: Option<LeaderWindowInfo>,
 ) -> (Option<LeaderWindowInfo>, bool) {
-    if latest_parent_ready.as_ref().map(|info| info.start_slot)
-        >= latest_optimistic_parent
-            .as_ref()
-            .map(|info| info.start_slot)
-    {
-        (latest_parent_ready, false)
-    } else {
-        (latest_optimistic_parent, true)
+    match (latest_parent_ready, latest_optimistic_parent) {
+        (None, None) => (None, false),
+        (Some(parent_ready), None) => (Some(parent_ready), false),
+        (None, Some(opt_parent)) => (Some(opt_parent), true),
+        (Some(parent_ready), Some(opt_parent)) => {
+            if parent_ready.start_slot >= opt_parent.start_slot {
+                (Some(parent_ready), false)
+            } else {
+                (Some(opt_parent), true)
+            }
+        }
     }
 }
 
@@ -553,18 +593,19 @@ fn produce_window(
     parent_block: Block,
     mut block_timer: Instant,
     ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
 ) -> Result<(), StartLeaderError> {
+    update_leader_window_clock(ctx, start_slot, block_timer);
+
     // Insert the first bank
     let mut working_bank = start_leader_wait_for_parent_replay(
+        ctx,
+        slot_metrics,
         start_slot,
         parent_block.slot,
         Some(parent_block.block_id),
         block_timer,
-        ctx,
     )?;
-    if fast_leader_handover {
-        ctx.slot_metrics.mark_leader_handover_fast();
-    }
 
     let my_pubkey = ctx.my_pubkey;
     let mut window_production_start = Measure::start("window_production");
@@ -580,9 +621,14 @@ fn produce_window(
         let mut bank_completion_measure = Measure::start("bank_completion");
         let optimistic_parent =
             (fast_leader_handover && slot == start_slot).then_some(parent_block);
-        if let Err(e) =
-            record_and_complete_block(ctx, slot, optimistic_parent, &mut block_timer, timeout)
-        {
+        if let Err(e) = record_and_complete_block(
+            ctx,
+            slot_metrics,
+            slot,
+            optimistic_parent,
+            &mut block_timer,
+            timeout,
+        ) {
             if ctx.exit.load(Ordering::Relaxed) {
                 return Ok(());
             }
@@ -593,13 +639,11 @@ fn produce_window(
         }
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
         bank_completion_measure.stop();
-        ctx.slot_metrics.report();
 
         ctx.metrics.bank_timeout_completion_count += 1;
-        let _ = ctx
-            .metrics
-            .bank_timeout_completion_elapsed_hist
-            .increment(bank_completion_measure.as_us());
+        ctx.metrics
+            .bank_timeout_completion_elapsed
+            .add_sample(bank_completion_measure.as_us());
 
         // Produce our next slot
         slot += 1;
@@ -607,10 +651,22 @@ fn produce_window(
             trace!("{my_pubkey}: finished leader window {start_slot}-{end_slot}");
             break;
         }
+        {
+            let mut swap = SlotMetrics::new(slot, false);
+            std::mem::swap(&mut swap, slot_metrics);
+            swap.report();
+        }
 
         // Although `slot - 1`has been cleared from `poh_recorder`, it might not have finished processing in
         // `replay_stage`, which is why we use `start_leader_retry_replay`
-        working_bank = start_leader_wait_for_parent_replay(slot, slot - 1, None, block_timer, ctx)?;
+        working_bank = start_leader_wait_for_parent_replay(
+            ctx,
+            slot_metrics,
+            slot,
+            slot - 1,
+            None,
+            block_timer,
+        )?;
     }
 
     window_production_start.stop();
@@ -627,15 +683,26 @@ fn produce_window(
 /// - Clear the working bank
 fn record_and_complete_block(
     ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
     bank_slot: Slot,
     mut optimistic_parent: Option<Block>,
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
-    let reward_cert_request = ctx
-        .reward_certs_requestor
-        .request_reward_certs(ctx.my_pubkey, bank_slot)
-        .map_err(|()| PohRecorderError::ChannelDisconnected)?;
+    // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
+    // would be tower slots.
+    let reward_cert_request = if bank_slot
+        > ctx
+            .genesis_cert_block_marker
+            .slot
+            .saturating_add(NUM_SLOTS_FOR_REWARD)
+    {
+        ctx.reward_certs_requestor
+            .request_reward_certs(slot_metrics, ctx.my_pubkey, bank_slot)
+            .map_err(|()| PohRecorderError::ChannelDisconnected)?
+    } else {
+        None
+    };
     let mut accumulated_txs = vec![];
     let mut records_shutdown = false;
     let window_has_moved_on = loop {
@@ -680,6 +747,7 @@ fn record_and_complete_block(
                 let info = msg.map_err(|_| PohRecorderError::ChannelDisconnected)?;
                 if process_parent_ready(
                     ctx,
+                    slot_metrics,
                     info,
                     bank_slot,
                     &mut optimistic_parent,
@@ -692,19 +760,16 @@ fn record_and_complete_block(
             },
             recv(ctx.record_receiver.inner()) -> msg => {
                 let record = msg.map_err(|_| PohRecorderError::ChannelDisconnected)?;
-                ctx.record_receiver
-                    .on_received_record(record.transaction_batches.len() as u64);
+                ctx.record_receiver.on_received_record();
 
                 if optimistic_parent.is_some() {
-                    record.transaction_batches.iter().for_each(|batch| {
-                        accumulated_txs.extend(batch.iter().cloned());
-                    });
+                    accumulated_txs.extend(record.transactions.iter().cloned());
                 }
 
                 ctx.poh_recorder.write().unwrap().record(
                     record.bank_id,
-                    record.mixins,
-                    record.transaction_batches,
+                    record.mixin,
+                    record.transactions,
                 )?;
             },
             default(select_timeout) => {},
@@ -748,6 +813,14 @@ fn record_and_complete_block(
         bank.slot()
     );
 
+    // Root advancement can retire and purge this Bank concurrently with block completion. Hold
+    // execution token through remaining mutations.
+    let Some(_completion_guard) = bank.try_enter_transaction_execution() else {
+        // Bank is being retired!
+        w_poh_recorder.clear_bank(true);
+        return Err(PohRecorderError::WindowMovedOn(bank_slot));
+    };
+
     let max_tick_height = bank.max_tick_height();
     // Set the tick height for the bank to max_tick_height - 1, so that PohRecorder::flush_cache()
     // will properly increment the tick_height to max_tick_height.
@@ -756,14 +829,15 @@ fn record_and_complete_block(
     let footer = {
         let reward_certs = ctx
             .reward_certs_requestor
-            .recv_reward_certs(ctx.my_pubkey, reward_cert_request)
+            .recv_reward_certs(slot_metrics, ctx.my_pubkey, reward_cert_request)
             .map_err(|()| PohRecorderError::ChannelDisconnected)?;
         let RewardRespSucc {
             skip,
             notar,
-            validators: _,
+            validators,
         } = reward_certs;
-        let reward_cert = ValidatedRewardCert::try_new(&bank, &skip, &notar)?;
+        let reward_cert =
+            ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?;
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
@@ -783,7 +857,6 @@ fn record_and_complete_block(
         footer
     };
 
-    drop(bank);
     // Write the single tick for this slot
     w_poh_recorder.tick_alpenglow(max_tick_height, footer)?;
     Ok(())
@@ -796,6 +869,7 @@ fn record_and_complete_block(
 /// sad leader handover and restart the bank on the ParentReady parent.
 fn process_parent_ready(
     ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
     info: LeaderWindowInfo,
     bank_slot: Slot,
     optimistic_parent: &mut Option<Block>,
@@ -810,18 +884,18 @@ fn process_parent_ready(
     }
 
     if info.start_slot == bank_slot {
-        if let Some(optimistic_parent_block) = optimistic_parent.take() {
-            if handle_parent_ready(
+        if let Some(optimistic_parent_block) = optimistic_parent.take()
+            && handle_parent_ready(
                 ctx,
+                slot_metrics,
                 info,
                 optimistic_parent_block,
                 std::mem::take(accumulated_txs),
                 block_timer,
             )?
             .is_some()
-            {
-                *records_shutdown = false;
-            }
+        {
+            *records_shutdown = false;
         }
         return Ok(false);
     }
@@ -853,7 +927,7 @@ fn abort_working_bank(ctx: &mut LeaderContext, slot: Slot) -> Result<(), BankFor
     let reset_bank = bank
         .parent()
         .unwrap_or_else(|| ctx.bank_forks.read().unwrap().root_bank());
-    bank.wait_for_inflight_commits();
+    bank.quiesce_transaction_execution();
     ctx.bank_forks_controller.clear_bank(slot)?;
     reset_poh_recorder(&reset_bank, ctx);
     Ok(())
@@ -889,6 +963,7 @@ fn send_update_parent(
 /// - we clear the bank for the current slot
 fn handle_parent_ready(
     ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
     leader_window_info: LeaderWindowInfo,
     optimistic_parent_block: Block,
     mut accumulated_txs: Vec<VersionedTransaction>,
@@ -904,7 +979,7 @@ fn handle_parent_ready(
         "{:?}: Sad leader handover slot optimistic parent = {:?} != {:?} = parent from ParentReady",
         ctx.my_pubkey, optimistic_parent_block, leader_window_info.parent_block
     );
-    ctx.slot_metrics.mark_leader_handover_sad();
+    slot_metrics.leader_handover_sad = true;
 
     // If the optimistic parent doesn't match the one specified in ParentReady, then
     // this resets the block timer to the new parent's timer.
@@ -936,21 +1011,37 @@ fn handle_parent_ready(
             old_parent_slot,
             new_parent_slot,
         ))?;
-    bank.wait_for_inflight_commits();
+    let cleared_bank_id = bank.bank_id();
+    bank.quiesce_transaction_execution();
+    let entry_bytes_consumed = bank.entry_bytes_budget().consumed();
     ctx.bank_forks_controller
         .clear_bank(slot)
         .map_err(|_| PohRecorderError::ResetBankError(old_parent_slot, new_parent_slot))?;
     ctx.poh_recorder.write().unwrap().clear_bank(true);
 
+    if let Some(sender) = &ctx.entry_notification_sender
+        && let Err(err) = sender.send(EntryNotification::UpdateParent(EntryUpdateParentInfo {
+            slot,
+            cleared_bank_id,
+            parent_slot: new_parent_slot,
+            parent_block_id: new_parent_hash,
+        }))
+    {
+        warn!("UpdateParent entry notification send failed: {err:?}");
+    }
+
     // Create the new bank before re-injecting transactions to avoid racing.
-    let new_bank = start_leader_wait_for_parent_replay(
+    let new_bank = start_leader_wait_for_parent_replay_with_used_bytes(
+        ctx,
+        slot_metrics,
         slot,
         new_parent_slot,
         Some(new_parent_hash),
         *block_timer,
-        ctx,
+        entry_bytes_consumed,
     )
     .map_err(|_| PohRecorderError::ResetBankError(old_parent_slot, new_parent_slot))?;
+    update_leader_window_clock(ctx, slot, *block_timer);
 
     // Re-inject accumulated transactions back to banking stage for rescheduling
     let packets: Vec<BytesPacket> = accumulated_txs
@@ -978,7 +1069,7 @@ fn handle_parent_ready(
             packets.len(),
         );
         let batch: PacketBatch = packets.into();
-        let banking_packet_batch = Arc::new(vec![batch]);
+        let banking_packet_batch = Arc::new(batch);
         ctx.banking_stage_sender
             // technically this send can evict to make room (which may drop a few packets)
             // but this should (hopefully) not be significant amounts since we are evicting
@@ -990,7 +1081,14 @@ fn handle_parent_ready(
     Ok(Some(new_bank))
 }
 
-/// Shut down record intake and synchronously record all already-reserved batches.
+fn update_leader_window_clock(ctx: &LeaderContext, slot: Slot, started_at: Instant) {
+    let slot_duration =
+        Duration::from_nanos_u128(ctx.sharable_banks.root().ns_per_slot_at_slot(slot));
+    ctx.alpenglow_slot_clock
+        .update_leader(slot, started_at, slot_duration);
+}
+
+/// Shut down record intake and synchronously process all already-reserved records.
 ///
 /// When `accumulated_txs` is provided, the drained transactions are retained so
 /// sad handover can reschedule them against the recreated bank.
@@ -1003,16 +1101,13 @@ fn shutdown_and_drain_record_receiver(
 
     for record in record_receiver.drain_after_shutdown() {
         if let Some(accumulated_txs) = accumulated_txs.as_deref_mut() {
-            record.transaction_batches.iter().for_each(|batch| {
-                accumulated_txs.extend(batch.iter().cloned());
-            });
+            accumulated_txs.extend(record.transactions.iter().cloned());
         }
 
-        poh_recorder.write().unwrap().record(
-            record.bank_id,
-            record.mixins,
-            record.transaction_batches,
-        )?;
+        poh_recorder
+            .write()
+            .unwrap()
+            .record(record.bank_id, record.mixin, record.transactions)?;
     }
 
     Ok(())
@@ -1026,11 +1121,32 @@ fn time_left(block_timer: Instant, timeout: Duration) -> Duration {
 /// Similar to `maybe_start_leader`, however if replay of the parent block is lagging we retry
 /// until either replay finishes or we hit the block timeout.
 fn start_leader_wait_for_parent_replay(
+    ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
     slot: Slot,
     parent_slot: Slot,
     parent_hash: Option<Hash>,
     block_timer: Instant,
+) -> Result<Arc<Bank>, StartLeaderError> {
+    start_leader_wait_for_parent_replay_with_used_bytes(
+        ctx,
+        slot_metrics,
+        slot,
+        parent_slot,
+        parent_hash,
+        block_timer,
+        0,
+    )
+}
+
+fn start_leader_wait_for_parent_replay_with_used_bytes(
     ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
+    slot: Slot,
+    parent_slot: Slot,
+    parent_hash: Option<Hash>,
+    block_timer: Instant,
+    entry_bytes_consumed: u64,
 ) -> Result<Arc<Bank>, StartLeaderError> {
     trace!(
         "{}: Attempting to start leader slot {slot} parent {parent_slot}",
@@ -1040,9 +1156,9 @@ fn start_leader_wait_for_parent_replay(
     let timeout = block_timeout(&ctx.bank_forks.read().unwrap().root_bank(), slot);
     let end_slot = last_of_consecutive_leader_slots(slot);
 
-    let mut slot_delay_start = Measure::start("slot_delay");
+    let mut slot_delay_measure = Measure::start("slot_delay");
     while !time_left(block_timer, timeout).is_zero() {
-        ctx.slot_metrics.attempt_start_leader_count += 1;
+        slot_metrics.attempt_start_leader_count += 1;
 
         // Check if the entire window is skipped.
         let highest_parent_ready_slot = ctx.highest_parent_ready.read().unwrap().0;
@@ -1058,21 +1174,18 @@ fn start_leader_wait_for_parent_replay(
             ));
         }
 
-        match maybe_start_leader(slot, parent_slot, parent_hash, ctx) {
+        match maybe_start_leader(
+            ctx,
+            slot_metrics,
+            slot,
+            parent_slot,
+            parent_hash,
+            entry_bytes_consumed,
+        ) {
             Ok(()) => {
-                slot_delay_start.stop();
-                let _ = ctx
-                    .slot_metrics
-                    .slot_delay_hist
-                    .increment(slot_delay_start.as_us())
-                    .inspect_err(|e| {
-                        error!(
-                            "{}: unable to increment slot delay histogram {e:?}",
-                            ctx.my_pubkey
-                        );
-                    });
+                slot_delay_measure.stop();
+                slot_metrics.slot_delay_us += slot_delay_measure.as_us();
 
-                ctx.slot_metrics.report();
                 return Ok(ctx
                     .poh_recorder
                     .read()
@@ -1093,7 +1206,7 @@ fn start_leader_wait_for_parent_replay(
                     .unwrap();
 
                 // We wait until either we finish replay of the parent or the block timer finishes
-                let mut wait_start = Measure::start("replay_is_behind");
+                let mut replay_behind_measure = Measure::start("replay_is_behind");
                 let _unused = {
                     let timeout = time_left(block_timer, timeout);
                     ctx.replay_highest_frozen
@@ -1101,18 +1214,8 @@ fn start_leader_wait_for_parent_replay(
                         .wait_timeout_while(highest_frozen_slot, timeout, |hfs| *hfs < parent_slot)
                         .unwrap()
                 };
-                wait_start.stop();
-                ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
-                let _ = ctx
-                    .slot_metrics
-                    .replay_is_behind_wait_elapsed_hist
-                    .increment(wait_start.as_us())
-                    .inspect_err(|e| {
-                        error!(
-                            "{}: unable to increment replay is behind histogram {e:?}",
-                            ctx.my_pubkey
-                        );
-                    });
+                replay_behind_measure.stop();
+                slot_metrics.replay_is_behind_us += replay_behind_measure.as_us();
             }
             Err(StartLeaderError::ParentBlockIdMismatch {
                 expected, actual, ..
@@ -1121,7 +1224,7 @@ fn start_leader_wait_for_parent_replay(
                     "{my_pubkey}: Attempting to produce slot {slot}, however parent {parent_slot} \
                      has block id {actual:?}, expected {expected}; waiting for bank switch"
                 );
-                let mut wait_start = Measure::start("parent_block_id_mismatch");
+                let mut replay_behind_measure = Measure::start("parent_block_id_mismatch");
                 let wait_timeout = time_left(block_timer, timeout).min(Duration::from_millis(100));
                 if !wait_timeout.is_zero() {
                     let highest_frozen_slot = ctx
@@ -1135,12 +1238,8 @@ fn start_leader_wait_for_parent_replay(
                         .wait_timeout(highest_frozen_slot, wait_timeout)
                         .unwrap();
                 }
-                wait_start.stop();
-                ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
-                let _ = ctx
-                    .slot_metrics
-                    .replay_is_behind_wait_elapsed_hist
-                    .increment(wait_start.as_us());
+                replay_behind_measure.stop();
+                slot_metrics.replay_is_behind_us += replay_behind_measure.as_us();
             }
             Err(e) => return Err(e),
         }
@@ -1162,23 +1261,23 @@ fn start_leader_wait_for_parent_replay(
 /// - Create a new bank for `slot` with parent `parent_slot`
 /// - Insert into bank_forks and poh recorder
 fn maybe_start_leader(
+    ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
     slot: Slot,
     parent_slot: Slot,
     parent_hash: Option<Hash>,
-    ctx: &mut LeaderContext,
+    entry_bytes_consumed: u64,
 ) -> Result<(), StartLeaderError> {
     if ctx.bank_forks.read().unwrap().get(slot).is_some() {
-        ctx.slot_metrics.already_have_bank_count += 1;
+        slot_metrics.already_have_bank_count += 1;
         return Err(StartLeaderError::AlreadyHaveBank(slot));
     }
 
     let Some(parent_bank) = ctx.bank_forks.read().unwrap().get(parent_slot) else {
-        ctx.slot_metrics.replay_is_behind_count += 1;
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     };
 
     if !parent_bank.is_frozen() {
-        ctx.slot_metrics.replay_is_behind_count += 1;
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     }
 
@@ -1195,7 +1294,7 @@ fn maybe_start_leader(
     }
 
     // Create and insert the bank
-    create_and_insert_leader_bank(slot, parent_bank, ctx)
+    create_and_insert_leader_bank(slot, parent_bank, entry_bytes_consumed, ctx)
 }
 
 /// Creates and inserts the leader bank `slot` of this window with
@@ -1203,6 +1302,7 @@ fn maybe_start_leader(
 fn create_and_insert_leader_bank(
     slot: Slot,
     parent_bank: Arc<Bank>,
+    entry_bytes_consumed: u64,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     let parent_slot = parent_bank.slot();
@@ -1231,9 +1331,9 @@ fn create_and_insert_leader_bank(
         );
     }
 
-    if ctx.poh_recorder.read().unwrap().start_slot() != parent_slot {
-        // Important to keep Poh somewhat accurate for
-        // parts of the system relying on PohRecorder::would_be_leader()
+    if ctx.poh_recorder.read().unwrap().start_bank_id() != parent_bank.bank_id() {
+        // PoH must be based on the exact parent bank. Comparing slots is insufficient because
+        // fast leader handover can switch between parent banks in the same slot.
         reset_poh_recorder(&parent_bank, ctx);
     }
 
@@ -1256,7 +1356,8 @@ fn create_and_insert_leader_bank(
         ctx.rpc_subscriptions.as_deref(),
         &ctx.slot_status_notifier,
         NewBankOptions::default(),
-    );
+    )
+    .mark_leader_bank();
     // make sure parent is frozen for finalized hashes via the above
     // new()-ing of its child bank
     ctx.banking_tracer.hash_event(
@@ -1272,11 +1373,31 @@ fn create_and_insert_leader_bank(
         tpu_bank.set_hashes_per_tick(None);
     }
 
+    // A sad leader handover recreates the bank for the same slot, but the entries emitted before
+    // the UpdateParent marker still occupy shreds in that slot. Preserve their reservations before
+    // exposing the replacement bank to BankingStage.
+    tpu_bank
+        .entry_bytes_budget()
+        .reserve(entry_bytes_consumed)
+        .expect(
+            "No feature flag could have been activated in this same slot to cause reserve to fail",
+        );
+
     // Insert the bank
     let tpu_bank = ctx.bank_forks_controller.insert_bank(tpu_bank)?;
 
     let bank_id = tpu_bank.bank_id();
-    ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
+
+    // Tell broadcast to produce the header
+    let send_result = ctx
+        .poh_recorder
+        .write()
+        .unwrap()
+        .set_bank_and_send_slot_start(tpu_bank);
+    if let Err(err) = send_result {
+        abort_working_bank(ctx, slot)?;
+        return Err(StartLeaderError::PohRecorder(err));
+    }
 
     // If this is the first alpenglow block, emit the genesis certificate marker.
     // This happens before record intake restarts, so a send failure can be
@@ -1288,7 +1409,6 @@ fn create_and_insert_leader_bank(
 
     // Wakeup banking stage
     ctx.record_receiver.restart(bank_id);
-    ctx.slot_metrics.reset(slot);
 
     info!(
         "{}: new fork:{} parent:{} (leader) root:{}",
@@ -1317,9 +1437,9 @@ fn maybe_include_genesis_certificate(
 
     // Process the genesis certificate
     let bank = poh_recorder.bank().expect("Bank cannot have been cleared");
-    let processor = bank.block_component_processor.read().unwrap();
+    let mut processor = bank.block_component_processor.write().unwrap();
     processor
-        .on_genesis_cert_block_marker(
+        .on_genesis_cert_block_marker_leader(
             bank.clone(),
             ctx.genesis_cert_block_marker.clone(),
             &ctx.bank_forks.read().unwrap().migration_status(),
@@ -1343,12 +1463,12 @@ mod tests {
         agave_banking_stage_ingress_types::BankingPacketReceiver,
         crossbeam_channel::bounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_entry::{block_component::VersionedUpdateParent, entry_or_marker::EntryOrMarker},
+        solana_entry::{block_component::VersionedUpdateParent, recorder_message::RecorderMessage},
         solana_keypair::Keypair,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
         solana_poh::{
-            poh_recorder::{PohRecorder, Record, WorkingBankEntryOrMarker},
+            poh_recorder::{PohRecorder, Record, WorkingBankMessage},
             record_channels::record_channels,
         },
         solana_poh_config::PohConfig,
@@ -1401,17 +1521,13 @@ mod tests {
             Ok(self.bank_forks.write().unwrap().insert(bank))
         }
 
-        fn enqueue_set_root(
-            &self,
-            _parent_slot: Slot,
-            new_root: Slot,
-            highest_super_majority_root: Option<Slot>,
-        ) {
+        fn enqueue_set_root(&self, new_root: Block) {
+            let new_root = new_root.slot;
             // Test code only so we allow writing bank forks directly.
             self.bank_forks
                 .write()
                 .unwrap()
-                .set_root(new_root, None, highest_super_majority_root);
+                .set_root(new_root, None, Some(new_root));
         }
 
         fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
@@ -1434,10 +1550,7 @@ mod tests {
         LeaderWindowInfo {
             start_slot,
             end_slot: last_of_consecutive_leader_slots(start_slot),
-            parent_block: Block {
-                slot: parent_slot,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(parent_slot),
             block_timer: Instant::now(),
         }
     }
@@ -1468,9 +1581,7 @@ mod tests {
         assert_eq!(selected.parent_block.slot, 6);
     }
 
-    fn recv_update_parent_marker(
-        entry_receiver: &Receiver<WorkingBankEntryOrMarker>,
-    ) -> UpdateParentV1 {
+    fn recv_update_parent_marker(entry_receiver: &Receiver<WorkingBankMessage>) -> UpdateParentV1 {
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
             let timeout = deadline.saturating_duration_since(Instant::now());
@@ -1478,9 +1589,8 @@ mod tests {
                 !timeout.is_zero(),
                 "timed out waiting for UpdateParent marker"
             );
-            let (_bank, (entry_or_marker, _tick_height)) =
-                entry_receiver.recv_timeout(timeout).unwrap();
-            let EntryOrMarker::Marker(VersionedBlockMarker::V1(marker)) = entry_or_marker else {
+            let (_bank, (message, _tick_height)) = entry_receiver.recv_timeout(timeout).unwrap();
+            let RecorderMessage::Marker(VersionedBlockMarker::V1(marker)) = message else {
                 continue;
             };
             let Some(VersionedUpdateParent::V1(update_parent)) = marker.as_update_parent() else {
@@ -1493,10 +1603,9 @@ mod tests {
     fn recv_rescheduled_transactions(
         receiver: &BankingPacketReceiver,
     ) -> Vec<VersionedTransaction> {
-        let packet_batches = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        packet_batches
+        let packet_batch = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        packet_batch
             .iter()
-            .flat_map(|batch| batch.iter())
             .map(|packet| {
                 wincode::deserialize::<VersionedTransaction>(
                     packet.data(..packet.meta().size).unwrap(),
@@ -1545,36 +1654,33 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((
-                0,
-                Block {
-                    slot: 0,
-                    block_id: Hash::default(),
-                },
-            ))),
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
             poh_recorder,
             leader_schedule_cache,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
+            entry_notification_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
-            slot_metrics: SlotMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
-        create_and_insert_leader_bank(1, root_bank.clone(), &mut ctx).unwrap();
+        create_and_insert_leader_bank(1, root_bank.clone(), 0, &mut ctx).unwrap();
         assert!(ctx.poh_recorder.read().unwrap().has_bank());
         assert!(ctx.bank_forks.read().unwrap().get(1).is_some());
 
         let bank = ctx.poh_recorder.read().unwrap().bank().unwrap();
+        assert!(!bank.should_replay_from_blockstore());
         let in_flight_commit = bank.freeze_lock();
         ctx.record_receiver.shutdown();
         for _ in ctx.record_receiver.drain_after_shutdown() {}
@@ -1599,7 +1705,7 @@ mod tests {
                 .recv_timeout(Duration::from_secs(1))
                 .unwrap();
         });
-        create_and_insert_leader_bank(1, root_bank, &mut ctx).unwrap();
+        create_and_insert_leader_bank(1, root_bank, 0, &mut ctx).unwrap();
         assert!(ctx.poh_recorder.read().unwrap().has_bank());
         assert!(ctx.bank_forks.read().unwrap().get(1).is_some());
 
@@ -1663,32 +1769,28 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((
-                0,
-                Block {
-                    slot: 0,
-                    block_id: Hash::default(),
-                },
-            ))),
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
             poh_recorder,
             leader_schedule_cache,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
+            entry_notification_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
-            slot_metrics: SlotMetrics::default(),
             genesis_cert_block_marker,
         };
 
-        let err = create_and_insert_leader_bank(2, parent_bank, &mut ctx).unwrap_err();
+        let err = create_and_insert_leader_bank(2, parent_bank, 0, &mut ctx).unwrap_err();
         assert!(matches!(
             err,
             StartLeaderError::PohRecorder(PohRecorderError::SendError(_))
@@ -1738,44 +1840,46 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((
-                2,
-                Block {
-                    slot: 0,
-                    block_id: Hash::default(),
-                },
-            ))),
+            highest_parent_ready: Arc::new(RwLock::new((2, Block::new_unique(0)))),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
             poh_recorder,
             leader_schedule_cache,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
+            entry_notification_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
-            slot_metrics: SlotMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
-        create_and_insert_leader_bank(1, root_bank, &mut ctx).unwrap();
+        create_and_insert_leader_bank(1, root_bank, 0, &mut ctx).unwrap();
         let bank_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
         record_sender
             .try_send(Record::new(
-                vec![Hash::new_unique()],
-                vec![vec![versioned_transfer(1)]],
+                Hash::new_unique(),
+                vec![versioned_transfer(1)],
                 bank_id,
             ))
             .unwrap();
 
         let start = Instant::now();
-        let result =
-            record_and_complete_block(&mut ctx, 1, None, &mut Instant::now(), Duration::ZERO);
+        let result = record_and_complete_block(
+            &mut ctx,
+            &mut SlotMetrics::new(1, true),
+            1,
+            None,
+            &mut Instant::now(),
+            Duration::ZERO,
+        );
         assert!(matches!(result, Err(PohRecorderError::WindowMovedOn(1))));
         assert!(start.elapsed() < Duration::from_millis(250));
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
@@ -1785,7 +1889,16 @@ mod tests {
     }
 
     #[test]
-    fn test_sad_leader_handover() {
+    fn test_sad_leader_handover_same_parent_slot() {
+        test_sad_leader_handover(1);
+    }
+
+    #[test]
+    fn test_sad_leader_handover_different_parent_slot() {
+        test_sad_leader_handover(3);
+    }
+
+    fn test_sad_leader_handover(optimistic_parent_slot: Slot) {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let my_pubkey = Pubkey::new_unique();
@@ -1806,19 +1919,35 @@ mod tests {
             SlotLeader::new_unique(),
             new_parent_slot,
         );
+        new_parent.register_unique_recent_blockhash_for_test();
         new_parent.freeze();
         new_parent.set_block_id(Some(new_parent_hash));
+        let new_parent_bank_id = new_parent.bank_id();
 
-        let optimistic_parent_slot = 3;
         let optimistic_parent_hash = Hash::new_unique();
-        let optimistic_parent = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            root_bank.clone(),
-            SlotLeader::new_unique(),
-            optimistic_parent_slot,
-        );
+        let optimistic_parent = if optimistic_parent_slot == new_parent_slot {
+            Arc::new(Bank::new_from_parent(
+                root_bank.clone(),
+                SlotLeader::new_unique(),
+                optimistic_parent_slot,
+            ))
+        } else {
+            Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                root_bank.clone(),
+                SlotLeader::new_unique(),
+                optimistic_parent_slot,
+            )
+        };
+        optimistic_parent.register_unique_recent_blockhash_for_test();
         optimistic_parent.freeze();
         optimistic_parent.set_block_id(Some(optimistic_parent_hash));
+        let optimistic_parent_bank_id = optimistic_parent.bank_id();
+        assert_ne!(optimistic_parent_bank_id, new_parent_bank_id);
+        assert_ne!(
+            optimistic_parent.last_blockhash(),
+            new_parent.last_blockhash()
+        );
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
@@ -1841,6 +1970,7 @@ mod tests {
         let (banking_stage_sender, banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
+        let (entry_notification_sender, entry_notification_receiver) = bounded(1);
 
         let mut ctx = LeaderContext {
             exit,
@@ -1859,33 +1989,46 @@ mod tests {
             record_receiver,
             poh_recorder,
             leader_schedule_cache,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
+            entry_notification_sender: Some(entry_notification_sender),
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
-            slot_metrics: SlotMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
         let leader_slot = 4;
-        create_and_insert_leader_bank(leader_slot, optimistic_parent, &mut ctx).unwrap();
-        let optimistic_bank_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
+        create_and_insert_leader_bank(leader_slot, optimistic_parent, 0, &mut ctx).unwrap();
+        let optimistic_bank = ctx.poh_recorder.read().unwrap().bank().unwrap();
+        let optimistic_bank_id = optimistic_bank.bank_id();
+        const ENTRY_BYTES_CONSUMED_BEFORE_HANDOVER: u64 = 1_024;
+        optimistic_bank
+            .entry_bytes_budget()
+            .reserve(ENTRY_BYTES_CONSUMED_BEFORE_HANDOVER)
+            .unwrap();
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            optimistic_parent_bank_id
+        );
 
         let accumulated_tx = versioned_transfer(1);
         let drained_tx = versioned_transfer(2);
         record_sender
             .try_send(Record::new(
-                vec![Hash::new_unique()],
-                vec![vec![drained_tx.clone()]],
+                Hash::new_unique(),
+                vec![drained_tx.clone()],
                 optimistic_bank_id,
             ))
             .unwrap();
 
+        let parent_ready_started_at = Instant::now();
         let parent_ready = LeaderWindowInfo {
             start_slot: leader_slot,
             end_slot: 7,
@@ -1893,10 +2036,11 @@ mod tests {
                 slot: new_parent_slot,
                 block_id: new_parent_hash,
             },
-            block_timer: Instant::now(),
+            block_timer: parent_ready_started_at,
         };
         let new_bank = handle_parent_ready(
             &mut ctx,
+            &mut SlotMetrics::new(leader_slot, true),
             parent_ready,
             Block {
                 slot: optimistic_parent_slot,
@@ -1910,6 +2054,40 @@ mod tests {
 
         assert_eq!(new_bank.slot(), leader_slot);
         assert_eq!(new_bank.parent_slot(), new_parent_slot);
+        assert_eq!(
+            new_bank.entry_bytes_budget().consumed(),
+            ENTRY_BYTES_CONSUMED_BEFORE_HANDOVER
+        );
+        assert!(
+            new_bank
+                .entry_bytes_budget()
+                .reserve(new_bank.max_entry_bytes_per_slot() - ENTRY_BYTES_CONSUMED_BEFORE_HANDOVER)
+                .is_ok()
+        );
+        assert!(new_bank.entry_bytes_budget().reserve(1).is_err());
+        assert_eq!(new_bank.parent().unwrap().bank_id(), new_parent_bank_id);
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            new_parent_bank_id
+        );
+        let EntryNotification::UpdateParent(update_parent) =
+            entry_notification_receiver.try_recv().unwrap()
+        else {
+            panic!("expected UpdateParent entry notification");
+        };
+        assert_eq!(
+            update_parent,
+            EntryUpdateParentInfo {
+                slot: leader_slot,
+                cleared_bank_id: optimistic_bank_id,
+                parent_slot: new_parent_slot,
+                parent_block_id: new_parent_hash,
+            }
+        );
+        assert_eq!(
+            ctx.alpenglow_slot_clock.load().unwrap().started_at,
+            parent_ready_started_at
+        );
         assert_eq!(
             ctx.bank_forks
                 .read()

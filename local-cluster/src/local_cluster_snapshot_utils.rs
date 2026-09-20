@@ -106,13 +106,12 @@ impl LocalCluster {
                                 incremental_snapshot_archives_dir.as_ref().unwrap(),
                                 full_snapshot_archive_info.slot(),
                             )
+                            && incremental_snapshot_archive_info.slot() > last_slot
                         {
-                            if incremental_snapshot_archive_info.slot() > last_slot {
-                                break NextSnapshotResult::IncrementalAndFullSnapshot(
-                                    incremental_snapshot_archive_info,
-                                    full_snapshot_archive_info,
-                                );
-                            }
+                            break NextSnapshotResult::IncrementalAndFullSnapshot(
+                                incremental_snapshot_archive_info,
+                                full_snapshot_archive_info,
+                            );
                         }
                     }
                 }

@@ -68,13 +68,13 @@ pub fn read_more_buffer(
 }
 
 #[cfg(unix)]
-fn arch_read_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+fn arch_read_at(file: &File, buffer: &mut [u8], offset: FileSize) -> std::io::Result<usize> {
     use std::os::unix::prelude::FileExt;
     file.read_at(buffer, offset)
 }
 
 #[cfg(windows)]
-fn arch_read_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+fn arch_read_at(file: &File, buffer: &mut [u8], offset: FileSize) -> std::io::Result<usize> {
     use std::os::windows::fs::FileExt;
     // Note: as opposed to unix `read_at` this call will update the internal file offset,
     // so all callers should consistently use the file only through this module
@@ -82,13 +82,13 @@ fn arch_read_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<
 }
 
 #[cfg(unix)]
-fn arch_write_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<usize> {
+fn arch_write_at(file: &File, buffer: &[u8], offset: FileSize) -> io::Result<usize> {
     use std::os::unix::prelude::FileExt;
     file.write_at(buffer, offset)
 }
 
 #[cfg(windows)]
-fn arch_write_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<usize> {
+fn arch_write_at(file: &File, buffer: &[u8], offset: FileSize) -> io::Result<usize> {
     use std::os::windows::fs::FileExt;
     // Note: as opposed to unix `write_at` this call will update the internal file offset,
     // so all callers should consistently use the file only through this module
@@ -98,14 +98,18 @@ fn arch_write_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<usize> {
 /// Write, starting at `offset`, the whole buffer to a file irrespective of the file's current length.
 ///
 /// After this operation file size may be extended and the file cursor may be moved (platform-dependent).
-pub fn write_buffer_to_file(file: &File, mut buffer: &[u8], mut offset: u64) -> io::Result<()> {
+pub fn write_buffer_to_file(
+    file: &File,
+    mut buffer: &[u8],
+    mut offset: FileSize,
+) -> io::Result<()> {
     while !buffer.is_empty() {
         let wrote_len = arch_write_at(file, buffer, offset)?;
         if wrote_len == 0 {
             return Err(io::ErrorKind::WriteZero.into());
         }
         buffer = &buffer[wrote_len..];
-        offset += wrote_len as u64;
+        offset += wrote_len as FileSize;
     }
     Ok(())
 }
@@ -166,7 +170,7 @@ pub trait FileCreator {
     ) -> io::Result<()>;
 
     /// Invoke implementation specific logic to handle file creation completion.
-    fn file_complete(&mut self, created_file: File, path: PathBuf, file_size: u64);
+    fn file_complete(&mut self, created_file: File, path: PathBuf, file_size: FileSize);
 
     /// Waits for all operations to be completed
     fn drain(&mut self) -> io::Result<()>;
@@ -258,7 +262,7 @@ impl FileCreator for SyncIoFileCreator<'_> {
         Ok(())
     }
 
-    fn file_complete(&mut self, file: File, path: PathBuf, size: u64) {
+    fn file_complete(&mut self, file: File, path: PathBuf, size: FileSize) {
         (self.file_complete)(FileInfo { file, path, size });
     }
 
@@ -487,9 +491,9 @@ mod tests {
         let mut file_info = callback_provided_file_info.unwrap();
         assert_eq!(
             file_info.file.metadata().unwrap().len(),
-            contents.len() as u64
+            contents.len() as FileSize,
         );
-        assert_eq!(file_info.size, contents.len() as u64);
+        assert_eq!(file_info.size, contents.len() as FileSize);
         file_info.file.read_to_string(&mut read_buf).unwrap();
         assert_eq!(&read_buf, contents);
 

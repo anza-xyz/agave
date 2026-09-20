@@ -71,12 +71,21 @@ EOF
 fi
 
 # Disallow (re)introduction of solana sdk dependencies
-(
-  if git diff "$target" | grep -v '+++' | grep '^+.*solana[-_]sdk[: =]'; then
-    cat <<'EOF' 1>&2
+cargo_deny_config="$PWD/deny.toml"
+scripts/cargo-for-all-lock-files.sh -- \
+  deny --config "$cargo_deny_config" --all-features check bans
 
-Error: solana sdk crate dependencies (re)introduced.
-This crate is DEPRECATED. Please use the standalone crates for the corresponding modules
+# Disallow adding new files under docs/ — docs now live in a separate repo
+(
+  added_docs=$(git diff --diff-filter=AR --name-only "$target" -- 'docs/*')
+  if [ -n "$added_docs" ]; then
+    cat <<EOF 1>&2
+
+Error: new files added under docs/:
+$added_docs
+
+Documentation has moved to https://github.com/anza-xyz/docs.anza.xyz
+Please add your changes there instead.
 EOF
     exit 1
   fi

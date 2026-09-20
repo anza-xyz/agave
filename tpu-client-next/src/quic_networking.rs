@@ -1,7 +1,7 @@
 //! Utility code to handle quic networking.
 
 use {
-    crate::connection_workers_scheduler::BindTarget,
+    crate::{WireTransaction, connection_workers_scheduler::BindTarget},
     quinn::{
         ClientConfig, Connection, Endpoint, EndpointConfig, IdleTimeout, TransportConfig,
         congestion::CubicConfig, crypto::rustls::QuicClientConfig, default_runtime,
@@ -53,6 +53,7 @@ pub(crate) fn create_client_config(
         let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
         res.max_idle_timeout(Some(timeout));
         res.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
+        res.datagram_receive_buffer_size(None);
         // Disable Quic send fairness.
         // When set to false, streams are still scheduled based on priority,
         // but once a chunk of a stream has been written out, quinn tries to complete
@@ -97,10 +98,13 @@ pub(crate) fn create_client_endpoint(
 
 pub(crate) async fn send_data_over_stream(
     connection: &Connection,
-    data: &[u8],
+    transaction: WireTransaction,
 ) -> Result<(), QuicError> {
     let mut send_stream = connection.open_uni().await?;
-    send_stream.write_all(data).await.map_err(QuicError::from)?;
+    send_stream
+        .write_chunk(transaction)
+        .await
+        .map_err(QuicError::from)?;
 
     // Stream will be finished when dropped. Finishing here explicitly is a noop.
     Ok(())

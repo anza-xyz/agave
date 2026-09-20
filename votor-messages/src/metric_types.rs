@@ -14,20 +14,20 @@ pub enum ConsensusMetricsEvent {
     /// A vote was received from the node with `id`.
     Vote {
         /// The validator that voted.
-        id: Pubkey,
+        ids: Vec<Pubkey>,
         /// The type of vote.
         vote: Vote,
     },
-    /// A block hash was seen for `slot` and the `leader` is responsible for producing it.
-    BlockHashSeen {
+    /// A block for `slot` that was produced by `leader` finished replaying.
+    ReplayCompleted {
         /// The leader that produced the block.
         leader: Pubkey,
         /// The slot the block was produced for.
         slot: Slot,
     },
-    /// Start of slot.
-    StartOfSlot {
-        /// The slot that just started.
+    /// ParentReady event was seen.
+    ParentReadySeen {
+        /// The slot for which the parent ready event was seen.
         slot: Slot,
     },
     /// A slot was finalized.

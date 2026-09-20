@@ -159,17 +159,17 @@ impl SlotsStats {
                 }
             }
             let mut slot_full_reporting_info = None;
-            if let Some(meta) = slot_meta {
-                if meta.is_full() {
-                    location_stats.last_index = meta.last_index.unwrap();
-                    if !location_stats.is_full {
-                        location_stats.is_full = true;
-                        slot_full_reporting_info = Some((
-                            location,
-                            location_stats.num_repaired,
-                            location_stats.num_recovered,
-                        ));
-                    }
+            if let Some(meta) = slot_meta
+                && meta.is_full()
+            {
+                location_stats.last_index = meta.last_index.unwrap();
+                if !location_stats.is_full {
+                    location_stats.is_full = true;
+                    slot_full_reporting_info = Some((
+                        location,
+                        location_stats.num_repaired,
+                        location_stats.num_recovered,
+                    ));
                 }
             }
             (slot_full_reporting_info, evicted)

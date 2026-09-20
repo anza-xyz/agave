@@ -21,6 +21,15 @@ static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
     pubkey
 });
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "CrSvqX8ZAYxjZ6XoTp9Z1ED6McdnqhXq8zYFWBDkCwJs",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 /// The per epoch info stored in the off curve account.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 pub(super) struct EpochInflationState {
@@ -38,10 +47,10 @@ impl EpochInflationState {
     fn new_from_bank(
         bank: &Bank,
         epoch_start_capitalization: u64,
-        additional_validator_rewards: u64,
+        additional_rewards: u64,
     ) -> Self {
         let max_possible_validator_reward = bank.calculate_epoch_inflation_rewards(
-            epoch_start_capitalization + additional_validator_rewards,
+            epoch_start_capitalization + additional_rewards,
             bank.epoch(),
         );
         EpochInflationState {
@@ -52,6 +61,15 @@ impl EpochInflationState {
     }
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "FeEFnXTk7DxHkCamcHDpRRjRDfSyMh3DGnefbwSvA8Kc",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 /// The state stored in the off curve account used to store metadata for calculating and paying
 /// voting rewards.
 ///
@@ -76,6 +94,12 @@ impl EpochInflationAccountState {
     pub(crate) fn new_from_bank(bank: &Bank) -> Option<Self> {
         bank.get_account(&VOTE_REWARD_ACCOUNT_ADDR)
             .and_then(|acct| wincode::deserialize(acct.data()).ok())
+    }
+
+    /// Returns the epoch-start inflation rewards recorded for `epoch`.
+    pub(crate) fn inflation_rewards_for_epoch(self, epoch: Epoch) -> Option<u64> {
+        self.get_epoch_state(epoch)
+            .map(|state| state.max_possible_validator_reward)
     }
 
     /// Serializes and updates [`Self`] into the accounts in the [`Bank`].
@@ -115,19 +139,19 @@ impl EpochInflationAccountState {
     /// capitalization keeps increasing in the first slots of the epoch.  Vote rewards are
     /// calculated as a function of the capitalization and we do not want voting in the initial
     /// slots to earn less rewards than voting in the later rewards.  As such this function is
-    /// called with [`additional_validator_rewards`] which should be the total rewards that will
+    /// called with [`additional_rewards`] which should be the total rewards that will
     /// be paid by PER and we use the capitalization from the previous epoch plus this value to
     /// compute the vote rewards.
     pub(crate) fn new_epoch_update_account(
         bank: &Bank,
         epoch_start_capitalization: u64,
-        additional_validator_rewards: u64,
+        additional_rewards: u64,
     ) {
         let prev = Self::new_from_bank(bank).map(|s| s.current);
         let current = EpochInflationState::new_from_bank(
             bank,
             epoch_start_capitalization,
-            additional_validator_rewards,
+            additional_rewards,
         );
         let state = Self { prev, current };
         state.set_state(bank);
@@ -138,10 +162,10 @@ impl EpochInflationAccountState {
         if self.current.epoch == epoch {
             return Some(self.current);
         }
-        if let Some(prev) = self.prev {
-            if prev.epoch == epoch {
-                return Some(prev);
-            }
+        if let Some(prev) = self.prev
+            && prev.epoch == epoch
+        {
+            return Some(prev);
         }
         None
     }

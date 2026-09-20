@@ -116,13 +116,8 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
                 .recv()
                 .unwrap()
                 .iter()
-                .map(|batch| {
-                    batch
-                        .iter()
-                        .filter(|packet| !packet.meta().discard())
-                        .count()
-                })
-                .sum::<usize>();
+                .filter(|packet| !packet.meta().discard())
+                .count();
         }
         trace!("received: {verified}");
     });
@@ -180,7 +175,7 @@ fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32)
         let mut batches = batches0.clone();
 
         let mut verify_time = Measure::start("sigverify_batch_time");
-        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_valid_packets, false);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_valid_packets);
         verify_time.stop();
         black_box(sigverify::count_valid_packets(&batches));
 
