@@ -4,6 +4,7 @@ pub mod args;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod config_file;
 pub mod execute;
+mod xdp;
 
 pub use {args::add_args, execute::execute};
 
