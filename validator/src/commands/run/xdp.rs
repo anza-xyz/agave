@@ -323,7 +323,7 @@ mod versioned_xdp_tests {
     }
 
     #[test]
-    fn disabled_xdp_skips_host_resolution() {
+    fn test_disabled_xdp_skips_host_resolution() {
         let defaults = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &defaults);
         for (case, enabled, flags) in [("CLI", true, vec!["--no-xdp"]), ("file", false, vec![])] {
@@ -372,7 +372,7 @@ workers.cpus = [4294967295]
     }
 
     #[test]
-    fn policy_is_validated_without_xdp_support() {
+    fn test_policy_is_validated_without_xdp_support() {
         let defaults = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &defaults);
         for (contents, expected_error) in [
@@ -420,7 +420,7 @@ tx.interface = "other"
     }
 
     #[test]
-    fn zero_copy_cli_flags_are_parsed_and_conflicts_rejected() {
+    fn test_zero_copy_cli_flags_are_parsed_and_conflicts_rejected() {
         use clap::ErrorKind::ArgumentConflict;
 
         let defaults = DefaultArgs::default();
@@ -450,7 +450,7 @@ tx.interface = "other"
     }
 
     #[test]
-    fn unsupported_bind_addresses_are_rejected() {
+    fn test_unsupported_bind_addresses_are_rejected() {
         let defaults = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &defaults);
         let matches = app.get_matches_from(vec!["agave-validator"]);
@@ -478,7 +478,7 @@ tx.interface = "other"
     }
 
     #[test]
-    fn empty_cli_cpu_selection_is_rejected() {
+    fn test_empty_cli_cpu_selection_is_rejected() {
         let defaults = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &defaults);
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
@@ -493,7 +493,7 @@ tx.interface = "other"
     }
 
     #[test]
-    fn init_parses_config_without_applying_live_policy() {
+    fn test_init_parses_config_without_applying_live_policy() {
         let config = br#"
 schema_version = 1
 
@@ -522,7 +522,7 @@ workers.auto.count = 1
     }
 
     #[test]
-    fn init_rejects_invalid_config_values() {
+    fn test_init_rejects_invalid_config_values() {
         let config = br#"
 schema_version = "one"
 "#;
@@ -533,7 +533,7 @@ schema_version = "one"
     }
 
     #[test]
-    fn missing_device_is_a_targeted_error() {
+    fn test_missing_device_is_a_targeted_error() {
         let Err(error) = resolve_xdp_device(
             "primary",
             &config_file::DeviceSelector::Name("nosuchnic0".to_string()),
@@ -544,7 +544,7 @@ schema_version = "one"
     }
 
     #[test]
-    fn source_ipv4_respects_bind_address() {
+    fn test_source_ipv4_respects_bind_address() {
         let device = NetworkDevice::new("lo").unwrap();
         let explicit = Ipv4Addr::new(192, 0, 2, 1);
         for (bind, expected) in [
