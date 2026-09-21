@@ -36,7 +36,6 @@ use {
     solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
     std::{
-        collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
         ops::AddAssign,
         sync::{Arc, RwLock, atomic::Ordering},
@@ -113,6 +112,8 @@ struct RetransmitStats {
 struct RetransmitState {
     stats: RetransmitStats,
     shred_buf: Vec<Vec<shred::Payload>>,
+    slot_leader_cache: Arc<SlotLeaderCache>,
+    slots: Vec<Slot>,
     pending_first_shred_event: Option<VotorEvent>,
 }
 
@@ -142,6 +143,8 @@ impl RetransmitState {
         Self {
             stats: RetransmitStats::new(now),
             shred_buf: Vec::new(),
+            slot_leader_cache: Arc::default(),
+            slots: Vec::new(),
             pending_first_shred_event: None,
         }
     }
@@ -239,7 +242,7 @@ impl<const K: usize> ShredDeduper<K> {
     }
 }
 
-type SlotLeaderCache = HashMap<Slot, (Pubkey, Arc<ClusterNodes<RetransmitStage>>)>;
+type SlotLeaderCache = Vec<(Slot, (Pubkey, Arc<ClusterNodes<RetransmitStage>>))>;
 
 struct RetransmitJob {
     context: Arc<JobContext>,
@@ -252,6 +255,8 @@ struct JobContext {
     cluster_info: Arc<ClusterInfo>,
     shred_deduper: Arc<ShredDeduper>,
     root_bank: Arc<Bank>,
+    // Drop the cache handle before result_sender so channel disconnection also signals that the
+    // dispatch thread can mutate its cache again.
     slot_leader_cache: Arc<SlotLeaderCache>,
     result_sender: Sender<JobStats>,
 }
@@ -389,6 +394,8 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
     let RetransmitState {
         stats,
         shred_buf,
+        slot_leader_cache,
+        slots,
         pending_first_shred_event,
     } = state;
 
@@ -444,30 +451,30 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
     epoch_cache_update.stop();
     stats.epoch_cache_update += epoch_cache_update.as_us();
     // Lookup slot leader and cluster nodes for each slot.
-    let slot_leader_cache: SlotLeaderCache = shred_buf
-        .iter()
-        .flatten()
-        .filter_map(|shred| shred::layout::get_slot(shred))
-        .collect::<HashSet<Slot>>()
-        .into_iter()
-        .filter_map(|slot: Slot| {
-            max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
-            // TODO: consider using root-bank here for leader lookup!
-            // Shreds' signatures should be verified before they reach here,
-            // and if the leader is unknown they should fail signature check.
-            // So here we should expect to know the slot leader and otherwise
-            // skip the shred.
-            let Some(slot_leader) = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))
-            else {
-                stats.unknown_shred_slot_leader += num_shreds;
-                return None;
-            };
-            let cluster_nodes =
-                cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            Some((slot, (slot_leader.id, cluster_nodes)))
-        })
-        .collect();
-    let slot_leader_cache = Arc::new(slot_leader_cache);
+    slots.extend(
+        shred_buf
+            .iter()
+            .flatten()
+            .filter_map(|shred| shred::layout::get_slot(shred)),
+    );
+    slots.sort_unstable();
+    slots.dedup();
+    let cache = Arc::get_mut(slot_leader_cache).unwrap();
+    for slot in slots.drain(..) {
+        max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
+        // TODO: consider using root-bank here for leader lookup!
+        // Shreds' signatures should be verified before they reach here,
+        // and if the leader is unknown they should fail signature check.
+        // So here we should expect to know the slot leader and otherwise
+        // skip the shred.
+        let Some(slot_leader) = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))
+        else {
+            stats.unknown_shred_slot_leader += num_shreds;
+            continue;
+        };
+        let cluster_nodes = cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
+        cache.push((slot, (slot_leader.id, cluster_nodes)));
+    }
 
     if num_shreds == 1 {
         stats.num_small_batches += 1;
@@ -487,7 +494,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
 
         root_bank: root_bank.clone(),
         shred_deduper: shred_deduper.clone(),
-        slot_leader_cache,
+        slot_leader_cache: slot_leader_cache.clone(),
         result_sender,
     });
 
@@ -513,6 +520,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
             pending_first_shred_event,
         );
     }
+    Arc::get_mut(slot_leader_cache).unwrap().clear();
     stats.submit_slot_stats();
 
     timer_start.stop();
@@ -598,7 +606,10 @@ fn get_retransmit_addrs(
     socket_addr_space: &SocketAddrSpace,
     stats: &mut JobStats,
 ) -> Option<(/*root_distance:*/ u8, Vec<SocketAddr>)> {
-    let (slot_leader, cluster_nodes) = cache.get(&shred.slot())?;
+    let index = cache
+        .binary_search_by_key(&shred.slot(), |entry| entry.0)
+        .ok()?;
+    let (_, (slot_leader, cluster_nodes)) = &cache[index];
     let (root_distance, addrs) = cluster_nodes
         .get_retransmit_addrs(slot_leader, shred, DATA_PLANE_FANOUT, socket_addr_space)
         .inspect_err(|err| match err {
@@ -908,7 +919,11 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
-        solana_ledger::shred::{ProcessShredsStats, Shredder},
+        solana_ledger::{
+            genesis_utils::create_genesis_config_with_leader,
+            shred::{ProcessShredsStats, Shredder},
+        },
+        solana_signer::Signer,
     };
 
     fn get_keypair() -> Keypair {
@@ -920,6 +935,88 @@ mod tests {
             .map(Keypair::try_from)
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn test_retransmit_reuses_slot_leader_cache() {
+        let keypair = get_keypair();
+        let (_, _, cluster_info) =
+            crate::cluster_nodes::make_test_cluster(&mut rand::rng(), 1, None);
+        let bank = Bank::new_for_tests(
+            &create_genesis_config_with_leader(100, &keypair.pubkey(), 10).genesis_config,
+        );
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let migration_status = bank_forks.read().unwrap().migration_status();
+        let (retransmit_sender, pool) = WorkerPool::build("testRetransmit", 2, 2);
+        let (shred_sender, retransmit_receiver) = crossbeam_channel::unbounded();
+        let (votor_event_sender, _votor_event_receiver) = crossbeam_channel::unbounded();
+        let context = RetransmitContext {
+            retransmit_sender,
+            bank_forks,
+            leader_schedule_cache,
+            cluster_info: Arc::new(cluster_info),
+            retransmit_receiver,
+            retransmit_sockets: Arc::new(
+                (0..2)
+                    .map(|_| UdpSocket::bind("127.0.0.1:0").unwrap())
+                    .collect(),
+            ),
+            xdp_sender: None,
+            cluster_nodes_cache: ClusterNodesCache::new(
+                CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
+                CLUSTER_NODES_CACHE_TTL,
+            ),
+            shred_deduper: Arc::new(ShredDeduper::new(&mut rand::rng(), 640_007)),
+            max_slots: Arc::default(),
+            notifiers: RetransmitNotifiers {
+                rpc_subscriptions: None,
+                slot_status_notifier: None,
+                migration_status,
+                votor_event_sender,
+            },
+        };
+        let mut state = RetransmitState::new(Instant::now());
+        let mut allocations = None;
+        let entries = create_ticks(1, 1, Hash::new_unique());
+        for slots in [[3, 0, 1, Slot::MAX], [6, 4, 5, Slot::MAX]] {
+            let batch: Vec<_> = slots
+                .into_iter()
+                .flat_map(|slot| {
+                    let shredder = Shredder::new(slot, slot.saturating_sub(1), 1, 0).unwrap();
+                    let (data, _) = shredder.entries_to_merkle_shreds_for_tests(
+                        &keypair,
+                        &entries,
+                        true,
+                        Hash::new_unique(),
+                        0,
+                        0,
+                        &mut ProcessShredsStats::default(),
+                    );
+                    let payload = data.into_iter().next().unwrap().into_payload();
+                    [payload.clone(), payload]
+                })
+                .collect();
+            let unknown = state.stats.unknown_shred_slot_leader + batch.len();
+            shred_sender.send(batch).unwrap();
+            retransmit(&context, &mut state).unwrap();
+            // Slot::MAX is missing, and its duplicate must not trigger another leader lookup.
+            assert_eq!(state.stats.unknown_shred_slot_leader, unknown);
+            for slot in &slots[..3] {
+                assert!(state.stats.slot_stats.contains(slot));
+            }
+            assert!(!state.stats.slot_stats.contains(&Slot::MAX));
+            let cache = &state.slot_leader_cache;
+            assert!(state.slots.is_empty());
+            assert!(cache.is_empty());
+            let pointers = (Arc::as_ptr(cache), state.slots.as_ptr(), cache.as_ptr());
+            assert_eq!(*allocations.get_or_insert(pointers), pointers);
+        }
+        // An empty input dispatches no worker jobs and must still release the job context.
+        shred_sender.send(Vec::new()).unwrap();
+        retransmit(&context, &mut state).unwrap();
+        drop(context);
+        pool.join().unwrap();
     }
 
     #[test]
