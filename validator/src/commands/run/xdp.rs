@@ -294,12 +294,17 @@ mod versioned_xdp_tests {
         std::{io::Write as _, net::Ipv6Addr},
     };
 
-    fn build_with_config(
+    fn write_config(contents: &[u8]) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(contents).unwrap();
+        file
+    }
+
+    fn build_and_validate_config(
         contents: &[u8],
         operation: Operation,
     ) -> Result<Option<ResolvedXdp>, String> {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(contents).unwrap();
+        let file = write_config(contents);
         let defaults = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &defaults);
         let matches = app.get_matches_from(vec![
@@ -310,20 +315,191 @@ mod versioned_xdp_tests {
         let binds = BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap();
         let without_xdp = validate_config_file_without_xdp(&matches, &operation);
         let with_xdp = build_xdp_config(&matches, &operation, &binds);
-        assert_eq!(without_xdp.as_ref().err(), with_xdp.as_ref().err());
+        assert_eq!(
+            without_xdp.as_ref().err(),
+            with_xdp.as_ref().err(),
+            "config loading and initialization should agree across both startup paths"
+        );
         with_xdp
     }
 
     #[test]
-    fn no_xdp_skips_host_resolution() {
+    fn disabled_xdp_skips_host_resolution() {
         let defaults = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &defaults);
-        let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
+        for (case, enabled, flags) in [("CLI", true, vec!["--no-xdp"]), ("file", false, vec![])] {
+            // An active policy would fail both CPU and device resolution.
+            let file = write_config(
+                format!(
+                    r#"
+schema_version = 1
+[xdp]
+enabled = {enabled}
+[interfaces.primary]
+device.name = "nosuchnic0"
+[interfaces.primary.xdp]
+workers.cpus = [4294967295]
+"#
+                )
+                .as_bytes(),
+            );
+            let mut args = vec![
+                "agave-validator",
+                "--experimental-config-file",
+                file.path().to_str().unwrap(),
+            ];
+            args.extend(flags);
+            let matches = app.clone().get_matches_from(args);
+            for (bind_case, addresses) in [
+                ("IPv4", vec![Ipv4Addr::UNSPECIFIED.into()]),
+                (
+                    "multihoming",
+                    vec![
+                        Ipv4Addr::new(192, 0, 2, 1).into(),
+                        Ipv4Addr::new(192, 0, 2, 2).into(),
+                    ],
+                ),
+                ("IPv6", vec![Ipv6Addr::LOCALHOST.into()]),
+            ] {
+                let binds = BindIpAddrs::new(addresses).unwrap();
+                assert!(
+                    build_xdp_config(&matches, &Operation::Run, &binds)
+                        .unwrap()
+                        .is_none(),
+                    "{case}/{bind_case}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn policy_is_validated_without_xdp_support() {
+        let defaults = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &defaults);
+        for (contents, expected_error) in [
+            (None, None),
+            (Some("schema_version = 1"), None),
+            (
+                Some(
+                    r#"
+schema_version = 1
+[tpu.xdp]
+tx.queues = [1]
+"#,
+                ),
+                Some("tpu.xdp.tx.queues references queue(s) 1 not declared"),
+            ),
+            (
+                Some(
+                    r#"
+schema_version = 1
+[tpu.xdp]
+tx.interface = "other"
+"#,
+                ),
+                Some("tpu.xdp.tx.interface names \"other\", which is not a declared interface"),
+            ),
+            (
+                Some(
+                    r#"
+schema_version = 1
+[xdp]
+enabled = false
+[tpu.xdp]
+tx.queues = [1]
+tx.interface = "other"
+"#,
+                ),
+                None,
+            ),
+        ] {
+            let file = contents.map(|contents| write_config(contents.as_bytes()));
+            let mut args = vec!["agave-validator"];
+            if let Some(file) = &file {
+                args.extend(["--experimental-config-file", file.path().to_str().unwrap()]);
+            }
+            let matches = app.clone().get_matches_from(args);
+            let result = validate_config_file_without_xdp(&matches, &Operation::Run);
+            match expected_error {
+                Some(expected) => {
+                    let error = result.unwrap_err();
+                    assert!(error.contains(expected), "{contents:?}: {error}");
+                }
+                None => result.unwrap(),
+            }
+        }
+    }
+
+    #[test]
+    fn zero_copy_cli_flags_are_parsed_and_conflicts_rejected() {
+        use clap::ErrorKind::ArgumentConflict;
+
+        let defaults = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &defaults);
+        for (flags, expected) in [
+            (vec![], Ok(None)),
+            (vec!["--xdp-zero-copy"], Ok(Some(true))),
+            (vec!["--no-xdp-zero-copy"], Ok(Some(false))),
+            (
+                vec!["--xdp-zero-copy", "--no-xdp-zero-copy"],
+                Err(ArgumentConflict),
+            ),
+            (
+                vec!["--no-xdp", "--no-xdp-zero-copy"],
+                Err(ArgumentConflict),
+            ),
+        ] {
+            let result = app
+                .clone()
+                .get_matches_from_safe(
+                    std::iter::once("agave-validator").chain(flags.iter().copied()),
+                )
+                .map(|matches| cli_xdp_overrides(&matches).unwrap().zero_copy)
+                .map_err(|error| error.kind);
+            assert_eq!(result, expected, "{flags:?}");
+        }
+    }
+
+    #[test]
+    fn unsupported_bind_addresses_are_rejected() {
+        let defaults = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &defaults);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        for (case, addresses, expected) in [
+            (
+                "multihoming",
+                vec![
+                    Ipv4Addr::new(192, 0, 2, 1).into(),
+                    Ipv4Addr::new(192, 0, 2, 2).into(),
+                ],
+                "XDP does not support multiple --bind-address values; select one IPv4 address",
+            ),
+            (
+                "IPv6",
+                vec![Ipv6Addr::LOCALHOST.into()],
+                "XDP transmit supports IPv4 only; supply an IPv4 --bind-address",
+            ),
+        ] {
+            let binds = BindIpAddrs::new(addresses).unwrap();
+            let Err(error) = build_xdp_config(&matches, &Operation::Run, &binds) else {
+                panic!("{case} unexpectedly accepted")
+            };
+            assert_eq!(error, format!("{expected}, or pass --no-xdp"), "{case}");
+        }
+    }
+
+    #[test]
+    fn empty_cli_cpu_selection_is_rejected() {
+        let defaults = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &defaults);
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
         let binds = BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap();
+        let Err(error) = build_xdp_config(&matches, &Operation::Run, &binds) else {
+            panic!("empty CPU selection unexpectedly accepted")
+        };
         assert!(
-            build_xdp_config(&matches, &Operation::Run, &binds)
-                .unwrap()
-                .is_none()
+            error.contains("--xdp-cpu-cores must contain between 1") && error.contains("found 0"),
+            "{error}"
         );
     }
 
@@ -346,11 +522,11 @@ workers.auto.count = 1
 "#;
 
         assert!(
-            build_with_config(config, Operation::Initialize)
+            build_and_validate_config(config, Operation::Initialize)
                 .unwrap()
                 .is_none()
         );
-        let Err(error) = build_with_config(config, Operation::Run) else {
+        let Err(error) = build_and_validate_config(config, Operation::Run) else {
             panic!("live policy with two interfaces unexpectedly succeeded")
         };
         assert!(error.contains("exactly one"), "{error}");
@@ -361,7 +537,7 @@ workers.auto.count = 1
         let config = br#"
 schema_version = "one"
 "#;
-        let Err(error) = build_with_config(config, Operation::Initialize) else {
+        let Err(error) = build_and_validate_config(config, Operation::Initialize) else {
             panic!("invalid schema version unexpectedly succeeded")
         };
         assert!(error.contains("non-integer schema_version"), "{error}");
@@ -379,13 +555,22 @@ schema_version = "one"
     }
 
     #[test]
-    fn ipv6_bind_is_rejected() {
+    fn source_ipv4_respects_bind_address() {
         let device = NetworkDevice::new("lo").unwrap();
-        let Err(error) =
-            resolve_xdp_source_ipv4("primary", &device, IpAddr::V6(Ipv6Addr::LOCALHOST))
-        else {
-            panic!("IPv6 bind address unexpectedly accepted")
-        };
-        assert!(error.contains("supports IPv4 only"), "{error}");
+        let explicit = Ipv4Addr::new(192, 0, 2, 1);
+        for (bind, expected) in [
+            (IpAddr::V4(explicit), Ok(explicit)),
+            (IpAddr::V4(Ipv4Addr::UNSPECIFIED), Ok(Ipv4Addr::LOCALHOST)),
+            (IpAddr::V6(Ipv6Addr::LOCALHOST), Err("supports IPv4 only")),
+        ] {
+            let result = resolve_xdp_source_ipv4("primary", &device, bind);
+            match expected {
+                Ok(expected) => assert_eq!(result.unwrap(), expected, "{bind}"),
+                Err(expected) => {
+                    let error = result.unwrap_err();
+                    assert!(error.contains(expected), "{bind}: {error}");
+                }
+            }
+        }
     }
 }
