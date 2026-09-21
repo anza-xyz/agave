@@ -96,8 +96,20 @@ impl Dashboard {
                 println_name_value("Genesis Hash:", &genesis_hash.to_string());
             }
 
-            if let Ok(version) = rpc_client.get_version() {
-                println_name_value("Version:", &version.to_string());
+            if let Some(version) = contact_info
+                .as_ref()
+                .and_then(|contact_info| contact_info.version.as_deref())
+            {
+                println_name_value("Version:", version);
+            } else if let Ok(version) = rpc_client.get_version() {
+                let feature_set = version
+                    .feature_set
+                    .map(|feature_set| format!("{feature_set:08x}"))
+                    .unwrap_or_else(|| "unknown".to_string());
+                println_name_value(
+                    "Version:",
+                    &format!("{version} (src:unknown; feat:{feature_set}, client:unknown)"),
+                );
             }
             if let Some(admin_rpc_service::AdminRpcContactInfo {
                 gossip,
@@ -403,15 +415,15 @@ mod tests {
         let rpc_addr = "127.0.0.1:8899".parse::<SocketAddr>().unwrap();
         let start_time = SystemTime::now();
         let keypair = Keypair::new();
-        let mut contact_info = serde_json::to_value(admin_rpc_service::AdminRpcContactInfo::from(
-            ContactInfo::new(keypair.pubkey(), 0, 0),
-        ))
-        .unwrap();
-        contact_info
-            .as_object_mut()
-            .unwrap()
-            .remove("tpu_quic")
-            .unwrap();
+        let contact_info = ContactInfo::new(keypair.pubkey(), 0, 0);
+        let expected_version = contact_info.version().as_detailed_string();
+        let mut contact_info =
+            serde_json::to_value(admin_rpc_service::AdminRpcContactInfo::from(contact_info))
+                .unwrap();
+        let contact_info_object = contact_info.as_object_mut().unwrap();
+        contact_info_object.remove("tpu_quic").unwrap();
+        let version = contact_info_object.remove("version").unwrap();
+        assert_eq!(version.as_str(), Some(expected_version.as_str()));
         let contact_info_attempts = Arc::new(AtomicUsize::new(0));
 
         let mut io = IoHandler::default();
@@ -447,7 +459,9 @@ mod tests {
             ))
             .unwrap();
 
-        assert!(contact_info.unwrap().tpu_quic.is_none());
+        let contact_info = contact_info.unwrap();
+        assert!(contact_info.tpu_quic.is_none());
+        assert!(contact_info.version.is_none());
         assert_eq!(contact_info_attempts.load(Ordering::Relaxed), 2);
         server.close();
     }
