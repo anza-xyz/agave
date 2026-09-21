@@ -286,14 +286,9 @@ impl<'de> Deserialize<'de> for QueueSelection {
     }
 }
 
-fn parse_toml(text: &str, description: &str, built_in: bool) -> Result<toml::Value, String> {
-    let value: toml::Value = toml::from_str(text).map_err(|error| {
-        if built_in {
-            format!("built-in default config is invalid: {error}")
-        } else {
-            format!("invalid config file `{description}`: {error}")
-        }
-    })?;
+fn parse_toml(text: &str, description: &str) -> Result<toml::Value, String> {
+    let value: toml::Value = toml::from_str(text)
+        .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
     let version = match value.get("schema_version") {
         Some(value) => value.as_integer().ok_or_else(|| {
             format!(
@@ -301,7 +296,6 @@ fn parse_toml(text: &str, description: &str, built_in: bool) -> Result<toml::Val
                  version {SCHEMA_VERSION}"
             )
         })?,
-        None if built_in => return Err("built-in config is missing schema_version".to_string()),
         None => {
             return Err(format!(
                 "config `{description}` is missing required schema_version; this binary supports \
@@ -318,18 +312,10 @@ fn parse_toml(text: &str, description: &str, built_in: bool) -> Result<toml::Val
     Ok(value)
 }
 
-fn decode_config(
-    value: toml::Value,
-    description: &str,
-    built_in: bool,
-) -> Result<EffectiveConfig, String> {
-    value.try_into().map_err(|error| {
-        if built_in {
-            format!("built-in default config is invalid: {error}")
-        } else {
-            format!("invalid config file `{description}`: {error}")
-        }
-    })
+fn decode_config(value: toml::Value, description: &str) -> Result<EffectiveConfig, String> {
+    value
+        .try_into()
+        .map_err(|error| format!("invalid config file `{description}`: {error}"))
 }
 
 fn merge_value(base: &mut toml::Value, user: toml::Value, path: &mut Vec<String>) {
@@ -347,7 +333,7 @@ fn merge_value(base: &mut toml::Value, user: toml::Value, path: &mut Vec<String>
             for (key, value) in user {
                 match base.get_mut(&key) {
                     Some(base) => {
-                        path.push(key.clone());
+                        path.push(key);
                         merge_value(base, value, path);
                         path.pop();
                     }
@@ -422,8 +408,8 @@ fn validate_structural(config: &EffectiveConfig) -> Result<(), String> {
 }
 
 pub(crate) fn load(user_path: Option<&Path>) -> Result<EffectiveConfig, String> {
-    let mut built_in = parse_toml(DEFAULT_CONFIG, "<built-in>", true)?;
-    let base = decode_config(built_in.clone(), "<built-in>", true)?;
+    let mut built_in = parse_toml(DEFAULT_CONFIG, "<built-in>")?;
+    let base = decode_config(built_in.clone(), "<built-in>")?;
     validate_structural(&base)?;
     match user_path {
         None => Ok(base),
@@ -432,9 +418,9 @@ pub(crate) fn load(user_path: Option<&Path>) -> Result<EffectiveConfig, String> 
                 format!("failed to read config file `{}`: {error}", path.display())
             })?;
             let description = path.display().to_string();
-            let user = parse_toml(&text, &description, false)?;
+            let user = parse_toml(&text, &description)?;
             merge_value(&mut built_in, user.clone(), &mut Vec::new());
-            let mut config = decode_config(built_in, &description, false)?;
+            let mut config = decode_config(built_in, &description)?;
             mark_user_sources(&mut config, &user);
             validate_structural(&config)?;
             Ok(config)
@@ -639,11 +625,9 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
     if !active {
         return Ok(warnings);
     }
-    let selections: Vec<_> = config
+    let selections = config
         .named_modules()
-        .into_iter()
-        .map(|(_, module)| module_queue_ids(module, &pool))
-        .collect();
+        .map(|(_, module)| module_queue_ids(module, &pool));
     for queue in &pool {
         if selections.iter().any(|queues| queues.contains(queue)) {
             continue;
@@ -686,6 +670,7 @@ fn resolve_declared_workers(
                 .rev()
                 .copied()
                 .filter(|cpu| Some(*cpu) != poh_core)
+                .take(*count)
                 .collect();
             if eligible.len() < *count {
                 return Err(format!(
@@ -694,7 +679,7 @@ fn resolve_declared_workers(
                     eligible.len()
                 ));
             }
-            eligible.into_iter().take(*count).collect()
+            eligible
         }
         WorkerPolicy::Cpus(cpus) => {
             for cpu in cpus {
