@@ -823,22 +823,29 @@ impl From<RecycledPacketBatch> for Vec<Packet> {
     }
 }
 
-pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<PacketBatch> {
+pub fn to_packet_batches<T: wincode::Serialize<Src = T>>(
+    items: &[T],
+    chunk_size: usize,
+) -> Vec<PacketBatch> {
     items
         .chunks(chunk_size)
         .map(|batch_items| {
-            let mut batch = RecycledPacketBatch::with_capacity(batch_items.len());
-            batch.packets.resize(batch_items.len(), Packet::default());
-            for (item, packet) in batch_items.iter().zip(batch.packets.iter_mut()) {
-                Packet::populate_packet(packet, None, item).expect("serialize request");
-            }
-            batch.into()
+            batch_items
+                .iter()
+                .map(|item| {
+                    let buffer = Bytes::from(wincode::serialize(item).expect("serialize request"));
+                    let mut meta = Meta::default();
+                    meta.size = buffer.len();
+                    BytesPacket::new(buffer, meta)
+                })
+                .collect::<BytesPacketBatch>()
+                .into()
         })
         .collect()
 }
 
 #[cfg(test)]
-fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {
+fn to_packet_batches_for_tests<T: wincode::Serialize<Src = T>>(items: &[T]) -> Vec<PacketBatch> {
     to_packet_batches(items, NUM_PACKETS)
 }
 
