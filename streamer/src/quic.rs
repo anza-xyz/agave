@@ -214,8 +214,8 @@ pub struct StreamerStats {
     // opened from a particular IP address.
     pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
-    pub(crate) stream_load_ema: AtomicUsize,
-    pub(crate) stream_load_ema_overflow: AtomicUsize,
+    pub(crate) staked_stream_load_ema: AtomicUsize,
+    pub(crate) unstaked_stream_load_ema: AtomicUsize,
     pub(crate) stream_load_capacity_overflow: AtomicUsize,
     pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
@@ -473,13 +473,13 @@ impl StreamerStats {
                 i64
             ),
             (
-                "stream_load_ema",
-                self.stream_load_ema.load(Ordering::Relaxed),
+                "staked_stream_load_ema",
+                self.staked_stream_load_ema.load(Ordering::Relaxed),
                 i64
             ),
             (
-                "stream_load_ema_overflow",
-                self.stream_load_ema_overflow.load(Ordering::Relaxed),
+                "unstaked_stream_load_ema",
+                self.unstaked_stream_load_ema.load(Ordering::Relaxed),
                 i64
             ),
             (
