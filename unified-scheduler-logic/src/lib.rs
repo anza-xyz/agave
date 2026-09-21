@@ -1360,7 +1360,7 @@ impl SchedulingStateMachine {
         // `Bank::prepare_unlocked_batch_from_single_tx()` as well.
         // This redundancy is known. It was just left as-is out of abundance
         // of caution.
-        let lock_contexts = transaction
+        let mut lock_contexts: Vec<_> = transaction
             .account_keys()
             .iter()
             .enumerate()
@@ -1375,6 +1375,9 @@ impl SchedulingStateMachine {
                 )
             })
             .collect();
+        lock_contexts.extend(transaction.implicit_read_locks().iter().map(|address| {
+            LockContext::new(usage_queue_loader(*address), RequestedUsage::Readonly)
+        }));
 
         Task::new(TaskInner {
             transaction,

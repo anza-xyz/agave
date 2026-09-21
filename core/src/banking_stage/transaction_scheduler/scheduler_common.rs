@@ -314,7 +314,8 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
             let read_account_locks = account_keys
                 .iter()
                 .enumerate()
-                .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key));
+                .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key))
+                .chain(transaction.implicit_read_locks());
             self.account_locks
                 .unlock_accounts(write_account_locks, read_account_locks, thread_id);
         }
@@ -385,7 +386,8 @@ mod tests {
         let read_account_locks = account_keys
             .iter()
             .enumerate()
-            .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key));
+            .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key))
+            .chain(transaction.implicit_read_locks());
 
         common
             .account_locks

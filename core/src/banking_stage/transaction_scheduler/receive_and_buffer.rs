@@ -69,11 +69,16 @@ pub(crate) fn precheck_transaction(
 ) -> PrecheckResult {
     let sanitize_config = sanitize_config();
     let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+    // Buffered transactions may outlive the working bank; only drop locks after activation is rooted.
     let (view, deactivation_slot) = translate_to_runtime_view(
         bytes,
         root_bank,
         transaction_account_lock_limit,
         &sanitize_config,
+        !root_bank
+            .feature_set
+            .snapshot()
+            .loaderv3_programdata_size_floor,
     )
     .map_err(IngressCheckError::PacketHandling)?;
 
@@ -122,6 +127,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     bank: &Bank,
     transaction_account_lock_limit: usize,
     sanitize_config: &SanitizeConfig,
+    enable_implicit_read_locks: bool,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
     let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, sanitize_config) else {
         return Err(PacketHandlingError::Sanitization);
@@ -145,7 +151,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
 
     let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
 
-    let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+    let Ok(mut view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
         view,
         loaded_addresses,
         bank.get_reserved_account_keys(),
@@ -155,6 +161,10 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
 
     if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
         return Err(PacketHandlingError::LockValidation);
+    }
+
+    if enable_implicit_read_locks {
+        view.load_implicit_read_locks();
     }
 
     Ok((view, deactivation_slot))

@@ -55,6 +55,12 @@ impl<'a, T: TransactionWithMeta> TransactionAccountLocksIterator<'a, T> {
             .iter()
             .enumerate()
             .map(|(index, key)| (key, self.transaction.is_writable(index)))
+            .chain(
+                self.transaction
+                    .implicit_read_locks()
+                    .iter()
+                    .map(|key| (key, false)),
+            )
     }
 }
 

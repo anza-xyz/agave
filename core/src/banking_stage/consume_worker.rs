@@ -204,7 +204,7 @@ pub(crate) mod external {
         },
         arrayvec::ArrayVec,
         solana_cost_model::cost_model::CostModel,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, bank_forks::SharableBanks},
         solana_runtime_transaction::{
             runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
         },
@@ -226,6 +226,7 @@ pub(crate) mod external {
         allocator: rts_alloc::Allocator,
 
         shared_leader_state: SharedLeaderState,
+        sharable_banks: SharableBanks,
         metrics: Arc<ConsumeWorkerMetrics>,
     }
 
@@ -243,6 +244,7 @@ pub(crate) mod external {
             sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
             allocator: rts_alloc::Allocator,
             shared_leader_state: SharedLeaderState,
+            sharable_banks: SharableBanks,
         ) -> Self {
             Self {
                 exit,
@@ -250,6 +252,7 @@ pub(crate) mod external {
                 sender,
                 allocator,
                 shared_leader_state,
+                sharable_banks,
                 metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
             }
         }
@@ -378,8 +381,16 @@ pub(crate) mod external {
                     &self.allocator,
                 )
             };
-            let (translation_results, transactions, max_ages) =
-                Self::translate_transaction_batch(&batch, bank);
+            let (translation_results, transactions, max_ages) = Self::translate_transaction_batch(
+                &batch,
+                bank,
+                !self
+                    .sharable_banks
+                    .root()
+                    .feature_set
+                    .snapshot()
+                    .loaderv3_programdata_size_floor,
+            );
 
             // Enforce all or nothing on translation_results.
             let execution_flags = ExecutionFlags {
@@ -571,6 +582,7 @@ pub(crate) mod external {
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
             bank: &Bank,
+            enable_implicit_read_locks: bool,
         ) -> (
             ArrayVec<Result<(), PacketHandlingError>, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
@@ -588,6 +600,7 @@ pub(crate) mod external {
                     bank,
                     transaction_account_lock_limit,
                     &sanitize_config,
+                    enable_implicit_read_locks,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -606,12 +619,14 @@ pub(crate) mod external {
             bank: &Bank,
             transaction_account_lock_limit: usize,
             sanitize_config: &SanitizeConfig,
+            enable_implicit_read_locks: bool,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
                 bank,
                 transaction_account_lock_limit,
                 sanitize_config,
+                enable_implicit_read_locks,
             )
             .map(|(view, deactivation_slot)| {
                 (
@@ -903,6 +918,7 @@ pub(crate) mod external {
                 agave_worker.worker_to_pack,
                 agave_worker.allocator,
                 shared_leader_state.clone(),
+                bank_forks.read().unwrap().sharable_banks(),
             );
 
             ExternalTestFrame {
@@ -981,6 +997,7 @@ pub(crate) mod external {
                         &bank,
                         bank.get_transaction_account_lock_limit(),
                         &sanitize_config(),
+                        !bank.feature_set.snapshot().loaderv3_programdata_size_floor,
                     )
                     .ok()
                     .unwrap()
@@ -1083,6 +1100,7 @@ pub(crate) mod external {
                 &bank,
                 bank.get_transaction_account_lock_limit(),
                 &sanitize_config(),
+                !bank.feature_set.snapshot().loaderv3_programdata_size_floor,
             )
             .ok()
             .unwrap()
