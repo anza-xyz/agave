@@ -6,6 +6,22 @@ use {
 };
 
 #[test]
+fn test_print_default_config_exits_without_startup_side_effects() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!(env!("CARGO_PKG_NAME")));
+    cmd.current_dir(temp_dir.path())
+        .args(["--print-default-config", "--ledger", "ledger"]);
+    cmd.assert()
+        .success()
+        .stdout(include_str!("../src/commands/run/default_config.toml"));
+    let created_file = std::fs::read_dir(temp_dir.path()).unwrap().next();
+    assert!(
+        created_file.is_none(),
+        "printing config created a file: {created_file:?}"
+    );
+}
+
+#[test]
 fn test_use_the_same_path_for_accounts_and_snapshots() {
     let temp_dir = TempDir::new().unwrap();
     let temp_dir_path = temp_dir.path();
