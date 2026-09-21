@@ -161,25 +161,18 @@ pub(crate) struct RuntimeXdpConfig {
 impl<'de> Deserialize<'de> for DeviceSelector {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Device {
-            route: Option<String>,
-            name: Option<String>,
+        #[serde(rename_all = "snake_case", deny_unknown_fields)]
+        enum Device {
+            Route(String),
+            Name(String),
         }
 
-        let Device { route, name } = Device::deserialize(deserializer)?;
-        match (route, name) {
-            (Some(route), None) if route == "default" => Ok(Self::DefaultRoute),
-            (Some(route), None) => Err(serde::de::Error::custom(format!(
+        match Device::deserialize(deserializer)? {
+            Device::Route(route) if route == "default" => Ok(Self::DefaultRoute),
+            Device::Route(route) => Err(serde::de::Error::custom(format!(
                 "device.route must be \"default\"; found {route:?}"
             ))),
-            (None, Some(name)) => Ok(Self::Name(name)),
-            (None, None) => Err(serde::de::Error::custom(
-                "device must specify exactly one of device.route or device.name",
-            )),
-            (Some(_), Some(_)) => Err(serde::de::Error::custom(
-                "device specifies conflicting keys device.route and device.name",
-            )),
+            Device::Name(name) => Ok(Self::Name(name)),
         }
     }
 }
@@ -205,42 +198,31 @@ impl<'de> Deserialize<'de> for WorkerPolicy {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct Auto {
-            count: usize,
-        }
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
         struct Binding {
             queue: u32,
             cpu: usize,
         }
         #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Workers {
-            auto: Option<Auto>,
-            cpus: Option<Vec<usize>>,
-            bindings: Option<Vec<Binding>>,
+        #[serde(rename_all = "snake_case", deny_unknown_fields)]
+        enum Workers {
+            Auto { count: usize },
+            Cpus(Vec<usize>),
+            Bindings(Vec<Binding>),
         }
 
         let workers = Workers::deserialize(deserializer)?;
         let parse = || -> Result<_, String> {
-            match (workers.auto, workers.cpus, workers.bindings) {
-                (None, None, None) => Err("workers must specify exactly one of workers.auto, \
-                                           workers.cpus, or workers.bindings"
-                    .to_string()),
-                (Some(_), Some(_), _) | (Some(_), _, Some(_)) | (_, Some(_), Some(_)) => {
-                    Err("workers specifies conflicting worker modes".to_string())
-                }
-                (Some(Auto { count }), None, None) => {
+            match workers {
+                Workers::Auto { count } => {
                     validate_pool_len(count, "workers.auto.count")?;
                     Ok(WorkerPolicy::Auto { count })
                 }
-                (None, Some(cpus), None) => {
+                Workers::Cpus(cpus) => {
                     validate_pool_len(cpus.len(), "workers.cpus")?;
                     validate_unique_cpus(&cpus, "workers.cpus")?;
                     Ok(WorkerPolicy::Cpus(cpus))
                 }
-                (None, None, Some(raw_bindings)) => {
+                Workers::Bindings(raw_bindings) => {
                     validate_pool_len(raw_bindings.len(), "workers.bindings")?;
                     let mut queues = BTreeSet::new();
                     let mut cpus = BTreeSet::new();
@@ -360,14 +342,7 @@ fn merge_value(base: &mut toml::Value, user: toml::Value, path: &mut Vec<String>
     match (base, user) {
         (toml::Value::Table(base), toml::Value::Table(user)) => {
             if path.len() == 1 && path[0] == "interfaces" {
-                let removed: Vec<_> = base
-                    .keys()
-                    .filter(|label| !user.contains_key(*label))
-                    .cloned()
-                    .collect();
-                for label in removed {
-                    base.remove(&label);
-                }
+                base.retain(|label, _| user.contains_key(label));
             }
             for (key, value) in user {
                 match base.get_mut(&key) {
@@ -894,21 +869,6 @@ workers = {workers}
     }
 
     #[test]
-    fn scalar_patch_inherits_atomic_choices() {
-        let config = load_valid_config(
-            r#"
-schema_version = 1
-[interfaces.primary.xdp]
-zero_copy = true
-"#,
-        );
-        let interface = &config.interfaces["primary"];
-        assert!(interface.xdp.zero_copy);
-        assert_eq!(interface.device, DeviceSelector::DefaultRoute);
-        assert_eq!(interface.xdp.workers, WorkerPolicy::Auto { count: 1 });
-    }
-
-    #[test]
     fn new_interface_error_identifies_missing_field() {
         let error = load_config(
             r#"
@@ -940,7 +900,7 @@ workers.cpus = [8, 9]
     #[test]
     fn invalid_selectors_are_rejected_after_merge() {
         for label in ["primary", "fast"] {
-            for (contents, expected) in [
+            for (contents, field, expected) in [
                 (
                     format!(
                         r#"
@@ -949,7 +909,8 @@ schema_version = 1
 device = {{ route = "default", name = "eth0" }}
 "#
                     ),
-                    "conflicting keys device.route and device.name",
+                    "device",
+                    "more than 1 element",
                 ),
                 (
                     format!(
@@ -959,6 +920,7 @@ schema_version = 1
 device.route = "other"
 "#
                     ),
+                    "device",
                     "device.route must be \"default\"",
                 ),
                 (
@@ -969,7 +931,8 @@ schema_version = 1
 device = {{}}
 "#
                     ),
-                    "device must specify exactly one",
+                    "device",
+                    "found 0 elements",
                 ),
                 (
                     format!(
@@ -979,11 +942,16 @@ schema_version = 1
 workers = {{ auto = {{ count = 1 }}, cpus = [8] }}
 "#
                     ),
-                    "conflicting worker modes",
+                    "xdp.workers",
+                    "more than 1 element",
                 ),
             ] {
                 let error = load_config(&contents).unwrap_err();
                 assert!(error.contains(expected), "{contents}: {error}");
+                assert!(
+                    error.contains(&format!("interfaces.{label}.{field}")),
+                    "{contents}: {error}"
+                );
             }
         }
     }
@@ -991,8 +959,12 @@ workers = {{ auto = {{ count = 1 }}, cpus = [8] }}
     #[test]
     fn invalid_worker_policies_are_rejected() {
         for (workers, expected) in [
-            ("{}", "workers must specify exactly one"),
-            ("{ unused = \"warn\" }", "unknown field `unused`"),
+            ("{}", "found 0 elements"),
+            ("{ unused = \"warn\" }", "unknown variant `unused`"),
+            (
+                "{ auto = { count = 1, unused = true } }",
+                "unknown field `unused`",
+            ),
             (
                 "{ cpus = [8, 9, 8] }",
                 "workers.cpus contains duplicate CPU 8",
@@ -1007,15 +979,16 @@ workers = {{ auto = {{ count = 1 }}, cpus = [8] }}
             ),
             (
                 "{ auto = { count = 1 }, bindings = [{ queue = 0, cpu = 8 }] }",
-                "conflicting worker modes",
+                "more than 1 element",
             ),
             (
                 "{ cpus = [8], bindings = [{ queue = 0, cpu = 8 }] }",
-                "conflicting worker modes",
+                "more than 1 element",
             ),
         ] {
             let error = load_worker_config(workers).unwrap_err();
             assert!(error.contains(expected), "{workers}: {error}");
+            assert!(error.contains("interfaces.primary.xdp.workers"), "{error}");
         }
     }
 
@@ -1432,6 +1405,12 @@ zero_copy = {value}
             let interface = &application.config.interfaces["primary"];
             assert_eq!(interface.xdp.zero_copy, expected_value, "{case}");
             assert_eq!(interface.xdp.zero_copy_source, expected_source, "{case}");
+            assert_eq!(interface.device, DeviceSelector::DefaultRoute, "{case}");
+            assert_eq!(
+                interface.xdp.workers,
+                WorkerPolicy::Auto { count: 1 },
+                "{case}"
+            );
             match (file_value, cli_value) {
                 (Some(_), Some(value)) => {
                     let flag = if value {

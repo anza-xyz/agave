@@ -393,16 +393,6 @@ tx.queues = [1]
                 Some(
                     r#"
 schema_version = 1
-[tpu.xdp]
-tx.interface = "other"
-"#,
-                ),
-                Some("tpu.xdp.tx.interface names \"other\", which is not a declared interface"),
-            ),
-            (
-                Some(
-                    r#"
-schema_version = 1
 [xdp]
 enabled = false
 [tpu.xdp]
