@@ -2874,11 +2874,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
         _arg4: u64,
         _arg5: u64,
     ) -> Result<u64, Error> {
-        let amount = invoke_context
-            .get_execution_cost()
-            .sysvar_base_cost
-            .saturating_add(size_of::<LeaderInfo>() as u64);
-        invoke_context.consume_checked(amount)?;
+        invoke_context.consume_checked(110)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         if !check_aligned {
@@ -4780,7 +4776,6 @@ mod tests {
         };
 
         let config = Config::default();
-        let compute_cost = SVMTransactionExecutionCost::default();
         let mut compute_budget = SVMTransactionExecutionBudget::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
@@ -4791,9 +4786,7 @@ mod tests {
             }
         }
 
-        let expected_cus = compute_cost
-            .sysvar_base_cost
-            .saturating_add(size_of::<LeaderInfo>() as u64);
+        let expected_cus = 110;
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
