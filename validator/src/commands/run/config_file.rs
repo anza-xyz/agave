@@ -837,7 +837,7 @@ workers = {workers}
     }
 
     #[test]
-    fn embedded_default_resolves_from_policy_without_fallbacks() {
+    fn test_embedded_default_resolves_from_policy_without_fallbacks() {
         let config = load(None).unwrap();
         assert!(config.xdp.enabled);
         assert_eq!(config.interfaces.len(), 1);
@@ -854,7 +854,7 @@ workers = {workers}
     }
 
     #[test]
-    fn new_interface_error_identifies_missing_field() {
+    fn test_new_interface_error_identifies_missing_field() {
         let error = load_config(
             r#"
 schema_version = 1
@@ -868,7 +868,7 @@ zero_copy = false
     }
 
     #[test]
-    fn workers_replace_atomically() {
+    fn test_workers_replace_atomically() {
         let config = load_valid_config(
             r#"
 schema_version = 1
@@ -883,7 +883,7 @@ workers.cpus = [8, 9]
     }
 
     #[test]
-    fn invalid_selectors_are_rejected_after_merge() {
+    fn test_invalid_selectors_are_rejected_after_merge() {
         for label in ["primary", "fast"] {
             for (contents, field, expected) in [
                 (
@@ -942,7 +942,7 @@ workers = {{ auto = {{ count = 1 }}, cpus = [8] }}
     }
 
     #[test]
-    fn invalid_worker_policies_are_rejected() {
+    fn test_invalid_worker_policies_are_rejected() {
         for (workers, expected) in [
             ("{}", "found 0 elements"),
             ("{ unused = \"warn\" }", "unknown variant `unused`"),
@@ -978,7 +978,7 @@ workers = {{ auto = {{ count = 1 }}, cpus = [8] }}
     }
 
     #[test]
-    fn bindings_require_named_device_before_cli() {
+    fn test_bindings_require_named_device_before_cli() {
         let error = load_config(
             r#"
 schema_version = 1
@@ -994,7 +994,7 @@ workers.bindings = [{ queue = 0, cpu = 8 }]
     }
 
     #[test]
-    fn invalid_schema_versions_are_rejected() {
+    fn test_invalid_schema_versions_are_rejected() {
         for (contents, expected) in [
             ("[xdp]\nenabled = false", "missing required schema_version"),
             ("schema_version = 2", "supports version 1"),
@@ -1006,7 +1006,7 @@ workers.bindings = [{ queue = 0, cpu = 8 }]
     }
 
     #[test]
-    fn invalid_queue_reference_warns_when_dormant_and_fails_when_active() {
+    fn test_invalid_queue_reference_warns_when_dormant_and_fails_when_active() {
         let mut config = load_valid_config(
             r#"
 schema_version = 1
@@ -1036,7 +1036,7 @@ tx.queues = [1]
     }
 
     #[test]
-    fn every_worker_mode_enforces_the_same_cardinality_limit() {
+    fn test_every_worker_mode_enforces_the_same_cardinality_limit() {
         for (count, should_succeed) in [
             (0, false),
             (1, true),
@@ -1074,7 +1074,7 @@ tx.queues = [1]
     }
 
     #[test]
-    fn renaming_the_interface_requires_updating_module_references() {
+    fn test_renaming_the_interface_requires_updating_module_references() {
         const RENAMED: &str = r#"
 schema_version = 1
 [interfaces.fast]
@@ -1113,7 +1113,7 @@ tx.interface = "fast"
     }
 
     #[test]
-    fn module_referencing_another_interface_is_rejected() {
+    fn test_module_referencing_another_interface_is_rejected() {
         let config = load_valid_config(
             r#"
 schema_version = 1
@@ -1130,7 +1130,7 @@ tx.interface = "other"
     }
 
     #[test]
-    fn cli_worker_replacement_rejects_user_queue_ids_even_if_they_survive() {
+    fn test_cli_worker_replacement_rejects_user_queue_ids_even_if_they_survive() {
         let config = load_valid_config(
             r#"
 schema_version = 1
@@ -1152,7 +1152,7 @@ tx.queues = [0]
     }
 
     #[test]
-    fn module_level_switches_are_rejected() {
+    fn test_module_level_switches_are_rejected() {
         for module in ["tpu", "turbine", "repair", "gossip"] {
             let error = load_config(&format!(
                 r#"
@@ -1170,7 +1170,7 @@ enabled = true
     }
 
     #[test]
-    fn cli_cpu_workers_preserve_module_queue_scoping() {
+    fn test_cli_cpu_workers_preserve_module_queue_scoping() {
         let config = load_valid_config(
             r#"
 schema_version = 1
@@ -1193,7 +1193,7 @@ tx.queues = [0]
     }
 
     #[test]
-    fn sparse_bindings_preserve_worker_and_module_order() {
+    fn test_sparse_bindings_preserve_worker_and_module_order() {
         // Each module specifies its queue selection and expected sender positions.
         for (case, modules, expected_workers) in [
             (
@@ -1272,7 +1272,7 @@ workers.bindings = [
     }
 
     #[test]
-    fn cli_device_overrides_respect_explicit_bindings() {
+    fn test_cli_device_overrides_respect_explicit_bindings() {
         use Source::{Cli, User};
 
         const DEVICE: &str = r#"
@@ -1354,7 +1354,7 @@ tx.queues = "all"
     }
 
     #[test]
-    fn cli_zero_copy_overrides_file_and_default_values() {
+    fn test_cli_zero_copy_overrides_file_and_default_values() {
         use Source::{BuiltIn, Cli, User};
 
         for (file_value, cli_value, expected_value, expected_source) in [
@@ -1427,7 +1427,7 @@ zero_copy = {value}
     }
 
     #[test]
-    fn cli_cpu_workers_reject_duplicate_cpus() {
+    fn test_cli_cpu_workers_reject_duplicate_cpus() {
         let error = apply_cli(
             load(None).unwrap(),
             CliOverrides {
@@ -1440,7 +1440,7 @@ zero_copy = {value}
     }
 
     #[test]
-    fn explicit_workers_reject_invalid_cpus() {
+    fn test_explicit_workers_reject_invalid_cpus() {
         for (case, config) in [
             ("cpus", load_worker_config("{ cpus = [9] }").unwrap()),
             (
@@ -1479,7 +1479,7 @@ zero_copy = {value}
     }
 
     #[test]
-    fn auto_workers_require_enough_cpus_after_excluding_poh() {
+    fn test_auto_workers_require_enough_cpus_after_excluding_poh() {
         let config = load_worker_config("{ auto = { count = 2 } }").unwrap();
         let error = resolve_runtime(&config, &BTreeSet::from([8, 9]), Some(9)).unwrap_err();
         assert_eq!(
@@ -1490,7 +1490,7 @@ zero_copy = {value}
     }
 
     #[test]
-    fn every_worker_mode_must_leave_a_cpu_unreserved() {
+    fn test_every_worker_mode_must_leave_a_cpu_unreserved() {
         for workers in [
             "{ auto = { count = 2 } }",
             "{ cpus = [8, 9] }",
@@ -1503,7 +1503,7 @@ zero_copy = {value}
     }
 
     #[test]
-    fn inactive_cli_overrides_are_ignored_without_topology_validation() {
+    fn test_inactive_cli_overrides_are_ignored_without_topology_validation() {
         let config = load_valid_config(
             r#"
 schema_version = 1
@@ -1578,7 +1578,7 @@ workers.auto.count = 1
     }
 
     #[test]
-    fn unreferenced_workers_warn_and_release_cpus_for_every_source() {
+    fn test_unreferenced_workers_warn_and_release_cpus_for_every_source() {
         let mut built_in_workers = load_valid_config(ALL_MODULES_QUEUE_ZERO);
         // Simulate a built-in pool with an unused worker, retaining its provenance.
         built_in_workers
@@ -1627,7 +1627,7 @@ gossip.xdp.tx.queues = [0]
     }
 
     #[test]
-    fn invalid_queue_selections_are_rejected() {
+    fn test_invalid_queue_selections_are_rejected() {
         let too_many: Vec<_> = (0..=MAX_XDP_WORKERS).collect();
         for (queues, expected) in [
             ("true", "accepts only \"all\" or a non-empty integer array"),
