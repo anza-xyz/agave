@@ -5,7 +5,7 @@ use {
         stats::{SenderStats, VoteSenderStats},
     },
     agave_votor_messages::{
-        VerifiedVotorSlotsMessage,
+        VerifiedVotorSlotsMessage, VoteAccountPubkeys,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
@@ -101,7 +101,7 @@ pub(super) fn send_sig_verified_batch_to_pool(
 
 pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
-    votes: HashMap<Slot, Vec<Pubkey>>,
+    votes: HashMap<Slot, VoteAccountPubkeys>,
     channel: &EvictingSender<VerifiedVotorSlotsMessage>,
     stats: &mut VoteSenderStats,
 ) {

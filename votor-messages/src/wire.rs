@@ -47,10 +47,13 @@ use {
         vote::Vote,
     },
     serde::{Deserialize, Serialize},
-    solana_bls_signatures::Signature as BLSSignature,
+    solana_bls_signatures::{HashedMessage, Signature as BLSSignature},
     solana_clock::Slot,
+    std::mem::MaybeUninit,
     wincode::{
-        ReadError, SchemaRead, SchemaReadContext, SchemaWrite, config::Config, io::Reader,
+        ReadError, SchemaRead, SchemaReadContext, SchemaWrite,
+        config::{Config, DefaultConfig},
+        io::Reader,
         pod_wrapper,
     },
 };
@@ -511,6 +514,23 @@ impl VotePayloadToSign {
             | Self::SkipFallback { slot, .. } => *slot,
         }
     }
+
+    /// Serializes `self` into a `HashedMessage`.
+    pub fn to_hashed_msg(&self) -> HashedMessage {
+        // Tag + slot + optional block hash + shred version.
+        const MAX_SERIALIZED_SIZE: usize = 1 + 8 + 32 + 2;
+
+        let mut buffer = [MaybeUninit::uninit(); MAX_SERIALIZED_SIZE];
+        let mut remaining = buffer.as_mut_slice();
+
+        <VotePayloadToSign as SchemaWrite<DefaultConfig>>::write(&mut remaining, self).unwrap();
+        let written = MAX_SERIALIZED_SIZE
+            .checked_sub(remaining.len())
+            .expect("cannot write more than buffer size");
+
+        // SAFETY: `write` returned `Ok`, so the cursor initialized the first `written` bytes.
+        HashedMessage::new(unsafe { buffer[..written].assume_init_ref() })
+    }
 }
 
 impl From<VotePayloadToSign> for Vote {
@@ -533,4 +553,97 @@ impl From<VotePayloadToSign> for Vote {
 pub fn get_vote_payload_to_sign(vote: Vote, shred_version: u16) -> Vec<u8> {
     let vote_to_sign = VotePayloadToSign::new_from_vote(vote, shred_version);
     wincode::serialize(&vote_to_sign).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vote_payloads() -> [VotePayloadToSign; 6] {
+        let block = Block {
+            slot: 42,
+            block_id: solana_hash::Hash::new_from_array([7; 32]),
+        };
+        let shred_version = 123;
+        [
+            VotePayloadToSign::Notar {
+                block,
+                shred_version,
+            },
+            VotePayloadToSign::Finalize {
+                slot: block.slot,
+                shred_version,
+            },
+            VotePayloadToSign::Skip {
+                slot: block.slot,
+                shred_version,
+            },
+            VotePayloadToSign::NotarFallback {
+                block,
+                shred_version,
+            },
+            VotePayloadToSign::SkipFallback {
+                slot: block.slot,
+                shred_version,
+            },
+            VotePayloadToSign::Genesis {
+                block,
+                shred_version,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_vote_payload_to_sign_serialized_sizes() {
+        for payload in vote_payloads() {
+            // Keep this match exhaustive and destructure every field so changes to the shape of
+            // VotePayloadToSign require the stack buffer size to be reconsidered.
+            let expected_size = match payload {
+                VotePayloadToSign::Notar {
+                    block,
+                    shred_version,
+                }
+                | VotePayloadToSign::NotarFallback {
+                    block,
+                    shred_version,
+                }
+                | VotePayloadToSign::Genesis {
+                    block,
+                    shred_version,
+                } => {
+                    let _ = (block, shred_version);
+                    1 + 8 + 32 + 2
+                }
+                VotePayloadToSign::Finalize {
+                    slot,
+                    shred_version,
+                }
+                | VotePayloadToSign::Skip {
+                    slot,
+                    shred_version,
+                }
+                | VotePayloadToSign::SkipFallback {
+                    slot,
+                    shred_version,
+                } => {
+                    let _ = (slot, shred_version);
+                    1 + 8 + 2
+                }
+            };
+
+            assert_eq!(wincode::serialize(&payload).unwrap().len(), expected_size);
+        }
+    }
+
+    #[test]
+    fn test_vote_payload_to_hashed_msg_matches_wincode_serialization() {
+        for payload in vote_payloads() {
+            let serialized = wincode::serialize(&payload).unwrap();
+            assert_eq!(
+                payload.to_hashed_msg(),
+                HashedMessage::new(&serialized),
+                "unexpected hash for {payload:?}",
+            );
+        }
+    }
 }
