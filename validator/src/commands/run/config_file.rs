@@ -512,7 +512,11 @@ pub(crate) fn apply_cli(
     if let Some(cpus) = overrides.cpu_cores.as_ref() {
         validate_pool_len(cpus.len(), "--xdp-cpu-cores")?;
         validate_unique_cpus(cpus, "--xdp-cpu-cores")?;
-        let interface = config.interfaces.values().next().unwrap();
+        let interface = config
+            .interfaces
+            .values()
+            .next()
+            .expect("XDP config should contain exactly one interface after validation");
         if interface.xdp.workers_source == Source::User {
             let affected: Vec<_> = config
                 .named_modules()
@@ -533,7 +537,11 @@ pub(crate) fn apply_cli(
             }
         }
     }
-    let (label, interface) = config.interfaces.iter_mut().next().unwrap();
+    let (label, interface) = config
+        .interfaces
+        .iter_mut()
+        .next()
+        .expect("XDP config should contain exactly one interface after validation");
     if let Some(cpus) = overrides.cpu_cores {
         if interface.xdp.workers_source == Source::User {
             warnings.push(format!(
@@ -610,7 +618,11 @@ pub(crate) fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, S
     if config.interfaces.len() != 1 {
         return Ok(warnings);
     }
-    let (label, interface) = config.interfaces.iter().next().unwrap();
+    let (label, interface) = config
+        .interfaces
+        .iter()
+        .next()
+        .expect("XDP config should contain exactly one interface after validation");
     for (name, module) in config.named_modules() {
         if module.tx.interface == *label {
             continue;
@@ -738,7 +750,11 @@ pub(crate) fn resolve_runtime(
     if !config.xdp_active() {
         return Err("cannot resolve an inactive XDP policy".to_string());
     }
-    let (label, interface) = config.interfaces.iter().next().unwrap();
+    let (label, interface) = config
+        .interfaces
+        .iter()
+        .next()
+        .expect("XDP config should contain exactly one interface after validation");
     let declared = resolve_declared_workers(&interface.xdp.workers, allowed_cpus, poh_core)?;
     let pool: Vec<u32> = declared.iter().map(|binding| binding.queue).collect();
     let selected = Modules {
