@@ -2547,11 +2547,11 @@ fn test_verify_snapshot_bank() {
     .unwrap();
     bank.freeze();
     add_root_and_flush_write_cache(&bank);
-    assert!(bank.verify_snapshot_bank(false, false, bank.slot(), None));
+    assert!(bank.verify_snapshot_bank(false, bank.slot(), None));
 
     // tamper the bank after freeze!
     bank.increment_signature_count(1);
-    assert!(!bank.verify_snapshot_bank(false, false, bank.slot(), None));
+    assert!(!bank.verify_snapshot_bank(false, bank.slot(), None));
 }
 
 // Test that two bank forks with the same transactions should not hash to the same value.
@@ -5759,7 +5759,6 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         None,
         Some(leader_for_snapshot_restore),
         None,
-        false,
         false,
         false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,

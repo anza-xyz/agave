@@ -848,7 +848,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             accounts_db_config,
             None,
             Arc::default(),

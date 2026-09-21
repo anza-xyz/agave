@@ -5841,7 +5841,6 @@ impl Bank {
     /// calculation and could shield other real accounts.
     pub fn verify_snapshot_bank(
         &self,
-        skip_shrink: bool,
         force_clean: bool,
         latest_full_snapshot_slot: Slot,
         calculated_accounts_lt_hash: Option<&AccountsLtHash>,
@@ -5857,8 +5856,7 @@ impl Bank {
         });
 
         let (_, clean_time_us) = measure_us!({
-            let should_clean = force_clean || (!skip_shrink && self.slot() > 0);
-            if should_clean {
+            if force_clean {
                 info!("Cleaning...");
                 // We cannot clean past the latest full snapshot's slot because we are about to
                 // perform an accounts hash calculation *up to that slot*.  If we cleaned *past*

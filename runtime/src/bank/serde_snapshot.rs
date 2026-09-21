@@ -339,7 +339,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
