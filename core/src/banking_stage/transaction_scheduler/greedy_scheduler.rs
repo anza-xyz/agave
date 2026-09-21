@@ -260,7 +260,13 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     let transaction_account_locks = account_keys
         .iter()
         .enumerate()
-        .map(|(index, key)| (key, transaction.is_writable(index)));
+        .map(|(index, key)| (key, transaction.is_writable(index)))
+        .chain(
+            transaction
+                .implicit_read_locks()
+                .iter()
+                .map(|key| (key, false)),
+        );
 
     let thread_id = match account_locks.try_lock_accounts(
         transaction_account_locks,

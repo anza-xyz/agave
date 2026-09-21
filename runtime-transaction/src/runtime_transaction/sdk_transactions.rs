@@ -74,6 +74,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             )?;
 
         Ok(Self {
+            implicit_read_locks: Vec::new(),
             transaction: sanitized_versioned_tx,
             meta: CachedTransactionMeta {
                 message_hash,
@@ -142,12 +143,11 @@ impl RuntimeTransaction<SanitizedTransaction> {
             sanitized_transaction.account_keys(),
         )?;
 
-        let tx = Self {
+        Ok(Self {
+            implicit_read_locks: statically_loaded_runtime_tx.implicit_read_locks,
             transaction: sanitized_transaction,
             meta: statically_loaded_runtime_tx.meta,
-        };
-
-        Ok(tx)
+        })
     }
 }
 
@@ -182,7 +182,8 @@ impl RuntimeTransaction<SanitizedTransaction> {
                 .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
         )
         .expect("failed to extract test transaction instruction metadata");
-        Self {
+        let mut tx = Self {
+            implicit_read_locks: Vec::new(),
             meta: CachedTransactionMeta {
                 message_hash: *transaction.message_hash(),
                 is_simple_vote_transaction: transaction.is_simple_vote_transaction(),
@@ -195,7 +196,9 @@ impl RuntimeTransaction<SanitizedTransaction> {
                 instruction_data_len: instruction_meta.instruction_data_len,
             },
             transaction,
-        }
+        };
+        tx.load_implicit_read_locks();
+        tx
     }
 }
 

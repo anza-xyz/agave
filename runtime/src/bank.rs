@@ -3912,13 +3912,17 @@ impl Bank {
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
-                RuntimeTransaction::try_create(
+                let mut tx = RuntimeTransaction::try_create(
                     tx,
                     MessageHash::Compute,
                     None,
                     self,
                     self.get_reserved_account_keys(),
-                )
+                )?;
+                if !self.feature_set.snapshot().loaderv3_programdata_size_floor {
+                    tx.load_implicit_read_locks();
+                }
+                Ok(tx)
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(TransactionBatch::new(
@@ -5735,7 +5739,7 @@ impl Bank {
 
         // WARNING: Any pending features added here most likely must also be checked in
         //          `Bank::resanitize_transaction_minimally`.
-        let sanitized_tx = {
+        let mut sanitized_tx = {
             let size = tx.data().len();
             if size > max_transaction_size {
                 return Err(TransactionError::SanitizeFailure);
@@ -5766,6 +5770,9 @@ impl Bank {
             )
         }?;
 
+        if !self.feature_set.snapshot().loaderv3_programdata_size_floor {
+            sanitized_tx.load_implicit_read_locks();
+        }
         Ok(sanitized_tx)
     }
 
