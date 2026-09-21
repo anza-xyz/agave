@@ -183,6 +183,7 @@ name = "agave-feature-set"
 version = "4.4.0-alpha.5"
 dependencies = [
  "ahash 0.8.12",
+ "hex-literal",
  "solana-epoch-schedule",
  "solana-hash",
  "solana-keypair",
@@ -2842,6 +2843,12 @@ checksum = "fda06d18ac606267c40c04e41b9947729bf8b9efe74bd4e82b61a5f26a510b9f"
 dependencies = [
  "arrayvec",
 ]
+
+[[package]]
+name = "hex-literal"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
 name = "histogram"
