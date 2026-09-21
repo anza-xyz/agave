@@ -311,7 +311,6 @@ impl ConsensusPool {
                 root_slot: root_bank.slot(),
             });
         }
-        let vote_type = vote.get_type();
         let (entry_stake, new_cert) = self.update_vote_pool(rank_map, &msg)?;
         let fallback_vote_counters = self
             .slot_stake_counters_map
@@ -333,7 +332,7 @@ impl ConsensusPool {
             self.stats.incr_generated_cert(&cert.cert_type);
             cert
         });
-        self.stats.incr_ingested_vote_type(vote_type);
+        self.stats.incr_ingested_vote(vote);
         Ok(new_cert)
     }
 

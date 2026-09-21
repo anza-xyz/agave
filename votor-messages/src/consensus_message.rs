@@ -1,9 +1,6 @@
 //! Put Alpenglow consensus messages here so all clients can agree on the format.
 use {
-    crate::{
-        certificate::{Certificate, CertificateType},
-        vote::Vote,
-    },
+    crate::{certificate::Certificate, vote::Vote},
     serde::{Deserialize, Serialize},
     solana_bls_signatures::{Signature as BLSSignature, signature::SignatureAffine},
     solana_clock::Slot,
@@ -85,48 +82,4 @@ pub enum ConsensusMessage {
     Vote(VoteMessage),
     /// A certificate aggregating votes from multiple parties.
     Certificate(Certificate),
-}
-
-impl ConsensusMessage {
-    /// Create a new vote message
-    pub fn new_vote(
-        vote: Vote,
-        signature: SignatureAffine,
-        rank: u16,
-        stake: NonZero<u64>,
-    ) -> Self {
-        Self::Vote(VoteMessage {
-            vote,
-            signature,
-            rank,
-            stake,
-        })
-    }
-
-    /// Create a new certificate.
-    pub fn new_certificate(
-        cert_type: CertificateType,
-        bitmap: Vec<u8>,
-        signature: BLSSignature,
-    ) -> Self {
-        Self::Certificate(Certificate {
-            cert_type,
-            signature,
-            bitmap,
-        })
-    }
-
-    /// Returns the slot this message is for.
-    pub fn slot(&self) -> Slot {
-        match self {
-            Self::Vote(vote) => vote.vote.slot(),
-            Self::Certificate(certificate) => certificate.cert_type.slot(),
-        }
-    }
-}
-
-impl From<Certificate> for ConsensusMessage {
-    fn from(cert: Certificate) -> Self {
-        Self::Certificate(cert)
-    }
 }
