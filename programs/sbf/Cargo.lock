@@ -8250,6 +8250,7 @@ dependencies = [
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-loader-v3-interface",
  "solana-message",
  "solana-program-binaries",
@@ -8956,6 +8957,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sbf-syscall-get-leader"
+version = "4.5.0-alpha.2"
+dependencies = [
+ "solana-account-info",
+ "solana-define-syscall 3.0.0",
+ "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey 4.4.0",
+]
+
+[[package]]
 name = "solana-sbpf"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9514,6 +9527,7 @@ dependencies = [
  "solana-sha512-hasher",
  "solana-stable-layout 4.0.0",
  "solana-stake-history",
+ "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-type-overrides",
