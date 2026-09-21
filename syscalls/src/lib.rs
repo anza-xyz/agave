@@ -1,7 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 pub use self::{
     cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
-    leader::SyscallGetLeader,
     logging::{
         SyscallLog, SyscallLogBpfComputeUnits, SyscallLogData, SyscallLogPubkey, SyscallLogU64,
     },
@@ -36,6 +35,7 @@ use {
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
+        ebpf,
         memory_region::{AccessType, MemoryMapping},
         program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
         vm::Config,
@@ -45,6 +45,7 @@ use {
     },
     solana_sha256_hasher::Hasher,
     solana_sha512_hasher as sha512,
+    solana_svm_callback::LeaderInfo,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_type_overrides::sync::Arc,
@@ -58,7 +59,6 @@ use {
 };
 
 mod cpi;
-mod leader;
 mod logging;
 mod mem_ops;
 mod sysvar;
@@ -2869,6 +2869,50 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochStake {
 
             Ok(invoke_context.get_epoch_stake_for_vote_account(vote_address))
         }
+    }
+}
+
+/// Get the current and next leader.
+pub struct SyscallGetLeader {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
+    type Error = Error;
+    fn rust(
+        invoke_context: &mut InvokeContext<'_, '_>,
+        var_addr: u64,
+        _arg2: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+    ) -> Result<u64, Error> {
+        let amount = invoke_context
+            .get_execution_cost()
+            .sysvar_base_cost
+            .saturating_add(size_of::<LeaderInfo>() as u64);
+        invoke_context.compute_meter.consume_checked(amount)?;
+
+        let check_aligned = invoke_context.get_check_aligned();
+        if !check_aligned {
+            return Err(SyscallError::UnalignedPointer.into());
+        }
+
+        if var_addr >= ebpf::MM_INPUT_START {
+            return Err(SyscallError::InvalidPointer.into());
+        }
+
+        let var_ptr = {
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+            translate_mut!(
+                memory_mapping,
+                check_aligned,
+                let var: (&mut MaybeUninit<LeaderInfo>) = map(var_addr)?;
+            );
+            var.as_mut_ptr()
+        };
+
+        let leader_info = invoke_context.get_leader_info();
+        unsafe { var_ptr.write(leader_info) };
+
+        Ok(SUCCESS)
     }
 }
 
