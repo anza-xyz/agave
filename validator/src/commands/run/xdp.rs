@@ -52,13 +52,13 @@ fn bind_address_conflict(count: usize, address: IpAddr) -> Option<&'static str> 
 
 #[cfg(target_os = "linux")]
 fn resolve_xdp_configuration(
-    application: &config_file::CliApplication,
+    config: &config_file::EffectiveConfig,
     bind_address_count: usize,
     bind_address: IpAddr,
     poh_core: Option<usize>,
 ) -> Result<(Option<ResolvedXdp>, Vec<String>), String> {
-    if !application.config.xdp_active() {
-        return Ok((None, config_file::validate_policy(&application.config)?));
+    if !config.xdp_active() {
+        return Ok((None, config_file::validate_policy(config)?));
     }
     if let Some(conflict) = bind_address_conflict(bind_address_count, bind_address) {
         return Err(format!("{conflict}, or pass --no-xdp"));
@@ -68,8 +68,7 @@ fn resolve_xdp_configuration(
         .into_iter()
         .map(|cpu| *cpu)
         .collect();
-    let (policy, warnings) =
-        config_file::resolve_runtime(&application.config, &allowed_cpus, poh_core)?;
+    let (policy, warnings) = config_file::resolve_runtime(config, &allowed_cpus, poh_core)?;
     let device = resolve_xdp_device(&policy.interface_label, &policy.device)?;
     let src_ip = resolve_xdp_source_ipv4(&policy.interface_label, &device, bind_address)?;
     Ok((
@@ -186,7 +185,7 @@ fn resolve_xdp_source_ipv4(
 fn load_xdp_policy(
     matches: &ArgMatches,
     operation: &Operation,
-) -> Result<Option<config_file::CliApplication>, String> {
+) -> Result<Option<config_file::EffectiveConfig>, String> {
     let effective = config_file::load(matches.value_of("experimental_config_file").map(Path::new))?;
     let overrides = cli_xdp_overrides(matches)?;
     if *operation == Operation::Initialize {
@@ -194,10 +193,10 @@ fn load_xdp_policy(
         return Ok(None);
     }
     let application = config_file::apply_cli(effective, overrides)?;
-    for warning in &application.warnings {
+    for warning in application.warnings {
         warn!("{warning}");
     }
-    Ok(Some(application))
+    Ok(Some(application.config))
 }
 
 #[cfg(any(not(target_os = "linux"), test))]
@@ -205,15 +204,15 @@ pub(super) fn validate_config_file_without_xdp(
     matches: &ArgMatches,
     operation: &Operation,
 ) -> Result<(), String> {
-    let Some(application) = load_xdp_policy(matches, operation)? else {
+    let Some(config) = load_xdp_policy(matches, operation)? else {
         return Ok(());
     };
-    for warning in config_file::validate_policy(&application.config)? {
+    for warning in config_file::validate_policy(&config)? {
         warn!("{warning}");
     }
     // Only report inactivity the operator can act on. The built-in policy enables
     // XDP everywhere, so warning about it unprompted would fire on every startup.
-    if matches.is_present("experimental_config_file") && application.config.xdp_active() {
+    if matches.is_present("experimental_config_file") && config.xdp_active() {
         warn!(
             "XDP transmit is unavailable on this platform; the configured XDP policy is valid but \
              inactive"
@@ -228,14 +227,14 @@ pub(super) fn build_xdp_config(
     operation: &Operation,
     bind_addresses: &BindIpAddrs,
 ) -> Result<Option<ResolvedXdp>, String> {
-    let Some(application) = load_xdp_policy(matches, operation)? else {
+    let Some(config) = load_xdp_policy(matches, operation)? else {
         return Ok(None);
     };
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);
     let (resolved, warnings) = resolve_xdp_configuration(
-        &application,
+        &config,
         bind_addresses.len(),
         bind_addresses.active(),
         poh_pinned_cpu_core,
