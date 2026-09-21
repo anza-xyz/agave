@@ -52,6 +52,7 @@ pub struct SVMFeatureSet {
     pub relax_fee_payer_constraint: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
+    pub unbound_loader_v3_instruction_data: bool,
 }
 
 impl SVMFeatureSet {
@@ -108,6 +109,7 @@ impl SVMFeatureSet {
             relax_fee_payer_constraint: true,
             loader_v3_set_program_data_to_elf_length: true,
             early_instruction_trace_overflow_detection: true,
+            unbound_loader_v3_instruction_data: true,
         }
     }
 }

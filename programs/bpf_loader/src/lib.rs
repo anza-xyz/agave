@@ -46,7 +46,10 @@ const WRITE_INSTRUCTION_TAG: [u8; 4] = 1u32.to_le_bytes();
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 const WRITE_INSTRUCTION_HEADER_LEN: usize = 16;
 
-fn parse_write_instruction(instruction_data: &[u8]) -> Result<(u32, &[u8]), InstructionError> {
+fn parse_write_instruction(
+    instruction_data: &[u8],
+    unbound_loader_v3_instruction_data: bool,
+) -> Result<(u32, &[u8]), InstructionError> {
     #[derive(SchemaRead)]
     struct WriteInstruction<'a> {
         tag: u32,
@@ -62,7 +65,10 @@ fn parse_write_instruction(instruction_data: &[u8]) -> Result<(u32, &[u8]), Inst
         return Err(InstructionError::InvalidInstructionData);
     }
 
-    if WRITE_INSTRUCTION_HEADER_LEN.saturating_add(bytes.len()) > solana_packet::PACKET_DATA_SIZE {
+    if !unbound_loader_v3_instruction_data
+        && WRITE_INSTRUCTION_HEADER_LEN.saturating_add(bytes.len())
+            > solana_packet::PACKET_DATA_SIZE
+    {
         return Err(InstructionError::InvalidInstructionData);
     }
 
@@ -179,6 +185,9 @@ fn process_loader_upgradeable_instruction(
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_program_key()?;
+    let unbound_loader_v3_instruction_data = invoke_context
+        .get_feature_set()
+        .unbound_loader_v3_instruction_data;
 
     let instruction = if instruction_data.starts_with(&WRITE_INSTRUCTION_TAG) {
         // `Write` is parsed in-place in the match arm
@@ -186,6 +195,9 @@ fn process_loader_upgradeable_instruction(
             offset: 0,
             bytes: Vec::new(),
         }
+    } else if unbound_loader_v3_instruction_data {
+        wincode::deserialize(instruction_data)
+            .map_err(|_| InstructionError::InvalidInstructionData)?
     } else {
         limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?
     };
@@ -207,7 +219,8 @@ fn process_loader_upgradeable_instruction(
             })?;
         }
         UpgradeableLoaderInstruction::Write { .. } => {
-            let (offset, payload) = parse_write_instruction(instruction_data)?;
+            let (offset, payload) =
+                parse_write_instruction(instruction_data, unbound_loader_v3_instruction_data)?;
             instruction_context.check_number_of_instruction_accounts(2)?;
             let buffer = instruction_context.try_borrow_instruction_account(0)?;
 
@@ -1167,6 +1180,7 @@ mod tests {
         solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
         solana_sysvar_id::SysvarId,
         std::{fs::File, io::Read},
+        test_case::test_case,
     };
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
@@ -1187,8 +1201,9 @@ mod tests {
         AccountSharedData::new_data_with_space(1, value, required_data_len, &sysvar::id()).unwrap()
     }
 
-    #[test]
-    fn test_write_instruction_matches_sdk() {
+    #[test_case(false; "legacy")]
+    #[test_case(true; "SIMD-0648")]
+    fn test_write_instruction_matches_sdk(unbound_loader_v3_instruction_data: bool) {
         let instruction = UpgradeableLoaderInstruction::Write {
             offset: 7,
             bytes: vec![1, 2, 3],
@@ -1201,7 +1216,7 @@ mod tests {
         let serialized = bincode::serialize(&instruction).unwrap();
         assert!(serialized.starts_with(&WRITE_INSTRUCTION_TAG));
         assert_eq!(
-            parse_write_instruction(&serialized).unwrap(),
+            parse_write_instruction(&serialized, unbound_loader_v3_instruction_data).unwrap(),
             (*offset, bytes.as_slice())
         );
     }
