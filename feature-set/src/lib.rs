@@ -79,6 +79,7 @@ pub struct FeatureSnapshot {
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
+    pub unbound_loader_v3_instruction_data: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -177,6 +178,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
+            unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
         }
     }
 }
@@ -336,6 +338,7 @@ impl FeatureSet {
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
+            unbound_loader_v3_instruction_data: snapshot.unbound_loader_v3_instruction_data,
         }
     }
 }
@@ -1525,6 +1528,10 @@ pub mod double_disinflation_rate {
     pub const TAPER: f64 = 0.30;
 }
 
+pub mod unbound_loader_v3_instruction_data {
+    solana_pubkey::declare_id!("REPLACE111111111111111111111111111111111111");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2610,6 +2617,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             double_disinflation_rate::id(),
             "SIMD-0550: Double disinflation rate",
+        ),
+        (
+            unbound_loader_v3_instruction_data::id(),
+            "SIMD-0648: Unbound LoaderV3 Instruction Data",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
