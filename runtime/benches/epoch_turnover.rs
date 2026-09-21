@@ -202,9 +202,8 @@ fn bench_epoch_turnover(c: &mut Criterion) {
         } else {
             "vote_account"
         };
-        let name = format!(
-            "{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive_{collector_type}_collector"
-        );
+        let name =
+            format!("{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive_{collector_type}_collector");
 
         let (initial_bank, bank_forks) = setup_bank(
             vote_accounts,
