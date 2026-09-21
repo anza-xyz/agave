@@ -155,7 +155,16 @@ fn process_loader_upgradeable_instruction(
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_program_key()?;
 
-    match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
+    let instruction = if invoke_context
+        .get_feature_set()
+        .unbound_loader_v3_instruction_data
+    {
+        bincode::deserialize(instruction_data)
+            .map_err(|_| InstructionError::InvalidInstructionData)?
+    } else {
+        limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?
+    };
+    match instruction {
         UpgradeableLoaderInstruction::InitializeBuffer => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let mut buffer = instruction_context.try_borrow_instruction_account(0)?;
