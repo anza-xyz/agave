@@ -292,7 +292,7 @@ pub(super) struct VoteVerificationStats {
     /// Stats on how many votes were in the batch when it succeeded.
     pub(super) optimistic_batch: WelfordStats,
     /// Number of votes that were individually verified.
-    pub(super) num_individual_verified: Saturating<u64>,
+    pub(super) num_individual_verified: Saturating<usize>,
     /// Number of times we are banning a validator.
     pub(super) banning_validator: Saturating<u64>,
     /// Stats for [`verify_votes_optimistic`].

@@ -238,7 +238,7 @@ impl EventHandler {
         nonblocking_send(
             &local_context.my_pubkey,
             &vctx.consensus_metrics_sender,
-            (now, vec![ConsensusMetricsEvent::ParentReadySeen { slot }]),
+            (now, ConsensusMetricsEvent::ParentReadySeen { slot }),
             "consensus_metrics_sender",
         )
         .map_err(EventLoopError::ChannelDisconnected)?;
@@ -287,10 +287,10 @@ impl EventHandler {
             VotorEvent::Block(CompletedBlock { slot, bank }) => {
                 debug_assert!(bank.is_frozen());
                 let now = Instant::now();
-                let event = vec![ConsensusMetricsEvent::ReplayCompleted {
+                let event = ConsensusMetricsEvent::ReplayCompleted {
                     leader: *bank.leader_id(),
                     slot,
-                }];
+                };
                 nonblocking_send(
                     &local_context.my_pubkey,
                     &vctx.consensus_metrics_sender,
@@ -502,7 +502,7 @@ impl EventHandler {
                     &vctx.consensus_metrics_sender,
                     (
                         Instant::now(),
-                        vec![ConsensusMetricsEvent::SlotFinalized { slot: block.slot }],
+                        ConsensusMetricsEvent::SlotFinalized { slot: block.slot },
                     ),
                     "consensus_metrics_sender",
                 )
@@ -1605,8 +1605,7 @@ mod tests {
                 .consensus_metrics_receiver
                 .try_recv()
                 .expect("Should receive metrics event");
-            assert_eq!(event.1.len(), 1);
-            assert_eq!(event.1[0], expected);
+            assert_eq!(event.1, expected);
         }
 
         fn crate_vote_history_storage_and_switch_identity(

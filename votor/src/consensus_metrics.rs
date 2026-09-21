@@ -1,6 +1,7 @@
 use {
     agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::{
+        VoteAccountPubkeys,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventReceiver},
         vote::Vote,
     },
@@ -122,24 +123,20 @@ impl ConsensusMetrics {
     fn run(&mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             match self.receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok((received, events)) => {
-                    for event in events {
-                        match event {
-                            ConsensusMetricsEvent::Vote { ids, vote } => {
-                                self.record_vote(ids, &vote, received);
-                            }
-                            ConsensusMetricsEvent::ReplayCompleted { leader, slot } => {
-                                self.record_replay_completed(leader, slot, received);
-                            }
-                            ConsensusMetricsEvent::ParentReadySeen { slot } => {
-                                self.record_parent_ready_seen(slot, received);
-                            }
-                            ConsensusMetricsEvent::SlotFinalized { slot } => {
-                                self.handle_slot_finalized(slot);
-                            }
-                        }
+                Ok((received, event)) => match event {
+                    ConsensusMetricsEvent::Vote { ids, vote } => {
+                        self.record_vote(ids, &vote, received);
                     }
-                }
+                    ConsensusMetricsEvent::ReplayCompleted { leader, slot } => {
+                        self.record_replay_completed(leader, slot, received);
+                    }
+                    ConsensusMetricsEvent::ParentReadySeen { slot } => {
+                        self.record_parent_ready_seen(slot, received);
+                    }
+                    ConsensusMetricsEvent::SlotFinalized { slot } => {
+                        self.handle_slot_finalized(slot);
+                    }
+                },
                 Err(err) => match err {
                     RecvTimeoutError::Timeout => trace!("ConsensusMetricsEventReceiver timeout"),
                     RecvTimeoutError::Disconnected => {
@@ -180,18 +177,24 @@ impl ConsensusMetrics {
     }
 
     /// Records a `vote` from the node with `id`.
-    fn record_vote(&mut self, ids: Vec<Pubkey>, vote: &Vote, received: Instant) {
+    fn record_vote(&mut self, ids: VoteAccountPubkeys, vote: &Vote, received: Instant) {
         let vote_slot = vote.slot();
         let maybe_start_of_slot = self.compute_start_of_slot(vote_slot);
         let epoch_metrics = self.epoch_metrics_for_slot(vote_slot);
         let Some(start_of_slot) = maybe_start_of_slot else {
-            epoch_metrics.missing_start_of_window += ids.len();
+            epoch_metrics.missing_start_of_window += ids.as_slice().len();
             return;
         };
         let elapsed = received.duration_since(start_of_slot);
-        for id in ids {
+        let mut record_vote = |id| {
             let node = epoch_metrics.node_metrics.entry(id).or_default();
             node.record_vote(vote, elapsed);
+        };
+        match ids {
+            VoteAccountPubkeys::Owned(ids) => ids.into_iter().for_each(&mut record_vote),
+            VoteAccountPubkeys::Shared(ids) => {
+                ids.iter().copied().for_each(&mut record_vote);
+            }
         }
     }
 
@@ -354,7 +357,7 @@ mod tests {
         let mut metrics = new_metrics();
 
         metrics.record_vote(
-            vec![Keypair::new().pubkey()],
+            VoteAccountPubkeys::Owned(vec![Keypair::new().pubkey()]),
             &Vote::Skip(SkipVote { slot: 42 }),
             Instant::now(),
         );
@@ -374,7 +377,7 @@ mod tests {
             Duration::from_nanos_u128(metrics.sharable_banks.root().ns_per_slot_at_slot(slot));
         metrics.record_parent_ready_seen(first_slot_in_window, start);
         metrics.record_vote(
-            vec![pubkey],
+            VoteAccountPubkeys::Owned(vec![pubkey]),
             &Vote::Skip(SkipVote { slot }),
             start + slot_duration * 2 + Duration::from_millis(1),
         );

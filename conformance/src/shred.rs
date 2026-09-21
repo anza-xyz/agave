@@ -10,7 +10,7 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         account_locks::validate_account_locks,
         accounts::Accounts,

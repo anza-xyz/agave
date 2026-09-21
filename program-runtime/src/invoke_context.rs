@@ -864,7 +864,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             solana_svm_callback::InvokeContextCallback,
             solana_svm_log_collector::LogCollector,
             $crate::{
-                __private::{Hash, ReadableAccount, Rent, TransactionContext},
+                __private::{DropOnBailOut, Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
@@ -886,12 +886,13 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 }
             }
         });
-        let mut $transaction_context = TransactionContext::new(
+        let mut $transaction_context = TransactionContext::new_with_feature_flags(
             $transaction_accounts,
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             $top_level_instructions,
+            DropOnBailOut::Disabled,
         );
         let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(

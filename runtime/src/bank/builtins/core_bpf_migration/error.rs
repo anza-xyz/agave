@@ -12,6 +12,12 @@ pub enum CoreBpfMigrationError {
     /// Bincode serialization error
     #[error("Bincode serialization error: {0:?}")]
     BincodeError(#[from] bincode::Error),
+    /// Wincode deserialization error
+    #[error("Wincode deserialization error: {0:?}")]
+    WincodeReadError(#[from] wincode::ReadError),
+    /// Wincode serialization error
+    #[error("Wincode serialization error: {0:?}")]
+    WincodeWriteError(#[from] wincode::WriteError),
     /// Account not found
     #[error("Account not found: {0:?}")]
     AccountNotFound(Pubkey),

@@ -814,14 +814,16 @@ pub fn max_entries_per_n_shred_last_or_not(
             ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap() as u64;
         (shred_data_size * num_shreds - count_size) / entry_size
     } else {
-        // last FEC SET is signed, all others are unsigned
+        // The trailing FEC set(s) of the slot are signed, all others are unsigned.
+        // This assumes a single signed FEC set, which holds as long as the data
+        // fills all preceding sets exactly, as it does here.
         let shred_data_size_unsigned =
             ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap() as u64;
         let shred_data_size_signed =
             ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap() as u64;
-        let shreds_per_fec_block = SHREDS_PER_FEC_BLOCK as u64;
-        (shred_data_size_unsigned * (num_shreds - shreds_per_fec_block)
-            + shred_data_size_signed * shreds_per_fec_block
+        let data_shreds_per_fec_block = DATA_SHREDS_PER_FEC_BLOCK as u64;
+        (shred_data_size_unsigned * (num_shreds - data_shreds_per_fec_block)
+            + shred_data_size_signed * data_shreds_per_fec_block
             - count_size)
             / entry_size
     }

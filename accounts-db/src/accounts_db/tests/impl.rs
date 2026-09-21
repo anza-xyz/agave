@@ -1205,7 +1205,7 @@ fn test_shrink_does_not_resurrect_dead_account() {
     accounts.add_root_and_flush_write_cache(3);
 
     // Shrink slot 1's storage, which still physically holds pubkey's reclaimed version
-    accounts.shrink_slot_forced(1);
+    accounts.shrink_storage(accounts.get_storage_for_slot(1).unwrap());
 
     // The account should stay dead
     let loaded = accounts.do_load_for_tests(&Ancestors::default(), &pubkey);
@@ -1318,7 +1318,7 @@ fn test_shrink_carries_or_purges_flush_tombstone() {
         }
 
         // Shrink the slot. The behavior on the tombstone will depend on `latest_full_snapshot_slot`.
-        accounts.shrink_slot_forced(slot);
+        accounts.shrink_storage(storage);
 
         assert!(
             accounts.storage.get_slot_storage_entry(slot).is_some(),
@@ -1416,7 +1416,7 @@ fn test_clean_converts_zero_lamport_single_ref_account_to_tombstone_after_shrink
     accounts_db.store_for_tests((slot3, [(&obsolete_pubkey, &open_account)].as_slice()));
     accounts_db.add_root_and_flush_write_cache(slot3);
 
-    accounts_db.shrink_slot_forced(slot1);
+    accounts_db.shrink_candidate_slots(&EpochSchedule::default());
 
     let new_storage1 = accounts_db.get_and_assert_single_storage(slot1);
 
@@ -1542,7 +1542,7 @@ fn test_fully_tombstoned_storage_reclaim() {
 
     // Shrink routes the fully-dead slot to clean; clean retains the storage because the latest full
     // snapshot is older than the slot, so the slot is not yet eligible for shrink.
-    accounts_db.shrink_slot_forced(slot);
+    accounts_db.shrink_storage(accounts_db.get_storage_for_slot(slot).unwrap());
     accounts_db.clean_accounts(slot, false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot).is_some());
     // Verify that the slot is not queued for shrink at this time
@@ -1691,7 +1691,7 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
         AppendVec::calculate_stored_size(alive_account.data().len()),
     );
 
-    accounts_db.shrink_slot_forced(slot);
+    accounts_db.shrink_storage(storage);
 
     let storage_after_shrink = accounts_db.get_storage_for_slot(slot).unwrap();
     assert_eq!(
@@ -2591,21 +2591,6 @@ fn test_verify_index_small_dataset_detects_mismatch() {
 }
 
 #[test]
-fn test_shrink_all_slots_none() {
-    let epoch_schedule = EpochSchedule::default();
-    for startup in &[false, true] {
-        let accounts =
-            AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-
-        for _ in 0..10 {
-            accounts.shrink_candidate_slots(&epoch_schedule);
-        }
-
-        accounts.shrink_all_slots(*startup, None);
-    }
-}
-
-#[test]
 fn test_shrink_candidate_slots() {
     let mut accounts =
         AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
@@ -2652,13 +2637,6 @@ fn test_shrink_candidate_slots() {
     accounts.shrink_candidate_slots(&EpochSchedule::default());
     assert_eq!(
         pubkey_count,
-        accounts.all_account_count_in_accounts_file(shrink_slot)
-    );
-
-    // Now, do full-shrink.
-    accounts.shrink_all_slots(false, None);
-    assert_eq!(
-        pubkey_count_after_shrink,
         accounts.all_account_count_in_accounts_file(shrink_slot)
     );
 }

@@ -1,7 +1,10 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::{enable_alt_bn128_syscall, loader_v3_minimum_extend_program_size},
+    agave_feature_set::{
+        enable_alt_bn128_syscall, loader_v3_minimum_extend_program_size,
+        loader_v3_set_program_data_to_elf_length,
+    },
     assert_matches::assert_matches,
     serde_json::Value,
     solana_account::ReadableAccount,
@@ -53,6 +56,7 @@ use {
 
 pub struct LoaderV3Features {
     pub minimum_extend_program_size: bool,
+    pub set_programdata_to_elf_length: bool,
 }
 
 fn test_validator_genesis(
@@ -72,9 +76,13 @@ fn test_validator_genesis(
 
     let LoaderV3Features {
         minimum_extend_program_size,
+        set_programdata_to_elf_length,
     } = features;
     if !minimum_extend_program_size {
         genesis.deactivate_features(&[loader_v3_minimum_extend_program_size::id()]);
+    }
+    if !set_programdata_to_elf_length {
+        genesis.deactivate_features(&[loader_v3_set_program_data_to_elf_length::id()]);
     }
 
     genesis
@@ -212,6 +220,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -428,6 +437,7 @@ async fn test_cli_program_deploy_no_authority() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -537,6 +547,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     );
 
@@ -674,6 +685,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     );
 
@@ -843,6 +855,7 @@ async fn test_cli_program_deploy_local_verifier() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     );
 
@@ -982,6 +995,7 @@ async fn test_cli_program_deploy_with_authority() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1395,6 +1409,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1573,6 +1588,7 @@ async fn test_cli_program_close_program() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1716,6 +1732,7 @@ async fn test_cli_program_extend_program() {
         &noop_path,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .await;
@@ -1875,6 +1892,7 @@ async fn test_cli_program_extend_program_minimum_size() {
         &noop_path,
         LoaderV3Features {
             minimum_extend_program_size: true,
+            set_programdata_to_elf_length: false,
         },
     )
     .await;
@@ -1998,6 +2016,7 @@ async fn test_cli_program_write_buffer() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2418,6 +2437,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     );
 
@@ -2517,6 +2537,7 @@ async fn test_cli_program_set_buffer_authority() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2710,6 +2731,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2848,6 +2870,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -3047,6 +3070,7 @@ async fn test_cli_program_show() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -3249,6 +3273,7 @@ async fn test_cli_program_dump() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)

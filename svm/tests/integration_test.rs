@@ -7,7 +7,9 @@ use {
         create_custom_loader, deploy_program_with_upgrade_authority, load_program, program_address,
         program_data_size, register_builtins,
     },
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -166,6 +168,7 @@ impl SvmTestEnvironment<'_> {
             drop_on_failure: test_entry.drop_on_failure,
             all_or_nothing: test_entry.all_or_nothing,
             drop_noop_transactions: test_entry.drop_noop_transactions,
+            drop_bail_out_transactions: test_entry.drop_bail_out_transactions,
             ..Default::default()
         };
 
@@ -409,6 +412,9 @@ pub struct SvmTestEntry {
     // enables transformation of no-op result into error. false in replay, true in block production
     pub drop_noop_transactions: bool,
 
+    // enables dropping of transactions which bailed out in the program runtime. false in replay, true in block production
+    pub drop_bail_out_transactions: bool,
+
     // programs to deploy to the new svm
     pub initial_programs: Vec<(String, Slot, Option<Pubkey>)>,
 
@@ -432,6 +438,7 @@ impl Default for SvmTestEntry {
             all_or_nothing: false,
             drop_on_failure: false,
             drop_noop_transactions: false,
+            drop_bail_out_transactions: false,
             initial_programs: Vec::new(),
             initial_accounts: HashMap::new(),
             transaction_batch: Vec::new(),
