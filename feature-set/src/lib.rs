@@ -1525,6 +1525,25 @@ pub mod double_disinflation_rate {
     pub const TAPER: f64 = 0.30;
 }
 
+pub mod replace_ata_with_p_ata {
+    use {
+        super::{Hash, Pubkey},
+        hex_literal::hex,
+    };
+
+    solana_pubkey::declare_id!("pata6uFabFDejC1U7rpmFj9s1FhmiPyWk6D51U1ksx3");
+
+    pub const SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID: Pubkey =
+        Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+    pub const PATA_PROGRAM_BUFFER: Pubkey =
+        Pubkey::from_str_const("pataAAkF439TTjwRqmxRkTTEfZemRdoriXusez4PQ6S");
+
+    pub const PATA_BUILD_HASH: Hash = Hash::new_from_array(hex!(
+        "9eca7af64308df595c836ba3371c55f9eafafbbffafe45e3f1150e159d1c4629"
+    ));
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2610,6 +2629,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             double_disinflation_rate::id(),
             "SIMD-0550: Double disinflation rate",
+        ),
+        (
+            replace_ata_with_p_ata::id(),
+            "SIMD-0567: CU-optimized ATA program",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

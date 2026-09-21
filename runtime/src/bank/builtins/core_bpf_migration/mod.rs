@@ -391,18 +391,21 @@ impl Bank {
     ///     self.upgrade_loader_v2_program_with_loader_v3_program(
     ///        &bpf_loader_v2_program_address,
     ///        &source_buffer_address,
+    ///        expected_build_hash,
     ///        true,
     ///        "test_upgrade_loader_v2_program_with_loader_v3_program",
     ///     );
     /// }
     /// ```
     /// The `source_buffer_address` must point to a Loader v3 buffer account
-    /// (state equal to [`UpgradeableLoaderState::Buffer`]).
+    /// (state equal to [`UpgradeableLoaderState::Buffer`]) and its ELF must
+    /// hash to `expected_build_hash`.
     // #[expect(dead_code)] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
         &self,
         loader_v2_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
+        expected_build_hash: Hash,
         allow_prefunded: bool,
         datapoint_name: &'static str,
     ) -> Result<(), CoreBpfMigrationError> {
@@ -410,7 +413,11 @@ impl Bank {
 
         let target =
             TargetBpfV2::new_checked(self, loader_v2_bpf_program_address, allow_prefunded)?;
-        let source = SourceBuffer::new_checked(self, source_buffer_address)?;
+        let source = SourceBuffer::new_checked_with_verified_build_hash(
+            self,
+            source_buffer_address,
+            expected_build_hash,
+        )?;
 
         // Attempt serialization first before modifying the bank.
         let new_target_program_account =
@@ -572,6 +579,8 @@ pub(crate) mod tests {
         fn codegen(_: &mut solana_sbpf::program::JitCompiler<C>) {}
     }
 
+    const PATA_ELF: &[u8] = include_bytes!("tests/fixtures/pata-9eca7.so");
+
     fn test_elf() -> Vec<u8> {
         let mut elf = Vec::new();
         File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
@@ -601,8 +610,22 @@ pub(crate) mod tests {
             source_buffer_address: &Pubkey,
             upgrade_authority_address: Option<Pubkey>,
         ) -> Self {
-            let elf = test_elf();
+            Self::new_with_elf(
+                bank,
+                target_program_address,
+                source_buffer_address,
+                upgrade_authority_address,
+                test_elf(),
+            )
+        }
 
+        fn new_with_elf(
+            bank: &Bank,
+            target_program_address: &Pubkey,
+            source_buffer_address: &Pubkey,
+            upgrade_authority_address: Option<Pubkey>,
+            elf: Vec<u8>,
+        ) -> Self {
             let source_buffer_account = {
                 // BPF Loader always writes ELF bytes after
                 // `UpgradeableLoaderState::size_of_buffer_metadata()`.
@@ -1371,7 +1394,11 @@ pub(crate) mod tests {
         mint_keypair: &Keypair,
         slots_per_epoch: u64,
         cpi_program_id: &Pubkey,
+        expected_program_result: Result<(), InstructionError>,
     ) {
+        let expected_invoke_result =
+            expected_program_result.map_err(|e| TransactionError::InstructionError(0, e));
+
         let (bank, bank_forks) = root_bank.wrap_with_bank_forks_for_tests();
 
         // Advance to the next epoch without activating the feature.
@@ -1453,18 +1480,18 @@ pub(crate) mod tests {
         );
 
         // Successfully invoke the new BPF loader v3 program.
-        bank.process_transaction(&Transaction::new(
+        let result = bank.process_transaction(&Transaction::new(
             &vec![&mint_keypair],
             Message::new(
                 &[Instruction::new_with_bytes(*program_id, &[], Vec::new())],
                 Some(&mint_keypair.pubkey()),
             ),
             bank.last_blockhash(),
-        ))
-        .unwrap();
+        ));
+        assert_eq!(result, expected_invoke_result);
 
         // Successfully invoke the new BPF loader v3 program via CPI.
-        bank.process_transaction(&Transaction::new(
+        let result = bank.process_transaction(&Transaction::new(
             &vec![&mint_keypair],
             Message::new(
                 &[Instruction::new_with_bytes(
@@ -1475,8 +1502,8 @@ pub(crate) mod tests {
                 Some(&mint_keypair.pubkey()),
             ),
             bank.last_blockhash(),
-        ))
-        .unwrap();
+        ));
+        assert_eq!(result, expected_invoke_result);
 
         // Simulate crossing another epoch boundary for a new bank.
         goto_end_of_slot(bank.clone());
@@ -1495,18 +1522,18 @@ pub(crate) mod tests {
         test_context.run_program_cache_checks(&bank, migration_slot, ExpectedCacheEntry::Loaded);
 
         // Again, successfully invoke the new BPF loader v3 program.
-        bank.process_transaction(&Transaction::new(
+        let result = bank.process_transaction(&Transaction::new(
             &vec![&mint_keypair],
             Message::new(
                 &[Instruction::new_with_bytes(*program_id, &[], Vec::new())],
                 Some(&mint_keypair.pubkey()),
             ),
             bank.last_blockhash(),
-        ))
-        .unwrap();
+        ));
+        assert_eq!(result, expected_invoke_result);
 
         // Again, successfully invoke the new BPF loader v3 program via CPI.
-        bank.process_transaction(&Transaction::new(
+        let result = bank.process_transaction(&Transaction::new(
             &vec![&mint_keypair],
             Message::new(
                 &[Instruction::new_with_bytes(
@@ -1517,8 +1544,8 @@ pub(crate) mod tests {
                 Some(&mint_keypair.pubkey()),
             ),
             bank.last_blockhash(),
-        ))
-        .unwrap();
+        ));
+        assert_eq!(result, expected_invoke_result);
     }
 
     // This test can't be used to the `compute_budget` program, unless a valid
@@ -1578,6 +1605,7 @@ pub(crate) mod tests {
             &mint_keypair,
             slots_per_epoch,
             &cpi_program_id,
+            Ok(()),
         );
     }
 
@@ -1945,9 +1973,22 @@ pub(crate) mod tests {
 
         // Perform the upgrade.
         let upgrade_slot = bank.slot();
+        let expected_build_hash = SourceBuffer::verified_build_hash(&test_context.elf);
+        assert_matches!(
+            bank.upgrade_loader_v2_program_with_loader_v3_program(
+                &bpf_loader_v2_program_address,
+                &source_buffer_address,
+                Hash::default(),
+                true,
+                "test_upgrade_loader_v2_program_with_loader_v3_program",
+            ),
+            Err(CoreBpfMigrationError::BuildHashMismatch(actual, expected))
+                if actual == expected_build_hash && expected == Hash::default()
+        );
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            expected_build_hash,
             true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
@@ -2034,6 +2075,7 @@ pub(crate) mod tests {
             bank.upgrade_loader_v2_program_with_loader_v3_program(
                 &bpf_loader_v2_program_address,
                 &source_buffer_address,
+                Hash::default(),
                 true,
                 "test_upgrade_loader_v2_program_with_loader_v3_program",
             )
@@ -2057,7 +2099,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_replace_spl_token_with_p_token_e2e() {
+    fn test_replace_ata_with_p_ata_e2e() {
         let (mut genesis_config, mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let slots_per_epoch = 32;
@@ -2066,10 +2108,10 @@ pub(crate) mod tests {
 
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
-        let feature_id = agave_feature_set::replace_spl_token_with_p_token::id();
-        let program_id = agave_feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID;
-        let source_buffer_address =
-            agave_feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER;
+        let feature_id = agave_feature_set::replace_ata_with_p_ata::id();
+        let program_id =
+            agave_feature_set::replace_ata_with_p_ata::SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID;
+        let source_buffer_address = agave_feature_set::replace_ata_with_p_ata::PATA_PROGRAM_BUFFER;
 
         // Set up a mock BPF loader v2 program.
         {
@@ -2097,7 +2139,13 @@ pub(crate) mod tests {
         root_bank.feature_set = Arc::new(feature_set);
 
         // Initialize the source buffer account.
-        let test_context = TestContext::new(&root_bank, &program_id, &source_buffer_address, None);
+        let test_context = TestContext::new_with_elf(
+            &root_bank,
+            &program_id,
+            &source_buffer_address,
+            None,
+            PATA_ELF.to_vec(),
+        );
 
         // Activate the feature and run the necessary checks.
         activate_feature_and_run_checks(
@@ -2109,6 +2157,9 @@ pub(crate) mod tests {
             &mint_keypair,
             slots_per_epoch,
             &cpi_program_id,
+            // p-ATA rejects an empty instruction, so reaching its error proves it runs.
+            #[allow(deprecated)]
+            Err(InstructionError::NotEnoughAccountKeys),
         );
     }
 
@@ -2116,14 +2167,14 @@ pub(crate) mod tests {
     // Here we want to see that the bank handles the failure gracefully and
     // advances to the next epoch without issue.
     #[test]
-    fn test_replace_spl_token_with_p_token_e2e_failure() {
+    fn test_replace_ata_with_p_ata_e2e_failure() {
         let (genesis_config, _mint_keypair) = create_genesis_config(0);
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
-        let feature_id = &agave_feature_set::replace_spl_token_with_p_token::id();
-        let program_id = &agave_feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID;
-        let source_buffer_address =
-            &agave_feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER;
+        let feature_id = &agave_feature_set::replace_ata_with_p_ata::id();
+        let program_id =
+            &agave_feature_set::replace_ata_with_p_ata::SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID;
+        let source_buffer_address = &agave_feature_set::replace_ata_with_p_ata::PATA_PROGRAM_BUFFER;
 
         // Set up a mock BPF loader v2 program.
         {
@@ -2185,10 +2236,10 @@ pub(crate) mod tests {
         );
     }
 
-    // Simulate creating a bank from a snapshot after p-token migration feature was
+    // Simulate creating a bank from a snapshot after p-ATA migration feature was
     // activated and the migration was successful.
     #[test]
-    fn test_startup_from_snapshot_after_replace_spl_token_with_p_token() {
+    fn test_startup_from_snapshot_after_replace_ata_with_p_ata() {
         let leader_id = Pubkey::new_unique();
         let GenesisConfigInfo { genesis_config, .. } =
             create_genesis_config_with_leader(0, &leader_id, LAMPORTS_PER_SOL);
@@ -2237,6 +2288,7 @@ pub(crate) mod tests {
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            SourceBuffer::verified_build_hash(&test_context.elf),
             true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
@@ -2324,7 +2376,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_replace_spl_token_with_p_token_and_funded_program_data_account_e2e() {
+    fn test_replace_ata_with_p_ata_and_funded_program_data_account_e2e() {
         let (mut genesis_config, mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let slots_per_epoch = 32;
@@ -2333,10 +2385,10 @@ pub(crate) mod tests {
 
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
-        let feature_id = agave_feature_set::replace_spl_token_with_p_token::id();
-        let program_id = agave_feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID;
-        let source_buffer_address =
-            agave_feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER;
+        let feature_id = agave_feature_set::replace_ata_with_p_ata::id();
+        let program_id =
+            agave_feature_set::replace_ata_with_p_ata::SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID;
+        let source_buffer_address = agave_feature_set::replace_ata_with_p_ata::PATA_PROGRAM_BUFFER;
 
         // Set up a mock BPF loader v2 program.
         {
@@ -2364,7 +2416,13 @@ pub(crate) mod tests {
         root_bank.feature_set = Arc::new(feature_set);
 
         // Initialize the source buffer account.
-        let test_context = TestContext::new(&root_bank, &program_id, &source_buffer_address, None);
+        let test_context = TestContext::new_with_elf(
+            &root_bank,
+            &program_id,
+            &source_buffer_address,
+            None,
+            PATA_ELF.to_vec(),
+        );
 
         // Fund the program data account so it will appear as an existing account.
         let program_data_account = AccountSharedData::new(1_000_000_000, 0, &system_program::ID);
@@ -2383,11 +2441,14 @@ pub(crate) mod tests {
             &mint_keypair,
             slots_per_epoch,
             &cpi_program_id,
+            // p-ATA rejects an empty instruction, so reaching its error proves it runs.
+            #[allow(deprecated)]
+            Err(InstructionError::NotEnoughAccountKeys),
         );
     }
 
     #[test]
-    fn test_replace_spl_token_with_p_token_and_existing_program_data_account_failure() {
+    fn test_replace_ata_with_p_ata_and_existing_program_data_account_failure() {
         let (mut genesis_config, _mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let slots_per_epoch = 32;
@@ -2396,10 +2457,10 @@ pub(crate) mod tests {
 
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
-        let feature_id = agave_feature_set::replace_spl_token_with_p_token::id();
-        let program_id = agave_feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID;
-        let source_buffer_address =
-            agave_feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER;
+        let feature_id = agave_feature_set::replace_ata_with_p_ata::id();
+        let program_id =
+            agave_feature_set::replace_ata_with_p_ata::SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID;
+        let source_buffer_address = agave_feature_set::replace_ata_with_p_ata::PATA_PROGRAM_BUFFER;
 
         // Set up a mock BPF loader v2 program.
         let program_account = mock_bpf_loader_v2_program(&root_bank);
