@@ -1,5 +1,6 @@
 use {
-    crate::bank::Bank, core::ops::Deref, solana_svm_transaction::svm_message::SVMMessage,
+    crate::bank::Bank, core::ops::Deref,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction_error::TransactionResult as Result,
 };
 
@@ -20,14 +21,14 @@ impl<T> Deref for OwnedOrBorrowed<'_, T> {
 }
 
 // Represents the results of trying to lock a set of accounts
-pub struct TransactionBatch<'a, 'b, Tx: SVMMessage> {
+pub struct TransactionBatch<'a, 'b, Tx: TransactionWithMeta> {
     lock_results: Vec<Result<()>>,
     bank: &'a Bank,
     sanitized_txs: OwnedOrBorrowed<'b, Tx>,
     needs_unlock: bool,
 }
 
-impl<'a, 'b, Tx: SVMMessage> TransactionBatch<'a, 'b, Tx> {
+impl<'a, 'b, Tx: TransactionWithMeta> TransactionBatch<'a, 'b, Tx> {
     pub fn new(
         lock_results: Vec<Result<()>>,
         bank: &'a Bank,
@@ -97,7 +98,7 @@ impl<'a, 'b, Tx: SVMMessage> TransactionBatch<'a, 'b, Tx> {
 }
 
 // Unlock all locked accounts in destructor.
-impl<Tx: SVMMessage> Drop for TransactionBatch<'_, '_, Tx> {
+impl<Tx: TransactionWithMeta> Drop for TransactionBatch<'_, '_, Tx> {
     fn drop(&mut self) {
         if self.needs_unlock() {
             self.set_needs_unlock(false);

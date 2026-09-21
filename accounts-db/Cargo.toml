@@ -32,6 +32,7 @@ dev-context-only-utils = [
     "dep:solana-stake-interface",
     "dep:solana-vote-program",
     "solana-account/wincode",
+    "solana-runtime-transaction/dev-context-only-utils",
     "solana-transaction/dev-context-only-utils",
 ]
 frozen-abi = [
@@ -78,6 +79,7 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, optional = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
+solana-runtime-transaction = { workspace = true }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
 solana-stake-interface = { workspace = true, optional = true, features = ["serde", "wincode"] }
