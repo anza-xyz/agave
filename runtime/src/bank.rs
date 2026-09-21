@@ -6427,19 +6427,20 @@ impl Bank {
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 
-        if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id())
+        if new_feature_activations.contains(&feature_set::replace_ata_with_p_ata::id())
             && let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
-                &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
-                &feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
+                &feature_set::replace_ata_with_p_ata::SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+                &feature_set::replace_ata_with_p_ata::PATA_PROGRAM_BUFFER,
+                feature_set::replace_ata_with_p_ata::PATA_BUILD_HASH,
                 self.feature_set
                     .snapshot()
                     .relax_programdata_account_check_migration,
-                "replace_spl_token_with_p_token",
+                "replace_ata_with_p_ata",
             )
         {
             warn!(
-                "Failed to replace SPL Token with p-token buffer '{}': {e}",
-                feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
+                "Failed to replace SPL Associated Token Account with p-ATA buffer '{}': {e}",
+                feature_set::replace_ata_with_p_ata::PATA_PROGRAM_BUFFER,
             );
         }
 
