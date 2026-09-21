@@ -444,7 +444,7 @@ fn process_loader_upgradeable_instruction(
 
             let programdata = instruction_context.try_borrow_instruction_account(0)?;
             let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
-            let programdata_balance_required = if set_programdata_to_elf_len {
+            let (programdata_len, programdata_balance_required) = if set_programdata_to_elf_len {
                 // SIMD-0433: we'll resize the programdata account to the new ELF.
                 let new_len = programdata_data_offset.saturating_add(buffer_data_len);
                 if new_len > MAX_PERMITTED_DATA_LENGTH as usize {
@@ -455,21 +455,17 @@ fn process_loader_upgradeable_instruction(
                     );
                     return Err(InstructionError::InvalidAccountData);
                 }
-                1.max(rent.minimum_balance(new_len))
+                (new_len, 1.max(rent.minimum_balance(new_len)))
             } else {
-                // We won't change the size of the programdata account.
-                1.max(rent.minimum_balance(programdata.get_data().len()))
-            };
-            if !set_programdata_to_elf_len {
-                // After SIMD-0433 we won't check this length here, since the
-                // programdata account will be resized.
-                if programdata.get_data().len()
-                    < UpgradeableLoaderState::size_of_programdata(buffer_data_len)
-                {
+                // Before SIMD-0433 accounts must be expanded manually and cannot
+                // change size here.
+                let len = programdata.get_data().len();
+                if len < UpgradeableLoaderState::size_of_programdata(buffer_data_len) {
                     ic_logger_msg!(log_collector, "ProgramData account not large enough");
                     return Err(InstructionError::AccountDataTooSmall);
                 }
-            }
+                (len, 1.max(rent.minimum_balance(len)))
+            };
             if programdata.get_lamports().saturating_add(buffer_lamports)
                 < programdata_balance_required
             {
@@ -529,12 +525,7 @@ fn process_loader_upgradeable_instruction(
             // Update the ProgramData account
             let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
             {
-                if set_programdata_to_elf_len {
-                    // SIMD-0433: set the programdata account to the size of
-                    // the new ELF. This step can shrink or grow.
-                    programdata
-                        .set_data_length(programdata_data_offset.saturating_add(buffer_data_len))?;
-                }
+                programdata.set_data_length(programdata_len)?;
                 programdata.set_state(&UpgradeableLoaderState::ProgramData {
                     slot: clock.slot,
                     upgrade_authority_address: authority_key,
@@ -553,16 +544,11 @@ fn process_loader_upgradeable_instruction(
                     .ok_or(InstructionError::AccountDataTooSmall)?;
                 dst_slice.copy_from_slice(src_slice);
             }
-            if !set_programdata_to_elf_len {
-                // If SIMD-0433 is enabled, we already did the resizing here,
-                // which truncates in the shrink case. If it's not enabled,
-                // zero the rest here.
-                programdata
-                    .get_data_mut()?
-                    .get_mut(programdata_data_offset.saturating_add(buffer_data_len)..)
-                    .ok_or(InstructionError::AccountDataTooSmall)?
-                    .fill(0);
-            }
+            programdata
+                .get_data_mut()?
+                .get_mut(programdata_data_offset.saturating_add(buffer_data_len)..)
+                .ok_or(InstructionError::AccountDataTooSmall)?
+                .fill(0);
 
             // Fund ProgramData to rent-exemption, spill the rest
             let mut buffer = instruction_context.try_borrow_instruction_account(2)?;
