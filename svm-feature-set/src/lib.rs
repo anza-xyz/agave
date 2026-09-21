@@ -50,6 +50,7 @@ pub struct SVMFeatureSet {
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
+    pub unbound_loader_v3_instruction_data: bool,
 }
 
 impl SVMFeatureSet {
@@ -104,6 +105,7 @@ impl SVMFeatureSet {
             relax_post_exec_min_balance_check: true,
             define_ltds_fee_only_semantics: true,
             relax_fee_payer_constraint: true,
+            unbound_loader_v3_instruction_data: true,
         }
     }
 }
