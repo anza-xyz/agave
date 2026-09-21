@@ -5680,9 +5680,57 @@ pub mod tests {
         let expected: Option<RpcLeaderSchedule> = None;
         assert_eq!(result, expected);
 
+        // An identity that is not in the leader schedule returns an error.
         let identity = Pubkey::new_unique().to_string();
         let request =
             create_test_request("getLeaderSchedule", Some(json!([{"identity": identity }])));
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
+            format!("Node {identity} was not in the leader schedule for specified epoch"),
+        );
+        assert_eq!(response, expected);
+
+        // `keyByVoteAccount` keys the schedule by vote account; the `identity`
+        // filter continues to match on validator identity
+        for params in [
+            Some(json!([null, {"keyByVoteAccount": true}])),
+            Some(json!([{"keyByVoteAccount": true}])),
+            Some(json!([
+                {"keyByVoteAccount": true, "identity": rpc.leader_pubkey().to_string()}
+            ])),
+        ] {
+            let request = create_test_request("getLeaderSchedule", params);
+            let result: Option<RpcLeaderSchedule> =
+                parse_success_result(rpc.handle_request_sync(request));
+            let expected = Some(HashMap::from_iter(std::iter::once((
+                rpc.leader_vote_pubkey().to_string(),
+                Vec::from_iter(0..TEST_SLOTS_PER_EPOCH as usize),
+            ))));
+            assert_eq!(result, expected);
+        }
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([
+                {"keyByVoteAccount": false, "identity": rpc.leader_pubkey().to_string()}
+            ])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let expected = Some(HashMap::from_iter(std::iter::once((
+            rpc.leader_pubkey().to_string(),
+            Vec::from_iter(0..TEST_SLOTS_PER_EPOCH as usize),
+        ))));
+        assert_eq!(result, expected);
+
+        // A vote-account-keyed request for an identity that is not in the leader
+        // schedule also returns an error.
+        let identity = Pubkey::new_unique().to_string();
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{"keyByVoteAccount": true, "identity": identity }])),
+        );
         let response = parse_failure_response(rpc.handle_request_sync(request));
         let expected = (
             JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
