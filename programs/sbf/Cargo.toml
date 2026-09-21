@@ -68,6 +68,7 @@ members = [
     "rust/spoof1",
     "rust/spoof1_system",
     "rust/syscall-get-epoch-stake",
+    "rust/syscall-get-leader",
     "rust/sysvar",
     "rust/upgradeable",
     "rust/upgraded",
@@ -134,6 +135,7 @@ solana-hash = { version = "=4.6.0", features = ["bytemuck", "serde", "std"] }
 solana-instruction = "4.0.0"
 solana-instructions-sysvar = "=4.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
+solana-leader-schedule = { path = "../../leader-schedule", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 solana-msg = "=3.1.0"
 solana-poseidon = "=5.0.0"
 solana-program = "=4.1.0"
@@ -204,6 +206,7 @@ solana-hash = "4.3.0"
 solana-instruction = { workspace = true }
 solana-instruction-error = "3.0.0"
 solana-keypair = "4.0.0"
+solana-leader-schedule = { workspace = true }
 solana-loader-v3-interface = { version = "9.0.0", features = ["wincode"] }
 solana-message = "5.0.0"
 solana-program-binaries = { workspace = true, features = ["agave-unstable-api"] }
