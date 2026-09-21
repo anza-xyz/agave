@@ -18,7 +18,7 @@ use {
         serialization::{SerializedParameters, push_and_serialize_parameters},
         setup::{
             InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
-            program_runtime_environments, sysvar_cache_from_accounts,
+            program_runtime_environment, sysvar_cache_from_accounts,
         },
     },
     std::ffi::c_int,
@@ -36,7 +36,7 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
     let program_id = instr_context.instruction.program_id;
     let loader_key = program_loader_key(&instr_context.accounts, &program_id);
 
-    let program_runtime_environments = program_runtime_environments(&feature_set, &compute_budget);
+    let program_runtime_environment = program_runtime_environment(&feature_set, &compute_budget);
 
     // We're only testing the parameter serialization, so use an empty cache.
     let mut program_cache = ProgramCacheForTxBatch::default();
@@ -54,7 +54,7 @@ pub fn execute_vm_serialize(input: ProtoInstrContext) -> ProtoVmSerializationEff
         &loader_key,
         &sysvar_cache,
         &compute_budget,
-        &program_runtime_environments,
+        &program_runtime_environment,
     );
 
     let mut invoke_context = InvokeContext::new(

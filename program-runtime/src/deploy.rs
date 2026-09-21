@@ -137,9 +137,7 @@ macro_rules! deploy_program {
             #[cfg(feature = "metrics")]
             &mut load_program_metrics,
             $invoke_context.program_cache_for_tx_batch,
-            $invoke_context
-                .get_program_runtime_environment_for_deployment()
-                .clone(),
+            $invoke_context.get_program_runtime_environment().clone(),
             $disable_sbpf_v0_v1_v2_deployment,
             $program_id,
             $loader_key,

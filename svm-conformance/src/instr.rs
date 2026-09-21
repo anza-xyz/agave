@@ -9,7 +9,7 @@ use {
         direct_mapping::direct_mapping_handle_cu_exhaustion,
         instr::{context::InstrContext, harness::execute_instr_with_callback},
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        setup::{compute_budget, program_runtime_environments, sysvar_cache_from_accounts},
+        setup::{compute_budget, program_runtime_environment, sysvar_cache_from_accounts},
     },
     std::ffi::c_int,
 };
@@ -25,15 +25,10 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
         let slot = sysvar_cache.get_clock().unwrap().slot;
         let feature_set = &instr_context.feature_set;
         let compute_budget = compute_budget(feature_set);
-        let environments = program_runtime_environments(feature_set, &compute_budget);
+        let environment = program_runtime_environment(feature_set, &compute_budget);
 
         let mut cache = new_program_cache_with_builtins(slot);
-        fill_program_cache_from_accounts(
-            &mut cache,
-            environments.get_env_for_deployment(),
-            &instr_context.accounts,
-            slot,
-        );
+        fill_program_cache_from_accounts(&mut cache, &environment, &instr_context.accounts, slot);
 
         cache
     };

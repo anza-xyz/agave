@@ -146,8 +146,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        invoke_context::BuiltinFunctionRegisterer, loaded_programs::ProgramRuntimeEnvironment,
         program_cache_entry::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
@@ -4221,23 +4220,16 @@ impl Bank {
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
-        let effective_epoch_of_deployments =
-            self.epoch_schedule().get_epoch(self.slot.saturating_add(
-                solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
-            ));
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
             alpenglow_migration_succeeded: self.is_alpenglow(),
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
-            program_runtime_environments: ProgramRuntimeEnvironments::new(
-                self.transaction_processor
-                    .program_runtime_environment
-                    .clone(),
-                self.transaction_processor
-                    .program_runtime_environment_for_epoch(effective_epoch_of_deployments),
-            ),
+            program_runtime_environment: self
+                .transaction_processor
+                .program_runtime_environment
+                .clone(),
             rent: self.rent_collector.rent.clone(),
         };
 

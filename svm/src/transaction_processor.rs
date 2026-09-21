@@ -43,7 +43,7 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
-            ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, ProgramToLoad,
+            ProgramRuntimeEnvironment, ProgramToLoad,
         },
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
         program_metrics::ProgramStatistics,
@@ -171,8 +171,8 @@ pub struct TransactionProcessingEnvironment {
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: SVMFeatureSet,
-    /// Program runtime environments for execution and deployment.
-    pub program_runtime_environments: ProgramRuntimeEnvironments,
+    /// Program runtime environment to use for the transaction batch.
+    pub program_runtime_environment: ProgramRuntimeEnvironment,
     /// Rent calculator to use for the transaction batch.
     pub rent: Rent,
 }
@@ -185,7 +185,7 @@ pub fn get_mock_transaction_processing_environment() -> TransactionProcessingEnv
         alpenglow_migration_succeeded: false,
         epoch_total_stake: 0,
         feature_set: SVMFeatureSet::default(),
-        program_runtime_environments: ProgramRuntimeEnvironments::mock(),
+        program_runtime_environment: ProgramRuntimeEnvironment::mock(),
         rent: Rent::default(),
     }
 }
@@ -582,9 +582,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         self.replenish_program_cache(
                             &account_loader,
                             missing_programs,
-                            environment
-                                .program_runtime_environments
-                                .get_env_for_execution(),
+                            &environment.program_runtime_environment,
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
                             config.limit_to_load_programs,
@@ -1155,7 +1153,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment.alpenglow_migration_succeeded,
                 callback,
                 &environment.feature_set,
-                &environment.program_runtime_environments,
+                &environment.program_runtime_environment,
                 sysvar_cache,
             ),
             log_collector.clone(),

@@ -128,6 +128,7 @@ fn upgradeable_program_accounts(program_id: &Pubkey, program_elf: &[u8]) -> Vec<
     solana_program_binaries::bpf_loader_upgradeable_program_accounts(
         program_id,
         program_elf,
+        &Pubkey::default(),
         &Rent::default(),
     )
     .into()
