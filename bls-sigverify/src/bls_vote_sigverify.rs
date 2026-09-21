@@ -3,7 +3,7 @@ use {
         bls_sigverifier::SigVerifierChannels,
         errors::SigVerifyVoteError,
         stats::{SigVerifyVoteStats, VoteSenderStats, VoteVerificationStats},
-        unverified_votes_batch::UnverifiedBatch,
+        unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
         verified_batch::VerifiedBatch,
     },
     agave_votor_messages::wire::VotePayloadToSign,
@@ -15,16 +15,115 @@ use {
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
-    std::{collections::HashMap, num::Saturating},
+    solana_runtime::{bank::Bank, epoch_stakes::BLSPubkeyToRankMap},
+    std::{collections::HashMap, sync::Arc},
 };
+
+pub(crate) struct Batch {
+    batch_state: BatchState,
+    rank_map: Arc<BLSPubkeyToRankMap>,
+}
+
+impl Batch {
+    pub(crate) fn new(
+        vote_payload_to_sign: VotePayloadToSign,
+        payload: UnverifiedVotePayload,
+        sender_vote_account_pubkey: Pubkey,
+        rank_map: Arc<BLSPubkeyToRankMap>,
+    ) -> Self {
+        let unverified_batch =
+            UnverifiedBatch::new(vote_payload_to_sign, payload, sender_vote_account_pubkey);
+        let batch_state = BatchState::Unverified(unverified_batch);
+        Self {
+            batch_state,
+            rank_map,
+        }
+    }
+
+    pub(crate) fn rank_map(&self) -> &BLSPubkeyToRankMap {
+        &self.rank_map
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        payload: UnverifiedVotePayload,
+        sender_vote_account_pubkey: Pubkey,
+    ) {
+        self.batch_state.push(payload, sender_vote_account_pubkey)
+    }
+}
+
+/// To avoid having to allocate memory for `VerifiedBatch`, this enum exists to reuse the memory
+/// for the `UnverifiedBatch` when it is verified and a `VerifiedBatch` is produced.
+enum BatchState {
+    Unverified(UnverifiedBatch),
+    Verified {
+        batch: Option<VerifiedBatch>,
+        num_votes_to_sigverify: usize,
+        stats: VoteVerificationStats,
+    },
+    Empty,
+}
+
+impl BatchState {
+    fn push(&mut self, payload: UnverifiedVotePayload, sender_vote_account_pubkey: Pubkey) {
+        if let Self::Unverified(b) = self {
+            b.push(payload, sender_vote_account_pubkey);
+        }
+    }
+
+    fn verify(&mut self, max_validators: usize, ban_sender: &BanSender, thread_pool: &ThreadPool) {
+        if let Self::Unverified(unverified_batch) = self {
+            let num_votes_to_sigverify = unverified_batch.len();
+            let (verified_batch, stats) =
+                unverified_batch.verify(max_validators, ban_sender, thread_pool);
+            *self = Self::Verified {
+                batch: verified_batch,
+                num_votes_to_sigverify,
+                stats,
+            }
+        }
+    }
+
+    fn process(
+        &mut self,
+        root_bank: &Bank,
+        leader_schedule: &LeaderScheduleCache,
+        my_pubkey: &Pubkey,
+        channels: &SigVerifierChannels,
+        sender_stats: &mut VoteSenderStats,
+        vote_stats: &mut SigVerifyVoteStats,
+    ) -> Result<(), SigVerifyVoteError> {
+        let mut batch = Self::Empty;
+        std::mem::swap(&mut batch, self);
+        if let Self::Verified {
+            batch,
+            num_votes_to_sigverify,
+            stats,
+        } = batch
+        {
+            vote_stats.votes_to_sig_verify += num_votes_to_sigverify;
+            vote_stats.vote_verification_stats.merge(stats);
+            if let Some(batch) = batch {
+                batch.process_and_send(
+                    root_bank,
+                    leader_schedule,
+                    my_pubkey,
+                    channels,
+                    sender_stats,
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Verifies votes and sends the verified votes to the consensus pool; and sends the desired subset
 /// to rewards container and repair.
 ///
 /// Any vote that fails fallback individual signature verification will have its sender banlisted.
 pub(super) fn verify_and_send_votes(
-    unverified_votes: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
+    unverified_votes: &mut HashMap<VotePayloadToSign, Batch>,
     root_bank: &Bank,
     my_pubkey: &Pubkey,
     leader_schedule: &LeaderScheduleCache,
@@ -41,92 +140,29 @@ pub(super) fn verify_and_send_votes(
         .distinct_votes_stats
         .add_sample(unverified_votes.len() as u64);
 
-    let par_result = thread_pool.install(|| {
-        unverified_votes
-            .par_iter_mut()
-            .fold(
-                ParResult::default,
-                |mut par_result, (_, unverified_batch)| {
-                    let num_votes_to_sigverify = unverified_batch.len();
-                    let (verified_batch, stats) = unverified_batch.verify(ban_sender, thread_pool);
-                    par_result.add(verified_batch, stats, num_votes_to_sigverify);
-                    par_result
-                },
-            )
-            .reduce(ParResult::default, |mut left, right| {
-                left.merge(right);
-                left
-            })
+    thread_pool.install(|| {
+        unverified_votes.par_iter_mut().for_each(|(_, batch)| {
+            batch
+                .batch_state
+                .verify(batch.rank_map.len(), ban_sender, thread_pool);
+        });
     });
-    let sender_stats = process_and_send_verified_votes(
-        root_bank,
-        leader_schedule,
-        my_pubkey,
-        channels,
-        par_result.verified_votes,
-    )?;
-    stats.votes_to_sig_verify += par_result.num_votes_to_sigverify;
-    stats
-        .vote_verification_stats
-        .merge(par_result.verification_stats);
-    stats.senders.merge(sender_stats);
 
-    measure.stop();
-    stats
-        .fn_verify_and_send_votes_stats
-        .add_sample(measure.as_us());
-    Ok(stats)
-}
-
-fn process_and_send_verified_votes(
-    root_bank: &Bank,
-    leader_schedule: &LeaderScheduleCache,
-    my_pubkey: &Pubkey,
-    channels: &SigVerifierChannels,
-    verified_batches: Vec<VerifiedBatch>,
-) -> Result<VoteSenderStats, SigVerifyVoteError> {
     let mut sender_stats = VoteSenderStats::default();
-    for batch in verified_batches {
-        batch.process_and_send(
+    for batch in unverified_votes.values_mut() {
+        batch.batch_state.process(
             root_bank,
             leader_schedule,
             my_pubkey,
             channels,
             &mut sender_stats,
+            &mut stats,
         )?;
     }
-    Ok(sender_stats)
-}
-
-#[derive(Default)]
-struct ParResult {
-    verified_votes: Vec<VerifiedBatch>,
-    verification_stats: VoteVerificationStats,
-    num_votes_to_sigverify: Saturating<usize>,
-}
-
-impl ParResult {
-    fn add(
-        &mut self,
-        verified_batch: Option<VerifiedBatch>,
-        verification_stats: VoteVerificationStats,
-        num_votes_to_sigverify: usize,
-    ) {
-        self.verification_stats.merge(verification_stats);
-        self.num_votes_to_sigverify += num_votes_to_sigverify;
-        if let Some(b) = verified_batch {
-            self.verified_votes.push(b);
-        }
-    }
-
-    fn merge(&mut self, other: Self) {
-        let Self {
-            mut verified_votes,
-            verification_stats,
-            num_votes_to_sigverify,
-        } = other;
-        self.verified_votes.append(&mut verified_votes);
-        self.verification_stats.merge(verification_stats);
-        self.num_votes_to_sigverify += num_votes_to_sigverify;
-    }
+    stats.senders.merge(sender_stats);
+    measure.stop();
+    stats
+        .fn_verify_and_send_votes_stats
+        .add_sample(measure.as_us());
+    Ok(stats)
 }
