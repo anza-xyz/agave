@@ -2,7 +2,9 @@
 
 use {
     agave_feature_set::disable_fees_sysvar,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_instruction::{AccountMeta, Instruction},
     solana_message::Message,
     solana_pubkey::Pubkey,

@@ -11,7 +11,7 @@ fn main() {}
 mod bench {
     use {
         criterion::{Criterion, criterion_group},
-        solana_account::{AccountSharedData, state_traits::StateMut},
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as StateMut},
         solana_bpf_loader_program::Entrypoint,
         solana_instruction::AccountMeta,
         solana_loader_v3_interface::{

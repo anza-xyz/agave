@@ -5,20 +5,17 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
-        quic_socket::{QuicSocket, QuicXdpSocketParts, QuicXdpTxSocket},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
     crossbeam_channel::{Sender, TrySendError},
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
-    quinn::{
-        Accept, AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime,
-    },
+    quinn::{Accept, Connecting, Connection, Endpoint},
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
-    solana_net_utils::token_bucket::TokenBucket,
+    solana_net_utils::{quic_socket::QuicSocket, token_bucket::TokenBucket},
     solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
@@ -197,31 +194,9 @@ where
 
     let endpoints = sockets
         .into_iter()
-        .map(|sock| match sock {
-            QuicSocket::Kernel(socket) => Endpoint::new(
-                EndpointConfig::default(),
-                Some(config.clone()),
-                socket,
-                Arc::new(TokioRuntime),
-            )
-            .map_err(QuicServerError::EndpointFailed),
-            QuicSocket::Xdp(QuicXdpSocketParts {
-                socket,
-                fallback_src_ip,
-                xdp_sender,
-            }) => {
-                let socket = Arc::new(
-                    QuicXdpTxSocket::new(socket, fallback_src_ip, xdp_sender)
-                        .map_err(QuicServerError::EndpointFailed)?,
-                ) as Arc<dyn AsyncUdpSocket>;
-                Endpoint::new_with_abstract_socket(
-                    EndpointConfig::default(),
-                    Some(config.clone()),
-                    socket,
-                    Arc::new(TokioRuntime),
-                )
+        .map(|sock| {
+            sock.into_endpoint(Some(config.clone()))
                 .map_err(QuicServerError::EndpointFailed)
-            }
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -1218,7 +1193,7 @@ pub mod test {
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, bounded},
-        quinn::{ApplicationClose, ConnectionError},
+        quinn::{ApplicationClose, ConnectionError, EndpointConfig, TokioRuntime},
         solana_keypair::Keypair,
         solana_message::v1::MAX_TRANSACTION_SIZE,
         solana_net_utils::sockets::bind_to_localhost_unique,

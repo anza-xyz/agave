@@ -1170,10 +1170,6 @@ pub mod enable_transaction_loading_failure_fees {
     solana_pubkey::declare_id!("PaymEPK2oqwT9TXAVfadjztH2H6KfLEB9Hhd5Q5frvP");
 }
 
-pub mod enable_turbine_extended_fanout_experiments {
-    solana_pubkey::declare_id!("turbRpTzBzDU6PJmWvRTbcJXXGxUs19CvQamUrRD9bN");
-}
-
 pub mod deprecate_legacy_vote_ixs {
     solana_pubkey::declare_id!("depVvnQ2UysGrhwdiwU42tCadZL8GcBb1i2GYhMopQv");
 }
@@ -1516,7 +1512,7 @@ pub mod upgrade_bpf_stake_program_to_v5_1 {
 }
 
 pub mod alpenglow_fast_leader_handover {
-    solana_pubkey::declare_id!("FLHoAWBDjNh6zwmJ5i1NKK4KyD8otAiv7XxvmnFnVnKH");
+    solana_pubkey::declare_id!("FastLeaderHandover11111111111111111111111111");
 }
 
 pub mod relax_fee_payer_constraint {
@@ -2288,10 +2284,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enable_transaction_loading_failure_fees::id(),
             "SIMD-0082: Enable fees for some additional transaction failures",
-        ),
-        (
-            enable_turbine_extended_fanout_experiments::id(),
-            "enable turbine extended fanout experiments #",
         ),
         (
             deprecate_legacy_vote_ixs::id(),

@@ -3,7 +3,7 @@ pub(crate) mod tests {
     use {
         agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
         rand::Rng,
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_clock::Clock,
         solana_instruction::Instruction,

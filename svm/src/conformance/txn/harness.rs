@@ -25,7 +25,7 @@ use {
     solana_svm_callback::InvokeContextCallback,
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
-    solana_transaction_context::transaction::TransactionContext,
+    solana_transaction_context::{DropOnBailOut, transaction::TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{collections::HashMap, rc::Rc},
 };
@@ -89,12 +89,13 @@ pub fn execute_txn_with_callback<C: InvokeContextCallback>(
     let program_runtime_environments =
         program_runtime_environments(&runtime_features, &compute_budget);
 
-    let transaction_context = TransactionContext::new(
+    let transaction_context = TransactionContext::new_with_feature_flags(
         transaction_accounts,
         rent.clone(),
         execution_budget.max_instruction_stack_depth,
         execution_budget.max_instruction_trace_length,
         sanitized_message.num_instructions(),
+        DropOnBailOut::Disabled,
     );
 
     let (blockhash, blockhash_lamports_per_signature) = input

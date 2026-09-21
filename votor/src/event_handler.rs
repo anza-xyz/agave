@@ -234,6 +234,14 @@ impl EventHandler {
     ) -> Result<(), EventLoopError> {
         let my_pubkey = &local_context.my_pubkey;
         info!("{my_pubkey}: Parent ready {slot} {parent_block:?}");
+        let now = Instant::now();
+        nonblocking_send(
+            &local_context.my_pubkey,
+            &vctx.consensus_metrics_sender,
+            (now, ConsensusMetricsEvent::ParentReadySeen { slot }),
+            "consensus_metrics_sender",
+        )
+        .map_err(EventLoopError::ChannelDisconnected)?;
         Self::record_window_start(slot, Instant::now(), ctx, vctx);
 
         // We need to ensure that we've replayed the parent bank.
@@ -279,20 +287,14 @@ impl EventHandler {
             VotorEvent::Block(CompletedBlock { slot, bank }) => {
                 debug_assert!(bank.is_frozen());
                 let now = Instant::now();
-                let mut consensus_metrics_events =
-                    vec![ConsensusMetricsEvent::StartOfSlot { slot }];
-                if slot == first_of_consecutive_leader_slots(slot) {
-                    // all slots except the first in the window would typically start when the block is seen so the recording would essentially record 0.
-                    // hence we skip it.
-                    consensus_metrics_events.push(ConsensusMetricsEvent::BlockHashSeen {
-                        leader: *bank.leader_id(),
-                        slot,
-                    });
-                }
+                let event = ConsensusMetricsEvent::ReplayCompleted {
+                    leader: *bank.leader_id(),
+                    slot,
+                };
                 nonblocking_send(
                     &local_context.my_pubkey,
                     &vctx.consensus_metrics_sender,
-                    (now, consensus_metrics_events),
+                    (now, event),
                     "consensus_metrics_sender",
                 )
                 .map_err(EventLoopError::ChannelDisconnected)?;
@@ -370,14 +372,6 @@ impl EventHandler {
 
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
-                let now = Instant::now();
-                nonblocking_send(
-                    &local_context.my_pubkey,
-                    &vctx.consensus_metrics_sender,
-                    (now, vec![ConsensusMetricsEvent::StartOfSlot { slot }]),
-                    "consensus_metrics_sender",
-                )
-                .map_err(EventLoopError::ChannelDisconnected)?;
                 Self::handle_parent_ready_event(
                     slot,
                     parent_block,
@@ -400,20 +394,6 @@ impl EventHandler {
             // Skip timer for the slot has fired
             VotorEvent::Timeout(slot) => {
                 info!("{}: Timeout {slot}", local_context.my_pubkey);
-                if slot != last_of_consecutive_leader_slots(slot) {
-                    let next_slot = slot.saturating_add(1);
-                    let now = Instant::now();
-                    nonblocking_send(
-                        &local_context.my_pubkey,
-                        &vctx.consensus_metrics_sender,
-                        (
-                            now,
-                            vec![ConsensusMetricsEvent::StartOfSlot { slot: next_slot }],
-                        ),
-                        "consensus_metrics_sender",
-                    )
-                    .map_err(EventLoopError::ChannelDisconnected)?;
-                }
                 if vctx.vote_history.voted(slot) {
                     return Ok(votes);
                 }
@@ -522,7 +502,7 @@ impl EventHandler {
                     &vctx.consensus_metrics_sender,
                     (
                         Instant::now(),
-                        vec![ConsensusMetricsEvent::SlotFinalized { slot: block.slot }],
+                        ConsensusMetricsEvent::SlotFinalized { slot: block.slot },
                     ),
                     "consensus_metrics_sender",
                 )
@@ -1625,8 +1605,7 @@ mod tests {
                 .consensus_metrics_receiver
                 .try_recv()
                 .expect("Should receive metrics event");
-            assert_eq!(event.1.len(), 1);
-            assert_eq!(event.1[0], expected);
+            assert_eq!(event.1, expected);
         }
 
         fn crate_vote_history_storage_and_switch_identity(
@@ -1670,7 +1649,7 @@ mod tests {
         let bank1 = test_context.create_block_and_send_block_event(slot, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
 
-        test_context.check_for_metrics_event(ConsensusMetricsEvent::StartOfSlot { slot });
+        test_context.check_for_metrics_event(ConsensusMetricsEvent::ParentReadySeen { slot });
 
         // We should receive Notarize Vote for block 1
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {

@@ -207,7 +207,7 @@ fn process_and_send_verified_votes(
         let metrics_msg = ConsensusMetricsEvent::Vote { ids: pubkeys, vote };
         send_votes_to_metrics(
             my_pubkey,
-            vec![metrics_msg],
+            metrics_msg,
             &channels.channel_to_metrics,
             &mut sender_stats,
         );
