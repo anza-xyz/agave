@@ -21,10 +21,9 @@ use {
     solana_clock::Slot,
     solana_message::v0::LoadedAddresses,
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_slot_hashes::SlotHashes,
-    solana_svm_transaction::{
-        message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
-    },
+    solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionResult as Result,
@@ -40,11 +39,11 @@ use {
 
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
-struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
+struct TransactionAccountLocksIterator<'a, T: TransactionWithMeta> {
     transaction: &'a T,
 }
 
-impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
+impl<'a, T: TransactionWithMeta> TransactionAccountLocksIterator<'a, T> {
     pub(crate) fn new(transaction: &'a T) -> Self {
         Self { transaction }
     }
@@ -454,7 +453,7 @@ impl Accounts {
     #[must_use]
     pub fn lock_accounts<'a>(
         &self,
-        txs: impl Iterator<Item = &'a (impl SVMMessage + 'a)>,
+        txs: impl Iterator<Item = &'a (impl TransactionWithMeta + 'a)>,
         results: impl Iterator<Item = Result<()>>,
         tx_account_lock_limits: TransactionAccountLockLimits,
     ) -> Vec<Result<()>> {
@@ -477,7 +476,7 @@ impl Accounts {
     }
 
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
-    pub fn unlock_accounts<'a, Tx: SVMMessage + 'a>(
+    pub fn unlock_accounts<'a, Tx: TransactionWithMeta + 'a>(
         &self,
         txs_and_results: impl Iterator<Item = (&'a Tx, &'a Result<()>)> + Clone,
     ) {
@@ -540,18 +539,17 @@ mod tests {
     use {
         super::*,
         crate::account_locks::DEFAULT_TX_ACCOUNT_LOCKS,
-        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{AccountSharedData, WritableAccount},
         solana_address_lookup_table_interface::state::LookupTableMeta,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_message::{
-            LegacyMessage, Message, MessageHeader, SanitizedMessage,
-            compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup,
+            Message, MessageHeader, compiled_instruction::CompiledInstruction,
+            v0::MessageAddressTableLookup,
         },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::native_loader,
-        solana_signature::Signature,
         solana_signer::{Signer, signers::Signers},
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
@@ -573,29 +571,25 @@ mod tests {
         from_keypairs: &T,
         message: Message,
         recent_blockhash: Hash,
-    ) -> SanitizedTransaction {
-        SanitizedTransaction::from_transaction_for_tests(Transaction::new(
+    ) -> RuntimeTransaction<SanitizedTransaction> {
+        RuntimeTransaction::from_transaction_for_tests(Transaction::new(
             from_keypairs,
             message,
             recent_blockhash,
         ))
     }
 
-    fn sanitized_tx_from_metas(accounts: Vec<AccountMeta>) -> SanitizedTransaction {
+    fn sanitized_tx_from_metas(
+        accounts: Vec<AccountMeta>,
+    ) -> RuntimeTransaction<SanitizedTransaction> {
         let instruction = Instruction {
             accounts,
             program_id: Pubkey::default(),
             data: vec![],
         };
 
-        let message = Message::new(&[instruction], None);
-
-        let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(
-            message,
-            &ReservedAccountKeys::empty_key_set(),
-        ));
-
-        SanitizedTransaction::new_for_tests(sanitized_message, vec![Signature::new_unique()], false)
+        let message = Message::new(&[instruction], Some(&Pubkey::new_unique()));
+        RuntimeTransaction::from_transaction_for_tests(Transaction::new_unsigned(message))
     }
 
     #[test]

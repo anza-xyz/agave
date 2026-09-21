@@ -172,16 +172,30 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl RuntimeTransaction<SanitizedTransaction> {
+    /// Build test metadata without enforcing protocol limits or unique account keys.
     pub fn from_transaction_for_tests(transaction: solana_transaction::Transaction) -> Self {
-        let versioned_transaction = VersionedTransaction::from(transaction);
-        Self::try_create(
-            versioned_transaction,
-            MessageHash::Compute,
-            None,
-            solana_message::SimpleAddressLoader::Disabled,
-            &HashSet::new(),
+        let transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
+        let instruction_meta = InstructionMeta::try_new(
+            transaction
+                .message()
+                .program_instructions_iter()
+                .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
         )
-        .expect("failed to create RuntimeTransaction from Transaction")
+        .expect("failed to extract test transaction instruction metadata");
+        Self {
+            meta: CachedTransactionMeta {
+                message_hash: *transaction.message_hash(),
+                is_simple_vote_transaction: transaction.is_simple_vote_transaction(),
+                signature_details: transaction.message().get_signature_details(),
+                versioned_transaction_config:
+                    VersionedTransactionConfiguration::try_from_sanitized_message(
+                        transaction.message(),
+                    )
+                    .expect("failed to extract test transaction configuration"),
+                instruction_data_len: instruction_meta.instruction_data_len,
+            },
+            transaction,
+        }
     }
 }
 

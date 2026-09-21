@@ -3987,7 +3987,7 @@ impl Bank {
     }
 
     /// Prepare a transaction batch from a single transaction without locking accounts
-    pub fn prepare_unlocked_batch_from_single_tx<'a, Tx: SVMMessage>(
+    pub fn prepare_unlocked_batch_from_single_tx<'a, Tx: TransactionWithMeta>(
         &'a self,
         transaction: &'a Tx,
     ) -> TransactionBatch<'a, 'a, Tx> {
@@ -4224,7 +4224,7 @@ impl Bank {
         account_overrides
     }
 
-    pub fn unlock_accounts<'a, Tx: SVMMessage + 'a>(
+    pub fn unlock_accounts<'a, Tx: TransactionWithMeta + 'a>(
         &self,
         txs_and_results: impl Iterator<Item = (&'a Tx, &'a Result<()>)> + Clone,
     ) {
@@ -4248,7 +4248,7 @@ impl Bank {
 
     pub fn collect_balances(
         &self,
-        batch: &TransactionBatch<impl SVMMessage>,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
     ) -> TransactionBalances {
         let mut balances: TransactionBalances = vec![];
         for transaction in batch.sanitized_transactions() {
