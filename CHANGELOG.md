@@ -28,6 +28,8 @@ Release channels have their own copy of this changelog:
 * Added `RpcClient::get_signature_statuses_with_config`.
 * `accountSubscribe` and `programSubscribe` now honor `dataSlice` for binary account data.
   A zero-length slice returns empty data; omitting `dataSlice` returns the full account data.
+* `getLeaderSchedule` now returns a new error code `-32022` if the specified
+  `identity` does not appear in the leader schedule
 
 ### Validator
 
