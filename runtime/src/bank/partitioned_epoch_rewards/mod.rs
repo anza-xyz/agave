@@ -968,7 +968,7 @@ mod tests {
             &mut stakers,
             stake_lamports,
             vote_lamports + pending_delegator_rewards,
-            0,
+            Epoch::MAX,
             bank.epoch(),
         );
         modify_vote_state(&bank, &deactivating, &|vote_state| {
