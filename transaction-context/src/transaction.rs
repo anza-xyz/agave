@@ -410,17 +410,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .expect("Deduplication map must contain this account")
                 as usize;
 
-            if current_index != other_account_index {
-                let [current_account, reference_account] = instruction_accounts
-                    .get_disjoint_mut([current_index, other_account_index])
-                    .expect("Indices must be present in instruction account");
+            let Ok([current_account, reference_account]) =
+                instruction_accounts.get_disjoint_mut([current_index, other_account_index])
+            else {
+                continue;
+            };
 
-                current_account
-                    .set_is_signer(current_account.is_signer() || reference_account.is_signer());
-                current_account.set_is_writable(
-                    current_account.is_writable() || reference_account.is_writable(),
-                );
-            }
+            current_account
+                .set_is_signer(current_account.is_signer() || reference_account.is_signer());
+            current_account
+                .set_is_writable(current_account.is_writable() || reference_account.is_writable());
         }
     }
 

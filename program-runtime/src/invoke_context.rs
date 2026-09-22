@@ -367,10 +367,10 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 continue;
             }
 
+            // The account passed down to the instruction is supposed to be present in the caller
             let index_in_caller = instruction_context
                 .get_index_of_account_in_instruction(callee_account.index_in_transaction)?;
 
-            // The account passed down to the instruction is supposed to be present in the caller
             let account_key =
                 instruction_context.get_key_of_instruction_account(index_in_caller)?;
 
