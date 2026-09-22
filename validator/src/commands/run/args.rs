@@ -1242,13 +1242,14 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
-        Arg::with_name("experimental_config_file")
+        Arg::with_name("config_file")
             .long("experimental-config-file")
             .takes_value(true)
+            .hidden(true)
             .value_name("PATH")
             .help(
-                "Path to a versioned TOML configuration file. Currently configures XDP transmit \
-                 behavior (Linux only)",
+                "Path to an experimental TOML configuration file. The format may change \
+                 incompatibly between releases. Currently configures XDP transmit on Linux",
             ),
     )
     .arg(
