@@ -13,7 +13,7 @@ fn test_print_default_config_exits_without_startup_side_effects() {
         .args(["--print-default-config", "--ledger", "ledger"]);
     cmd.assert()
         .success()
-        .stdout(include_str!("../src/commands/run/default_config.toml"));
+        .stdout(agave_validator_config::DEFAULT_CONFIG);
     let created_file = std::fs::read_dir(temp_dir.path()).unwrap().next();
     assert!(
         created_file.is_none(),

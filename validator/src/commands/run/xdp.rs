@@ -1,7 +1,8 @@
 //! Validator XDP policy loading, host resolution, and transmit setup.
 
 use {
-    super::{config_file, execute::Operation},
+    super::execute::Operation,
+    agave_validator_config as config,
     clap::ArgMatches,
     log::{info, warn},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
@@ -27,7 +28,7 @@ use {
 
 #[cfg(target_os = "linux")]
 pub(super) struct ResolvedXdp {
-    policy: config_file::RuntimeXdpConfig,
+    policy: config::RuntimeXdpConfig,
     device: NetworkDevice,
     src_ip: Ipv4Addr,
 }
@@ -52,13 +53,13 @@ fn bind_address_conflict(count: usize, address: IpAddr) -> Option<&'static str> 
 
 #[cfg(target_os = "linux")]
 fn resolve_xdp_configuration(
-    config: &config_file::EffectiveConfig,
+    config: &config::EffectiveConfig,
     bind_address_count: usize,
     bind_address: IpAddr,
     poh_core: Option<usize>,
 ) -> Result<(Option<ResolvedXdp>, Vec<String>), String> {
     if !config.xdp_active() {
-        return Ok((None, config_file::validate_policy(config)?));
+        return Ok((None, config::validate_policy(config)?));
     }
     if let Some(conflict) = bind_address_conflict(bind_address_count, bind_address) {
         return Err(format!("{conflict}, or pass --no-xdp"));
@@ -68,7 +69,7 @@ fn resolve_xdp_configuration(
         .into_iter()
         .map(|cpu| *cpu)
         .collect();
-    let (policy, warnings) = config_file::resolve_runtime(config, &allowed_cpus, poh_core)?;
+    let (policy, warnings) = config::resolve_runtime(config, &allowed_cpus, poh_core)?;
     let device = resolve_xdp_device(&policy.interface_label, &policy.device)?;
     let src_ip = resolve_xdp_source_ipv4(&policy.interface_label, &device, bind_address)?;
     Ok((
@@ -86,14 +87,14 @@ pub(super) fn build_xdp_transmit_setup(
     resolved: ResolvedXdp,
     exit: Arc<AtomicBool>,
 ) -> Result<(XdpTransmitSetup, XdpNetworkConfigReport), String> {
-    use agave_xdp::transmitter::{TransmitterBuilder, XdpConfig};
+    use agave_xdp::transmitter::{QueueCpuBinding, TransmitterBuilder, XdpConfig};
 
     let ResolvedXdp {
         policy,
         device,
         src_ip,
     } = resolved;
-    let config_file::RuntimeXdpConfig {
+    let config::RuntimeXdpConfig {
         interface_label: logical_interface,
         device: _,
         queues,
@@ -108,6 +109,13 @@ pub(super) fn build_xdp_transmit_setup(
         votor: Some((0..queues.len()).collect()),
     };
     let xdp_interface = device.name().to_string();
+    let queues = queues
+        .into_iter()
+        .map(|binding| QueueCpuBinding {
+            queue: binding.queue,
+            cpu: binding.cpu,
+        })
+        .collect();
     let transmitter_builder = TransmitterBuilder::new(
         XdpConfig::new(Some(xdp_interface.clone()), queues, zero_copy),
         exit,
@@ -140,16 +148,16 @@ pub(super) fn build_xdp_transmit_setup(
 #[cfg(target_os = "linux")]
 fn resolve_xdp_device(
     logical_interface: &str,
-    selector: &config_file::DeviceSelector,
+    selector: &config::DeviceSelector,
 ) -> Result<NetworkDevice, String> {
     match selector {
-        config_file::DeviceSelector::Name(name) => NetworkDevice::new(name).map_err(|error| {
+        config::DeviceSelector::Name(name) => NetworkDevice::new(name).map_err(|error| {
             format!(
                 "XDP logical interface `{logical_interface}` selects device.name {name:?}, which \
                  is not usable: {error}; fix the name or pass --no-xdp"
             )
         }),
-        config_file::DeviceSelector::Route(config_file::RouteSelector::Default) => {
+        config::DeviceSelector::Route(config::RouteSelector::Default) => {
             NetworkDevice::new_from_default_route().map_err(|error| {
                 format!(
                     "failed to open the default-route device for XDP logical interface \
@@ -186,14 +194,14 @@ fn resolve_xdp_source_ipv4(
 fn load_xdp_policy(
     matches: &ArgMatches,
     operation: &Operation,
-) -> Result<Option<config_file::EffectiveConfig>, String> {
-    let effective = config_file::load(matches.value_of("experimental_config_file").map(Path::new))?;
+) -> Result<Option<config::EffectiveConfig>, String> {
+    let effective = config::load(matches.value_of("experimental_config_file").map(Path::new))?;
     let overrides = cli_xdp_overrides(matches)?;
     if *operation == Operation::Initialize {
         info!("ledger initialization does not start XDP; skipping XDP policy validation");
         return Ok(None);
     }
-    let application = config_file::apply_cli(effective, overrides)?;
+    let application = config::apply_cli(effective, overrides)?;
     for warning in application.warnings {
         warn!("{warning}");
     }
@@ -208,7 +216,7 @@ pub(super) fn validate_config_file_without_xdp(
     let Some(config) = load_xdp_policy(matches, operation)? else {
         return Ok(());
     };
-    for warning in config_file::validate_policy(&config)? {
+    for warning in config::validate_policy(&config)? {
         warn!("{warning}");
     }
     // Only report inactivity the operator can act on. The built-in policy enables
@@ -263,7 +271,7 @@ pub(super) fn build_xdp_config(
     Ok(resolved)
 }
 
-fn cli_xdp_overrides(matches: &ArgMatches) -> Result<config_file::CliOverrides, String> {
+fn cli_xdp_overrides(matches: &ArgMatches) -> Result<config::CliOverrides, String> {
     let zero_copy = if matches.is_present("xdp_zero_copy") {
         Some(true)
     } else if matches.is_present("no_xdp_zero_copy") {
@@ -271,7 +279,7 @@ fn cli_xdp_overrides(matches: &ArgMatches) -> Result<config_file::CliOverrides, 
     } else {
         None
     };
-    Ok(config_file::CliOverrides {
+    Ok(config::CliOverrides {
         no_xdp: matches.is_present("no_xdp"),
         interface: matches.value_of("xdp_interface").map(str::to_string),
         cpu_cores: matches
@@ -537,7 +545,7 @@ schema_version = "one"
     fn test_missing_device_is_a_targeted_error() {
         let Err(error) = resolve_xdp_device(
             "primary",
-            &config_file::DeviceSelector::Name("nosuchnic0".to_string()),
+            &config::DeviceSelector::Name("nosuchnic0".to_string()),
         ) else {
             panic!("missing device unexpectedly resolved")
         };

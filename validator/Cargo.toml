@@ -25,6 +25,7 @@ agave-cpu-utils = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-validator-config = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-transport = { workspace = true }
 agave-xdp = { workspace = true }
@@ -98,7 +99,6 @@ solana-vote-program = { workspace = true }
 symlink = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-toml = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }

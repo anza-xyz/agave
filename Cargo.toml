@@ -116,6 +116,7 @@ members = [
     "unified-scheduler-logic",
     "unified-scheduler-pool",
     "validator",
+    "validator-config",
     "version",
     "vote",
     "votor",
@@ -185,6 +186,7 @@ agave-scheduler-handshake = "7.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-transaction-view = "7.0.0"
+agave-validator-config = { path = "validator-config", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-votor-transport = { path = "votor-transport", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
