@@ -73,6 +73,10 @@ pub fn main() {
     let run_config = commands::run::Config {};
 
     match (subcommand, maybe_subcommand_matches) {
+        ("print-default-config", _) => {
+            print!("{}", agave_validator_config::DEFAULT_CONFIG);
+            Ok(())
+        }
         ("init", _) => commands::run::execute(
             &matches,
             solana_version,

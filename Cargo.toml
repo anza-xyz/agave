@@ -116,6 +116,7 @@ members = [
     "unified-scheduler-logic",
     "unified-scheduler-pool",
     "validator",
+    "validator-config",
     "version",
     "vote",
     "votor",
@@ -185,6 +186,7 @@ agave-scheduler-handshake = "7.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-transaction-view = "7.0.0"
+agave-validator-config = { path = "validator-config", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
 agave-votor-transport = { path = "votor-transport", version = "=4.4.0-alpha.5", features = ["agave-unstable-api"] }
@@ -545,6 +547,7 @@ tokio-serde = "0.9.0"
 tokio-stream = "0.1.19"
 tokio-tungstenite = "0.28.0"
 tokio-util = "0.7.19"
+toml = "1.1.6"
 tonic = { version = "0.14.6", default-features = false }
 tonic-prost = "0.14.6"
 tonic-prost-build = "0.14.6"

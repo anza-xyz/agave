@@ -40,6 +40,19 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* Added the versioned `--experimental-config-file <PATH>` TOML configuration. The file is parsed
+  and validated on every platform; its XDP transmit settings are applied on Linux and reported as
+  inactive elsewhere.
+  The built-in configuration is complete, user supplied config file patches it with device/worker choices, and
+  matching CLI arguments form the final layer. Interfaces use stable logical labels, worker modes
+  are expressed as `workers.auto`, `workers.cpus`, or `workers.bindings`, and each component selects
+  `tx.queues = "all"` or hardware queue ids on the sole interface.
+  `agave-validator print-default-config` prints the embedded reference policy.
+  `--no-xdp-zero-copy` can override a file's strict zero-copy request.
+  `xdp.enabled` controls XDP globally; `--no-xdp` disables it.
+* `--xdp-cpu-cores` preserves each component's queue selections. Selected queue ids must exist
+  in the overridden worker pool.
+
 ### CLI
 
 #### Breaking
