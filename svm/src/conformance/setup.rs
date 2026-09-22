@@ -239,15 +239,15 @@ pub fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache
     cache
 }
 
-/// Read and bincode-decode a sysvar account from the input set, ignoring
+/// Read and wincode-decode a sysvar account from the input set, ignoring
 /// zero-lamport (nonexistent) entries.
 #[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
 pub fn sysvar_from_accounts<T, A>(accounts: &[(Pubkey, A)], id: &Pubkey) -> T
 where
-    T: serde::de::DeserializeOwned,
+    T: wincode::DeserializeOwned<Dst = T>,
     A: ReadableAccount,
 {
-    bincode::deserialize(sysvar_account_data(accounts, id).unwrap()).unwrap()
+    wincode::deserialize(sysvar_account_data(accounts, id).unwrap()).unwrap()
 }
 
 #[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]

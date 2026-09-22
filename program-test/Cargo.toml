@@ -75,6 +75,7 @@ spl-generic-token = { workspace = true }
 spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 solana-cpi = { workspace = true }

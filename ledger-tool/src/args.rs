@@ -93,12 +93,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
                  the disk-backed index. The disk-backed index has lower performance; prefer \
                  higher explicit limits here. \"minimal\" is deprecated and behaves as \"25GB\".",
             ),
-        Arg::with_name("accounts_db_skip_shrink")
-            .long("accounts-db-skip-shrink")
-            .help(
-                "Enables faster starting of ledger-tool by skipping shrink. This option is for \
-                 use during testing.",
-            ),
         Arg::with_name("accounts_db_verify_index")
             .long("accounts-db-verify-index")
             .help(
@@ -247,7 +241,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         use_snapshot_archives_at_startup::cli::NAME,
         UseSnapshotArchivesAtStartup
     );
-    let accounts_db_skip_shrink = arg_matches.is_present("accounts_db_skip_shrink");
     let verify_index = arg_matches.is_present("verify_accounts_index");
     let limit_load_slot_count_from_snapshot =
         value_t!(arg_matches, "limit_load_slot_count_from_snapshot", usize).ok();
@@ -263,7 +256,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         new_hard_forks,
         runtime_config,
         accounts_db_config,
-        accounts_db_skip_shrink,
         verify_index,
         limit_load_slot_count_from_snapshot,
         run_final_accounts_hash_calc,

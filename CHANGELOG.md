@@ -9,11 +9,32 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 
 Release channels have their own copy of this changelog:
 
-* [edge - v4.4](#440-unreleased)
+* [edge - v4.5](#450-unreleased)
+* [alpha - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
 * [beta - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
 * [stable - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
 
-## 4.4.0-Unreleased
+## 4.5.0-Unreleased
+
+### RPC
+
+#### Breaking
+
+#### Changes
+
+### Validator
+
+#### Breaking
+
+#### Changes
+
+### CLI
+
+#### Breaking
+
+#### Changes
+
+## 4.4.0
 
 ### RPC
 
@@ -28,6 +49,8 @@ Release channels have their own copy of this changelog:
 * Added `RpcClient::get_signature_statuses_with_config`.
 * `accountSubscribe` and `programSubscribe` now honor `dataSlice` for binary account data.
   A zero-length slice returns empty data; omitting `dataSlice` returns the full account data.
+* `getLeaderSchedule` now returns a new error code `-32022` if the specified
+  `identity` does not appear in the leader schedule
 
 ### Validator
 

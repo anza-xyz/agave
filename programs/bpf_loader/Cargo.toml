@@ -75,6 +75,7 @@ solana-svm-callback = { path = "../../svm-callback", features = ["agave-unstable
 solana-system-program = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+test-case = { workspace = true }
 wincode = { workspace = true }
 
 [[bench]]

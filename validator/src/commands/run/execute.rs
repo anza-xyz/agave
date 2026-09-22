@@ -848,7 +848,6 @@ pub fn execute(
         account_paths: account_run_paths,
         account_snapshot_paths,
         accounts_db_config,
-        accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),

@@ -13,14 +13,25 @@ use {
     tokio::time::sleep,
 };
 
-/// Max TPS allowed for unstaked connection
-const MAX_UNSTAKED_TPS: u64 = 200;
-/// Expected fraction of max TPS to be consumed by unstaked connections
-const EXPECTED_UNSTAKED_STREAMS_RATIO: f64 = 0.20;
+/// Max TPS per unstaked peer while total load is below
+/// `UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO` of capacity.
+///
+/// Kept equal to `MIN_UNSTAKED_TPS` for now, so the unstaked quota is the
+/// previous fixed 200 TPS at any load. Raising it is left to a follow-up.
+pub(crate) const MAX_UNSTAKED_TPS: u64 = 200;
+/// Max TPS per unstaked peer once total load is above that threshold.
+const MIN_UNSTAKED_TPS: u64 = 200;
+const _: () = assert!(MIN_UNSTAKED_TPS <= MAX_UNSTAKED_TPS);
 
 pub const STREAM_THROTTLING_INTERVAL_MS: u64 = 100;
 pub const STREAM_THROTTLING_INTERVAL: Duration =
     Duration::from_millis(STREAM_THROTTLING_INTERVAL_MS);
+
+/// Number of streams per throttling interval that a rate of `tps` amounts to.
+pub(crate) const fn streams_per_throttling_interval(tps: u64) -> u64 {
+    tps * STREAM_THROTTLING_INTERVAL_MS / 1000
+}
+
 const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
 // EMA smoothing window to reduce sensitivity to short-lived load spikes at the start
 // of a leader slot. Throttling is only triggered when saturation is sustained.
@@ -29,62 +40,108 @@ const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
 // before throttling activates.
 const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
 
-const STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.95;
+/// Fraction of capacity at which staked peers switch to stake-proportional
+/// quotas. Compared against staked load alone, so unstaked traffic never
+/// throttles staked peers.
+///
+/// 0.76 is the previous trip point of 95% of an 80% staked share (1900
+/// streams per 5 ms interval at the default 500 streams/ms), kept for now so
+/// staked throttling starts at the same load while unstaked load accounting
+/// is rolled out.
+const STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.76;
+/// With unstaked connections disabled there was no staked share to shrink,
+/// so the previous 0.95 still applies.
+const STAKED_THROTTLING_ON_LOAD_WITHOUT_UNSTAKED_THRESHOLD_RATIO: f64 = 0.95;
+/// Fraction of capacity at which unstaked peers fall back to their minimum
+/// quota. Compared against total (staked + unstaked) load, so rising staked
+/// load pushes unstaked traffic down.
+const UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.70;
+const _: () = assert!(
+    UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO <= STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
+);
 
-pub(crate) struct StakedStreamLoadEMA {
-    current_load_ema: AtomicU64,
-    load_in_recent_interval: AtomicU64,
+/// Tracks stream load as exponential moving averages, kept separately for
+/// staked and unstaked streams. Both EMAs are advanced in the same update so
+/// they share a time grid and their sum is the total load.
+///
+/// Stream capacity is a single pool in which staked peers have priority:
+/// staked throttling is driven by staked load alone, unstaked throttling by
+/// total load. Quotas are per peer (see `ConnectionStreamCounter`).
+pub(crate) struct StreamLoadEMA {
+    staked_load_ema: AtomicU64,
+    staked_load_in_recent_interval: AtomicU64,
+    unstaked_load_ema: AtomicU64,
+    unstaked_load_in_recent_interval: AtomicU64,
     last_update: RwLock<Instant>,
     stats: Arc<StreamerStats>,
-    max_staked_load_in_throttling_window: u64,
+    /// Capacity per throttling window. Also the staked quota while staked
+    /// throttling is off, and the base for stake-proportional quotas while on.
+    max_load_in_throttling_window: u64,
+    /// Unstaked quota while unstaked throttling is off.
     max_unstaked_load_in_throttling_window: u64,
+    /// Unstaked quota while unstaked throttling is on.
+    min_unstaked_load_in_throttling_window: u64,
     max_streams_per_ms: u64,
     staked_throttling_on_load_threshold: u64, // in streams/STREAM_LOAD_EMA_INTERVAL_MS
+    unstaked_throttling_on_load_threshold: u64, // in streams/STREAM_LOAD_EMA_INTERVAL_MS
     staked_throttling_enabled: AtomicBool,
+    unstaked_throttling_enabled: AtomicBool,
 }
 
-impl StakedStreamLoadEMA {
+impl StreamLoadEMA {
     pub(crate) fn new(
         stats: Arc<StreamerStats>,
         max_unstaked_connections: usize,
         max_streams_per_ms: u64,
     ) -> Self {
+        let max_load_in_ema_interval = max_streams_per_ms * STREAM_LOAD_EMA_INTERVAL_MS;
+        let max_load_in_throttling_window = max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS;
+
         let allow_unstaked_streams = max_unstaked_connections > 0;
-        let max_staked_load_in_ms = if allow_unstaked_streams {
-            max_streams_per_ms
-                - ((EXPECTED_UNSTAKED_STREAMS_RATIO * (max_streams_per_ms as f64)) as u64)
+        let (max_unstaked_load_in_throttling_window, min_unstaked_load_in_throttling_window) =
+            if allow_unstaked_streams {
+                (
+                    streams_per_throttling_interval(MAX_UNSTAKED_TPS),
+                    streams_per_throttling_interval(MIN_UNSTAKED_TPS),
+                )
+            } else {
+                (0, 0)
+            };
+
+        let staked_threshold_ratio = if allow_unstaked_streams {
+            STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
         } else {
-            max_streams_per_ms
+            STAKED_THROTTLING_ON_LOAD_WITHOUT_UNSTAKED_THRESHOLD_RATIO
         };
-
-        let max_staked_load_in_ema_interval = max_staked_load_in_ms * STREAM_LOAD_EMA_INTERVAL_MS;
-        let max_staked_load_in_throttling_window =
-            max_staked_load_in_ms * STREAM_THROTTLING_INTERVAL_MS;
-
-        let max_unstaked_load_in_throttling_window = if allow_unstaked_streams {
-            MAX_UNSTAKED_TPS * STREAM_THROTTLING_INTERVAL_MS / 1000
-        } else {
-            0
-        };
-
-        let staked_throttling_on_load_threshold = (STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
-            * (max_staked_load_in_ema_interval as f64))
+        let staked_throttling_on_load_threshold =
+            (staked_threshold_ratio * max_load_in_ema_interval as f64) as u64;
+        let unstaked_throttling_on_load_threshold = (UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
+            * (max_load_in_ema_interval as f64))
             as u64;
 
         Self {
-            current_load_ema: AtomicU64::default(),
-            load_in_recent_interval: AtomicU64::default(),
+            staked_load_ema: AtomicU64::default(),
+            staked_load_in_recent_interval: AtomicU64::default(),
+            unstaked_load_ema: AtomicU64::default(),
+            unstaked_load_in_recent_interval: AtomicU64::default(),
             last_update: RwLock::new(Instant::now()),
             stats,
-            max_staked_load_in_throttling_window,
+            max_load_in_throttling_window,
             max_unstaked_load_in_throttling_window,
+            min_unstaked_load_in_throttling_window,
             max_streams_per_ms,
             staked_throttling_on_load_threshold,
+            unstaked_throttling_on_load_threshold,
             staked_throttling_enabled: AtomicBool::new(false),
+            unstaked_throttling_enabled: AtomicBool::new(false),
         }
     }
 
-    fn ema_function(current_ema: u128, recent_load: u128) -> u128 {
+    /// Advances the EMA by one interval carrying `recent_load`.
+    ///
+    /// The result is a weighted average of the two inputs and never exceeds
+    /// the larger of them.
+    fn ema_function(current_ema: u64, recent_load: u64) -> u64 {
         // Using the EMA multiplier helps in avoiding the floating point math during EMA related calculations
         const STREAM_LOAD_EMA_MULTIPLIER: u128 = 1024;
         let multiplied_smoothing_factor: u128 =
@@ -95,9 +152,13 @@ impl StakedStreamLoadEMA {
         // To avoid floating point math, we are using STREAM_LOAD_EMA_MULTIPLIER
         //    updated_ema = (recent_load * multiplied_smoothing_factor
         //                   + current_ema * (multiplier - multiplied_smoothing_factor)) / multiplier
-        (recent_load * multiplied_smoothing_factor
-            + current_ema * (STREAM_LOAD_EMA_MULTIPLIER - multiplied_smoothing_factor))
-            / STREAM_LOAD_EMA_MULTIPLIER
+        let updated_ema = (u128::from(recent_load) * multiplied_smoothing_factor
+            + u128::from(current_ema) * (STREAM_LOAD_EMA_MULTIPLIER - multiplied_smoothing_factor))
+            / STREAM_LOAD_EMA_MULTIPLIER;
+        match u64::try_from(updated_ema) {
+            Ok(updated_ema) => updated_ema,
+            Err(_) => unreachable!("EMA {updated_ema} must fit into u64"),
+        }
     }
 
     fn update_ema(&self, time_since_last_update_ms: u128) {
@@ -106,41 +167,63 @@ impl StakedStreamLoadEMA {
         let num_extra_updates =
             time_since_last_update_ms.saturating_sub(1) / u128::from(STREAM_LOAD_EMA_INTERVAL_MS);
 
-        let load_in_recent_interval =
-            u128::from(self.load_in_recent_interval.swap(0, Ordering::Relaxed));
+        // Reset both counters before advancing either EMA so the two
+        // estimates cover the same interval.
+        let staked_load_in_recent_interval = self
+            .staked_load_in_recent_interval
+            .swap(0, Ordering::Relaxed);
+        let unstaked_load_in_recent_interval = self
+            .unstaked_load_in_recent_interval
+            .swap(0, Ordering::Relaxed);
 
-        let mut updated_load_ema = Self::ema_function(
-            u128::from(self.current_load_ema.load(Ordering::Relaxed)),
-            load_in_recent_interval,
+        let staked_load_ema = Self::advance_ema(
+            &self.staked_load_ema,
+            staked_load_in_recent_interval,
+            num_extra_updates,
         );
+        if self.staked_throttling_on_load_threshold > 0 {
+            self.staked_throttling_enabled.store(
+                staked_load_ema >= self.staked_throttling_on_load_threshold,
+                Ordering::Relaxed,
+            );
+        }
+        self.stats
+            .staked_stream_load_ema
+            .store(staked_load_ema as usize, Ordering::Relaxed);
+
+        let unstaked_load_ema = Self::advance_ema(
+            &self.unstaked_load_ema,
+            unstaked_load_in_recent_interval,
+            num_extra_updates,
+        );
+        if self.unstaked_throttling_on_load_threshold > 0 {
+            // Unstaked throttling is decided on total load, since that is
+            // what saturates the pipeline.
+            let total_load_ema = staked_load_ema.saturating_add(unstaked_load_ema);
+            self.unstaked_throttling_enabled.store(
+                total_load_ema >= self.unstaked_throttling_on_load_threshold,
+                Ordering::Relaxed,
+            );
+        }
+        self.stats
+            .unstaked_stream_load_ema
+            .store(unstaked_load_ema as usize, Ordering::Relaxed);
+    }
+
+    /// Advances `ema` by one interval carrying `recent_load`, followed by
+    /// `num_extra_updates` empty intervals. Returns the new value.
+    fn advance_ema(ema: &AtomicU64, recent_load: u64, num_extra_updates: u128) -> u64 {
+        let mut updated_ema = Self::ema_function(ema.load(Ordering::Relaxed), recent_load);
 
         for _ in 0..num_extra_updates {
-            updated_load_ema = Self::ema_function(updated_load_ema, 0);
-            if updated_load_ema == 0 {
+            updated_ema = Self::ema_function(updated_ema, 0);
+            if updated_ema == 0 {
                 break;
             }
         }
 
-        let Ok(updated_load_ema) = u64::try_from(updated_load_ema) else {
-            error!("Failed to convert EMA {updated_load_ema} to a u64. Not updating the load EMA");
-            self.stats
-                .stream_load_ema_overflow
-                .fetch_add(1, Ordering::Relaxed);
-            return;
-        };
-
-        if self.staked_throttling_on_load_threshold > 0 {
-            self.staked_throttling_enabled.store(
-                updated_load_ema >= self.staked_throttling_on_load_threshold,
-                Ordering::Relaxed,
-            );
-        }
-
-        self.current_load_ema
-            .store(updated_load_ema, Ordering::Relaxed);
-        self.stats
-            .stream_load_ema
-            .store(updated_load_ema as usize, Ordering::Relaxed);
+        ema.store(updated_ema, Ordering::Relaxed);
+        updated_ema
     }
 
     pub(crate) fn update_ema_if_needed(&self) {
@@ -158,31 +241,42 @@ impl StakedStreamLoadEMA {
     }
 
     pub(crate) fn increment_load(&self, peer_type: ConnectionPeerType) {
-        if peer_type.is_staked() {
-            self.load_in_recent_interval.fetch_add(1, Ordering::Relaxed);
-        }
+        let load_in_recent_interval = if peer_type.is_staked() {
+            &self.staked_load_in_recent_interval
+        } else {
+            &self.unstaked_load_in_recent_interval
+        };
+        load_in_recent_interval.fetch_add(1, Ordering::Relaxed);
         self.update_ema_if_needed();
     }
 
+    /// Streams a peer of `peer_type` may open per throttling window.
     pub(crate) fn available_load_capacity_in_throttling_duration(
         &self,
         peer_type: ConnectionPeerType,
         total_stake: u64,
     ) -> u64 {
         match peer_type {
-            ConnectionPeerType::Unstaked => self.max_unstaked_load_in_throttling_window,
+            ConnectionPeerType::Unstaked => {
+                if self.unstaked_throttling_enabled.load(Ordering::Relaxed) {
+                    self.min_unstaked_load_in_throttling_window
+                } else {
+                    self.max_unstaked_load_in_throttling_window
+                }
+            }
             ConnectionPeerType::Staked(stake) => {
                 if self.staked_throttling_enabled.load(Ordering::Relaxed) {
-                    // 1 is added to `max_unstaked_load_in_throttling_window` to guarantee that staked
-                    // clients get at least 1 more number of streams than unstaked connections.
-                    u128::from(self.max_staked_load_in_throttling_window)
+                    // Staked throttling implies unstaked throttling, so unstaked peers are being
+                    // throttled here. +1 guarantees staked always get a bit more.
+                    let min_staked_load = self.min_unstaked_load_in_throttling_window + 1;
+                    u128::from(self.max_load_in_throttling_window)
                         .saturating_mul(u128::from(stake))
                         .checked_div(u128::from(total_stake))
                         .and_then(|capacity| u64::try_from(capacity).ok())
-                        .unwrap_or(self.max_unstaked_load_in_throttling_window + 1)
-                        .max(self.max_unstaked_load_in_throttling_window + 1)
+                        .unwrap_or(min_staked_load)
+                        .max(min_staked_load)
                 } else {
-                    self.max_staked_load_in_throttling_window
+                    self.max_load_in_throttling_window
                 }
             }
         }
@@ -193,6 +287,9 @@ impl StakedStreamLoadEMA {
     }
 }
 
+/// Per-peer stream counter for throttling. Shared by all connections under the
+/// same connection-table key (the peer's pubkey when known, otherwise its IP
+/// address), so quotas apply per peer, not per connection.
 #[derive(Debug)]
 pub struct ConnectionStreamCounter {
     pub(crate) stream_count: AtomicU64,
@@ -283,13 +380,11 @@ pub mod test {
 
     const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
     const TEST_TOTAL_STAKE: u64 = 400_000_000 * LAMPORTS_PER_SOL;
-    // Matches the production default, deriving a staked window of
-    // (500 - 0.2 * 500) * 100 = 40_000 streams (50_000 with unstaked
-    // connections disabled) and an unstaked window of 200 * 100 / 1000 = 20.
+    // Matches the production default.
     const TEST_MAX_STREAMS_PER_MS: u64 = 500;
 
-    fn new_throttled_load_ema(allow_unstaked_connections: bool) -> StakedStreamLoadEMA {
-        let load_ema = StakedStreamLoadEMA::new(
+    fn new_throttled_load_ema(allow_unstaked_connections: bool) -> StreamLoadEMA {
+        let load_ema = StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             usize::from(allow_unstaked_connections),
             TEST_MAX_STREAMS_PER_MS,
@@ -302,11 +397,24 @@ pub mod test {
 
     #[test]
     fn test_max_streams_for_unstaked_connection() {
-        let load_ema = Arc::new(StakedStreamLoadEMA::new(
+        let load_ema = Arc::new(StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         ));
+        // MAX_UNSTAKED_TPS currently equals MIN_UNSTAKED_TPS, so the quota is
+        // the same whether or not unstaked throttling is on.
+        assert_eq!(
+            load_ema.available_load_capacity_in_throttling_duration(
+                ConnectionPeerType::Unstaked,
+                10000,
+            ),
+            20
+        );
+
+        load_ema
+            .unstaked_throttling_enabled
+            .store(true, Ordering::Relaxed);
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
                 ConnectionPeerType::Unstaked,
@@ -318,7 +426,7 @@ pub mod test {
 
     #[test]
     fn test_staked_throttling_on_off() {
-        let mut load_ema = StakedStreamLoadEMA::new(
+        let mut load_ema = StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
@@ -326,15 +434,17 @@ pub mod test {
 
         load_ema.staked_throttling_on_load_threshold = 10;
 
-        load_ema.current_load_ema.store(12, Ordering::Relaxed);
+        load_ema.staked_load_ema.store(12, Ordering::Relaxed);
         load_ema
-            .load_in_recent_interval
+            .staked_load_in_recent_interval
             .store(12, Ordering::Relaxed);
         load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
         assert!(load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
 
-        load_ema.current_load_ema.store(4, Ordering::Relaxed);
-        load_ema.load_in_recent_interval.store(0, Ordering::Relaxed);
+        load_ema.staked_load_ema.store(4, Ordering::Relaxed);
+        load_ema
+            .staked_load_in_recent_interval
+            .store(0, Ordering::Relaxed);
         load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
         assert!(!load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
     }
@@ -343,22 +453,23 @@ pub mod test {
     fn test_staked_capacity_shares_with_large_stakes() {
         let load_ema = new_throttled_load_ema(true);
         // Stake divisors below assume these window values.
-        let full_staked_capacity = load_ema.max_staked_load_in_throttling_window;
-        assert_eq!(full_staked_capacity, 40_000);
+        let full_staked_capacity = load_ema.max_load_in_throttling_window;
+        assert_eq!(full_staked_capacity, 50_000);
         assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 20);
+        assert_eq!(load_ema.min_unstaked_load_in_throttling_window, 20);
 
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
                 ConnectionPeerType::Staked(1),
                 TEST_TOTAL_STAKE,
             ),
-            load_ema.max_unstaked_load_in_throttling_window + 1,
-            "any staked client gets more than unstaked",
+            load_ema.min_unstaked_load_in_throttling_window + 1,
+            "any staked client gets more than throttled unstaked",
         );
 
         for stake_divisor in [
-            // 1_000 and 800 represent below and above the u64 multiplication-overflow boundary.
-            1_500, 1_000, 800, 400, 100, 20, 1,
+            // 1_100 and 1_000 represent below and above the u64 multiplication-overflow boundary.
+            1_500, 1_100, 1_000, 400, 50, 20, 1,
         ] {
             assert_eq!(
                 load_ema.available_load_capacity_in_throttling_duration(
@@ -376,16 +487,17 @@ pub mod test {
     fn test_staked_capacity_shares_with_large_stakes_and_no_unstaked_connections() {
         let load_ema = new_throttled_load_ema(false);
         // Stake divisors below assume these window values.
-        let full_staked_capacity = load_ema.max_staked_load_in_throttling_window;
+        let full_staked_capacity = load_ema.max_load_in_throttling_window;
         assert_eq!(full_staked_capacity, 50_000);
         assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 0);
+        assert_eq!(load_ema.min_unstaked_load_in_throttling_window, 0);
 
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
                 ConnectionPeerType::Staked(100),
                 TEST_TOTAL_STAKE,
             ),
-            load_ema.max_unstaked_load_in_throttling_window + 1,
+            load_ema.min_unstaked_load_in_throttling_window + 1,
             "any staked client gets more than unstaked",
         );
 
@@ -414,13 +526,13 @@ pub mod test {
                 ConnectionPeerType::Staked(u64::MAX),
                 u64::MAX,
             ),
-            load_ema.max_staked_load_in_throttling_window,
+            load_ema.max_load_in_throttling_window,
         );
     }
 
     #[test]
     fn test_no_throttle_below_threshold() {
-        let mut load_ema = StakedStreamLoadEMA::new(
+        let mut load_ema = StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
@@ -429,7 +541,7 @@ pub mod test {
         load_ema
             .staked_throttling_enabled
             .store(false, Ordering::Relaxed);
-        load_ema.max_staked_load_in_throttling_window = 100;
+        load_ema.max_load_in_throttling_window = 100;
         load_ema.max_unstaked_load_in_throttling_window = 20;
 
         assert_eq!(
@@ -437,33 +549,158 @@ pub mod test {
                 ConnectionPeerType::Staked(10),
                 100
             ),
-            load_ema.max_staked_load_in_throttling_window
+            load_ema.max_load_in_throttling_window
         );
     }
 
     #[test]
     fn test_ema_decay_handles_missing_intervals() {
-        let load_ema = StakedStreamLoadEMA::new(
+        let load_ema = StreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         );
 
-        load_ema.current_load_ema.store(100, Ordering::Relaxed);
+        load_ema.staked_load_ema.store(100, Ordering::Relaxed);
         load_ema
-            .load_in_recent_interval
+            .staked_load_in_recent_interval
             .store(100, Ordering::Relaxed);
 
         load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS * 3));
 
-        let expected = StakedStreamLoadEMA::ema_function(
-            StakedStreamLoadEMA::ema_function(StakedStreamLoadEMA::ema_function(100, 100), 0),
+        let expected = StreamLoadEMA::ema_function(
+            StreamLoadEMA::ema_function(StreamLoadEMA::ema_function(100, 100), 0),
             0,
         );
-        assert_eq!(
-            load_ema.current_load_ema.load(Ordering::Relaxed),
-            u64::try_from(expected).unwrap()
+        assert_eq!(load_ema.staked_load_ema.load(Ordering::Relaxed), expected);
+    }
+
+    #[test]
+    fn test_ema_never_exceeds_its_inputs() {
+        // The weights sum to the multiplier, so the EMA is a weighted average
+        // and fits in a u64 for any u64 inputs, including the extremes.
+        assert_eq!(StreamLoadEMA::ema_function(u64::MAX, u64::MAX), u64::MAX);
+        assert!(StreamLoadEMA::ema_function(u64::MAX, 0) < u64::MAX);
+        assert!(StreamLoadEMA::ema_function(0, u64::MAX) < u64::MAX);
+        assert_eq!(StreamLoadEMA::ema_function(0, 0), 0);
+    }
+
+    #[test]
+    fn test_unstaked_load_tracked_separately() {
+        let mut load_ema = StreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
         );
+        load_ema.staked_throttling_on_load_threshold = 40;
+        load_ema.unstaked_throttling_on_load_threshold = 10;
+
+        load_ema
+            .staked_load_in_recent_interval
+            .store(100, Ordering::Relaxed);
+        load_ema
+            .unstaked_load_in_recent_interval
+            .store(1000, Ordering::Relaxed);
+        load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
+
+        // Both counters are consumed by the same update.
+        assert_eq!(
+            load_ema
+                .staked_load_in_recent_interval
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            load_ema
+                .unstaked_load_in_recent_interval
+                .load(Ordering::Relaxed),
+            0
+        );
+
+        let expected_staked = StreamLoadEMA::ema_function(0, 100);
+        let expected_unstaked = StreamLoadEMA::ema_function(0, 1000);
+        assert_eq!(
+            load_ema.staked_load_ema.load(Ordering::Relaxed),
+            expected_staked
+        );
+        assert_eq!(
+            load_ema.unstaked_load_ema.load(Ordering::Relaxed),
+            expected_unstaked
+        );
+        assert_eq!(
+            load_ema
+                .stats
+                .staked_stream_load_ema
+                .load(Ordering::Relaxed),
+            expected_staked as usize
+        );
+        assert_eq!(
+            load_ema
+                .stats
+                .unstaked_stream_load_ema
+                .load(Ordering::Relaxed),
+            expected_unstaked as usize
+        );
+
+        // Unstaked load alone never enables staked throttling, however high,
+        // but it does count towards unstaked throttling.
+        assert!(expected_unstaked >= load_ema.staked_throttling_on_load_threshold);
+        assert!(expected_staked < load_ema.staked_throttling_on_load_threshold);
+        assert!(!load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
+        assert!(
+            expected_staked + expected_unstaked >= load_ema.unstaked_throttling_on_load_threshold
+        );
+        assert!(load_ema.unstaked_throttling_enabled.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_unstaked_throttling_on_total_load() {
+        let mut load_ema = StreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
+        );
+        load_ema.staked_throttling_on_load_threshold = 100;
+        load_ema.unstaked_throttling_on_load_threshold = 40;
+
+        // Staked load alone above the unstaked threshold throttles unstaked
+        // peers, while staked peers, still below their own threshold, are not.
+        load_ema
+            .staked_load_in_recent_interval
+            .store(1000, Ordering::Relaxed);
+        load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
+        let staked_load_ema = load_ema.staked_load_ema.load(Ordering::Relaxed);
+        assert!((40..100).contains(&staked_load_ema));
+        assert_eq!(load_ema.unstaked_load_ema.load(Ordering::Relaxed), 0);
+        assert!(load_ema.unstaked_throttling_enabled.load(Ordering::Relaxed));
+        assert!(!load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
+        assert_eq!(
+            load_ema.available_load_capacity_in_throttling_duration(
+                ConnectionPeerType::Unstaked,
+                TEST_TOTAL_STAKE,
+            ),
+            load_ema.min_unstaked_load_in_throttling_window
+        );
+        assert_eq!(
+            load_ema.available_load_capacity_in_throttling_duration(
+                ConnectionPeerType::Staked(1),
+                TEST_TOTAL_STAKE,
+            ),
+            load_ema.max_load_in_throttling_window
+        );
+
+        // Once staked load crosses the staked threshold, both are throttled.
+        load_ema.staked_load_ema.store(200, Ordering::Relaxed);
+        load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
+        assert!(load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
+        assert!(load_ema.unstaked_throttling_enabled.load(Ordering::Relaxed));
+
+        // When load subsides, both are released.
+        load_ema.staked_load_ema.store(0, Ordering::Relaxed);
+        load_ema.unstaked_load_ema.store(0, Ordering::Relaxed);
+        load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
+        assert!(!load_ema.staked_throttling_enabled.load(Ordering::Relaxed));
+        assert!(!load_ema.unstaked_throttling_enabled.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -473,7 +710,7 @@ pub mod test {
         assert_eq!(
             load_ema
                 .available_load_capacity_in_throttling_duration(ConnectionPeerType::Staked(10), 0),
-            load_ema.max_unstaked_load_in_throttling_window + 1
+            load_ema.min_unstaked_load_in_throttling_window + 1
         );
     }
 }

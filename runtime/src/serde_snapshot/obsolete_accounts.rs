@@ -1,7 +1,6 @@
 use {
     crate::serde_snapshot::SerializedAccountsFileId,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
-    serde::Serialize,
     solana_accounts_db::{
         ObsoleteAccountItem, ObsoleteAccounts, account_storage_entry::AccountStorageEntry,
         accounts_db::AccountsFileId, append_vec_file_offset_from_logical,
@@ -14,7 +13,7 @@ use {
 
 #[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Debug, SchemaRead, SchemaWrite, Serialize)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct SerdeObsoleteAccountItem {
     /// File offset of the account in the account storage entry
     pub offset: u64,
@@ -25,7 +24,7 @@ pub struct SerdeObsoleteAccountItem {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Debug, Default, Serialize, SchemaRead, SchemaWrite)]
+#[derive(Debug, Default, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccounts {
     /// The ID of the associated account file. Used for verification to ensure the restored
     /// obsolete accounts correspond to the correct account file
@@ -107,7 +106,7 @@ impl SerdeObsoleteAccounts {
         abi_serializer = "wincode"
     )
 )]
-#[derive(Serialize, Debug, SchemaRead, SchemaWrite)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccountsMap {
     map: Vec<(Slot, SerdeObsoleteAccounts)>,
 }

@@ -13,10 +13,8 @@ use {
         migration::GENESIS_CERTIFICATE_ACCOUNT,
         wire::{WireBlockCertMessage, WireCertSignature},
     },
-    bincode::serialize,
     bitvec::vec::BitVec,
     log::*,
-    serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
     },
@@ -411,7 +409,7 @@ pub fn bls_pubkey_to_compressed_bytes(
     bls_pubkey: &BLSPubkey,
 ) -> [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE] {
     let key = BLSPubkeyCompressed::try_from(bls_pubkey).unwrap();
-    bincode::serialize(&key).unwrap().try_into().unwrap()
+    wincode::serialize(&key).unwrap().try_into().unwrap()
 }
 
 pub(crate) fn create_validator(
@@ -575,7 +573,7 @@ pub fn create_genesis_config_with_leader_ex(
 
 /// Wincode mirror of the deprecated [`StakeConfig`], since that type has no wincode schema.
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(SchemaRead, SchemaWrite)]
 struct SerializableStakeConfig {
     warmup_cooldown_rate: f64,
     slash_penalty: u8,
@@ -584,18 +582,17 @@ struct SerializableStakeConfig {
 /// Data of the stake program's config account at genesis: a `ConfigKeys` prefix, then the
 /// stake config.
 ///
-/// The digest freezes this layout, since genesis writes it on chain. Both codecs digest it,
-/// so their agreement proves the mirror below.
+/// The digest freezes this layout, since genesis writes it on chain.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "FrxVmDThystn6yVz3PjV9BTxGKocrq7LcKfk4VYk5efq",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "wire_only"
     )
 )]
-#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(SchemaRead, SchemaWrite)]
 struct GenesisStakeConfigAccount {
     /// `ConfigKeys` has no `StableAbi` of its own, so sample the key list directly.
     #[cfg_attr(
@@ -620,7 +617,7 @@ pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u
         warmup_cooldown_rate,
         slash_penalty,
     } = StakeConfig::default();
-    let data = serialize(&GenesisStakeConfigAccount {
+    let data = wincode::serialize(&GenesisStakeConfigAccount {
         keys: ConfigKeys { keys: vec![] },
         config: SerializableStakeConfig {
             warmup_cooldown_rate,
@@ -690,23 +687,20 @@ pub fn create_lockup_stake_account(
 mod tests {
     use super::*;
 
-    /// The mirror must encode exactly like `StakeConfig`. Naming the two halves as one
-    /// struct must not move any bytes.
+    /// Naming the two halves as one struct must not move any bytes. The frozen digest
+    /// covers their agreement with `StakeConfig`.
     #[test]
     #[expect(deprecated)]
     fn test_genesis_stake_config_account_layout() {
         let config = StakeConfig::default();
-        assert_eq!(
-            serialize(&config).unwrap(),
-            serialize(&SerializableStakeConfig {
+        let mut expected = wincode::serialize(&ConfigKeys { keys: vec![] }).unwrap();
+        expected.extend_from_slice(
+            &wincode::serialize(&SerializableStakeConfig {
                 warmup_cooldown_rate: config.warmup_cooldown_rate,
                 slash_penalty: config.slash_penalty,
             })
             .unwrap(),
         );
-
-        let mut expected = serialize(&ConfigKeys { keys: vec![] }).unwrap();
-        expected.extend_from_slice(&serialize(&config).unwrap());
 
         let mut genesis_config = GenesisConfig::default();
         add_genesis_stake_config_account(&mut genesis_config);

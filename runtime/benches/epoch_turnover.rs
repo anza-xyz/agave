@@ -247,7 +247,7 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
 
         let rewards_steps = bank
             .get_account(&epoch_rewards::id())
-            .and_then(|account| bincode::deserialize::<EpochRewards>(account.data()).ok())
+            .and_then(|account| wincode::deserialize::<EpochRewards>(account.data()).ok())
             .unwrap()
             .num_partitions;
 

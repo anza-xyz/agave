@@ -17,7 +17,9 @@ use {
             },
         },
     },
-    agave_votor_messages::{VerifiedVotorSlotsMessage, migration::MigrationStatus},
+    agave_votor_messages::{
+        VerifiedVotorSlotsMessage, VoteAccountPubkeys, migration::MigrationStatus,
+    },
     ahash::AHashMap,
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
@@ -705,18 +707,20 @@ impl RepairService {
         // Add new votes to the weighting heuristic
         let mut get_votes_us = Measure::start("get_votes_us");
         let mut slot_to_vote_pubkeys = HashMap::new();
-        verified_voter_slots_receiver.try_iter().for_each(|map| {
-            for (slot, mut pubkeys) in map {
-                match slot_to_vote_pubkeys.entry(slot) {
-                    Entry::Vacant(e) => {
-                        e.insert(pubkeys);
-                    }
-                    Entry::Occupied(e) => {
-                        e.into_mut().append(&mut pubkeys);
-                    }
+        for (slot, pubkeys) in verified_voter_slots_receiver.try_iter() {
+            match slot_to_vote_pubkeys.entry(slot) {
+                Entry::Vacant(e) => {
+                    let pubkeys = match pubkeys {
+                        VoteAccountPubkeys::Shared(p) => Arc::unwrap_or_clone(p),
+                        VoteAccountPubkeys::Owned(p) => p,
+                    };
+                    e.insert(pubkeys);
+                }
+                Entry::Occupied(e) => {
+                    e.into_mut().extend_from_slice(pubkeys.as_slice());
                 }
             }
-        });
+        }
         get_votes_us.stop();
 
         let mut add_voters_us = Measure::start("add_voters_us");

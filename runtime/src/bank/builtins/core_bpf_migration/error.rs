@@ -9,9 +9,6 @@ pub enum CoreBpfMigrationError {
     /// Solana instruction error
     #[error("Solana instruction error: {0:?}")]
     InstructionError(#[from] InstructionError),
-    /// Bincode serialization error
-    #[error("Bincode serialization error: {0:?}")]
-    BincodeError(#[from] bincode::Error),
     /// Wincode deserialization error
     #[error("Wincode deserialization error: {0:?}")]
     WincodeReadError(#[from] wincode::ReadError),

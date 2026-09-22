@@ -863,8 +863,12 @@ impl ProgramTest {
             panic!("Program file data not available for {program_name} ({program_id})")
         });
         let elf = read_file(program_file);
-        let program_accounts =
-            programs::bpf_loader_upgradeable_program_accounts(program_id, &elf, &Rent::default());
+        let program_accounts = programs::bpf_loader_upgradeable_program_accounts(
+            program_id,
+            &elf,
+            &Pubkey::default(),
+            &Rent::default(),
+        );
         for (address, account) in program_accounts {
             self.add_genesis_account(address, account);
         }
@@ -1399,7 +1403,7 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarId + Serialize>(&self, sysvar: &T) {
+    pub fn set_sysvar<T: SysvarId + wincode::Serialize<Src = T>>(&self, sysvar: &T) {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);
