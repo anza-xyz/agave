@@ -10308,6 +10308,7 @@ dependencies = [
  "agave-transaction-view",
  "bytes",
  "criterion",
+ "lazy-lru",
  "rand 0.9.4",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
