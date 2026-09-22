@@ -61,23 +61,9 @@ pull_request_rules:
           - automerge
       comment:
         message: automerge label removed due to a CI failure
-  - name: v4.2 feature-gate backport
+  - name: v4.2 backport
     conditions:
       - label=v4.2
-      - label=feature-gate
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        labels:
-          - feature-gate
-        branches:
-          - v4.2
-  - name: v4.2 non-feature-gate backport
-    conditions:
-      - label=v4.2
-      - label!=feature-gate
     actions:
       backport:
         assignees: *BackportAssignee
@@ -85,23 +71,9 @@ pull_request_rules:
         ignore_conflicts: true
         branches:
           - v4.2
-  - name: v4.3 feature-gate backport
+  - name: v4.3 backport
     conditions:
       - label=v4.3
-      - label=feature-gate
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        labels:
-          - feature-gate
-        branches:
-          - v4.3
-  - name: v4.3 non-feature-gate backport
-    conditions:
-      - label=v4.3
-      - label!=feature-gate
     actions:
       backport:
         assignees: *BackportAssignee
@@ -109,23 +81,9 @@ pull_request_rules:
         ignore_conflicts: true
         branches:
           - v4.3
-  - name: v4.4 feature-gate backport
+  - name: v4.4 backport
     conditions:
       - label=v4.4
-      - label=feature-gate
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        labels:
-          - feature-gate
-        branches:
-          - v4.4
-  - name: v4.4 non-feature-gate backport
-    conditions:
-      - label=v4.4
-      - label!=feature-gate
     actions:
       backport:
         assignees: *BackportAssignee
