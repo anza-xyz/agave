@@ -842,6 +842,7 @@ pub(crate) mod tests {
             blockstore.transaction_history_safe_root().unwrap(),
             Some(slot)
         );
+        assert_eq!(blockstore.cached_transaction_history_safe_root(), slot);
     }
 
     #[test]

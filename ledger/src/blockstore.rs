@@ -431,6 +431,7 @@ pub struct Blockstore {
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
 
     max_root: AtomicU64,
+    cached_transaction_history_safe_root: AtomicU64,
     insert_shreds_lock: Mutex<()>,
     switch_block_lock: SwitchBlockLock,
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
@@ -758,6 +759,8 @@ impl Blockstore {
             .map(|(slot, _)| slot)
             .unwrap_or(0);
         let max_root = AtomicU64::new(max_root);
+        let cached_transaction_history_safe_root =
+            AtomicU64::new(transaction_history_safe_root_cf.get(0)?.unwrap_or_default());
 
         measure.stop();
         info!("Opening blockstore done; {measure}");
@@ -800,6 +803,7 @@ impl Blockstore {
             insert_shreds_lock: Mutex::<()>::default(),
             switch_block_lock: SwitchBlockLock(FairMutex::new(())),
             max_root,
+            cached_transaction_history_safe_root,
             lowest_cleanup_slot: RwLock::<Slot>::default(),
             manual_purge_request_sender: Mutex::default(),
             slots_stats: SlotsStats::default(),
@@ -4150,14 +4154,20 @@ impl Blockstore {
         self.transaction_history_safe_root_cf.get(0)
     }
 
+    pub fn cached_transaction_history_safe_root(&self) -> Slot {
+        self.cached_transaction_history_safe_root
+            .load(Ordering::SeqCst)
+    }
+
     pub fn set_transaction_history_safe_root(&self, slot: Slot) -> Result<()> {
-        if self
-            .transaction_history_safe_root()?
-            .is_some_and(|safe_root| safe_root >= slot)
-        {
+        let current_safe_root = self.transaction_history_safe_root()?;
+        if current_safe_root.is_some_and(|safe_root| safe_root >= slot) {
             return Ok(());
         }
-        self.transaction_history_safe_root_cf.put(0, &slot)
+        self.transaction_history_safe_root_cf.put(0, &slot)?;
+        self.cached_transaction_history_safe_root
+            .fetch_max(slot, Ordering::SeqCst);
+        Ok(())
     }
 
     /// The first complete block that is available in the Blockstore ledger

@@ -82,10 +82,15 @@ impl BigTableUploadService {
                 break;
             }
 
+            let transaction_history_safe_root = blockstore.cached_transaction_history_safe_root();
+
             // The highest slot eligible for upload is the highest root that
-            // has complete block metadata
-            let highest_complete_root = std::cmp::min(
-                max_complete_transaction_status_slot.load(Ordering::SeqCst),
+            // has complete block metadata and transaction history.
+            let highest_complete_root = min(
+                min(
+                    max_complete_transaction_status_slot.load(Ordering::SeqCst),
+                    transaction_history_safe_root,
+                ),
                 block_commitment_cache.read().unwrap().root(),
             );
             let end_slot = min(
