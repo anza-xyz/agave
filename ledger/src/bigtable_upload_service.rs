@@ -83,7 +83,7 @@ impl BigTableUploadService {
             }
 
             // The highest slot eligible for upload is the highest root that
-            // has complete block metadata
+            // has complete block metadata and transaction history.
             let highest_complete_root = std::cmp::min(
                 max_complete_transaction_status_slot.load(Ordering::SeqCst),
                 block_commitment_cache.read().unwrap().root(),
