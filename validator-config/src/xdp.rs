@@ -1,7 +1,7 @@
 //! XDP worker and queue policies, validation, and CPU assignment.
 
 use {
-    crate::{DeviceSelector, EffectiveConfig, Modules, Source, interface::interface_path},
+    crate::{Components, DeviceSelector, EffectiveConfig, Source, interface::interface_path},
     serde::Deserialize,
     std::collections::{BTreeMap, BTreeSet},
 };
@@ -47,17 +47,15 @@ pub(crate) struct InterfaceXdp {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ModuleXdp {
-    pub(crate) tx: ModuleTx,
+pub(crate) struct ComponentXdp {
+    pub(crate) tx: ComponentTx,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ModuleTx {
+pub(crate) struct ComponentTx {
     pub(crate) interface: String,
     pub(crate) queues: QueueSelection,
-    #[serde(skip)]
-    pub(crate) queues_source: Source,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -72,7 +70,7 @@ pub struct RuntimeXdpConfig {
     pub device: DeviceSelector,
     pub queues: Vec<QueueCpuBinding>,
     pub zero_copy: bool,
-    pub modules: Modules<Box<[usize]>>,
+    pub components: Components<Box<[usize]>>,
 }
 
 pub(crate) fn validate_pool_len(len: usize, field: &str) -> Result<(), String> {
@@ -141,9 +139,9 @@ impl QueueSelection {
     }
 }
 
-/// Queue ids a module transmits over, in its own sender order.
-fn module_queue_ids<'a>(module: &'a ModuleXdp, pool: &'a [u32]) -> &'a [u32] {
-    match &module.tx.queues {
+/// Queue ids a component transmits over, in its own sender order.
+fn component_queue_ids<'a>(component: &'a ComponentXdp, pool: &'a [u32]) -> &'a [u32] {
+    match &component.tx.queues {
         QueueSelection::All => pool,
         QueueSelection::Explicit(queues) => queues,
     }
@@ -157,9 +155,10 @@ fn worker_queue_ids(policy: &WorkerPolicy) -> Vec<u32> {
     }
 }
 
-/// Validate host-independent cross-references. Problems are fatal when XDP is
-/// enabled; dormant-policy problems are reported as warnings.
+/// Validate schema constraints and host-independent cross-references. Invalid
+/// cross-references are fatal when XDP is enabled and warnings when disabled.
 pub fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, String> {
+    config.validate_structural()?;
     let mut warnings = Vec::new();
     let active = config.xdp_active();
     if active && config.interfaces.len() != 1 {
@@ -168,34 +167,27 @@ pub fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, String> 
             config.interfaces.len()
         ));
     }
-    if config.interfaces.len() != 1 {
-        return Ok(warnings);
-    }
-    let (label, interface) = config
-        .interfaces
-        .iter()
-        .next()
-        .expect("XDP config should contain exactly one interface after validation");
-    for (name, module) in config.named_modules() {
-        if module.tx.interface == *label {
+    for (name, component) in config.named_components() {
+        let label = &component.tx.interface;
+        let Some(interface) = config.interfaces.get(label) else {
+            let message = format!(
+                "{name}.xdp.tx.interface names {label:?}, which is not a declared interface; \
+                 declared: {:?}",
+                config.interfaces.keys().collect::<Vec<_>>()
+            );
+            if active {
+                return Err(message);
+            }
+            warnings.push(message);
             continue;
-        }
-        let message = format!(
-            "{name}.xdp.tx.interface names {:?}, which is not a declared interface; declared: {:?}",
-            module.tx.interface, label
-        );
-        if active {
-            return Err(message);
-        }
-        warnings.push(message);
-    }
-    let pool = worker_queue_ids(&interface.xdp.workers);
-    let pool_set: BTreeSet<_> = pool.iter().copied().collect();
-    for (name, module) in config.named_modules() {
-        if let QueueSelection::Explicit(queues) = &module.tx.queues {
+        };
+        if let QueueSelection::Explicit(queues) = &component.tx.queues {
+            let pool: BTreeSet<_> = worker_queue_ids(&interface.xdp.workers)
+                .into_iter()
+                .collect();
             let missing: Vec<_> = queues
                 .iter()
-                .filter(|queue| !pool_set.contains(queue))
+                .filter(|queue| !pool.contains(queue))
                 .collect();
             if !missing.is_empty() {
                 let message = format!(
@@ -217,9 +209,15 @@ pub fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, String> 
     if !active {
         return Ok(warnings);
     }
+    let (label, interface) = config
+        .interfaces
+        .iter()
+        .next()
+        .expect("XDP config should contain exactly one interface after validation");
+    let pool = worker_queue_ids(&interface.xdp.workers);
     let selections = config
-        .named_modules()
-        .map(|(_, module)| module_queue_ids(module, &pool));
+        .named_components()
+        .map(|(_, component)| component_queue_ids(component, &pool));
     for queue in &pool {
         if selections.iter().any(|queues| queues.contains(queue)) {
             continue;
@@ -309,11 +307,12 @@ pub fn resolve_runtime(
         .expect("XDP config should contain exactly one interface after validation");
     let declared = resolve_declared_workers(&interface.xdp.workers, allowed_cpus, poh_core)?;
     let pool: Vec<u32> = declared.iter().map(|binding| binding.queue).collect();
-    let selected = Modules {
-        gossip: module_queue_ids(&config.gossip.xdp, &pool),
-        repair: module_queue_ids(&config.repair.xdp, &pool),
-        tpu: module_queue_ids(&config.tpu.xdp, &pool),
-        turbine: module_queue_ids(&config.turbine.xdp, &pool),
+    let selected = Components {
+        gossip: component_queue_ids(&config.gossip.xdp, &pool),
+        repair: component_queue_ids(&config.repair.xdp, &pool),
+        tpu: component_queue_ids(&config.tpu.xdp, &pool),
+        turbine: component_queue_ids(&config.turbine.xdp, &pool),
+        votor: component_queue_ids(&config.votor.xdp, &pool),
     };
     let active_ids: BTreeSet<_> = selected
         .values()
@@ -337,7 +336,7 @@ pub fn resolve_runtime(
         .enumerate()
         .map(|(position, binding)| (binding.queue, position))
         .collect();
-    let module_positions = |queues: &[u32]| -> Box<[usize]> {
+    let component_positions = |queues: &[u32]| -> Box<[usize]> {
         queues
             .iter()
             .map(|queue| {
@@ -347,11 +346,12 @@ pub fn resolve_runtime(
             })
             .collect()
     };
-    let modules = Modules {
-        gossip: module_positions(selected.gossip),
-        repair: module_positions(selected.repair),
-        tpu: module_positions(selected.tpu),
-        turbine: module_positions(selected.turbine),
+    let components = Components {
+        gossip: component_positions(selected.gossip),
+        repair: component_positions(selected.repair),
+        tpu: component_positions(selected.tpu),
+        turbine: component_positions(selected.turbine),
+        votor: component_positions(selected.votor),
     };
     Ok((
         RuntimeXdpConfig {
@@ -359,7 +359,7 @@ pub fn resolve_runtime(
             device: interface.device.clone(),
             queues: active_workers,
             zero_copy: interface.xdp.zero_copy,
-            modules,
+            components,
         },
         warnings,
     ))

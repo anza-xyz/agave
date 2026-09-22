@@ -1,13 +1,9 @@
-//! Version checks, default merging, and validation of configuration files.
+//! Configuration file loading, version checks, and default merging.
 
 use {
-    crate::{
-        DeviceSelector, EffectiveConfig, Source, interface::interface_path, xdp::WorkerPolicy,
-    },
+    crate::{EffectiveConfig, SCHEMA_VERSION, Source, validate_schema_version},
     std::path::Path,
 };
-
-const SCHEMA_VERSION: u32 = 1;
 
 /// The embedded default policy, as shipped, for `--print-default-config`.
 pub const DEFAULT_CONFIG: &str = include_str!("../default_config.toml");
@@ -29,12 +25,7 @@ fn parse_toml(text: &str, description: &str) -> Result<toml::Value, String> {
             ));
         }
     };
-    if version != i64::from(SCHEMA_VERSION) {
-        return Err(format!(
-            "config `{description}` has schema_version {version}; this binary supports version \
-             {SCHEMA_VERSION}"
-        ));
-    }
+    validate_schema_version(version).map_err(|error| format!("config `{description}`: {error}"))?;
     Ok(value)
 }
 
@@ -88,62 +79,6 @@ fn mark_user_sources(config: &mut EffectiveConfig, user: &toml::Value) {
             }
         }
     }
-    for (name, module) in [
-        ("gossip", &mut config.gossip.xdp),
-        ("repair", &mut config.repair.xdp),
-        ("tpu", &mut config.tpu.xdp),
-        ("turbine", &mut config.turbine.xdp),
-    ] {
-        if user
-            .get(name)
-            .and_then(|module| module.get("xdp"))
-            .and_then(|xdp| xdp.get("tx"))
-            .is_some_and(|tx| tx.get("queues").is_some())
-        {
-            module.tx.queues_source = Source::User;
-        }
-    }
-}
-
-fn validate_interface_bindings(config: &EffectiveConfig) -> Result<(), String> {
-    let invalid: Vec<_> = config
-        .interfaces
-        .iter()
-        .filter_map(|(label, interface)| {
-            matches!(interface.xdp.workers, WorkerPolicy::Bindings(_))
-                .then_some((label, &interface.device))
-        })
-        .filter(|(_, device)| !matches!(device, DeviceSelector::Name(_)))
-        .map(|(label, _)| label.as_str())
-        .collect();
-    if invalid.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "workers.bindings requires device.name in the merged file policy for interface(s) {}; \
-             use workers.auto/workers.cpus with device.route, or name the device",
-            invalid.join(", ")
-        ))
-    }
-}
-
-// File constraints apply before CLI overrides, even when XDP is disabled.
-fn validate_file(config: &EffectiveConfig) -> Result<(), String> {
-    for (label, interface) in &config.interfaces {
-        interface
-            .xdp
-            .workers
-            .validate()
-            .map_err(|error| format!("{}.xdp.workers: {error}", interface_path(label)))?;
-    }
-    for (name, module) in config.named_modules() {
-        module
-            .tx
-            .queues
-            .validate()
-            .map_err(|error| format!("{name}.xdp.tx.queues: {error}"))?;
-    }
-    validate_interface_bindings(config)
 }
 
 pub fn load(user_path: Option<&Path>) -> Result<EffectiveConfig, String> {
@@ -164,7 +99,8 @@ pub fn load(user_path: Option<&Path>) -> Result<EffectiveConfig, String> {
     let mut config: EffectiveConfig = merged
         .try_into()
         .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
-    validate_file(&config)
+    config
+        .validate_structural()
         .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
     if let Some(user) = user {
         mark_user_sources(&mut config, &user);

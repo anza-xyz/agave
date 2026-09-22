@@ -3,7 +3,7 @@
 use crate::{
     DeviceSelector, EffectiveConfig, Source,
     interface::interface_path,
-    xdp::{QueueSelection, WorkerPolicy, validate_pool_len, validate_unique_cpus},
+    xdp::{WorkerPolicy, validate_pool_len, validate_unique_cpus},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -62,40 +62,14 @@ pub fn apply_cli(
             config.interfaces.len()
         ));
     }
-    if let Some(cpus) = overrides.cpu_cores.as_ref() {
-        validate_pool_len(cpus.len(), "--xdp-cpu-cores")?;
-        validate_unique_cpus(cpus, "--xdp-cpu-cores")?;
-        let interface = config
-            .interfaces
-            .values()
-            .next()
-            .expect("XDP config should contain exactly one interface after validation");
-        if interface.xdp.workers_source == Source::User {
-            let affected: Vec<_> = config
-                .named_modules()
-                .into_iter()
-                .filter(|(_, module)| {
-                    module.tx.queues_source == Source::User
-                        && matches!(module.tx.queues, QueueSelection::Explicit(_))
-                })
-                .map(|(name, _)| name)
-                .collect();
-            if !affected.is_empty() {
-                return Err(format!(
-                    "--xdp-cpu-cores replaces user-authored workers and would reinterpret \
-                     user-authored numeric queue ids in module(s) {}; use tx.queues = \"all\" or \
-                     update the file and CLI choices together",
-                    affected.join(", ")
-                ));
-            }
-        }
-    }
     let (label, interface) = config
         .interfaces
         .iter_mut()
         .next()
         .expect("XDP config should contain exactly one interface after validation");
     if let Some(cpus) = overrides.cpu_cores {
+        validate_pool_len(cpus.len(), "--xdp-cpu-cores")?;
+        validate_unique_cpus(&cpus, "--xdp-cpu-cores")?;
         if interface.xdp.workers_source == Source::User {
             warnings.push(format!(
                 "--xdp-cpu-cores replaces user-authored workers for interface {label:?}"

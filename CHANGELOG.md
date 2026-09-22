@@ -45,13 +45,12 @@ Release channels have their own copy of this changelog:
   inactive elsewhere.
   The built-in configuration is complete, user supplied config file patches it with device/worker choices, and
   matching CLI arguments form the final layer. Interfaces use stable logical labels, worker modes
-  are expressed as `workers.auto`, `workers.cpus`, or `workers.bindings`, and each module selects
+  are expressed as `workers.auto`, `workers.cpus`, or `workers.bindings`, and each component selects
   `tx.queues = "all"` or hardware queue ids on the sole interface. `--print-default-config` prints
   the embedded reference policy. `--no-xdp-zero-copy` can override a file's strict zero-copy
   request. `xdp.enabled` controls XDP globally; `--no-xdp` disables it.
-* `--xdp-cpu-cores` now preserves module-specific queue scoping instead of silently assigning every
-  CLI-created sender to every XDP-enabled module. A CLI worker replacement that could reinterpret
-  user-authored numeric queue ids is rejected; use `tx.queues = "all"` for portable policy.
+* `--xdp-cpu-cores` preserves each component's queue selections. Selected queue ids must exist
+  in the overridden worker pool.
 
 ### CLI
 

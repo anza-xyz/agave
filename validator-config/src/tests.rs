@@ -4,12 +4,13 @@ use {
     std::{collections::BTreeSet, io::Write as _},
 };
 
-const ALL_MODULES_QUEUE_ZERO: &str = r#"
+const ALL_COMPONENTS_QUEUE_ZERO: &str = r#"
 schema_version = 1
 tpu.xdp.tx.queues = [0]
 turbine.xdp.tx.queues = [0]
 repair.xdp.tx.queues = [0]
 gossip.xdp.tx.queues = [0]
+votor.xdp.tx.queues = [0]
 "#;
 
 fn load_config(contents: &str) -> Result<EffectiveConfig, String> {
@@ -65,8 +66,8 @@ fn test_embedded_default_resolves_from_policy_without_fallbacks() {
     let (runtime, warnings) = resolve_runtime(&config, &allowed, Some(5)).unwrap();
     assert!(warnings.is_empty());
     assert_eq!(runtime.queues, vec![QueueCpuBinding { queue: 0, cpu: 3 }]);
-    for module in runtime.modules.values() {
-        assert_eq!(module.as_ref(), &[0][..]);
+    for component in runtime.components.values() {
+        assert_eq!(component.as_ref(), &[0][..]);
     }
 }
 
@@ -198,33 +199,71 @@ fn test_invalid_schema_versions_are_rejected() {
 }
 
 #[test]
-fn test_invalid_queue_reference_warns_when_dormant_and_fails_when_active() {
-    let mut config = load_valid_config(
-        r#"
+fn test_invalid_references_warn_when_dormant_and_fail_when_active() {
+    let cases: [(&str, &[&str], &str); 3] = [
+        (
+            r#"
 schema_version = 1
-[xdp]
-enabled = false
-[tpu.xdp]
-tx.queues = [1]
+xdp.enabled = false
+tpu.xdp.tx.queues = [1]
 "#,
-    );
-    let expected = [
-        "tpu.xdp.tx.queues",
-        " 1 ",
-        "not declared",
-        "interfaces.primary.xdp.workers",
+            &["tpu.xdp.tx.queues"],
+            "tpu.xdp.tx.queues",
+        ),
+        (
+            r#"
+schema_version = 1
+xdp.enabled = false
+interfaces = {}
+"#,
+            &[
+                "gossip.xdp.tx.interface",
+                "repair.xdp.tx.interface",
+                "tpu.xdp.tx.interface",
+                "turbine.xdp.tx.interface",
+                "votor.xdp.tx.interface",
+            ],
+            "exactly one effective interface",
+        ),
+        (
+            r#"
+schema_version = 1
+xdp.enabled = false
+gossip.xdp.tx.interface = "missing"
+repair.xdp.tx.queues = [3]
+tpu.xdp.tx.interface = "secondary"
+tpu.xdp.tx.queues = [3]
+
+[interfaces.primary]
+device.route = "default"
+
+[interfaces.secondary]
+device.name = "eth1"
+xdp.zero_copy = false
+xdp.workers.bindings = [{ queue = 3, cpu = 8 }]
+"#,
+            &["gossip.xdp.tx.interface", "repair.xdp.tx.queues"],
+            "exactly one effective interface",
+        ),
     ];
-    assert_warnings_contain(
-        &validate_policy(&config).unwrap(),
-        &[&expected],
-        "dormant policy",
-    );
-    config.xdp.enabled = true;
-    let error = resolve_runtime(&config, &BTreeSet::from([8, 9]), None).unwrap_err();
-    assert!(
-        expected.iter().all(|fragment| error.contains(fragment)),
-        "{error}"
-    );
+    for (contents, expected_fields, active_error) in cases {
+        let mut config = load_valid_config(contents);
+        let warnings = validate_policy(&config).unwrap();
+        assert_eq!(
+            warnings.len(),
+            expected_fields.len(),
+            "{contents}: {warnings:?}"
+        );
+        for field in expected_fields {
+            assert!(
+                warnings.iter().any(|warning| warning.contains(field)),
+                "{contents}: missing warning for {field}: {warnings:?}"
+            );
+        }
+        config.xdp.enabled = true;
+        let error = resolve_runtime(&config, &BTreeSet::from([8, 9]), None).unwrap_err();
+        assert!(error.contains(active_error), "{contents}: {error}");
+    }
 }
 
 #[test]
@@ -266,7 +305,7 @@ fn test_every_worker_mode_enforces_the_same_cardinality_limit() {
 }
 
 #[test]
-fn test_renaming_the_interface_requires_updating_module_references() {
+fn test_renaming_the_interface_requires_updating_component_references() {
     const RENAMED: &str = r#"
 schema_version = 1
 [interfaces.fast]
@@ -294,17 +333,19 @@ tx.interface = "fast"
 tx.interface = "fast"
 [gossip.xdp]
 tx.interface = "fast"
+[votor.xdp]
+tx.interface = "fast"
 "#,
     );
     let (runtime, _) = resolve_runtime(&updated_references, &BTreeSet::from([8, 9]), None).unwrap();
     assert_eq!(runtime.interface_label, "fast");
-    for module in runtime.modules.values() {
-        assert_eq!(module.as_ref(), &[0][..]);
+    for component in runtime.components.values() {
+        assert_eq!(component.as_ref(), &[0][..]);
     }
 }
 
 #[test]
-fn test_module_referencing_another_interface_is_rejected() {
+fn test_component_referencing_another_interface_is_rejected() {
     let config = load_valid_config(
         r#"
 schema_version = 1
@@ -313,55 +354,77 @@ tx.interface = "other"
 "#,
     );
     let error = validate_policy(&config).unwrap_err();
-    assert_eq!(
-        error,
-        "tpu.xdp.tx.interface names \"other\", which is not a declared interface; declared: \
-         \"primary\""
+    assert!(
+        [
+            "tpu.xdp.tx.interface",
+            "other",
+            "not a declared interface",
+            "primary"
+        ]
+        .iter()
+        .all(|fragment| error.contains(fragment)),
+        "{error}"
     );
 }
 
 #[test]
-fn test_cli_worker_replacement_rejects_user_queue_ids_even_if_they_survive() {
+fn test_cli_worker_replacement_validates_queue_references() {
     let config = load_valid_config(
         r#"
 schema_version = 1
 [interfaces.primary.xdp]
 workers.cpus = [8, 9]
 [tpu.xdp]
-tx.queues = [0]
+tx.queues = [1]
 "#,
     );
-    let error = apply_cli(
-        config,
-        CliOverrides {
-            cpu_cores: Some(vec![10, 11]),
-            ..CliOverrides::default()
-        },
-    )
-    .unwrap_err();
-    assert!(error.contains("reinterpret"), "{error}");
+    for (cpus, valid) in [(vec![8, 9], true), (vec![10, 11], true), (vec![10], false)] {
+        let application = apply_cli(
+            config.clone(),
+            CliOverrides {
+                cpu_cores: Some(cpus.clone()),
+                ..CliOverrides::default()
+            },
+        )
+        .unwrap();
+        let result = resolve_runtime(
+            &application.config,
+            &BTreeSet::from([8, 9, 10, 11, 12]),
+            None,
+        );
+        if valid {
+            let (runtime, _) = result.unwrap();
+            let actual_cpus: Vec<_> = runtime.queues.iter().map(|binding| binding.cpu).collect();
+            assert_eq!(actual_cpus, cpus);
+            assert_eq!(runtime.components.tpu.as_ref(), &[1]);
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.contains("tpu.xdp.tx.queues"), "{error}");
+            assert!(error.contains("queue(s) 1 not declared"), "{error}");
+        }
+    }
 }
 
 #[test]
-fn test_module_level_switches_are_rejected() {
-    for module in ["tpu", "turbine", "repair", "gossip"] {
+fn test_component_level_switches_are_rejected() {
+    for component in ["tpu", "turbine", "repair", "gossip", "votor"] {
         let error = load_config(&format!(
             r#"
 schema_version = 1
-[{module}.xdp]
+[{component}.xdp]
 enabled = true
 "#
         ))
         .unwrap_err();
         assert!(
             error.contains("unknown field `enabled`"),
-            "{module}: {error}"
+            "{component}: {error}"
         );
     }
 }
 
 #[test]
-fn test_cli_cpu_workers_preserve_module_queue_scoping() {
+fn test_cli_cpu_workers_preserve_component_queue_scoping() {
     let config = load_valid_config(
         r#"
 schema_version = 1
@@ -379,41 +442,44 @@ tx.queues = [0]
     .unwrap();
     let (runtime, _) =
         resolve_runtime(&application.config, &BTreeSet::from([8, 9, 10]), None).unwrap();
-    assert_eq!(runtime.modules.tpu.as_ref(), &[0][..]);
-    assert_eq!(runtime.modules.turbine.as_ref(), &[0, 1][..]);
+    assert_eq!(runtime.components.tpu.as_ref(), &[0][..]);
+    assert_eq!(runtime.components.turbine.as_ref(), &[0, 1][..]);
 }
 
 #[test]
-fn test_sparse_bindings_preserve_worker_and_module_order() {
-    // Each module specifies its queue selection and expected sender positions.
-    for (case, modules, expected_workers) in [
+fn test_sparse_bindings_preserve_worker_and_component_order() {
+    // Each component specifies its queue selection and expected sender positions.
+    for (case, components, expected_workers) in [
         (
             "all workers",
-            Modules {
+            Components {
                 gossip: ("[11, 1]", vec![2, 3]),
                 repair: ("[3]", vec![1]),
                 tpu: ("[1, 7]", vec![3, 0]),
-                turbine: ("'all'", vec![0, 1, 2, 3]),
+                turbine: ("[7]", vec![0]),
+                votor: ("'all'", vec![0, 1, 2, 3]),
             },
             vec![(7, 8), (3, 9), (11, 10), (1, 11)],
         ),
         (
             "unused middle workers",
-            Modules {
+            Components {
                 gossip: ("[7, 1]", vec![0, 1]),
                 repair: ("[1]", vec![1]),
                 tpu: ("[1, 7]", vec![1, 0]),
                 turbine: ("[7]", vec![0]),
+                votor: ("[1]", vec![1]),
             },
             vec![(7, 8), (1, 11)],
         ),
     ] {
-        let Modules {
+        let Components {
             gossip: (gossip, expected_gossip),
             repair: (repair, expected_repair),
             tpu: (tpu, expected_tpu),
             turbine: (turbine, expected_turbine),
-        } = modules;
+            votor: (votor, expected_votor),
+        } = components;
         let contents = format!(
             r#"
 schema_version = 1
@@ -421,6 +487,7 @@ gossip.xdp.tx.queues = {gossip}
 repair.xdp.tx.queues = {repair}
 tpu.xdp.tx.queues = {tpu}
 turbine.xdp.tx.queues = {turbine}
+votor.xdp.tx.queues = {votor}
 [interfaces.primary]
 device.name = "eth0"
 [interfaces.primary.xdp]
@@ -444,20 +511,25 @@ workers.bindings = [
             .collect();
         assert_eq!(runtime.queues, expected_workers, "{case}");
         assert_eq!(
-            runtime.modules.gossip.as_ref(),
+            runtime.components.gossip.as_ref(),
             expected_gossip,
             "{case}/gossip"
         );
         assert_eq!(
-            runtime.modules.repair.as_ref(),
+            runtime.components.repair.as_ref(),
             expected_repair,
             "{case}/repair"
         );
-        assert_eq!(runtime.modules.tpu.as_ref(), expected_tpu, "{case}/tpu");
+        assert_eq!(runtime.components.tpu.as_ref(), expected_tpu, "{case}/tpu");
         assert_eq!(
-            runtime.modules.turbine.as_ref(),
+            runtime.components.turbine.as_ref(),
             expected_turbine,
             "{case}/turbine"
+        );
+        assert_eq!(
+            runtime.components.votor.as_ref(),
+            expected_votor,
+            "{case}/votor"
         );
     }
 }
@@ -771,7 +843,7 @@ workers.auto.count = 1
 
 #[test]
 fn test_unreferenced_workers_warn_and_release_cpus_for_every_source() {
-    let mut built_in_workers = load_valid_config(ALL_MODULES_QUEUE_ZERO);
+    let mut built_in_workers = load_valid_config(ALL_COMPONENTS_QUEUE_ZERO);
     // Simulate a built-in pool with an unused worker, retaining its provenance.
     built_in_workers
         .interfaces
@@ -787,10 +859,11 @@ tpu.xdp.tx.queues = [0]
 turbine.xdp.tx.queues = [0]
 repair.xdp.tx.queues = [0]
 gossip.xdp.tx.queues = [0]
+votor.xdp.tx.queues = [0]
 "#,
     );
     let cli_workers = apply_cli(
-        load_valid_config(ALL_MODULES_QUEUE_ZERO),
+        load_valid_config(ALL_COMPONENTS_QUEUE_ZERO),
         CliOverrides {
             cpu_cores: Some(vec![8, 9]),
             ..CliOverrides::default()
@@ -834,23 +907,23 @@ fn test_invalid_queue_selections_are_rejected() {
             "tx.queues exceeds MAX_XDP_WORKERS",
         ),
     ] {
-        for module in ["tpu", "turbine", "repair", "gossip"] {
+        for component in ["tpu", "turbine", "repair", "gossip", "votor"] {
             for enabled in [true, false] {
                 let error = load_config(&format!(
                     r#"
 schema_version = 1
 xdp.enabled = {enabled}
-[{module}.xdp]
+[{component}.xdp]
 tx.queues = {queues}
 "#
                 ))
                 .unwrap_err();
                 assert!(
                     error.contains(expected),
-                    "{module}, XDP enabled={enabled}, queues={queues}: {error}"
+                    "{component}, XDP enabled={enabled}, queues={queues}: {error}"
                 );
                 assert!(
-                    error.contains(&format!("{module}.xdp.tx.queues")),
+                    error.contains(&format!("{component}.xdp.tx.queues")),
                     "{error}"
                 );
             }
