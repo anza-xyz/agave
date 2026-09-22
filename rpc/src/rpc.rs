@@ -6105,6 +6105,139 @@ pub mod tests {
         );
     }
 
+    #[test_case(0)]
+    #[test_case(1)]
+    #[test_case(MAX_MULTIPLE_ACCOUNTS)]
+    fn test_rpc_get_multiple_accounts_preserves_positions(account_count: usize) {
+        let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+        let owner = Pubkey::new_unique();
+        let missing = Pubkey::new_unique();
+        let mut addresses = Vec::with_capacity(account_count);
+        let mut expected = Vec::with_capacity(account_count);
+        for index in 0..account_count {
+            if index % 3 == 1 {
+                addresses.push(missing.to_string());
+                expected.push(Value::Null);
+            } else if index % 3 == 2 {
+                // Repeated keys must retain their position, too.
+                addresses.push(addresses[index - 2].clone());
+                expected.push(expected[index - 2].clone());
+            } else {
+                let pubkey = Pubkey::new_unique();
+                let data = vec![index as u8; 8];
+                let account = AccountSharedData::create_from_existing_shared_data(
+                    index as u64 + 1,
+                    Arc::new(data.clone()),
+                    owner,
+                    false,
+                    0,
+                );
+                bank.store_account(&pubkey, &account);
+                addresses.push(pubkey.to_string());
+                expected.push(json!({
+                    "owner": owner.to_string(),
+                    "lamports": index as u64 + 1,
+                    "data": [BASE64_STANDARD.encode(&data[2..5]), "base64"],
+                    "executable": false,
+                    "rentEpoch": 0,
+                    "space": 8,
+                }));
+            }
+        }
+        let request = create_test_request(
+            "getMultipleAccounts",
+            Some(json!([addresses, {"dataSlice": {"offset": 2, "length": 3}}])),
+        );
+        let result: RpcResponse<Vec<Value>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result.context.slot, bank.slot());
+        assert_eq!(result.value, expected);
+    }
+
+    #[test_case(0)]
+    #[test_case(1)]
+    #[test_case(2)]
+    fn test_rpc_get_multiple_accounts_encoding_failure(error_index: usize) {
+        let rpc = RpcHandler::start();
+        let oversized = Pubkey::new_unique();
+        rpc.working_bank().store_account(
+            &oversized,
+            &AccountSharedData::new(1, MAX_BASE58_BYTES + 1, &Pubkey::default()),
+        );
+        let config = json!({"encoding": "base58"});
+        let expected = parse_failure_response(rpc.handle_request_sync(create_test_request(
+            "getAccountInfo",
+            Some(json!([oversized.to_string(), config])),
+        )));
+        let mut addresses = vec![rpc.mint_keypair.pubkey().to_string(); 3];
+        addresses[error_index] = oversized.to_string();
+        let actual = parse_failure_response(rpc.handle_request_sync(create_test_request(
+            "getMultipleAccounts",
+            Some(json!([addresses, config])),
+        )));
+        assert_eq!(actual, expected);
+    }
+
+    // Run with --ignored --nocapture --test-threads=1 on both revisions.
+    // Measures the in-process request processor; excludes HTTP/network overhead.
+    #[test]
+    #[ignore = "manual getMultipleAccounts latency benchmark"]
+    fn test_rpc_get_multiple_accounts_latency_benchmark() {
+        let rpc = RpcHandler::start_with_config(JsonRpcConfig {
+            rpc_threads: 2,
+            rpc_blocking_threads: 4,
+            ..JsonRpcConfig::default()
+        });
+        let bank = rpc.working_bank();
+        let pubkeys: Vec<_> = (0..MAX_MULTIPLE_ACCOUNTS)
+            .map(|_| {
+                let pubkey = Pubkey::new_unique();
+                bank.store_account(&pubkey, &AccountSharedData::new(1, 165, &Pubkey::default()));
+                pubkey
+            })
+            .collect();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        for account_count in [1, 10, MAX_MULTIPLE_ACCOUNTS] {
+            for clients in [1, 16] {
+                let mut samples = runtime.block_on(async {
+                    let mut requests = tokio::task::JoinSet::new();
+                    for _ in 0..clients {
+                        let meta = rpc.meta.clone();
+                        let keys = pubkeys[..account_count].to_vec();
+                        requests.spawn(async move {
+                            let mut samples = Vec::with_capacity(100);
+                            for iteration in 0..110 {
+                                let start = std::time::Instant::now();
+                                let result = meta
+                                    .get_multiple_accounts(keys.clone(), None)
+                                    .await
+                                    .unwrap();
+                                assert_eq!(result.value.len(), keys.len());
+                                if iteration >= 10 {
+                                    samples.push(start.elapsed().as_micros());
+                                }
+                            }
+                            samples
+                        });
+                    }
+                    let mut samples = Vec::new();
+                    while let Some(result) = requests.join_next().await {
+                        samples.extend(result.unwrap());
+                    }
+                    samples
+                });
+                samples.sort_unstable();
+                println!(
+                    "accounts={account_count} clients={clients} samples={} p50_us={} p95_us={}",
+                    samples.len(),
+                    samples[samples.len() / 2],
+                    samples[samples.len() * 95 / 100],
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_rpc_get_program_accounts() {
         let rpc = RpcHandler::start();
