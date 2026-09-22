@@ -238,7 +238,23 @@ impl ParentReadyTracker {
             .is_some_and(|ss| ss.parents_ready.contains(&parent))
     }
 
-    /// For our leader slot `slot`, which block should we use as the parent
+    /// For our leader slot `slot`, returns the block we should use as the
+    /// parent, if any.
+    ///
+    /// In this implementation, we choose *not to* build on blocks in slots that
+    /// have a skip certificate, regardless of whether the block also has a
+    /// notarize-fallback certificate, for a few reasons:
+    ///
+    /// 1. it is more profitable for the current leader as they can pack any
+    ///    transactions contained in those blocks in its own blocks,
+    /// 2. for a block to get enough skip votes to not be notarized the leader
+    ///    must have had poor propagation or was stretched very close to the skip
+    ///    timeout. We don't want to reward that behavior, and
+    /// 3. a malicious leader can submit multiple blocks in the same slot in
+    ///    such a way that different versions get Notarize-Fallback but neither
+    ///    version actually gets Finalized. We'd prefer to skip their slot to avoid
+    ///    forcing the network overhead of the cluster ditching their current
+    ///    version and downloading the version chosen by the next leader.
     pub(crate) fn block_production_parent(&self, slot: Slot) -> BlockProductionParent {
         if self.highest_parent_ready() > slot {
             // This indicates that our block has already received a certificate
@@ -246,6 +262,10 @@ impl ParentReadyTracker {
             // and catching up. Either way we should not attempt to produce this slot
             return BlockProductionParent::MissedWindow;
         }
+
+        // Don't build off of skipped slots (regardless of whether they include
+        // blocks that have a notarize-fallback certificate); see method
+        // docstring for details.
         match self
             .slot_statuses
             .get(&slot)
