@@ -1245,7 +1245,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("config_file")
             .long("experimental-config-file")
             .takes_value(true)
-            .hidden(true)
+            .hidden(hidden_unless_forced())
             .value_name("PATH")
             .help(
                 "Path to an experimental TOML configuration file. The format may change \
