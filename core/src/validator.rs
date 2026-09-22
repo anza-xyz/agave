@@ -1621,6 +1621,7 @@ impl Validator {
             banking_tracer: banking_tracer.clone(),
             slot_status_notifier: slot_status_notifier.clone(),
             entry_notification_sender: entry_notification_sender.clone(),
+            transaction_status_sender: transaction_status_sender.clone(),
             leader_window_info_receiver,
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
@@ -2461,6 +2462,18 @@ fn load_blockstore(
     // of blockstore root away here as soon as possible.
     let original_blockstore_root = blockstore.max_root();
     process_options.halt_at_slot = blockstore.highest_slot().unwrap_or(None);
+
+    if let Some(Ok((bank_forks, _))) = bank_from_snapshot_opt.as_ref() {
+        let snapshot_slot = bank_forks.read().unwrap().root();
+        blockstore
+            .reconcile_transaction_history_for_snapshot_slots(snapshot_slot)
+            .map_err(|err| {
+                format!(
+                    "Failed to recover transaction history through snapshot slot {snapshot_slot}: \
+                     {err:?}"
+                )
+            })?;
+    }
 
     let enable_rpc_transaction_history =
         config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history;

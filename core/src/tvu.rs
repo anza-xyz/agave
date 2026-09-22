@@ -546,6 +546,7 @@ impl Tvu {
             bls_sender: bls_sender.clone(),
             commitment_sender: votor_commitment_sender,
             bank_notification_sender: bank_notification_sender.clone(),
+            transaction_status_sender: transaction_status_sender.clone(),
             leader_window_info_sender,
             highest_parent_ready: highest_parent_ready.clone(),
             event_sender: votor_event_sender.clone(),
