@@ -5,7 +5,7 @@ use {
     std::path::Path,
 };
 
-/// The embedded reference from `res/validator-config.toml`, for `--print-default-config`.
+/// The embedded reference from `res/validator-config.toml`, for `print-default-config`.
 // The crate-local symlink lets Cargo include the reference in published packages.
 pub const DEFAULT_CONFIG: &str = include_str!("../default_config.toml");
 

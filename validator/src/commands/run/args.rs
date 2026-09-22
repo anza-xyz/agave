@@ -1253,12 +1253,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("print_default_config")
-            .long("print-default-config")
-            .takes_value(false)
-            .help("Print the built-in default configuration file and exit"),
-    )
-    .arg(
         Arg::with_name("no_xdp")
             .long("no-xdp")
             .takes_value(false)

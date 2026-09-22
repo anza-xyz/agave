@@ -1,5 +1,5 @@
 # Built-in validator policy and reference for the config file format.
-# Print this default config with `agave-validator --print-default-config`.
+# Print this default config with `agave-validator print-default-config`.
 #
 # Precedence: CLI flags override the user config file, which overrides these
 # built-in defaults. Unknown fields are errors.
