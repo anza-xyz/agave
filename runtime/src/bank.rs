@@ -147,7 +147,9 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        loaded_programs::{
+            MAX_LOADED_ENTRY_COUNT, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+        },
         program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
     },
     solana_pubkey::Pubkey,
@@ -1679,67 +1681,68 @@ impl Bank {
             .set_fork_graph(fork_graph);
     }
 
-    fn prepare_program_cache_for_upcoming_feature_set(&self) -> FeatureSet {
+    // Returns whether we've entered the recompilation window of the program
+    // cache's Epoch Boundary Preparation Phase (EBPP)
+    fn in_ebpp_recompilation_window(&self) -> bool {
         let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
         let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
+        let slots_in_recompilation_phase = (MAX_LOADED_ENTRY_COUNT as u64)
+            .min(slots_in_epoch)
+            .checked_div(2)
+            .unwrap();
+        slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
+    }
+
+    fn prepare_program_cache_for_upcoming_feature_set(&self) -> FeatureSet {
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
 
-        // Recompile loaded programs one at a time before the next epoch hits
-        let slots_in_recompilation_phase =
-            (solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT as u64)
-                .min(slots_in_epoch)
-                .checked_div(2)
-                .unwrap();
+        if !self.in_ebpp_recompilation_window() {
+            // Not in the window, nothing to do.
+            return upcoming_feature_set;
+        }
 
-        let mut epoch_boundary_preparation = self
+        let upcoming_env = self.create_program_runtime_environment(&upcoming_feature_set);
+        let current_env = self
+            .transaction_processor
+            .program_runtime_environment
+            .clone();
+
+        let mut ebpp = self
             .transaction_processor
             .epoch_boundary_preparation
             .write()
             .unwrap();
 
-        if let Some(upcoming_environment) = epoch_boundary_preparation.upcoming_environment.as_ref()
+        if *current_env != *upcoming_env
+            && ebpp
+                .upcoming_environment
+                .as_ref()
+                .is_none_or(|e| **e != *upcoming_env)
         {
-            let upcoming_environment = upcoming_environment.clone();
-            if let Some((key, program_to_recompile)) =
-                epoch_boundary_preparation.programs_to_recompile.pop()
-            {
-                drop(epoch_boundary_preparation);
-                self.transaction_processor
-                    .prepare_one_program_for_upcoming_feature_set(
-                        self,
-                        &upcoming_environment,
-                        &key,
-                        &program_to_recompile.stats,
-                    );
-            }
-        } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
-            // Anticipate the upcoming program runtime environment for the next epoch,
-            // so we can try to recompile loaded programs before the feature transition hits.
-            let new_environment = self.create_program_runtime_environment(&upcoming_feature_set);
-            let mut upcoming_environment = self
+            // A different environment is upcoming and we are not preparing for
+            // it yet. Initiate or restart EBPP.
+            let pc = self
                 .transaction_processor
-                .program_runtime_environment
-                .clone();
-            // Here we actually want to compare the content of the environments, thus the deref.
-            let changed_program_runtime_environment = *upcoming_environment != *new_environment;
-            if changed_program_runtime_environment {
-                upcoming_environment = new_environment;
-                let program_cache_guard = self
-                    .transaction_processor
-                    .global_program_cache
-                    .read()
-                    .unwrap();
-                epoch_boundary_preparation.programs_to_recompile =
-                    program_cache_guard.get_flattened_entries();
-                epoch_boundary_preparation
-                    .programs_to_recompile
-                    .sort_by_cached_key(|(_id, program)| program.retention_score());
-            } else {
-                epoch_boundary_preparation.programs_to_recompile.clear();
-            }
-            epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
-            epoch_boundary_preparation.upcoming_environment = Some(upcoming_environment);
+                .global_program_cache
+                .read()
+                .unwrap();
+            ebpp.programs_to_recompile = pc.get_flattened_entries();
+            ebpp.programs_to_recompile
+                .sort_by_cached_key(|(_id, program)| program.retention_score());
+            ebpp.upcoming_epoch = self.epoch.saturating_add(1);
+            ebpp.upcoming_environment = Some(upcoming_env);
         }
+
+        // Proceed with recompilation, if any programs remain.
+        let Some(ebpp_env) = ebpp.upcoming_environment.clone() else {
+            return upcoming_feature_set;
+        };
+        let Some((key, program)) = ebpp.programs_to_recompile.pop() else {
+            return upcoming_feature_set;
+        };
+        drop(ebpp);
+        self.transaction_processor
+            .prepare_one_program_for_upcoming_feature_set(self, &ebpp_env, &key, &program.stats);
 
         upcoming_feature_set
     }

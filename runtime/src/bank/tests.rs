@@ -11492,8 +11492,20 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
         &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
     );
 
-    // Advance the bank to middle of epoch to start the recompilation phase.
+    // Before the recompilation phase, only the original program is cached.
     goto_end_of_slot(bank.clone());
+    {
+        let program_cache = bank
+            .transaction_processor
+            .global_program_cache
+            .read()
+            .unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        assert_eq!(slot_versions.len(), 1);
+    }
+
+    // Advance the bank to middle of epoch to start the recompilation phase,
+    // which recompiles the program in the same slot it starts.
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
     let current_env = bank
         .transaction_processor
@@ -11511,23 +11523,6 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
         .unwrap();
     assert!(*upcoming_env == *ebpp_env);
     assert_eq!(upcoming_env, ebpp_env); // `Arc::ptr_eq`
-
-    // Advance the bank to recompile the program.
-    {
-        let program_cache = bank
-            .transaction_processor
-            .global_program_cache
-            .read()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 1);
-        assert_eq!(
-            slot_versions[0].program.get_environment().unwrap(),
-            &current_env,
-        );
-    }
-    goto_end_of_slot(bank.clone());
-    let bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
     {
         let program_cache = bank
             .transaction_processor
@@ -11764,10 +11759,10 @@ fn test_feature_activation_loaded_programs_late_activation() {
         assert_eq!(slot_versions.len(), 1);
     }
 
-    // Advance the bank to middle of epoch to start the recompilation phase.
-    // We've seen no feature yet, so environments should match and cache
-    // contents should be unchanged. However, the EBPP window latches and we
-    // see the module contain the current environment going forward.
+    // Advance the bank to the middle of the epoch to start the recompilation
+    // phase. We've seen no feature yet, so environments should match and cache
+    // contents should be unchanged. Also, EBPP should not have latched yet,
+    // since it hasn't seen a changed environment yet.
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
     let current_env = bank
         .transaction_processor
@@ -11775,18 +11770,13 @@ fn test_feature_activation_loaded_programs_late_activation() {
     let upcoming_env = bank
         .transaction_processor
         .program_runtime_environment_for_epoch(1);
-    let ebpp_env = bank
+    let ebpp = bank
         .transaction_processor
         .epoch_boundary_preparation
         .read()
-        .unwrap()
-        .upcoming_environment
-        .clone()
         .unwrap();
     assert!(*current_env == *upcoming_env);
     assert_eq!(current_env, upcoming_env);
-    assert!(*current_env == *ebpp_env);
-    assert_eq!(current_env, ebpp_env);
     {
         let program_cache = bank
             .transaction_processor
@@ -11800,6 +11790,9 @@ fn test_feature_activation_loaded_programs_late_activation() {
             &current_env,
         );
     }
+    assert!(ebpp.upcoming_environment.is_none());
+    assert!(ebpp.programs_to_recompile.is_empty());
+    drop(ebpp);
 
     // Now move forward a few more slots, mid-way into EBPP, and activate the
     // feature.
@@ -11812,8 +11805,9 @@ fn test_feature_activation_loaded_programs_late_activation() {
         &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
     );
 
-    // Go a few more slots. See that the EBPP does not relatch, we still do not
-    // recompile any programs, and the environments are unchanged.
+    // Go a few more slots. See that the EBPP does in fact relatch, now that
+    // we observe a changed upcoming environment. We also recompile our first
+    // few programs.
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 30);
     let current_env = bank
@@ -11830,10 +11824,10 @@ fn test_feature_activation_loaded_programs_late_activation() {
         .upcoming_environment
         .clone()
         .unwrap();
-    assert!(*current_env == *upcoming_env);
-    assert_eq!(current_env, upcoming_env);
-    assert!(*current_env == *ebpp_env);
-    assert_eq!(current_env, ebpp_env);
+    assert!(*current_env != *upcoming_env);
+    assert_ne!(current_env, upcoming_env);
+    assert!(*ebpp_env == *upcoming_env);
+    assert_eq!(ebpp_env, upcoming_env);
     {
         let program_cache = bank
             .transaction_processor
@@ -11841,10 +11835,14 @@ fn test_feature_activation_loaded_programs_late_activation() {
             .write()
             .unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 1);
+        assert_eq!(slot_versions.len(), 2);
         assert_eq!(
             slot_versions[0].program.get_environment().unwrap(),
             &current_env,
+        );
+        assert_eq!(
+            slot_versions[1].program.get_environment().unwrap(),
+            &upcoming_env, // <-- EBPP env
         );
     }
 
@@ -11852,29 +11850,19 @@ fn test_feature_activation_loaded_programs_late_activation() {
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
 
-    // The processor's new environment should be an updated environment
-    // computed from the new epoch's feature set. We assert this below, but we
-    // can only compare by value.
+    // The processor's new environment is now exactly equal to what EBPP was
+    // preparing for.
     let computed_env = bank.create_program_runtime_environment(&bank.feature_set);
     let new_processor_env = bank
         .transaction_processor
         .program_runtime_environment
         .clone();
-    assert!(*computed_env == *new_processor_env);
-    assert_ne!(computed_env, new_processor_env);
+    assert!(*new_processor_env == *computed_env);
+    assert!(*new_processor_env == *upcoming_env);
+    assert_eq!(new_processor_env, upcoming_env); // `Arc::ptr_eq`
 
-    // Load the program with the new environment.
-    let transaction = Transaction::new(&signers, message, bank.last_blockhash());
-    let result_with_feature_enabled = bank.process_transaction(&transaction);
-    assert_eq!(
-        result_with_feature_enabled,
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::UnsupportedProgramId
-        ))
-    );
-
-    // The program should have been reloaded with the new environment.
+    // Cache contents should be unchanged. The program should have the new
+    // environment.
     {
         let program_cache = bank
             .transaction_processor
@@ -11961,122 +11949,143 @@ fn test_feature_activation_loaded_programs_fork_without_activation() {
     );
 
     // Fork on 16 does not see the feature and enters the EBPP window first.
-    // It sees no change in environment, so EBPP latches onto the current env
-    // and queues nothing.
+    // It sees no change in environment, so EBPP does not latch yet.
     let without_feature =
         Bank::new_from_parent_with_bank_forks(&bank_forks, fork_point, SlotLeader::default(), 16);
-    let current_env = without_feature
-        .transaction_processor
-        .program_runtime_environment_for_epoch(0);
-    let upcoming_env = without_feature
-        .transaction_processor
-        .program_runtime_environment_for_epoch(1);
-    let ebpp = without_feature
-        .transaction_processor
-        .epoch_boundary_preparation
-        .read()
-        .unwrap();
-    let ebpp_env = ebpp.upcoming_environment.clone().unwrap();
-    assert!(*current_env == *upcoming_env);
-    assert_eq!(current_env, upcoming_env);
-    assert!(*current_env == *ebpp_env);
-    assert_eq!(current_env, ebpp_env);
-    assert!(ebpp.programs_to_recompile.is_empty());
-    drop(ebpp);
+    {
+        let current_env = without_feature
+            .transaction_processor
+            .program_runtime_environment_for_epoch(0);
+        let upcoming_env = without_feature
+            .transaction_processor
+            .program_runtime_environment_for_epoch(1);
+        let ebpp = without_feature
+            .transaction_processor
+            .epoch_boundary_preparation
+            .read()
+            .unwrap();
+        assert!(*current_env == *upcoming_env);
+        assert_eq!(current_env, upcoming_env);
+        assert!(ebpp.upcoming_environment.is_none());
+        assert!(ebpp.programs_to_recompile.is_empty());
+    }
 
-    // The fork with the activation now enters the EBPP window at 17. The latch
-    // is already closed by the other fork, so it does not relatch onto its own
-    // environment and queues no recompilation, even though its feature set
-    // demands a different one.
+    // The fork with the activation now enters the EBPP window at 17. It
+    // latches EBPP with its observed upcoming environment.
     goto_end_of_slot(with_feature.clone());
     let with_feature =
         Bank::new_from_parent_with_bank_forks(&bank_forks, with_feature, SlotLeader::default(), 17);
-    let with_feature_ebpp = with_feature
-        .transaction_processor
-        .epoch_boundary_preparation
-        .read()
-        .unwrap();
-    // Same `Arc`s.
-    assert_eq!(
-        with_feature
+    let ebpp_latch_env = {
+        let current_env = without_feature
             .transaction_processor
-            .program_runtime_environment_for_epoch(0),
-        current_env,
-    );
-    assert_eq!(
-        with_feature
+            .program_runtime_environment_for_epoch(0);
+        let upcoming_env = without_feature
             .transaction_processor
-            .program_runtime_environment_for_epoch(1),
-        upcoming_env,
-    );
-    assert_eq!(
-        with_feature_ebpp.upcoming_environment.clone().unwrap(),
-        ebpp_env,
-    );
-    assert!(with_feature_ebpp.programs_to_recompile.is_empty());
-    drop(with_feature_ebpp);
+            .program_runtime_environment_for_epoch(1);
+        let ebpp = without_feature
+            .transaction_processor
+            .epoch_boundary_preparation
+            .read()
+            .unwrap();
+        let ebpp_env = ebpp.upcoming_environment.clone().unwrap();
+        assert!(*current_env != *upcoming_env);
+        assert_ne!(current_env, upcoming_env);
+        assert!(*ebpp_env == *upcoming_env);
+        assert_eq!(ebpp_env, upcoming_env);
+        // We already recompiled one program in this slot, too.
+        assert_eq!(ebpp.programs_to_recompile.len(), program_keypairs.len() - 1);
+        ebpp_env
+    };
 
     // The fork without the activation steps through the phase again at 18. It
-    // finds the same closed latch and the same empty queue.
-    // goto_end_of_slot(without_feature.clone());
+    // finds latch closed from slot 17's environment. However, since this fork
+    // still sees no change in environment, it leaves the latch alone.
     let without_feature = Bank::new_from_parent_with_bank_forks(
         &bank_forks,
         without_feature,
         SlotLeader::default(),
         18,
     );
-    let without_feature_ebpp = without_feature
-        .transaction_processor
-        .epoch_boundary_preparation
-        .read()
-        .unwrap();
-    // Same `Arc`s.
-    assert_eq!(
-        without_feature
+    let non_recompiled_programs = {
+        // If we query from EBPP, we'll see the new environment from the other
+        // fork.
+        let current_env = without_feature
             .transaction_processor
-            .program_runtime_environment_for_epoch(0),
-        current_env,
-    );
-    assert_eq!(
-        without_feature
+            .program_runtime_environment_for_epoch(0);
+        let upcoming_env = without_feature
             .transaction_processor
-            .program_runtime_environment_for_epoch(1),
-        upcoming_env,
-    );
-    assert_eq!(
-        without_feature_ebpp.upcoming_environment.clone().unwrap(),
-        ebpp_env,
-    );
-    assert!(without_feature_ebpp.programs_to_recompile.is_empty());
-    drop(without_feature_ebpp);
+            .program_runtime_environment_for_epoch(1);
+        assert!(*current_env != *upcoming_env);
+        assert_ne!(current_env, upcoming_env);
+
+        // But if we compare with this fork's feature set, we'll see it's not
+        // the same.
+        let computed_env =
+            without_feature.create_program_runtime_environment(&without_feature.feature_set);
+        assert!(*current_env == *computed_env);
+
+        // EBPP is still latched properly to the "with feature" fork's upcoming
+        // environment.
+        let ebpp = without_feature
+            .transaction_processor
+            .epoch_boundary_preparation
+            .read()
+            .unwrap();
+        let ebpp_env = ebpp.upcoming_environment.clone().unwrap();
+        assert!(*ebpp_env == *upcoming_env);
+        assert_eq!(ebpp_env, upcoming_env);
+        assert_eq!(ebpp_env, ebpp_latch_env);
+        assert!(*ebpp_env != *computed_env);
+        // This fork even picked up some work, even though it doesn't have
+        // the feature!
+        assert_eq!(ebpp.programs_to_recompile.len(), program_keypairs.len() - 2);
+
+        // Skip these in checks later, since they didn't get recompiled.
+        ebpp.programs_to_recompile.clone()
+    };
 
     // Now the fork with the activation crosses the epoch boundary and
-    // activates the feature. It
+    // activates the feature.
     goto_end_of_slot(with_feature.clone());
     let with_feature =
         Bank::new_from_parent_with_bank_forks(&bank_forks, with_feature, SlotLeader::default(), 33);
 
-    // The processor's new environment should be an updated environment
-    // computed from the new epoch's feature set. We assert this below, but we
-    // can only compare by value.
+    // The processor's new environment is now exactly equal to what EBPP was
+    // preparing for.
     let computed_env = with_feature.create_program_runtime_environment(&with_feature.feature_set);
     let new_processor_env = with_feature
         .transaction_processor
         .program_runtime_environment
         .clone();
-    assert!(*computed_env == *new_processor_env);
-    assert_ne!(computed_env, new_processor_env);
+    assert!(*new_processor_env == *computed_env);
+    assert!(*new_processor_env == *ebpp_latch_env);
+    assert_eq!(new_processor_env, ebpp_latch_env); // `Arc::ptr_eq`
 
-    // And of course, neither environment is equal to the ones we saw before.
-    assert!(*new_processor_env != *current_env);
-    assert_ne!(new_processor_env, current_env,);
-    assert!(*new_processor_env != *upcoming_env);
-    assert_ne!(new_processor_env, upcoming_env,);
+    {
+        let program_cache = with_feature
+            .transaction_processor
+            .global_program_cache
+            .write()
+            .unwrap();
+        for program_id in program_keypairs.iter().filter_map(|program_keypair| {
+            let program_id = program_keypair.pubkey();
+            non_recompiled_programs
+                .iter()
+                .all(|(key, _)| *key != program_id)
+                .then_some(program_id)
+        }) {
+            let slot_versions = program_cache.get_slot_versions_for_tests(&program_id);
+            assert_eq!(slot_versions.len(), 2);
+            assert_eq!(
+                slot_versions[1].program.get_environment().unwrap(),
+                &new_processor_env,
+            );
+        }
+    }
 }
 
-#[test_case(true)]
-#[test_case(false)]
-fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation(proper_ebpp: bool) {
+#[test]
+fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
     // TODO: This test is only required while we continue to maintain two
     // program runtime environments at the end of a feature activation window.
     // Once these are consolidated, programs in the final slot of the epoch
@@ -12137,16 +12146,8 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation(proper_ebpp: bool)
     };
 
     goto_end_of_slot(bank.clone());
-    let bank = if proper_ebpp {
-        // We want a proper EBPP setup, so activate the feature before the EBPP
-        // window opens.
-        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 12)
-    } else {
-        // We want to intentionally sabotage EBPP, mimicking one of the
-        // scenarios in the previous tests, so activate the feature after the
-        // EBPP window opens.
-        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 20)
-    };
+    // Activate the feature before the EBPP window opens.
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 12);
 
     // Submit `disable_sbpf_v0_execution` for activation at the next epoch boundary.
     let feature_account_balance =
@@ -12179,20 +12180,12 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation(proper_ebpp: bool)
             epoch_boundary_preparation.programs_to_recompile.len(),
         )
     };
-    if proper_ebpp {
-        // We should see a proper EBPP preparing for the upcoming environment.
-        assert!(*current_env != *upcoming_env);
-        assert!(*upcoming_env == *ebpp_env);
-        assert_eq!(upcoming_env, ebpp_env);
-        assert_eq!(queued, 1);
-    } else {
-        // We should see no EBPP in operation.
-        assert!(*current_env == *upcoming_env);
-        assert_eq!(current_env, upcoming_env);
-        assert!(*current_env == *ebpp_env);
-        assert_eq!(current_env, ebpp_env);
-        assert_eq!(queued, 0);
-    }
+    // We should see a proper EBPP preparing for the upcoming environment. The
+    // queue is drained, since recompilation starts in the slot EBPP latches.
+    assert!(*current_env != *upcoming_env);
+    assert!(*upcoming_env == *ebpp_env);
+    assert_eq!(upcoming_env, ebpp_env);
+    assert_eq!(queued, 0);
 
     // Advance to the last slot of the epoch.
     let last_slot_in_epoch = bank.epoch_schedule().get_last_slot_in_epoch(bank.epoch());
@@ -12211,23 +12204,11 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation(proper_ebpp: bool)
         .unwrap()
         .clone();
     assert!(*deployment_env != *current_env);
-    if proper_ebpp {
-        // EBPP predicted correctly, so the guard holds the same `Arc`.
-        assert!(*deployment_env == *ebpp_env);
-        assert_eq!(deployment_env, ebpp_env);
-    } else {
-        // EBPP was wrong, so we have a fresh `Arc` in here, but for the
-        // upcoming feature set.
-        let mut upcoming_feature_set = (*bank.feature_set).clone();
-        upcoming_feature_set.activate(&feature_set::disable_sbpf_v0_execution::id(), bank.slot());
-        let computed_env = bank.create_program_runtime_environment(&upcoming_feature_set);
-        assert!(*deployment_env == *computed_env);
-        assert!(*deployment_env != *ebpp_env);
-    }
+    assert!(*deployment_env == *ebpp_env);
+    assert_eq!(deployment_env, ebpp_env);
 
-    // Regardless of EBPP, new deployments in the final slot are always
-    // verified against the upcoming environment. Therefore, deployment of
-    // SBPFv0 should be blocked.
+    // New deployments in the final slot are always verified against the
+    // upcoming environment. Therefore, deployment of SBPFv0 should be blocked.
     assert_eq!(
         upgrade_with_sbpf_v0_elf(&bank),
         Err(TransactionError::InstructionError(
