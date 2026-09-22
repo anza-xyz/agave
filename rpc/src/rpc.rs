@@ -580,18 +580,28 @@ impl JsonRpcRequestProcessor {
         })?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Base64);
 
-        let mut accounts = Vec::with_capacity(pubkeys.len());
-        for pubkey in pubkeys {
-            let bank = Arc::clone(&bank);
-            accounts.push(
-                self.runtime
-                    .spawn_blocking(move || {
-                        get_encoded_account(&bank, &pubkey, encoding, data_slice, None)
-                    })
-                    .await
-                    .expect("rpc: get_encoded_account panicked")?,
-            );
+        if pubkeys.is_empty() {
+            return Ok(new_response(&bank, Vec::new()));
         }
+
+        // Keep account loading and encoding off the async workers without a
+        // separate blocking-pool round trip for every account in the batch.
+        let accounts = self
+            .runtime
+            .spawn_blocking({
+                let bank = Arc::clone(&bank);
+                move || -> Result<_> {
+                    let mut accounts = Vec::with_capacity(pubkeys.len());
+                    for pubkey in pubkeys {
+                        accounts.push(get_encoded_account(
+                            &bank, &pubkey, encoding, data_slice, None,
+                        )?);
+                    }
+                    Ok(accounts)
+                }
+            })
+            .await
+            .expect("rpc: get_encoded_account panicked")?;
         Ok(new_response(&bank, accounts))
     }
 
