@@ -100,12 +100,6 @@ pub fn execute(
     operation: Operation,
     config: super::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Print the built-in policy before RunArgs parsing, which loads identity
-    // material and canonicalizes the ledger directory.
-    if matches.is_present("print_default_config") {
-        print!("{}", agave_validator_config::DEFAULT_CONFIG);
-        return Ok(());
-    }
     // Debugging panics is easier with a backtrace
     if env::var_os("RUST_BACKTRACE").is_none() {
         // Safety: env update is made before any spawned threads might access the environment
