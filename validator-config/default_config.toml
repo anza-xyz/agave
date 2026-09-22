@@ -16,12 +16,12 @@
 schema_version = 1
 
 [xdp]
-# Enable XDP for every module. False uses OS sockets. `--no-xdp` forces it false
+# Enable XDP for every component. False uses OS sockets. `--no-xdp` forces it false
 # and nothing re-enables it.
 enabled = true
 
-# `primary` is a logical name referenced by each module's tx.interface.
-# Version 1 supports one interface when XDP is enabled. Every module must name
+# `primary` is a logical name referenced by each component's tx.interface.
+# Version 1 supports one interface when XDP is enabled. Every component must name
 # that declared label.
 [interfaces.primary]
 # Specify exactly one device selector. Bind the NIC carrying the default route:
@@ -50,30 +50,26 @@ workers.auto.count = 1
 #   { queue = 3, cpu = 9 },
 # ]
 
+# These settings apply to each component below.
+# tx.interface names a declared interface.
+# tx.queues is "all", or hardware queue ids in sender order, e.g. [0, 3].
+# Ids must exist in that interface's worker pool. Components may share a queue.
 [tpu.xdp]
-# Which declared interface this module transmits over.
 tx.interface = "primary"
-# "all", or hardware queue ids in sender order, e.g. [0, 3]. Ids must exist in
-# the worker pool above. Modules may share a queue.
 tx.queues = "all"
 
 [turbine.xdp]
-# Which declared interface this module transmits over.
 tx.interface = "primary"
-# "all", or hardware queue ids in sender order, e.g. [0, 3]. Ids must exist in
-# the worker pool above. Modules may share a queue.
 tx.queues = "all"
 
 [repair.xdp]
-# Which declared interface this module transmits over.
 tx.interface = "primary"
-# "all", or hardware queue ids in sender order, e.g. [0, 3]. Ids must exist in
-# the worker pool above. Modules may share a queue.
 tx.queues = "all"
 
 [gossip.xdp]
-# Which declared interface this module transmits over.
 tx.interface = "primary"
-# "all", or hardware queue ids in sender order, e.g. [0, 3]. Ids must exist in
-# the worker pool above. Modules may share a queue.
+tx.queues = "all"
+
+[votor.xdp]
+tx.interface = "primary"
 tx.queues = "all"

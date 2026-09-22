@@ -99,14 +99,14 @@ pub(super) fn build_xdp_transmit_setup(
         device: _,
         queues,
         zero_copy,
-        modules,
+        components,
     } = policy;
     let modules = XdpModules {
-        tpu: Some(modules.tpu),
-        turbine: Some(modules.turbine),
-        repair: Some(modules.repair),
-        gossip: Some(modules.gossip),
-        votor: Some((0..queues.len()).collect()),
+        tpu: Some(components.tpu),
+        turbine: Some(components.turbine),
+        repair: Some(components.repair),
+        gossip: Some(components.gossip),
+        votor: Some(components.votor),
     };
     let xdp_interface = device.name().to_string();
     let queues = queues
@@ -254,18 +254,19 @@ pub(super) fn build_xdp_config(
     if let Some(runtime) = &resolved {
         info!(
             "XDP policy: label={}, selector={:?}, device={}, source_ipv4={}, zero_copy={}, \
-             workers={:?}, module sender positions: tpu={:?}, turbine={:?}, repair={:?}, \
-             gossip={:?}",
+             workers={:?}, component sender positions: tpu={:?}, turbine={:?}, repair={:?}, \
+             gossip={:?}, votor={:?}",
             runtime.policy.interface_label,
             runtime.policy.device,
             runtime.device.name(),
             runtime.src_ip,
             runtime.policy.zero_copy,
             runtime.policy.queues,
-            runtime.policy.modules.tpu,
-            runtime.policy.modules.turbine,
-            runtime.policy.modules.repair,
-            runtime.policy.modules.gossip,
+            runtime.policy.components.tpu,
+            runtime.policy.components.turbine,
+            runtime.policy.components.repair,
+            runtime.policy.components.gossip,
+            runtime.policy.components.votor,
         );
     }
     Ok(resolved)
