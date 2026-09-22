@@ -875,6 +875,7 @@ pub fn execute(
             usize
         )
         .ok(),
+        replay_arenas: value_t!(matches, "replay_arenas", usize).ok(),
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",

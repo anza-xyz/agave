@@ -236,6 +236,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-jemalloc"
+version = "4.4.0-beta.1"
+dependencies = [
+ "log",
+ "solana-metrics",
+ "thiserror 2.0.20",
+ "tikv-jemalloc-ctl",
+ "tikv-jemalloc-sys",
+ "tikv-jemallocator",
+]
+
+[[package]]
 name = "agave-ledger-tool"
 version = "4.4.0-beta.1"
 dependencies = [
@@ -6398,6 +6410,7 @@ dependencies = [
  "agave-bls-sigverify",
  "agave-feature-set",
  "agave-fs",
+ "agave-jemalloc",
  "agave-logger",
  "agave-math-utils",
  "agave-scheduler-bindings",
@@ -9091,6 +9104,7 @@ name = "solana-unified-scheduler-pool"
 version = "4.4.0-beta.1"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-jemalloc",
  "assert_matches",
  "crossbeam-channel",
  "dashmap",
