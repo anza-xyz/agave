@@ -31,6 +31,7 @@ use {
         generated_cert_types::GeneratedCertTypes,
         rewards::RewardInput,
     },
+    agave_jemalloc::jemalloc::Arena,
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         peer_list_updater::PeerListService,
@@ -161,6 +162,7 @@ pub struct TvuConfig {
     pub bls_sigverify_threads: NonZeroUsize,
     pub turbine_xdp_sender: Option<TurbineXdpSender>,
     pub repair_xdp_sender: Option<PinnedXdpSender>,
+    pub(crate) replay_arena: Option<Arena>,
 }
 
 impl Default for TvuConfig {
@@ -177,6 +179,7 @@ impl Default for TvuConfig {
             bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             turbine_xdp_sender: None,
             repair_xdp_sender: None,
+            replay_arena: None,
         }
     }
 }
@@ -620,6 +623,7 @@ impl Tvu {
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
+            replay_arena: tvu_config.replay_arena,
         };
 
         let voting_service = VotingService::new(
