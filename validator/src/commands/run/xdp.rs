@@ -149,13 +149,14 @@ fn resolve_xdp_device(
                  is not usable: {error}; fix the name or pass --no-xdp"
             )
         }),
-        config_file::DeviceSelector::DefaultRoute => NetworkDevice::new_from_default_route()
-            .map_err(|error| {
+        config_file::DeviceSelector::Route(config_file::RouteSelector::Default) => {
+            NetworkDevice::new_from_default_route().map_err(|error| {
                 format!(
                     "failed to open the default-route device for XDP logical interface \
                      `{logical_interface}`: {error}; set device.name or pass --no-xdp"
                 )
-            }),
+            })
+        }
     }
 }
 
