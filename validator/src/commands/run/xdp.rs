@@ -15,7 +15,7 @@ use {
     solana_clap_utils::input_parsers::value_of,
     solana_core::{
         system_monitor_service::XdpNetworkConfigReport,
-        validator::{XdpModules, XdpTransmitSetup},
+        validator::{XdpComponents, XdpTransmitSetup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
@@ -101,7 +101,7 @@ pub(super) fn build_xdp_transmit_setup(
         zero_copy,
         components,
     } = policy;
-    let modules = XdpModules {
+    let components = XdpComponents {
         tpu: Some(components.tpu),
         turbine: Some(components.turbine),
         repair: Some(components.repair),
@@ -136,7 +136,7 @@ pub(super) fn build_xdp_transmit_setup(
         XdpTransmitSetup {
             transmitter_builder,
             src_ip,
-            modules,
+            components,
         },
         XdpNetworkConfigReport {
             zero_copy,

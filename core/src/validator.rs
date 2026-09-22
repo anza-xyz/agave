@@ -550,15 +550,15 @@ pub enum ValidatorStartProgress {
 pub struct XdpTransmitSetup {
     pub transmitter_builder: TransmitterBuilder,
     pub src_ip: Ipv4Addr,
-    pub modules: XdpModules,
+    pub components: XdpComponents,
 }
 
-/// Per-module XDP sender positions. `None` means the module uses OS sockets.
+/// Per-component XDP sender positions. `None` means the component uses OS sockets.
 ///
 /// Positions index into the configured queue list (`XdpConfig::queues`), not into NIC hardware
 /// queue ids.
 #[derive(Clone, Debug)]
-pub struct XdpModules {
+pub struct XdpComponents {
     pub tpu: Option<Box<[usize]>>,
     pub turbine: Option<Box<[usize]>>,
     pub repair: Option<Box<[usize]>>,
@@ -566,9 +566,9 @@ pub struct XdpModules {
     pub votor: Option<Box<[usize]>>,
 }
 
-impl XdpModules {
+impl XdpComponents {
     fn validate_sender_positions(&self, sender_count: usize) -> Result<()> {
-        for (module, positions) in [
+        for (component, positions) in [
             ("tpu", &self.tpu),
             ("turbine", &self.turbine),
             ("repair", &self.repair),
@@ -579,7 +579,9 @@ impl XdpModules {
                 continue;
             };
             if let Err(err) = XdpSender::validate_subset_positions(positions, sender_count) {
-                return Err(anyhow!("invalid XDP sender positions for {module}: {err}"));
+                return Err(anyhow!(
+                    "invalid XDP sender positions for {component}: {err}"
+                ));
             }
         }
         Ok(())
@@ -1485,7 +1487,7 @@ impl Validator {
         ) = if let Some(XdpTransmitSetup {
             transmitter_builder,
             src_ip,
-            modules,
+            components,
         }) = xdp_transmit_setup
         {
             let turbine_src_port = node.sockets.retransmit_sockets[0]
@@ -1505,12 +1507,12 @@ impl Validator {
                 .expect("gossip socket should have local address")
                 .port();
 
-            modules.validate_sender_positions(transmitter_builder.sender_count())?;
+            components.validate_sender_positions(transmitter_builder.sender_count())?;
             let (transmitter, sender) = transmitter_builder.build();
 
             (
                 Some(transmitter),
-                modules.turbine.map(|positions| {
+                components.turbine.map(|positions| {
                     PinnedXdpSender::new(
                         sender
                             .subset(&positions)
@@ -1518,7 +1520,7 @@ impl Validator {
                         SocketAddrV4::new(src_ip, turbine_src_port),
                     )
                 }),
-                modules.tpu.map(|positions| {
+                components.tpu.map(|positions| {
                     (
                         sender
                             .subset(&positions)
@@ -1526,7 +1528,7 @@ impl Validator {
                         src_ip,
                     )
                 }),
-                modules.repair.map(|positions| {
+                components.repair.map(|positions| {
                     PinnedXdpSender::new(
                         sender
                             .subset(&positions)
@@ -1534,7 +1536,7 @@ impl Validator {
                         SocketAddrV4::new(src_ip, repair_src_port),
                     )
                 }),
-                modules.gossip.map(|positions| {
+                components.gossip.map(|positions| {
                     PinnedXdpSender::new(
                         sender
                             .subset(&positions)
@@ -1542,7 +1544,7 @@ impl Validator {
                         SocketAddrV4::new(src_ip, gossip_src_port),
                     )
                 }),
-                modules.votor.map(|positions| {
+                components.votor.map(|positions| {
                     (
                         sender
                             .subset(&positions)
@@ -3251,15 +3253,15 @@ mod tests {
     };
 
     #[test]
-    fn test_xdp_modules_validate_sender_positions_with_module_context() {
-        let modules = XdpModules {
+    fn test_xdp_components_validate_sender_positions_with_component_context() {
+        let components = XdpComponents {
             tpu: Some([0].into()),
             turbine: None,
             repair: Some([1, 1].into()),
             gossip: None,
             votor: None,
         };
-        let error = modules.validate_sender_positions(2).unwrap_err();
+        let error = components.validate_sender_positions(2).unwrap_err();
         assert!(
             error.to_string().contains("repair") && error.to_string().contains("is repeated"),
             "unexpected error: {error}"
