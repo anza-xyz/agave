@@ -30,7 +30,7 @@ use {
             RpcBlockProductionRange, RpcBlockhash, RpcConfirmedTransactionStatusWithSignature,
             RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
             RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee,
-            RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
+            RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSnapshotHashes, RpcSupply,
             RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
         },
     },
@@ -279,6 +279,10 @@ impl RpcSender for MockSender {
             "getHighestSnapshotSlot" => json!(RpcSnapshotSlotInfo {
                 full: 100,
                 incremental: Some(110),
+            }),
+            "getSnapshotHashes" => json!(RpcSnapshotHashes {
+                full: (100_000, Hash::default()),
+                incremental: Some((200_000, Hash::default())),
             }),
             "getBlockHeight" => Value::Number(Number::from(1234)),
             "getSlotLeader" => Value::String(PUBKEY.to_string()),

@@ -2862,6 +2862,9 @@ pub mod rpc_minimal {
         #[rpc(meta, name = "getHighestSnapshotSlot")]
         fn get_highest_snapshot_slot(&self, meta: Self::Metadata) -> Result<RpcSnapshotSlotInfo>;
 
+        #[rpc(meta, name = "getSnapshotHashes")]
+        fn get_snapshot_hashes(&self, meta: Self::Metadata) -> Result<Option<RpcSnapshotHashes>>;
+
         #[rpc(meta, name = "getTransactionCount")]
         fn get_transaction_count(
             &self,
@@ -2987,6 +2990,20 @@ pub mod rpc_minimal {
                 full: full_snapshot_slot,
                 incremental: incremental_snapshot_slot,
             })
+        }
+
+        fn get_snapshot_hashes(&self, meta: Self::Metadata) -> Result<Option<RpcSnapshotHashes>> {
+            debug!("get_snapshot_hashes rpc request received");
+            let hashes = meta.cluster_info.get_snapshot_hashes();
+            if let Some(hashes) = hashes {
+                let highest_incremental_snapshot_hash = hashes.incremental.into_iter().max();
+                Ok(Some(RpcSnapshotHashes{
+                    full: hashes.full,
+                    incremental: highest_incremental_snapshot_hash,
+                }))
+            } else {
+                Ok(None)
+            }
         }
 
         fn get_transaction_count(
@@ -9967,5 +9984,29 @@ pub mod tests {
                 },
             ],
         );
+    }
+
+    #[test]
+    fn test_rpc_get_snapshot_hashes() {
+        let rpc = RpcHandler::start();
+        let RpcHandler {
+            ref meta, ..
+        } = rpc;
+
+        let full = (100_000, Hash::default());
+        let incremental = vec![(200_000, Hash::default())];
+
+        let _ = meta.cluster_info.push_snapshot_hashes(full, incremental);
+        meta.cluster_info.flush_push_queue();
+
+        let request = create_test_request("getSnapshotHashes", None);
+        let result: Value = parse_success_result(rpc.handle_request_sync(request));
+        let expected = {
+            json!({
+                "full": (100_000, Hash::default()),
+                "incremental": Some((200_000, Hash::default())),
+            })
+        };
+        assert_eq!(result, expected);
     }
 }

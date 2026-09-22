@@ -1084,6 +1084,11 @@ impl ClusterInfo {
             .cloned()
     }
 
+    pub fn get_snapshot_hashes(&self) -> Option<SnapshotHashes> {
+        let self_pubkey = self.id();
+        self.get_snapshot_hashes_for_node(&self_pubkey)
+    }
+
     /// Returns epoch-slots inserted since the given cursor.
     pub fn get_epoch_slots(&self, cursor: &mut Cursor) -> Vec<EpochSlots> {
         let gossip_crds = self.gossip.crds.read().unwrap();
