@@ -430,9 +430,14 @@ impl ConsensusPool {
             .unwrap_or(0)
     }
 
-    /// Checks if any block in the `slot` is finalized
+    /// Checks if any block in the `slot` received a Finalize or FinalizeFast
+    /// certificate.
+    ///
+    /// Note that this does *not* answer the question of whether `slot` is
+    /// finalized, as a slot can be finalized without getting a certificate if
+    /// it has a descendant that is finalized.
     #[cfg(test)]
-    fn is_finalized(&self, slot: Slot) -> bool {
+    fn slot_has_finalize_or_finalizefast(&self, slot: Slot) -> bool {
         self.completed_certificates
             .keys()
             .any(|cert_type| match cert_type {
@@ -490,7 +495,7 @@ impl ConsensusPool {
 
         if needs_notar_cert
             && !self.slot_has_notar_fallback_or_notar(parent_slot)
-            && !self.is_finalized(parent_slot)
+            && !self.slot_has_finalize_or_finalizefast(parent_slot)
         {
             error!("Missing notarization certificate {parent_slot}");
             return false;
@@ -1754,18 +1759,18 @@ mod tests {
         };
         ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_2]));
         assert!(ctx.pool.skip_certified(1));
-        assert!(ctx.pool.is_finalized(2));
+        assert!(ctx.pool.slot_has_finalize_or_finalizefast(2));
 
         let new_bank = Arc::new(create_bank(2, root_bank, SlotLeader::new_unique()));
         ctx.pool.maybe_prune(new_bank.slot());
         // Check that cert for 1 is gone, but cert for 2 is still there
         assert!(!ctx.pool.skip_certified(1));
-        assert!(ctx.pool.is_finalized(2));
+        assert!(ctx.pool.slot_has_finalize_or_finalizefast(2));
         let new_bank = Arc::new(create_bank(3, new_bank, SlotLeader::new_unique()));
         ctx.pool.maybe_prune(new_bank.slot());
         // Now both certs should be gone
         assert!(!ctx.pool.skip_certified(1));
-        assert!(!ctx.pool.is_finalized(2));
+        assert!(!ctx.pool.slot_has_finalize_or_finalizefast(2));
         // Send a vote on slot 1, it should be rejected
         let vote = Vote::new_skip_vote(1);
         let aggregate = new_vote_aggregate(
