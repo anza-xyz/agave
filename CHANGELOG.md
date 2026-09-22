@@ -7,13 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
-Release channels have their own copy of this changelog:
-
-* [edge - v4.4](#440-unreleased)
-* [beta - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
-* [stable - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
-
-## 4.4.0-Unreleased
+## 4.4.0
 
 ### RPC
 
