@@ -25,6 +25,7 @@ agave-cpu-utils = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-validator-config = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-transport = { workspace = true }
 agave-xdp = { workspace = true }
@@ -99,7 +100,6 @@ solana-vote-program = { workspace = true }
 symlink = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-toml = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 caps = { workspace = true }
