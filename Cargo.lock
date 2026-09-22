@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "agave-validator-config"
-version = "4.4.0-alpha.5"
+version = "4.5.0-alpha.1"
 dependencies = [
  "serde",
  "tempfile",

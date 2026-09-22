@@ -327,6 +327,7 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-snapshots",
+ "agave-validator-config",
  "agave-votor",
  "agave-votor-transport",
  "agave-xdp",
@@ -402,6 +403,13 @@ dependencies = [
  "thiserror 2.0.21",
  "tikv-jemallocator",
  "tokio",
+]
+
+[[package]]
+name = "agave-validator-config"
+version = "4.5.0-alpha.1"
+dependencies = [
+ "serde",
  "toml 1.1.6+spec-1.1.0",
 ]
 
