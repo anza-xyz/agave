@@ -195,7 +195,7 @@ fn load_xdp_policy(
     matches: &ArgMatches,
     operation: &Operation,
 ) -> Result<Option<config::EffectiveConfig>, String> {
-    let effective = config::load(matches.value_of("experimental_config_file").map(Path::new))?;
+    let effective = config::load(matches.value_of("config_file").map(Path::new))?;
     let overrides = cli_xdp_overrides(matches)?;
     if *operation == Operation::Initialize {
         info!("ledger initialization does not start XDP; skipping XDP policy validation");
@@ -221,7 +221,7 @@ pub(super) fn validate_config_file_without_xdp(
     }
     // Only report inactivity the operator can act on. The built-in policy enables
     // XDP everywhere, so warning about it unprompted would fire on every startup.
-    if matches.is_present("experimental_config_file") && config.xdp_active() {
+    if matches.is_present("config_file") && config.xdp_active() {
         warn!(
             "XDP transmit is unavailable on this platform; the configured XDP policy is valid but \
              inactive"
