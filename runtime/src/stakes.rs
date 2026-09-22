@@ -88,6 +88,7 @@ impl StakesCache {
         Self(RwLock::new(stakes))
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn stakes(&self) -> RwLockReadGuard<'_, Stakes<StakeAccount>> {
         self.0.read().unwrap()
     }
@@ -764,6 +765,7 @@ impl Stakes<StakeAccount> {
     /// elements.
     ///
     /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn stake_delegations_vec(&self) -> Vec<(&Pubkey, &StakeAccount)> {
         self.stake_delegations.iter().collect()
     }

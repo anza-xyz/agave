@@ -344,6 +344,30 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
 
     let capitalization = if has_err { 0 } else { bank.capitalization() };
 
+    let stake_delegations = if has_err {
+        Vec::new()
+    } else {
+        let stakes = bank.stakes();
+        let mut entries = stakes.stake_delegations_vec();
+        entries.sort_unstable_by_key(|(pubkey, _)| **pubkey);
+        entries
+            .into_iter()
+            .map(|(pubkey, stake_account)| {
+                let delegation = stake_account.delegation();
+                protos::StakeDelegation {
+                    stake_account: pubkey.to_bytes().to_vec(),
+                    vote_account: delegation.voter_pubkey.to_bytes().to_vec(),
+                    stake: delegation.stake,
+                    activation_epoch: delegation.activation_epoch,
+                    deactivation_epoch: delegation.deactivation_epoch,
+                    credits_observed: stake_account.stake().credits_observed,
+                    lamports: stake_account.lamports(),
+                    data_len: stake_account.data_len() as u64,
+                }
+            })
+            .collect()
+    };
+
     // Then include in the output
     ProtoBlockEffects {
         has_error: has_err,
@@ -353,6 +377,7 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
             block_cost: cost_tracker.block_cost(),
         }),
         leader_schedule: Some(leader_schedule_effects),
+        stake_delegations,
     }
 }
 

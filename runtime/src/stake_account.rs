@@ -80,6 +80,7 @@ pub enum Error {
 
 impl<T> StakeAccount<T> {
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn lamports(&self) -> u64 {
         self.account.lamports()
     }
@@ -90,6 +91,7 @@ impl<T> StakeAccount<T> {
     }
 
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn data_len(&self) -> usize {
         self.account.data().len()
     }
@@ -105,6 +107,7 @@ impl StakeAccount<Delegation> {
     }
 
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn stake(&self) -> &Stake {
         // Safe to unwrap here because StakeAccount<Delegation> will always
         // only wrap a stake-state.
