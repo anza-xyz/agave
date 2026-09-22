@@ -182,6 +182,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tikv-jemalloc-ctl",
  "tikv-jemalloc-sys",
+ "tikv-jemallocator",
 ]
 
 [[package]]

@@ -26,12 +26,10 @@ metrics = ["dep:log", "dep:solana-metrics"]
 [dependencies]
 jemalloc-ctl = { workspace = true }
 jemalloc-sys = { workspace = true }
+jemallocator = { workspace = true }
 log = { workspace = true, optional = true }
 solana-metrics = { workspace = true, optional = true }
 thiserror = { workspace = true }
-
-[dev-dependencies]
-jemallocator = { workspace = true }
 
 [lints]
 workspace = true
