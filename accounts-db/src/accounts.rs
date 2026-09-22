@@ -557,6 +557,7 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::native_loader,
         solana_signer::{Signer, signers::Signers},
+        solana_svm_transaction::svm_message::SVMMessage,
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
         std::{
@@ -767,6 +768,102 @@ mod tests {
         let results =
             accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), TEST_ACCOUNT_LOCK_LIMITS);
         assert_eq!(results[0], Err(TransactionError::AccountLoadedTwice));
+    }
+
+    #[test_case::test_case(None; "implicit_read_only")]
+    #[test_case::test_case(Some(false); "overlap_with_explicit_read")]
+    #[test_case::test_case(Some(true); "overlap_with_explicit_write")]
+    fn test_lock_accounts_implicit_programdata(explicit_writable_programdata: Option<bool>) {
+        let accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
+        let program = Pubkey::new_unique();
+        let programdata = solana_loader_v3_interface::get_program_data_address(&program);
+        let metas = match explicit_writable_programdata {
+            None => vec![AccountMeta::new_readonly(program, false)],
+            Some(false) => vec![
+                AccountMeta::new_readonly(program, false),
+                AccountMeta::new_readonly(programdata, false),
+            ],
+            Some(true) => vec![
+                AccountMeta::new_readonly(program, false),
+                AccountMeta::new(programdata, false),
+            ],
+        };
+        let transaction = sanitized_tx_from_metas(metas);
+        let reader = sanitized_tx_from_metas(vec![AccountMeta::new_readonly(programdata, false)]);
+        let writer = sanitized_tx_from_metas(vec![AccountMeta::new(programdata, false)]);
+        // Only explicit accounts count toward the limit, despite the additional implicit locks.
+        let first_result = accounts.lock_accounts(
+            iter::once(&transaction),
+            iter::once(Ok(())),
+            TransactionAccountLockLimits {
+                legacy: transaction.account_keys().len(),
+                ..TEST_ACCOUNT_LOCK_LIMITS
+            },
+        );
+        assert_eq!(first_result, vec![Ok(())]);
+        let reader_result = accounts.lock_accounts(
+            iter::once(&reader),
+            iter::once(Ok(())),
+            TransactionAccountLockLimits {
+                legacy: reader.account_keys().len(),
+                ..TEST_ACCOUNT_LOCK_LIMITS
+            },
+        );
+        assert_eq!(
+            reader_result,
+            vec![if explicit_writable_programdata == Some(true) {
+                Err(TransactionError::AccountInUse)
+            } else {
+                Ok(())
+            }]
+        );
+        let writer_result = accounts.lock_accounts(
+            iter::once(&writer),
+            iter::once(Ok(())),
+            TransactionAccountLockLimits {
+                legacy: writer.account_keys().len(),
+                ..TEST_ACCOUNT_LOCK_LIMITS
+            },
+        );
+        assert_eq!(writer_result, vec![Err(TransactionError::AccountInUse)]);
+        // Failed acquisitions must not release another transaction's locks.
+        accounts.unlock_accounts(iter::once(&writer).zip(&writer_result));
+        assert_eq!(
+            accounts.lock_accounts(
+                iter::once(&writer),
+                iter::once(Ok(())),
+                TransactionAccountLockLimits {
+                    legacy: writer.account_keys().len(),
+                    ..TEST_ACCOUNT_LOCK_LIMITS
+                }
+            ),
+            vec![Err(TransactionError::AccountInUse)]
+        );
+        accounts.unlock_accounts(iter::once(&transaction).zip(&first_result));
+        if explicit_writable_programdata != Some(true) {
+            assert_eq!(
+                accounts.lock_accounts(
+                    iter::once(&writer),
+                    iter::once(Ok(())),
+                    TransactionAccountLockLimits {
+                        legacy: writer.account_keys().len(),
+                        ..TEST_ACCOUNT_LOCK_LIMITS
+                    }
+                ),
+                vec![Err(TransactionError::AccountInUse)]
+            );
+        }
+        accounts.unlock_accounts(iter::once(&reader).zip(&reader_result));
+        let writer_result = accounts.lock_accounts(
+            iter::once(&writer),
+            iter::once(Ok(())),
+            TransactionAccountLockLimits {
+                legacy: writer.account_keys().len(),
+                ..TEST_ACCOUNT_LOCK_LIMITS
+            },
+        );
+        assert_eq!(writer_result, vec![Ok(())]);
+        accounts.unlock_accounts(iter::once(&writer).zip(&writer_result));
     }
 
     #[test]
