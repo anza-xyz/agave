@@ -107,6 +107,7 @@ rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true, features = ["rand"] }

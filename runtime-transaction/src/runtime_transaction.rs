@@ -197,3 +197,6 @@ impl<T: SVMStaticTransaction> SVMStaticTransaction for RuntimeTransaction<T> {
         self.transaction.signatures()
     }
 }
+
+#[cfg(test)]
+mod implicit_lock_tests;
