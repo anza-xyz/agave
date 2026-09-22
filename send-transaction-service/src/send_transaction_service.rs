@@ -22,7 +22,7 @@ use {
         num::Saturating,
         sync::{
             Arc, Mutex, RwLock,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle, sleep},
         time::{Duration, Instant},
@@ -71,7 +71,7 @@ pub struct TransactionInfo {
     pub last_valid_block_height: u64,
     pub durable_nonce_info: Option<(Pubkey, Hash)>,
     pub max_retries: Option<usize>,
-    retries: usize,
+    retries: AtomicUsize,
     /// Last time the transaction was sent
     last_sent_time: Option<Instant>,
 }
@@ -95,7 +95,7 @@ impl TransactionInfo {
             last_valid_block_height,
             durable_nonce_info,
             max_retries,
-            retries: 0,
+            retries: AtomicUsize::new(0),
             last_sent_time,
         }
     }
@@ -435,7 +435,7 @@ impl SendTransactionService {
                 transaction_info.get_max_retries(default_max_retries, service_max_retries);
 
             if let Some(max_retries) = max_retries
-                && transaction_info.retries >= max_retries
+                && transaction_info.retries.load(Ordering::Relaxed) >= max_retries
             {
                 info!("Dropping transaction due to max retries: {signature}");
                 result.max_retries_elapsed += 1;
@@ -457,7 +457,7 @@ impl SendTransactionService {
 
                             info!("Retrying transaction: {signature}");
                             result.retried += 1;
-                            transaction_info.retries += 1;
+                            transaction_info.retries.fetch_add(1, Ordering::Relaxed);
                         }
 
                         batched_transactions.push(*signature);
@@ -466,7 +466,7 @@ impl SendTransactionService {
                         let max_retries = transaction_info
                             .get_max_retries(default_max_retries, service_max_retries);
                         if let Some(max_retries) = max_retries
-                            && transaction_info.retries >= max_retries
+                            && transaction_info.retries.load(Ordering::Relaxed) >= max_retries
                         {
                             exceeded_retries_transactions.push(*signature);
                         }
@@ -586,7 +586,7 @@ mod test {
             last_valid_block_height: 0,
             durable_nonce_info: None,
             max_retries: None,
-            retries: 0,
+            retries: AtomicUsize::new(0),
             last_sent_time: None,
         };
 
