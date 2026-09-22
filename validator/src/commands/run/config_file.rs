@@ -25,22 +25,42 @@ enum Source {
     Cli,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum DeviceSelector {
-    DefaultRoute,
+    Route(RouteSelector),
     Name(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum RouteSelector {
+    Default,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum WorkerPolicy {
     Auto { count: usize },
     Cpus(Vec<usize>),
-    Bindings(Vec<QueueCpuBinding>),
+    Bindings(Vec<Binding>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct Binding {
+    queue: u32,
+    cpu: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(
+    rename_all = "snake_case",
+    expecting = "\"all\" or an array of non-negative 32-bit queue IDs"
+)]
 enum QueueSelection {
     All,
+    #[serde(untagged)]
     Explicit(Vec<u32>),
 }
 
@@ -158,134 +178,6 @@ pub(crate) struct RuntimeXdpConfig {
     pub modules: Modules<Box<[usize]>>,
 }
 
-impl<'de> Deserialize<'de> for DeviceSelector {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case", deny_unknown_fields)]
-        enum Device {
-            Route(String),
-            Name(String),
-        }
-
-        match Device::deserialize(deserializer)? {
-            Device::Route(route) if route == "default" => Ok(Self::DefaultRoute),
-            Device::Route(route) => Err(serde::de::Error::custom(format!(
-                "device.route must be \"default\"; found {route:?}"
-            ))),
-            Device::Name(name) => Ok(Self::Name(name)),
-        }
-    }
-}
-
-fn validate_pool_len(len: usize, field: &str) -> Result<(), String> {
-    if len == 0 || len > MAX_XDP_WORKERS {
-        return Err(format!(
-            "{field} must contain between 1 and {MAX_XDP_WORKERS} workers; found {len}"
-        ));
-    }
-    Ok(())
-}
-
-fn validate_unique_cpus(cpus: &[usize], field: &str) -> Result<(), String> {
-    let mut seen = BTreeSet::new();
-    if let Some(cpu) = cpus.iter().find(|cpu| !seen.insert(**cpu)) {
-        return Err(format!("{field} contains duplicate CPU {cpu}"));
-    }
-    Ok(())
-}
-
-impl<'de> Deserialize<'de> for WorkerPolicy {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Binding {
-            queue: u32,
-            cpu: usize,
-        }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case", deny_unknown_fields)]
-        enum Workers {
-            Auto { count: usize },
-            Cpus(Vec<usize>),
-            Bindings(Vec<Binding>),
-        }
-
-        let workers = Workers::deserialize(deserializer)?;
-        let parse = || -> Result<_, String> {
-            match workers {
-                Workers::Auto { count } => {
-                    validate_pool_len(count, "workers.auto.count")?;
-                    Ok(WorkerPolicy::Auto { count })
-                }
-                Workers::Cpus(cpus) => {
-                    validate_pool_len(cpus.len(), "workers.cpus")?;
-                    validate_unique_cpus(&cpus, "workers.cpus")?;
-                    Ok(WorkerPolicy::Cpus(cpus))
-                }
-                Workers::Bindings(raw_bindings) => {
-                    validate_pool_len(raw_bindings.len(), "workers.bindings")?;
-                    let mut queues = BTreeSet::new();
-                    let mut cpus = BTreeSet::new();
-                    let mut bindings = Vec::with_capacity(raw_bindings.len());
-                    for Binding { queue, cpu } in raw_bindings {
-                        if !queues.insert(queue) {
-                            return Err(format!(
-                                "workers.bindings contains duplicate queue {queue}"
-                            ));
-                        }
-                        if !cpus.insert(cpu) {
-                            return Err(format!("workers.bindings contains duplicate CPU {cpu}"));
-                        }
-                        bindings.push(QueueCpuBinding { queue, cpu });
-                    }
-                    Ok(WorkerPolicy::Bindings(bindings))
-                }
-            }
-        };
-        parse().map_err(serde::de::Error::custom)
-    }
-}
-
-impl<'de> Deserialize<'de> for QueueSelection {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = toml::Value::deserialize(deserializer)?;
-        let parse = || -> Result<_, String> {
-            let toml::Value::Array(values) = value else {
-                return match value {
-                    toml::Value::String(keyword) if keyword == "all" => Ok(Self::All),
-                    toml::Value::String(keyword) => Err(format!(
-                        "tx.queues accepts only \"all\" or a non-empty integer array; found \
-                         {keyword:?}"
-                    )),
-                    other => Err(format!(
-                        "tx.queues accepts only \"all\" or a non-empty integer array; found {}",
-                        other.type_str()
-                    )),
-                };
-            };
-            if values.is_empty() {
-                return Err("tx.queues must not be an empty queue list".to_string());
-            }
-            if values.len() > MAX_XDP_WORKERS {
-                return Err(format!(
-                    "tx.queues exceeds MAX_XDP_WORKERS ({MAX_XDP_WORKERS})"
-                ));
-            }
-            let queues: Vec<u32> = toml::Value::Array(values)
-                .try_into()
-                .map_err(|error| format!("tx.queues: {error}"))?;
-            let mut seen = BTreeSet::new();
-            for queue in &queues {
-                if !seen.insert(*queue) {
-                    return Err(format!("tx.queues contains duplicate queue {queue}"));
-                }
-            }
-            Ok(Self::Explicit(queues))
-        };
-        parse().map_err(serde::de::Error::custom)
-    }
-}
-
 fn parse_toml(text: &str, description: &str) -> Result<toml::Value, String> {
     let value: toml::Value = toml::from_str(text)
         .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
@@ -310,12 +202,6 @@ fn parse_toml(text: &str, description: &str) -> Result<toml::Value, String> {
         ));
     }
     Ok(value)
-}
-
-fn decode_config(value: toml::Value, description: &str) -> Result<EffectiveConfig, String> {
-    value
-        .try_into()
-        .map_err(|error| format!("invalid config file `{description}`: {error}"))
 }
 
 fn merge_value(base: &mut toml::Value, user: toml::Value, path: &mut Vec<String>) {
@@ -385,7 +271,73 @@ fn mark_user_sources(config: &mut EffectiveConfig, user: &toml::Value) {
     }
 }
 
-fn validate_structural(config: &EffectiveConfig) -> Result<(), String> {
+fn validate_pool_len(len: usize, field: &str) -> Result<(), String> {
+    if len == 0 || len > MAX_XDP_WORKERS {
+        return Err(format!(
+            "{field} must contain between 1 and {MAX_XDP_WORKERS} workers; found {len}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_unique_cpus(cpus: &[usize], field: &str) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    if let Some(cpu) = cpus.iter().find(|cpu| !seen.insert(**cpu)) {
+        return Err(format!("{field} contains duplicate CPU {cpu}"));
+    }
+    Ok(())
+}
+
+impl WorkerPolicy {
+    fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Auto { count } => validate_pool_len(*count, "workers.auto.count"),
+            Self::Cpus(cpus) => {
+                validate_pool_len(cpus.len(), "workers.cpus")?;
+                validate_unique_cpus(cpus, "workers.cpus")
+            }
+            Self::Bindings(bindings) => {
+                validate_pool_len(bindings.len(), "workers.bindings")?;
+                let mut queues = BTreeSet::new();
+                let mut cpus = BTreeSet::new();
+                for Binding { queue, cpu } in bindings {
+                    if !queues.insert(queue) {
+                        return Err(format!("workers.bindings contains duplicate queue {queue}"));
+                    }
+                    if !cpus.insert(cpu) {
+                        return Err(format!("workers.bindings contains duplicate CPU {cpu}"));
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl QueueSelection {
+    fn validate(&self) -> Result<(), String> {
+        let Self::Explicit(queues) = self else {
+            return Ok(());
+        };
+        if queues.is_empty() {
+            return Err("tx.queues must not be an empty queue list".to_string());
+        }
+        if queues.len() > MAX_XDP_WORKERS {
+            return Err(format!(
+                "tx.queues exceeds MAX_XDP_WORKERS ({MAX_XDP_WORKERS})"
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        for queue in queues {
+            if !seen.insert(*queue) {
+                return Err(format!("tx.queues contains duplicate queue {queue}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_interface_bindings(config: &EffectiveConfig) -> Result<(), String> {
     let invalid: Vec<_> = config
         .interfaces
         .iter()
@@ -407,25 +359,49 @@ fn validate_structural(config: &EffectiveConfig) -> Result<(), String> {
     }
 }
 
-pub(crate) fn load(user_path: Option<&Path>) -> Result<EffectiveConfig, String> {
-    let mut built_in = parse_toml(DEFAULT_CONFIG, "<built-in>")?;
-    let base = decode_config(built_in.clone(), "<built-in>")?;
-    validate_structural(&base)?;
-    match user_path {
-        None => Ok(base),
-        Some(path) => {
-            let text = std::fs::read_to_string(path).map_err(|error| {
-                format!("failed to read config file `{}`: {error}", path.display())
-            })?;
-            let description = path.display().to_string();
-            let user = parse_toml(&text, &description)?;
-            merge_value(&mut built_in, user.clone(), &mut Vec::new());
-            let mut config = decode_config(built_in, &description)?;
-            mark_user_sources(&mut config, &user);
-            validate_structural(&config)?;
-            Ok(config)
-        }
+// File constraints apply before CLI overrides, even when XDP is disabled.
+fn validate_file(config: &EffectiveConfig) -> Result<(), String> {
+    for (label, interface) in &config.interfaces {
+        interface
+            .xdp
+            .workers
+            .validate()
+            .map_err(|error| format!("{}.xdp.workers: {error}", interface_path(label)))?;
     }
+    for (name, module) in config.named_modules() {
+        module
+            .tx
+            .queues
+            .validate()
+            .map_err(|error| format!("{name}.xdp.tx.queues: {error}"))?;
+    }
+    validate_interface_bindings(config)
+}
+
+pub(crate) fn load(user_path: Option<&Path>) -> Result<EffectiveConfig, String> {
+    let mut merged = parse_toml(DEFAULT_CONFIG, "<built-in>")?;
+    let description = user_path.map_or_else(
+        || "<built-in>".to_string(),
+        |path| path.display().to_string(),
+    );
+    let user = if let Some(path) = user_path {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("failed to read config file `{description}`: {error}"))?;
+        let user = parse_toml(&text, &description)?;
+        merge_value(&mut merged, user.clone(), &mut Vec::new());
+        Some(user)
+    } else {
+        None
+    };
+    let mut config: EffectiveConfig = merged
+        .try_into()
+        .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
+    validate_file(&config)
+        .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
+    if let Some(user) = user {
+        mark_user_sources(&mut config, &user);
+    }
+    Ok(config)
 }
 
 pub(crate) fn apply_cli(
@@ -842,7 +818,10 @@ workers = {workers}
         assert!(config.xdp.enabled);
         assert_eq!(config.interfaces.len(), 1);
         let interface = &config.interfaces["primary"];
-        assert_eq!(interface.device, DeviceSelector::DefaultRoute);
+        assert_eq!(
+            interface.device,
+            DeviceSelector::Route(RouteSelector::Default)
+        );
         assert_eq!(interface.xdp.workers, WorkerPolicy::Auto { count: 1 });
         let allowed = BTreeSet::from([1, 3, 5]);
         let (runtime, warnings) = resolve_runtime(&config, &allowed, Some(5)).unwrap();
@@ -885,52 +864,27 @@ workers.cpus = [8, 9]
     #[test]
     fn test_invalid_selectors_are_rejected_after_merge() {
         for label in ["primary", "fast"] {
-            for (contents, field, expected) in [
+            for (field, value, expected) in [
                 (
-                    format!(
-                        r#"
-schema_version = 1
-[interfaces.{label}]
-device = {{ route = "default", name = "eth0" }}
-"#
-                    ),
                     "device",
+                    r#"{ route = "default", name = "eth0" }"#,
                     "more than 1 element",
                 ),
+                ("device", r#"{ route = "other" }"#, "expected `default`"),
+                ("device", "{}", "found 0 elements"),
                 (
-                    format!(
-                        r#"
-schema_version = 1
-[interfaces.{label}]
-device.route = "other"
-"#
-                    ),
-                    "device",
-                    "device.route must be \"default\"",
-                ),
-                (
-                    format!(
-                        r#"
-schema_version = 1
-[interfaces.{label}]
-device = {{}}
-"#
-                    ),
-                    "device",
-                    "found 0 elements",
-                ),
-                (
-                    format!(
-                        r#"
-schema_version = 1
-[interfaces.{label}.xdp]
-workers = {{ auto = {{ count = 1 }}, cpus = [8] }}
-"#
-                    ),
                     "xdp.workers",
+                    "{ auto = { count = 1 }, cpus = [8] }",
                     "more than 1 element",
                 ),
             ] {
+                let contents = format!(
+                    r#"
+schema_version = 1
+[interfaces.{label}]
+{field} = {value}
+"#
+                );
                 let error = load_config(&contents).unwrap_err();
                 assert!(error.contains(expected), "{contents}: {error}");
                 assert!(
@@ -1058,11 +1012,11 @@ tx.queues = [1]
                 ("cpus", toml::toml! { cpus = (cpus) }),
                 ("bindings", toml::toml! { bindings = (bindings) }),
             ] {
-                let result = policy.try_into::<WorkerPolicy>();
+                let result = policy.try_into::<WorkerPolicy>().unwrap().validate();
                 if should_succeed {
                     result.unwrap_or_else(|error| panic!("{field}/{count}: {error}"));
                 } else {
-                    let error = result.unwrap_err().to_string();
+                    let error = result.unwrap_err();
                     let expected = format!(
                         "workers.{field} must contain between 1 and {MAX_XDP_WORKERS} workers; \
                          found {count}"
@@ -1390,7 +1344,11 @@ zero_copy = {value}
             let interface = &application.config.interfaces["primary"];
             assert_eq!(interface.xdp.zero_copy, expected_value, "{case}");
             assert_eq!(interface.xdp.zero_copy_source, expected_source, "{case}");
-            assert_eq!(interface.device, DeviceSelector::DefaultRoute, "{case}");
+            assert_eq!(
+                interface.device,
+                DeviceSelector::Route(RouteSelector::Default),
+                "{case}"
+            );
             assert_eq!(
                 interface.xdp.workers,
                 WorkerPolicy::Auto { count: 1 },
@@ -1628,29 +1586,42 @@ gossip.xdp.tx.queues = [0]
 
     #[test]
     fn test_invalid_queue_selections_are_rejected() {
+        let syntax_error = "non-negative 32-bit queue IDs";
         let too_many: Vec<_> = (0..=MAX_XDP_WORKERS).collect();
         for (queues, expected) in [
-            ("true", "accepts only \"all\" or a non-empty integer array"),
-            ("\"other\"", "found \"other\""),
+            ("true", syntax_error),
+            ("\"other\"", syntax_error),
             ("[]", "tx.queues must not be an empty queue list"),
             ("[3, 3]", "tx.queues contains duplicate queue 3"),
-            ("[-1]", "tx.queues: invalid value"),
-            ("[4294967296]", "tx.queues: invalid value"),
-            ("[\"zero\"]", "tx.queues: invalid type"),
+            ("[-1]", syntax_error),
+            ("[4294967296]", syntax_error),
+            ("[\"zero\"]", syntax_error),
             (
                 &format!("{too_many:?}"),
                 "tx.queues exceeds MAX_XDP_WORKERS",
             ),
         ] {
-            let error = load_config(&format!(
-                r#"
+            for module in ["tpu", "turbine", "repair", "gossip"] {
+                for enabled in [true, false] {
+                    let error = load_config(&format!(
+                        r#"
 schema_version = 1
-[tpu.xdp]
+xdp.enabled = {enabled}
+[{module}.xdp]
 tx.queues = {queues}
 "#
-            ))
-            .unwrap_err();
-            assert!(error.contains(expected), "{queues}: {error}");
+                    ))
+                    .unwrap_err();
+                    assert!(
+                        error.contains(expected),
+                        "{module}, XDP enabled={enabled}, queues={queues}: {error}"
+                    );
+                    assert!(
+                        error.contains(&format!("{module}.xdp.tx.queues")),
+                        "{error}"
+                    );
+                }
+            }
         }
     }
 }
