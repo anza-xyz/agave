@@ -325,7 +325,7 @@ impl<'a> SnapshotMinimizer<'a> {
                 StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
 
             self.accounts_db()
-                .store_accounts_for_shrink(storable_accounts, new_storage);
+                .store_accounts_for_shrink(&storable_accounts, new_storage);
 
             new_storage.flush().unwrap();
         }

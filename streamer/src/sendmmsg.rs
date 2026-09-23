@@ -272,16 +272,18 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use {crate::sendmmsg::SendPktsError, std::net::UdpSocket};
     use {
         crate::{
             packet::{BytesPacketBatch, Packet},
             recvmmsg::{PacketBufferPool, recv_mmsg},
-            sendmmsg::{SendPktsError, batch_send, multi_target_send},
+            sendmmsg::{batch_send, multi_target_send},
         },
         assert_matches::assert_matches,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_packet::PACKET_DATA_SIZE,
-        std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+        std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     };
 
     #[test]

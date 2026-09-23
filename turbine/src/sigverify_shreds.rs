@@ -603,7 +603,7 @@ mod tests {
             shred::{Nonce, ProcessShredsStats, ReedSolomonCache, Shredder},
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{Packet, PacketFlags, RecycledPacketBatch},
+        solana_perf::packet::{BytesPacketBatch, PacketFlags},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -620,11 +620,6 @@ mod tests {
         );
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let bank_forks = BankForks::new_rw_arc(bank);
-        let batch_size = 2;
-        let mut batch = RecycledPacketBatch::with_capacity(batch_size);
-        batch.resize(batch_size, Packet::default());
-        let mut batches = vec![batch];
-
         let entries = create_ticks(1, 1, Hash::new_unique());
         let shredder = Shredder::new(1, 0, 1, 0).unwrap();
         let (shreds_data, _shreds_code) = shredder.entries_to_merkle_shreds_for_tests(
@@ -648,13 +643,11 @@ mod tests {
             &mut ProcessShredsStats::default(),
         );
 
-        let shred = shreds_data[0].clone();
-        batches[0][0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batches[0][0].meta_mut().size = shred.payload().len();
-
-        let shred = shreds_data_wrong[0].clone();
-        batches[0][1].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batches[0][1].meta_mut().size = shred.payload().len();
+        let batch = BytesPacketBatch::from(vec![
+            shreds_data[0].payload().to_bytes_packet(None),
+            shreds_data_wrong[0].payload().to_bytes_packet(None),
+        ]);
+        let batches = vec![batch];
 
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
