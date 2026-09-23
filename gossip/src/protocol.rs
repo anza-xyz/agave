@@ -53,7 +53,7 @@ const MAX_CRDS_VALUES_PER_PACKET: usize =
 // Bound it to the largest CRDS value vector that can fit in one gossip packet.
 const GOSSIP_PROTOCOL_PREALLOC_LIMIT: usize =
     MAX_CRDS_VALUES_PER_PACKET * std::mem::size_of::<CrdsValue>();
-type GossipProtocolWincodeConfig =
+pub(crate) type GossipProtocolWincodeConfig =
     wincode::config::Configuration<true, GOSSIP_PROTOCOL_PREALLOC_LIMIT>;
 
 /// Gossip protocol messages base enum
