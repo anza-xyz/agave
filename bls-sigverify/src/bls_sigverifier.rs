@@ -35,11 +35,12 @@ use {
     solana_measure::measure_us,
     solana_perf::packet::packet_config,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyToRankMap},
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
     std::{
         cmp,
-        collections::{HashMap, HashSet, hash_map::Entry},
+        collections::{HashMap, HashSet},
+        num::Saturating,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -293,6 +294,7 @@ impl SigVerifier {
 
         let vote_stats = votes_result?;
         let cert_stats = certs_result?;
+        self.vote_pool.update_verified(votes_buffer);
 
         self.stats.vote_stats.merge(vote_stats);
         self.stats.cert_stats.merge(cert_stats);
@@ -479,81 +481,51 @@ impl SigVerifier {
             cmp::Ordering::Greater => (),
         }
 
-        let vote_payload_to_sign =
-            VotePayloadToSign::new_from_vote(unverified_vote.vote, unverified_vote.shred_version);
-        match votes.entry(vote_payload_to_sign) {
-            Entry::Vacant(e) => {
-                let vote_slot = unverified_vote.vote.slot();
-                let vote_epoch = root_bank.epoch_schedule().get_epoch(vote_slot);
-                let Some(rank_map) = self.rank_map_cache.get_rank_map(root_bank, vote_epoch) else {
-                    self.stats.discard_vote_no_epoch_stakes += 1;
-                    self.stats.num_keep_vote_failed += 1;
-                    return;
-                };
-                match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
-                    Some((payload, sender_vote_account_pubkey)) => {
-                        let batch = Batch::new(
-                            vote_payload_to_sign,
-                            payload,
-                            sender_vote_account_pubkey,
-                            rank_map,
-                        );
-                        e.insert(batch);
-                    }
-                    None => {
-                        self.stats.num_keep_vote_failed += 1;
-                    }
-                }
-            }
-            Entry::Occupied(mut e) => {
-                let batch = e.get_mut();
-                match self.keep_vote(batch.rank_map(), unverified_vote, sender_identity_pubkey) {
-                    Some((payload, sender_vote_account_pubkey)) => {
-                        batch.push(payload, sender_vote_account_pubkey);
-                    }
-                    None => {
-                        self.stats.num_keep_vote_failed += 1;
-                    }
-                }
-            }
-        }
-    }
+        let vote_epoch = root_bank
+            .epoch_schedule()
+            .get_epoch(unverified_vote.vote.slot());
+        let Some(rank_map) = self.rank_map_cache.get_rank_map(root_bank, vote_epoch) else {
+            self.stats.discard_vote_no_epoch_stakes += 1;
+            return;
+        };
+        let Some((rank, rank_map_entry)) =
+            rank_map.get_ranked_entry_for_node(&sender_identity_pubkey)
+        else {
+            self.stats.discard_vote_invalid_rank += 1;
+            return;
+        };
+        let unverified_payload = UnverifiedVotePayload {
+            vote_message: unverified_vote,
+            sender_bls_pubkey: rank_map_entry.bls_pubkey,
+            sender_identity_pubkey,
+            sender_vote_account_pubkey: rank_map_entry.vote_account_pubkey,
+            stake: rank_map_entry.stake,
+            rank,
+        };
+        let my_stake = rank_map
+            .get_ranked_entry_for_node(my_pubkey)
+            .map_or(0, |(_, entry)| entry.stake.get());
+        let my_stake = Saturating(my_stake);
 
-    /// If this vote should be verified, then returns the [`UnverifiedVotePayload`].
-    fn keep_vote(
-        &mut self,
-        rank_map: &BLSPubkeyToRankMap,
-        msg: UnverifiedVoteMessage,
-        sender_identity_pubkey: Pubkey,
-    ) -> Option<(UnverifiedVotePayload, Pubkey)> {
-        let (rank, entry) = rank_map
-            .get_ranked_entry_for_node(&sender_identity_pubkey)
-            .or_else(|| {
-                self.stats.discard_vote_invalid_rank += 1;
-                None
-            })?;
-        match self.vote_pool.try_add_vote(&msg, rank, rank_map.len()) {
-            Ok(()) => Some((
-                UnverifiedVotePayload {
-                    vote_message: msg,
-                    sender_bls_pubkey: entry.bls_pubkey,
-                    sender_identity_pubkey,
-                    stake: entry.stake,
-                    rank,
-                },
-                entry.vote_account_pubkey,
-            )),
-            Err(VotePoolError::Duplicate) => {
+        match self.vote_pool.add_vote(
+            my_pubkey,
+            root_bank,
+            &self.leader_schedule,
+            &rank_map,
+            votes,
+            my_stake,
+            unverified_payload,
+        ) {
+            Ok(()) => (),
+            Err(VotePoolError::DuplicateVote) => {
                 self.stats.vote_pool_duplicate += 1;
-                None
             }
-            Err(VotePoolError::Invalid) => {
+            Err(VotePoolError::InvalidVote(sender_identity_pubkey)) => {
                 self.stats.invalid_vote_banning_validator += 1;
                 self.ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
                 info!(
                     "bls_sigverifier: banned sender={sender_identity_pubkey} due to invalid vote"
                 );
-                None
             }
         }
     }
@@ -1163,21 +1135,27 @@ mod tests {
         // Close the pool receiver to simulate a disconnected channel.
         drop(ctx.pool_receiver);
 
-        let rank = 0;
-        let msg = ConsensusMessage::Vote(create_signed_vote_message(
-            &ctx.verifier.sharable_banks.root(),
-            &ctx.validator_keypairs,
-            ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_finalization_vote(5),
-            rank,
-        ));
-        let messages = [(msg, ctx.validator_keypairs[rank].node_keypair.pubkey())];
+        // Reach the finalize threshold so delivery exercises the disconnected channel.
+        let bank = ctx.verifier.sharable_banks.root();
+        let shred_version = ctx.verifier.cluster_info.my_shred_version();
+        let messages: Vec<_> = ctx
+            .validator_keypairs
+            .iter()
+            .enumerate()
+            .map(|(rank, keypairs)| {
+                let msg = create_signed_vote_message(
+                    &bank,
+                    &ctx.validator_keypairs,
+                    shred_version,
+                    Vote::new_finalization_vote(5),
+                    rank,
+                );
+                (ConsensusMessage::Vote(msg), keypairs.node_keypair.pubkey())
+            })
+            .collect();
         let result = ctx
             .verifier
-            .verify_and_send_datagrams(messages_to_datagrams(
-                &messages,
-                ctx.verifier.cluster_info.my_shred_version(),
-            ));
+            .verify_and_send_datagrams(messages_to_datagrams(&messages, shred_version));
         assert!(result.is_err());
     }
 

@@ -16,7 +16,7 @@ use {
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::sync::Arc,
+    std::{num::NonZero, sync::Arc},
 };
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -24,6 +24,7 @@ pub(crate) struct VerifiedBatch {
     vote: Vote,
     aggregates: Vec<VoteAggregate>,
     sender_vote_account_pubkeys: Vec<Pubkey>,
+    verified_stake: NonZero<u64>,
 }
 
 impl VerifiedBatch {
@@ -31,12 +32,18 @@ impl VerifiedBatch {
         vote: Vote,
         aggregates: Vec<VoteAggregate>,
         sender_vote_account_pubkeys: Vec<Pubkey>,
+        verified_stake: NonZero<u64>,
     ) -> Self {
         Self {
             vote,
             aggregates,
             sender_vote_account_pubkeys,
+            verified_stake,
         }
+    }
+
+    pub(crate) fn verified_stake(&self) -> NonZero<u64> {
+        self.verified_stake
     }
 
     pub(crate) fn len(&self) -> usize {

@@ -11,41 +11,37 @@ use {
     rayon::ThreadPool,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, epoch_stakes::BLSPubkeyToRankMap},
-    std::sync::Arc,
+    solana_runtime::bank::Bank,
 };
 
 pub(crate) struct Batch {
     batch_state: BatchState,
-    rank_map: Arc<BLSPubkeyToRankMap>,
 }
 
 impl Batch {
     pub(crate) fn new(
         vote_payload_to_sign: VotePayloadToSign,
-        payload: UnverifiedVotePayload,
-        sender_vote_account_pubkey: Pubkey,
-        rank_map: Arc<BLSPubkeyToRankMap>,
+        batch: Vec<UnverifiedVotePayload>,
+        sender_vote_account_pubkeys: Vec<Pubkey>,
+        max_validators: usize,
     ) -> Self {
-        let unverified_batch =
-            UnverifiedBatch::new(vote_payload_to_sign, payload, sender_vote_account_pubkey);
+        let unverified_batch = UnverifiedBatch::new(
+            vote_payload_to_sign,
+            batch,
+            sender_vote_account_pubkeys,
+            max_validators,
+        );
         let batch_state = BatchState::Unverified(unverified_batch);
-        Self {
-            batch_state,
-            rank_map,
-        }
+        Self { batch_state }
     }
 
-    pub(crate) fn rank_map(&self) -> &BLSPubkeyToRankMap {
-        &self.rank_map
-    }
-
-    pub(crate) fn push(
+    pub(crate) fn push_list(
         &mut self,
-        payload: UnverifiedVotePayload,
-        sender_vote_account_pubkey: Pubkey,
+        payloads: Vec<UnverifiedVotePayload>,
+        sender_vote_account_pubkeys: Vec<Pubkey>,
     ) {
-        self.batch_state.push(payload, sender_vote_account_pubkey)
+        self.batch_state
+            .push_list(payloads, sender_vote_account_pubkeys);
     }
 
     #[must_use]
@@ -54,12 +50,11 @@ impl Batch {
         ban_sender: &BanSender,
         thread_pool: &ThreadPool,
     ) -> (usize, VoteVerificationStats) {
-        self.batch_state
-            .verify(self.rank_map.len(), ban_sender, thread_pool)
+        self.batch_state.verify(ban_sender, thread_pool)
     }
 
     pub(super) fn process(
-        self,
+        &mut self,
         root_bank: &Bank,
         leader_schedule: &LeaderScheduleCache,
         my_pubkey: &Pubkey,
@@ -74,6 +69,10 @@ impl Batch {
             sender_stats,
         )
     }
+
+    pub(crate) fn verified_stake(self) -> u64 {
+        self.batch_state.verified_stake()
+    }
 }
 
 /// To avoid having to allocate memory for `VerifiedBatch`, this enum exists to reuse the memory
@@ -81,37 +80,42 @@ impl Batch {
 enum BatchState {
     Unverified(UnverifiedBatch),
     Verified(Option<VerifiedBatch>),
+    Processed { verified_stake: u64 },
 }
 
 impl BatchState {
-    fn push(&mut self, payload: UnverifiedVotePayload, sender_vote_account_pubkey: Pubkey) {
-        match self {
-            Self::Unverified(b) => b.push(payload, sender_vote_account_pubkey),
-            Self::Verified(_) => unreachable!("Invalid state"),
-        }
-    }
-
     #[must_use]
     fn verify(
         &mut self,
-        max_validators: usize,
         ban_sender: &BanSender,
         thread_pool: &ThreadPool,
     ) -> (usize, VoteVerificationStats) {
         match self {
             Self::Unverified(unverified_batch) => {
                 let num_votes_to_sigverify = unverified_batch.len();
-                let (verified_batch, stats) =
-                    unverified_batch.verify(max_validators, ban_sender, thread_pool);
+                let (verified_batch, stats) = unverified_batch.verify(ban_sender, thread_pool);
                 *self = Self::Verified(verified_batch);
                 (num_votes_to_sigverify, stats)
             }
-            Self::Verified(_) => unreachable!("Invalid state"),
+            Self::Verified(_) | Self::Processed { .. } => unreachable!("Invalid state"),
+        }
+    }
+
+    fn push_list(
+        &mut self,
+        payloads: Vec<UnverifiedVotePayload>,
+        sender_vote_account_pubkeys: Vec<Pubkey>,
+    ) {
+        match self {
+            Self::Unverified(unverified_batch) => {
+                unverified_batch.push_list(payloads, sender_vote_account_pubkeys);
+            }
+            Self::Verified(_) | Self::Processed { .. } => unreachable!("Invalid state"),
         }
     }
 
     fn process(
-        self,
+        &mut self,
         root_bank: &Bank,
         leader_schedule: &LeaderScheduleCache,
         my_pubkey: &Pubkey,
@@ -120,18 +124,34 @@ impl BatchState {
     ) -> Result<(), SigVerifyVoteError> {
         match self {
             Self::Verified(batch) => {
-                if let Some(batch) = batch {
-                    batch.process_and_send(
-                        root_bank,
-                        leader_schedule,
-                        my_pubkey,
-                        channels,
-                        sender_stats,
-                    )?;
+                match batch.take() {
+                    None => {
+                        *self = Self::Processed { verified_stake: 0 };
+                    }
+                    Some(batch) => {
+                        let verified_stake = batch.verified_stake();
+                        batch.process_and_send(
+                            root_bank,
+                            leader_schedule,
+                            my_pubkey,
+                            channels,
+                            sender_stats,
+                        )?;
+                        *self = Self::Processed {
+                            verified_stake: verified_stake.get(),
+                        };
+                    }
                 }
                 Ok(())
             }
-            Self::Unverified(_) => unreachable!("Invalid state"),
+            Self::Unverified(_) | Self::Processed { .. } => unreachable!("Invalid state"),
+        }
+    }
+
+    fn verified_stake(self) -> u64 {
+        match self {
+            Self::Processed { verified_stake } => verified_stake,
+            Self::Unverified(_) | Self::Verified(_) => unreachable!("Invalid state"),
         }
     }
 }

@@ -67,7 +67,7 @@ pub(super) fn verify_and_send_votes(
     stats.votes_to_sig_verify += votes_to_verify;
     stats.vote_verification_stats.merge(vote_verification_stats);
     let mut sender_stats = VoteSenderStats::default();
-    for (_, batch) in unverified_votes.drain() {
+    for batch in unverified_votes.values_mut() {
         batch.process(
             root_bank,
             leader_schedule,
