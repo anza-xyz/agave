@@ -79,7 +79,7 @@ impl RpcClientConfig {
 
 /// Trait used to add support for versioned messages to RPC APIs while
 /// retaining backwards compatibility
-#[deprecated(since = "4.4.0", note = "Use VersionedMessage instead")]
+#[deprecated(since = "4.5.0", note = "Use VersionedMessage instead")]
 pub trait SerializableMessage {
     fn serialize(&self) -> Vec<u8>;
 }
@@ -4300,7 +4300,7 @@ impl RpcClient {
     /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
     ///
     /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
-    #[deprecated(since = "4.4.0", note = "Use get_fee_for_versioned_message instead")]
+    #[deprecated(since = "4.5.0", note = "Use get_fee_for_versioned_message instead")]
     #[allow(deprecated)]
     pub fn get_fee_for_message(&self, message: &impl SerializableMessage) -> ClientResult<u64> {
         self.invoke((self.rpc_client.as_ref()).get_fee_for_message(message))

@@ -5058,7 +5058,7 @@ impl RpcClient {
     /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
     ///
     /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
-    #[deprecated(since = "4.4.0", note = "Use get_fee_for_versioned_message instead")]
+    #[deprecated(since = "4.5.0", note = "Use get_fee_for_versioned_message instead")]
     #[allow(deprecated)]
     pub async fn get_fee_for_message(
         &self,
