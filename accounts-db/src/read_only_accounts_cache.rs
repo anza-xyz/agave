@@ -91,7 +91,6 @@ pub(crate) struct ReadOnlyAccountsCache {
 
     // Performance statistics
     stats: Arc<AtomicReadOnlyCacheStats>,
-    highest_slot_stored: AtomicU64,
 
     /// Timer for generating timestamps for entries.
     timer: Instant,
@@ -143,7 +142,6 @@ impl ReadOnlyAccountsCache {
         );
 
         Self {
-            highest_slot_stored: AtomicU64::default(),
             _max_data_size_lo: max_data_size_lo,
             _max_data_size_hi: max_data_size_hi,
             cache,
@@ -199,7 +197,6 @@ impl ReadOnlyAccountsCache {
         timestamp: u64,
     ) {
         let measure_store = Measure::start("");
-        self.highest_slot_stored.fetch_max(slot, Ordering::Release);
         let new_account_size = Self::account_size(&account);
         let old_account_size;
         match self.cache.entry(pubkey) {
