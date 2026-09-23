@@ -4,11 +4,11 @@ use {
     crate::block_creation_loop::rewards::certs_builder::entry::{
         PartialCert, partial_cert::BuildResult,
     },
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor::aggregate_accumulator::AggregateAccumulatorError,
     agave_votor_messages::{
         consensus_message::VoteMessage,
         reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
-        sig_verified_messages::VoteAggregate,
     },
     solana_clock::Slot,
     solana_hash::Hash,

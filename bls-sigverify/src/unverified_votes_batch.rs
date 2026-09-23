@@ -4,11 +4,12 @@ use qualifier_attr::qualifiers;
 use std::collections::HashSet;
 use {
     crate::{
-        bls_sigverifier::BAN_TIMEOUT, stats::VoteVerificationStats, verified_batch::VerifiedBatch,
+        bls_sigverifier::BAN_TIMEOUT, sig_verified_messages::VoteAggregate,
+        stats::VoteVerificationStats, verified_batch::VerifiedBatch,
     },
     agave_votor_messages::{
-        consensus_message::VoteMessage, sig_verified_messages::VoteAggregate,
-        unverified_vote_message::UnverifiedVoteMessage, vote::Vote, wire::VotePayloadToSign,
+        consensus_message::VoteMessage, unverified_vote_message::UnverifiedVoteMessage, vote::Vote,
+        wire::VotePayloadToSign,
     },
     agave_votor_transport::endpoint::BanSender,
     log::info,

@@ -7,6 +7,7 @@ use {
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
         rewards::{RewardInput, rewards_wants_vote},
+        sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
         unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
         vote_pool::{VotePool, VotePoolError},
@@ -17,7 +18,6 @@ use {
         consensus_message::Block,
         metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
-        sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
         },
@@ -595,6 +595,7 @@ fn recv_inputs(
 mod tests {
     use {
         super::*,
+        crate::sig_verified_messages::VoteAggregate,
         agave_bls_cert_verify::cert_verify::{
             test_create_base2_certificate, test_create_base2_unverified_certificate,
             test_create_base3_certificate,
@@ -603,7 +604,6 @@ mod tests {
             certificate::{Certificate, CertificateType},
             consensus_message::{Block, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
-            sig_verified_messages::VoteAggregate,
             vote::Vote,
             wire::{VersionedWireConsensusMessage, get_vote_payload_to_sign},
         },

@@ -1,11 +1,11 @@
 //! Defines `AggregateAccumulator` that can used to aggregate votes and produce certificates.
 
 use {
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::VoteMessage,
         fraction::Fraction,
-        sig_verified_messages::VoteAggregate,
     },
     bitvec::vec::BitVec,
     solana_bls_signatures::{

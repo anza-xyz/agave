@@ -454,11 +454,9 @@ name = "agave-votor-messages"
 version = "4.5.0-alpha.0"
 dependencies = [
  "agave-feature-set",
- "bitvec",
  "crossbeam-channel",
  "log",
  "serde",
- "smallvec",
  "solana-address 2.8.0",
  "solana-bls-signatures",
  "solana-clock 4.0.0",

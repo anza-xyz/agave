@@ -1,7 +1,7 @@
 //! This module contains definitions of various types of signature verified messages.
 
 use {
-    crate::{
+    agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage, vote::Vote,
         wire::VotePayloadToSign,
     },

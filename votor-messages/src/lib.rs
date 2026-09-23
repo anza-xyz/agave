@@ -12,7 +12,6 @@ pub mod fraction;
 pub mod metric_types;
 pub mod migration;
 pub mod reward_certificate;
-pub mod sig_verified_messages;
 pub mod unverified_vote_message;
 pub mod vote;
 pub mod wire;

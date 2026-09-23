@@ -580,9 +580,9 @@ mod tests {
     use {
         super::{parent_ready_tracker::BlockProductionParent, *},
         crate::tests::get_cluster_info,
+        agave_bls_sigverify::sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
-            sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
             vote::Vote,
             wire::get_vote_payload_to_sign,
         },

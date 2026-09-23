@@ -20,12 +20,14 @@ use {
         voting_service::BLSOp,
         votor::ExitOnDrop,
     },
-    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
+    agave_bls_sigverify::{
+        generated_cert_types::GeneratedCertTypes,
+        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
+    },
     agave_votor_messages::{
         certificate::Certificate,
         consensus_message::{Block, VoteMessage},
         migration::MigrationStatus,
-        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         vote::Vote,
     },
     crossbeam_channel::{Receiver, RecvError, Sender, TrySendError, select_biased},
