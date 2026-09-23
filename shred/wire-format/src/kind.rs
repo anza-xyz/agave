@@ -105,12 +105,19 @@ impl ShredLayout for Data {
     /// chose it, so it is checked against the layout here rather than trusted by
     /// `agave_shred::shred::DataShred::data`. The index is checked against the FEC set's for the
     /// same reason: their difference is the shard index, which
-    /// [`erasure_shard_index`](Self::erasure_shard_index) then reads off infallibly.
+    /// [`erasure_shard_index`](Self::erasure_shard_index) then reads off infallibly. The flags are
+    /// checked here rather than against the admission policy because an undefined combination is
+    /// not a matter of what this node currently accepts.
     fn check_header(
         common: &CommonHeader,
         header: &DataHeader,
         body: &[u8],
     ) -> Result<(), ParseError> {
+        if !header.flags.is_valid() {
+            return Err(ParseError::InvalidShredFlags {
+                flags: header.flags.bits(),
+            });
+        }
         if common.index < common.fec_set_index {
             return Err(ParseError::IndexBeforeFecSet {
                 index: common.index,

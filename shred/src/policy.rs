@@ -2,7 +2,7 @@
 //!
 //! It is not a standing configuration: every field is read from the node's state.
 
-pub use agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK;
+pub use agave_shred_wire_format::constants::{DATA_SHREDS_PER_FEC_BLOCK, is_fec_set_start};
 use {
     crate::error::RejectReason,
     agave_shred_wire_format::headers::{AnyHeader, CodeHeader, CommonHeader, DataHeader},
@@ -57,9 +57,7 @@ pub const fn is_fec_set_aligned(index: u32, fec_set_index: u32) -> bool {
     let Some(fec_set_end) = fec_set_index.checked_add(DATA_SHREDS_PER_FEC_BLOCK) else {
         return false;
     };
-    index >= fec_set_index
-        && index < fec_set_end
-        && fec_set_index.is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK)
+    is_fec_set_start(fec_set_index) && index >= fec_set_index && index < fec_set_end
 }
 
 /// Whether `index` can be the last data shred of a slot, which requires it to end an FEC set.

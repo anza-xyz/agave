@@ -14,6 +14,12 @@ pub enum BuildError {
         /// What one batch can carry.
         capacity: usize,
     },
+    /// The batch was asked to start where no FEC set starts.
+    #[error("fec set index {fec_set_index} does not start an erasure batch")]
+    MisalignedFecSet {
+        /// The index the batch was asked to start at.
+        fec_set_index: u32,
+    },
     /// The parent slot is not a slot this one can chain to within a `u16` offset.
     #[error("slot {slot} cannot chain to parent slot {parent_slot}")]
     BadParentSlot {

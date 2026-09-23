@@ -39,6 +39,12 @@ pub enum ParseError {
         /// The size the data header claims.
         size: u16,
     },
+    /// A data shred's flags set the slot-end bit without the FEC-set-end bit.
+    #[error("data shred flags {flags:#010b} are not a defined combination")]
+    InvalidShredFlags {
+        /// The flag byte the data header carries.
+        flags: u8,
+    },
     /// A data shred's index is below its FEC set's first index.
     ///
     /// A shred's index minus its FEC set's is its erasure shard index, so an index below the set's

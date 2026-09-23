@@ -73,7 +73,11 @@ pub struct CodeHeader {
 }
 
 /// Data shred flags: a 6-bit reference tick plus two completion markers.
-/// Does not have invalid combinations, so we deserialize as u8.
+///
+/// Every byte deserializes, but not every byte is a legal combination: the slot-end bit is defined
+/// only together with the FEC-set-end bit. [`is_valid`](Self::is_valid) is what says so, and
+/// [`Data::check_header`](crate::kind::Data::check_header) is where a shred that says otherwise is
+/// rejected.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, SchemaRead, SchemaWrite)]
 #[repr(transparent)]
 pub struct ShredFlags(u8);
@@ -85,6 +89,24 @@ impl ShredFlags {
     pub const DATA_COMPLETE_SHRED: u8 = 0b0100_0000;
     /// Marks the last data shred of a slot. Implies [`Self::DATA_COMPLETE_SHRED`].
     pub const LAST_SHRED_IN_SLOT: u8 = 0b1100_0000;
+    /// The slot-end half of [`Self::LAST_SHRED_IN_SLOT`], which carries no meaning on its own.
+    const SLOT_END: u8 = 0b1000_0000;
+
+    /// The raw byte.
+    #[inline]
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Whether the completion markers are a combination the protocol defines.
+    ///
+    /// A shred that ends its slot also ends its FEC set, so the slot-end bit without the
+    /// FEC-set-end bit describes nothing. Accepting it would have this node ingest shreds that
+    /// every node running the previous implementation rejects.
+    #[inline]
+    pub const fn is_valid(self) -> bool {
+        self.0 & Self::SLOT_END == 0 || self.data_complete()
+    }
 
     /// The reference tick, saturated at [`Self::REFERENCE_TICK_MASK`] by the sender.
     #[inline]

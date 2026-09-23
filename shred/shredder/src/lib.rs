@@ -34,7 +34,8 @@ use {
     agave_shred_verify::merkle,
     agave_shred_wire_format::{
         constants::{
-            MERKLE_PROOF_ENTRIES, SIZE_OF_MERKLE_PROOF, SIZE_OF_MERKLE_PROOF_ENTRY, payload_buffer,
+            MERKLE_PROOF_ENTRIES, SIZE_OF_MERKLE_PROOF, SIZE_OF_MERKLE_PROOF_ENTRY,
+            is_fec_set_start, payload_buffer,
         },
         headers::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
         kind::{Code, Data, ShredLayout},
@@ -108,6 +109,36 @@ impl BatchPosition {
 }
 
 impl FecSetSpec {
+    /// Checks the spec against the rules the format fixes, before anything is written.
+    ///
+    /// These are the structural rules only: where an FEC set may start, and which slots a batch
+    /// may chain between. What a particular node is currently willing to accept is a separate
+    /// question, asked of a finished shred by `agave_shred::policy`, and asking it here would tie
+    /// the writer to one node's view of the cluster.
+    pub const fn validate(&self) -> Result<(), BuildError> {
+        if !is_fec_set_start(self.fec_set_index) {
+            return Err(BuildError::MisalignedFecSet {
+                fec_set_index: self.fec_set_index,
+            });
+        }
+        // Slot zero chaining to itself is genesis; every other batch chains strictly backwards,
+        // and no further back than a `u16` offset reaches.
+        let chainable = match self.slot {
+            0 => self.parent_slot == 0,
+            slot => match slot.checked_sub(self.parent_slot) {
+                Some(offset) => offset > 0 && offset <= u16::MAX as Slot,
+                None => false,
+            },
+        };
+        if !chainable {
+            return Err(BuildError::BadParentSlot {
+                slot: self.slot,
+                parent_slot: self.parent_slot,
+            });
+        }
+        Ok(())
+    }
+
     /// How much ledger data one batch built to this spec can carry.
     pub const fn capacity(&self) -> usize {
         self.data_capacity_per_shred().saturating_mul(DATA_SHREDS)
@@ -143,6 +174,7 @@ pub fn build_payloads(
     data: &[u8],
     keypair: &Keypair,
 ) -> Result<(Vec<Bytes>, Hash), BuildError> {
+    spec.validate()?;
     if data.len() > spec.capacity() {
         return Err(BuildError::TooMuchData {
             len: data.len(),

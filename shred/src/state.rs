@@ -34,8 +34,13 @@ pub enum Parsed {}
 /// Nothing about the shred's authenticity is known.
 pub enum Admissible {}
 
-/// The leader's signature over the shred's Merkle root verifies, and the headers agreed with the
-/// caller's admission policy on the way.
+/// The leader's signature over the shred's Merkle root verifies.
+///
+/// That is the whole promise. Admission is not part of it: a shred reaches this state from the
+/// wire, where [`Admissible`] precedes it, but also from this node's own block production, from
+/// erasure recovery and from the blockstore, none of which consult an admission policy. Admission
+/// answers whether a shred is worth this node's attention right now, which is a question about a
+/// moving root and moving limits; authenticity is a property of the bytes and does not expire.
 pub enum Verified {}
 
 macro_rules! impl_state {

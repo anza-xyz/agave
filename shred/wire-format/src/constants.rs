@@ -57,6 +57,19 @@ pub const CODE_SHREDS: usize = DATA_SHREDS;
 /// Number of shards in an erasure batch, which is also the number of leaves in its Merkle tree.
 pub const SHARDS: usize = DATA_SHREDS + CODE_SHREDS;
 
+/// Whether `fec_set_index` can be the first index of an FEC set.
+///
+/// Under the fixed configuration the sets tile the slot from index zero, so a set starts every
+/// [`DATA_SHREDS_PER_FEC_BLOCK`] indices and nowhere else. Shared by the writer, which may not
+/// build a batch anywhere else, and by the admission policy, which may not accept one.
+#[inline]
+pub const fn is_fec_set_start(fec_set_index: u32) -> bool {
+    fec_set_index.is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK)
+        && fec_set_index
+            .checked_add(DATA_SHREDS_PER_FEC_BLOCK)
+            .is_some()
+}
+
 /// One entry of a Merkle proof, which is a hash truncated to its first 20 bytes.
 ///
 /// The hashing itself is `agave-shred-verify`, which asserts that its own copy of this width
