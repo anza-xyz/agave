@@ -558,11 +558,32 @@ impl SanityTest {
 struct Failure {
     test_name: &'static str,
     message: String,
+    /// Names of the other tests that failed in the same poll. They are shown in
+    /// the notification but excluded from its deduplication, so a lower-priority
+    /// test that starts or stops failing does not re-send the notification.
+    other_test_names: Vec<&'static str>,
 }
 
 impl Failure {
     fn new(test_name: &'static str, message: String) -> Self {
-        Self { test_name, message }
+        Self {
+            test_name,
+            message,
+            other_test_names: vec![],
+        }
+    }
+
+    /// `message` with the names of the other failing tests appended.
+    fn full_message(&self) -> String {
+        if self.other_test_names.is_empty() {
+            self.message.clone()
+        } else {
+            format!(
+                "{} (also failing: {})",
+                self.message,
+                self.other_test_names.join(",")
+            )
+        }
     }
 }
 
@@ -570,17 +591,20 @@ impl Failure {
 ///
 /// Watchtower reports one failure per endpoint per poll; `main` relies on that
 /// to detect endpoints that disagree with each other. The highest-priority test
-/// wins, with its messages joined across identities.
+/// wins, with its messages joined across identities. The names of the other
+/// failing tests are kept so they are not hidden.
 fn select_failure(failures: Vec<(SanityTest, String)>) -> Option<Failure> {
     let mut by_test: BTreeMap<SanityTest, Vec<String>> = BTreeMap::new();
     for (test, msg) in failures {
         by_test.entry(test).or_default().push(msg);
     }
 
-    let (test, msgs) = by_test.into_iter().next()?;
+    let mut iter = by_test.into_iter();
+    let (test, msgs) = iter.next()?;
     Some(Failure {
         test_name: test.name(),
         message: msgs.join(","),
+        other_test_names: iter.map(|(test, _)| test.name()).collect(),
     })
 }
 
@@ -709,26 +733,33 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             }
 
             let failure = failures.values().next().unwrap();
-            let notification_msg = format!(
-                "agave-watchtower{}: Error: {}: {}",
-                config.name_suffix, failure.test_name, failure.message
+            let notification_prefix = format!(
+                "agave-watchtower{}: Error: {}",
+                config.name_suffix, failure.test_name
             );
+            // Deduplicated without `other_test_names`, see `Failure`
+            let notification_msg = format!("{notification_prefix}: {}", failure.message);
+            let full_notification_msg =
+                format!("{notification_prefix}: {}", failure.full_message());
             num_consecutive_failures += 1;
             if num_consecutive_failures > config.unhealthy_threshold {
                 datapoint_info!("watchtower-sanity", ("ok", false, bool));
                 if last_notification_msg != notification_msg {
-                    notifier.send(&notification_msg, &NotificationType::Trigger { incident });
+                    notifier.send(
+                        &full_notification_msg,
+                        &NotificationType::Trigger { incident },
+                    );
                 }
                 datapoint_error!(
                     "watchtower-sanity-failure",
                     ("test", failure.test_name, String),
-                    ("err", failure.message, String)
+                    ("err", failure.full_message(), String)
                 );
                 last_notification_msg = notification_msg;
             } else {
                 info!(
                     "Failure {} of {}: {}",
-                    num_consecutive_failures, config.unhealthy_threshold, notification_msg
+                    num_consecutive_failures, config.unhealthy_threshold, full_notification_msg
                 );
             }
         } else {
@@ -765,8 +796,12 @@ mod tests {
         (test, msg.to_string())
     }
 
-    fn reported(test: SanityTest, msg: &str) -> Failure {
-        Failure::new(test.name(), msg.to_string())
+    fn reported(test: SanityTest, msg: &str, others: &[SanityTest]) -> Failure {
+        Failure {
+            test_name: test.name(),
+            message: msg.to_string(),
+            other_test_names: others.iter().map(|test| test.name()).collect(),
+        }
     }
 
     #[test]
@@ -778,7 +813,7 @@ mod tests {
     fn test_select_failure_single_failure_is_reported_as_is() {
         assert_eq!(
             select_failure(vec![failure(SanityTest::Balance, "A has 1")]),
-            Some(reported(SanityTest::Balance, "A has 1"))
+            Some(reported(SanityTest::Balance, "A has 1", &[]))
         );
     }
 
@@ -791,7 +826,11 @@ mod tests {
                 failure(SanityTest::Balance, "B has 1"),
                 failure(SanityTest::Delinquent, "A delinquent"),
             ]),
-            Some(reported(SanityTest::Delinquent, "A delinquent"))
+            Some(reported(
+                SanityTest::Delinquent,
+                "A delinquent",
+                &[SanityTest::Balance]
+            ))
         );
     }
 
@@ -803,7 +842,11 @@ mod tests {
                 failure(SanityTest::Balance, "A has 1"),
                 failure(SanityTest::TransactionCount, "stuck"),
             ]),
-            Some(reported(SanityTest::TransactionCount, "stuck"))
+            Some(reported(
+                SanityTest::TransactionCount,
+                "stuck",
+                &[SanityTest::Delinquent, SanityTest::Balance]
+            ))
         );
     }
 
@@ -816,7 +859,8 @@ mod tests {
             ]),
             Some(reported(
                 SanityTest::VatVoteAccountBalance,
-                "A vote account low"
+                "A vote account low",
+                &[SanityTest::Balance]
             ))
         );
     }
@@ -828,7 +872,43 @@ mod tests {
                 failure(SanityTest::Balance, "A has 1"),
                 failure(SanityTest::Balance, "B has 2"),
             ]),
-            Some(reported(SanityTest::Balance, "A has 1,B has 2"))
+            Some(reported(SanityTest::Balance, "A has 1,B has 2", &[]))
+        );
+    }
+
+    #[test]
+    fn test_select_failure_names_each_other_test_once() {
+        assert_eq!(
+            select_failure(vec![
+                failure(SanityTest::Balance, "A has 1"),
+                failure(SanityTest::Balance, "B has 2"),
+                failure(SanityTest::Delinquent, "A delinquent"),
+            ]),
+            Some(reported(
+                SanityTest::Delinquent,
+                "A delinquent",
+                &[SanityTest::Balance]
+            ))
+        );
+    }
+
+    #[test]
+    fn test_select_failure_other_tests_do_not_change_message() {
+        // `main` deduplicates notifications on `message`, so a balance failure
+        // that comes and goes must not change it.
+        let delinquent_only =
+            select_failure(vec![failure(SanityTest::Delinquent, "A delinquent")]).unwrap();
+        let with_balance = select_failure(vec![
+            failure(SanityTest::Balance, "A has 0"),
+            failure(SanityTest::Delinquent, "A delinquent"),
+        ])
+        .unwrap();
+
+        assert_eq!(delinquent_only.message, with_balance.message);
+        assert_eq!(delinquent_only.full_message(), "A delinquent");
+        assert_eq!(
+            with_balance.full_message(),
+            "A delinquent (also failing: balance)"
         );
     }
 
@@ -864,5 +944,6 @@ mod tests {
 
         assert_eq!(failure.test_name, "delinquent");
         assert_eq!(failure.message, format!("{PUBKEY} delinquent"));
+        assert_eq!(failure.other_test_names, vec!["balance"]);
     }
 }
