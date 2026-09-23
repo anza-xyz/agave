@@ -132,7 +132,7 @@ solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=4.5.0-alpha.0" }
 solana-hash = { version = "=4.7.0", features = ["bytemuck", "serde", "std"] }
 solana-instruction = "4.0.0"
-solana-instructions-sysvar = "=4.0.0"
+solana-instructions-sysvar = "=5.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
 solana-msg = "=3.1.0"
 solana-poseidon = "=5.0.0"
