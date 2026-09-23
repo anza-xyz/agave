@@ -371,9 +371,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             let index_in_caller = instruction_context
                 .get_index_of_account_in_instruction(callee_account.index_in_transaction)?;
 
-            let account_key =
-                instruction_context.get_key_of_instruction_account(index_in_caller)?;
-
             let caller_instruction_account = instruction_context
                 .instruction_accounts()
                 .get(index_in_caller as usize)
@@ -381,6 +378,10 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                     "get_index_of_account_in_instruction above has already checked if the index \
                      is valid.",
                 );
+
+            let account_key = self
+                .transaction_context
+                .get_key_of_account_at_index(caller_instruction_account.index_in_transaction)?;
 
             // Readonly in caller cannot become writable in callee
             if callee_account.is_writable() && !caller_instruction_account.is_writable() {
