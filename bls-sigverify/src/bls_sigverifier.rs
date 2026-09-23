@@ -27,7 +27,7 @@ use {
     },
     agave_votor_transport::endpoint::{BanSender, Datagram},
     crossbeam_channel::{Receiver, Sender, TryRecvError, select},
-    log::{error, info},
+    log::error,
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -35,11 +35,12 @@ use {
     solana_measure::measure_us,
     solana_perf::packet::packet_config,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyToRankMap},
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
     std::{
         cmp,
-        collections::{HashMap, HashSet, hash_map::Entry},
+        collections::{HashMap, HashSet},
+        num::Saturating,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -260,7 +261,6 @@ impl SigVerifier {
                     &root_bank,
                     my_pubkey,
                     &self.leader_schedule,
-                    &self.ban_sender,
                     &self.thread_pool,
                     &self.channels,
                 )
@@ -272,14 +272,16 @@ impl SigVerifier {
                     certs,
                     &root_bank,
                     &self.channels.channel_to_pool,
-                    &self.ban_sender,
                     &self.thread_pool,
                 )
             },
         );
 
         let vote_stats = votes_result?;
-        let cert_stats = certs_result?;
+        let (cert_stats, pubkeys_to_ban) = certs_result?;
+        self.vote_pool
+            .update_verified(&self.ban_sender, votes_buffer);
+        self.vote_pool.ban_pubkeys(&self.ban_sender, pubkeys_to_ban);
 
         self.stats.vote_stats.merge(vote_stats);
         self.stats.cert_stats.merge(cert_stats);
@@ -333,6 +335,7 @@ impl SigVerifier {
         let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
         let migration_slot = self.migration_status.migration_slot();
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
+        let mut pubkeys_to_ban = HashSet::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
         for Datagram {
@@ -354,7 +357,7 @@ impl SigVerifier {
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
-                    self.extract_and_filter_vote(
+                    if let Err(pubkey_to_ban) = self.extract_and_filter_vote(
                         my_pubkey,
                         *sender_identity_pubkey,
                         migration_slot,
@@ -362,7 +365,9 @@ impl SigVerifier {
                         root_bank,
                         votes_buffer,
                         unverified_vote,
-                    );
+                    ) {
+                        pubkeys_to_ban.insert(pubkey_to_ban);
+                    }
                 }
                 DecodedWireConsensusMessage::Certificate(cert) => {
                     let cert_slot = cert.cert_type.slot();
@@ -412,6 +417,7 @@ impl SigVerifier {
             self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
         }
         self.stats.num_pkts += num_pkts;
+        self.vote_pool.ban_pubkeys(&self.ban_sender, pubkeys_to_ban);
         cert_groups
     }
 
@@ -424,11 +430,11 @@ impl SigVerifier {
         root_bank: &Bank,
         votes: &mut HashMap<VotePayloadToSign, Batch>,
         unverified_vote: UnverifiedVoteMessage,
-    ) {
+    ) -> Result<(), Pubkey> {
         // votes from self take a different pathway.
         if &sender_identity_pubkey == my_pubkey {
             self.stats.num_keep_vote_failed += 1;
-            return;
+            return Ok(());
         }
         let root_slot = root_bank.slot();
         let vote_slot = unverified_vote.vote.slot();
@@ -443,7 +449,7 @@ impl SigVerifier {
         if !is_in_range {
             self.stats.vote_too_far_in_future += 1;
             self.stats.num_keep_vote_failed += 1;
-            return;
+            return Ok(());
         }
 
         match vote_slot.cmp(&root_slot) {
@@ -459,88 +465,56 @@ impl SigVerifier {
                 ) {
                     self.stats.num_old_votes_received += 1;
                     self.stats.num_keep_vote_failed += 1;
-                    return;
+                    return Ok(());
                 }
             }
             // Votes above the root are always allowed
             cmp::Ordering::Greater => (),
         }
 
-        let vote_payload_to_sign =
-            VotePayloadToSign::new_from_vote(unverified_vote.vote, unverified_vote.shred_version);
-        match votes.entry(vote_payload_to_sign) {
-            Entry::Vacant(e) => {
-                let vote_slot = unverified_vote.vote.slot();
-                let vote_epoch = root_bank.epoch_schedule().get_epoch(vote_slot);
-                let Some(rank_map) = self.rank_map_cache.get_rank_map(root_bank, vote_epoch) else {
-                    self.stats.discard_vote_no_epoch_stakes += 1;
-                    self.stats.num_keep_vote_failed += 1;
-                    return;
-                };
-                match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
-                    Some((payload, sender_vote_account_pubkey)) => {
-                        let batch = Batch::new(
-                            vote_payload_to_sign,
-                            payload,
-                            sender_vote_account_pubkey,
-                            rank_map,
-                        );
-                        e.insert(batch);
-                    }
-                    None => {
-                        self.stats.num_keep_vote_failed += 1;
-                    }
-                }
-            }
-            Entry::Occupied(mut e) => {
-                let batch = e.get_mut();
-                match self.keep_vote(batch.rank_map(), unverified_vote, sender_identity_pubkey) {
-                    Some((payload, sender_vote_account_pubkey)) => {
-                        batch.push(payload, sender_vote_account_pubkey);
-                    }
-                    None => {
-                        self.stats.num_keep_vote_failed += 1;
-                    }
-                }
-            }
-        }
-    }
+        let vote_epoch = root_bank
+            .epoch_schedule()
+            .get_epoch(unverified_vote.vote.slot());
+        let Some(rank_map) = self.rank_map_cache.get_rank_map(root_bank, vote_epoch) else {
+            self.stats.discard_vote_no_epoch_stakes += 1;
+            return Ok(());
+        };
+        let Some((rank, rank_map_entry)) =
+            rank_map.get_ranked_entry_for_node(&sender_identity_pubkey)
+        else {
+            self.stats.discard_vote_invalid_rank += 1;
+            return Ok(());
+        };
+        let unverified_payload = UnverifiedVotePayload {
+            vote_message: unverified_vote,
+            sender_bls_pubkey: rank_map_entry.bls_pubkey,
+            sender_identity_pubkey,
+            sender_vote_account_pubkey: rank_map_entry.vote_account_pubkey,
+            stake: rank_map_entry.stake,
+            rank,
+        };
+        let my_stake = rank_map
+            .get_ranked_entry_for_node(my_pubkey)
+            .map_or(0, |(_, entry)| entry.stake.get());
+        let my_stake = Saturating(my_stake);
 
-    /// If this vote should be verified, then returns the [`UnverifiedVotePayload`].
-    fn keep_vote(
-        &mut self,
-        rank_map: &BLSPubkeyToRankMap,
-        msg: UnverifiedVoteMessage,
-        sender_identity_pubkey: Pubkey,
-    ) -> Option<(UnverifiedVotePayload, Pubkey)> {
-        let (rank, entry) = rank_map
-            .get_ranked_entry_for_node(&sender_identity_pubkey)
-            .or_else(|| {
-                self.stats.discard_vote_invalid_rank += 1;
-                None
-            })?;
-        match self.vote_pool.try_add_vote(&msg, rank, rank_map.len()) {
-            Ok(()) => Some((
-                UnverifiedVotePayload {
-                    vote_message: msg,
-                    sender_bls_pubkey: entry.bls_pubkey,
-                    sender_identity_pubkey,
-                    stake: entry.stake,
-                    rank,
-                },
-                entry.vote_account_pubkey,
-            )),
-            Err(VotePoolError::Duplicate) => {
+        match self.vote_pool.add_vote(
+            my_pubkey,
+            root_bank,
+            &self.leader_schedule,
+            &rank_map,
+            votes,
+            my_stake,
+            unverified_payload,
+        ) {
+            Ok(()) => Ok(()),
+            Err(VotePoolError::DuplicateVote) => {
                 self.stats.vote_pool_duplicate += 1;
-                None
+                Ok(())
             }
-            Err(VotePoolError::Invalid) => {
+            Err(VotePoolError::InvalidVote(pubkey_to_ban)) => {
                 self.stats.invalid_vote_banning_validator += 1;
-                self.ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
-                info!(
-                    "bls_sigverifier: banned sender={sender_identity_pubkey} due to invalid vote"
-                );
-                None
+                Err(pubkey_to_ban)
             }
         }
     }
