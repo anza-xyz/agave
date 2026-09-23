@@ -1729,7 +1729,7 @@ impl ServeRepair {
         repair_request: BlockIdRepairType,
         peers_cache: &mut LruCache<Slot, RepairPeers>,
         outstanding_requests: &mut OutstandingRequests<BlockIdRepairType>,
-    ) -> Result<(Vec<u8>, SocketAddr, Pubkey)> {
+    ) -> Result<(Vec<u8>, SocketAddr, Pubkey, Nonce)> {
         let identity_keypair = repair_info.cluster_info.keypair();
         let slot = repair_request.slot();
         let weight_source = RepairPeerWeightSource::CurrentEpochStake;
@@ -1756,7 +1756,7 @@ impl ServeRepair {
             peer.pubkey,
             repair_request
         );
-        Ok((out, peer.serve_repair, peer.pubkey))
+        Ok((out, peer.serve_repair, peer.pubkey, nonce))
     }
 
     pub(crate) fn repair_request_ancestor_hashes_sample_peers(

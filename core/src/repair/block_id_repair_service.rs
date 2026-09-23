@@ -37,7 +37,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, CompletedSlotsReceiver, SlotMeta},
         blockstore_meta::BlockLocation,
-        shred::DATA_SHREDS_PER_FEC_BLOCK,
+        shred::{DATA_SHREDS_PER_FEC_BLOCK, Nonce},
     },
     solana_perf::packet::{PacketBatch, PacketRef, packet_config},
     solana_pubkey::Pubkey,
@@ -178,11 +178,13 @@ struct RepairState {
     /// Only the lowest slots are retained if the queue reaches [`MAX_PENDING_REPAIR_EVENTS`].
     pending_repair_events: BTreeSet<RepairEvent>,
 
-    /// Requests that have been sent, mapped to the timestamp they were sent.
-    /// Used for retry logic - requests that exceed `2 * DELTA`
-    /// are moved back to pending_repair_requests. We track this separately from the
-    /// outstanding_requests maps as those are used for verifying response validity.
-    sent_requests: HashMap<OutgoingMessage, u64>,
+    /// Requests that have been sent, mapped to the timestamp they were sent and,
+    /// for metadata requests, the nonce of the in-flight attempt. Used for retry
+    /// logic - requests that exceed `2 * DELTA` are moved back to
+    /// pending_repair_requests with their nonce invalidated. We track this
+    /// separately from the outstanding_requests maps as those are used for
+    /// verifying response validity.
+    sent_requests: HashMap<OutgoingMessage, (u64, Option<Nonce>)>,
 
     /// Blocks we've previously requested. Used to avoid re-initiating repair for an in progress block.
     requested_blocks: HashSet<Block>,
@@ -868,27 +870,35 @@ impl BlockIdRepairService {
     /// Check for requests that have timed out and move them back to pending_repair_requests.
     /// For shred requests, we check if the shred has been received before retrying
     fn retry_timed_out_requests(blockstore: &Blockstore, state: &mut RepairState, now: u64) {
-        state.sent_requests.retain(|request, sent_time| {
-            if now.saturating_sub(*sent_time) >= u64::try_from(2 * DELTA.as_millis()).unwrap() {
-                match request {
-                    OutgoingMessage::Metadata(_) => {
-                        // Metadata requests: always retry on timeout
-                        state.pending_repair_requests.push(request.clone());
-                    }
-                    // Since shred responses are sent to a different socket, we need to check
-                    // blockstore to see if this expired request is actually expired, or if the
-                    // shred has already been ingested
-                    OutgoingMessage::Shred(shred_request) => {
-                        if !Self::has_received_shred(blockstore, shred_request) {
+        state
+            .sent_requests
+            .retain(|request, (sent_time, sent_nonce)| {
+                if now.saturating_sub(*sent_time) >= u64::try_from(2 * DELTA.as_millis()).unwrap() {
+                    match request {
+                        OutgoingMessage::Metadata(_) => {
+                            // Invalidate the nonce from the timed-out attempt before
+                            // requeueing, so a peer that held its response and replies once
+                            // per still-live nonce cannot pass verification a second time.
+                            if let Some(nonce) = sent_nonce {
+                                state.outstanding_requests.invalidate_request(*nonce);
+                            }
+                            // Metadata requests: always retry on timeout
                             state.pending_repair_requests.push(request.clone());
                         }
+                        // Since shred responses are sent to a different socket, we need to check
+                        // blockstore to see if this expired request is actually expired, or if the
+                        // shred has already been ingested
+                        OutgoingMessage::Shred(shred_request) => {
+                            if !Self::has_received_shred(blockstore, shred_request) {
+                                state.pending_repair_requests.push(request.clone());
+                            }
+                        }
                     }
+                    false
+                } else {
+                    true
                 }
-                false
-            } else {
-                true
-            }
-        });
+            });
     }
 
     /// Check if we have received a shred for a ShredForBlockId request.
@@ -941,7 +951,7 @@ impl BlockIdRepairService {
 
             match request {
                 OutgoingMessage::Metadata(block_id_repair_type) => {
-                    let Ok((bytes, addr, peer_pubkey)) = state
+                    let Ok((bytes, addr, peer_pubkey, nonce)) = state
                         .serve_repair
                         .block_id_repair_request(
                             repair_info,
@@ -961,7 +971,7 @@ impl BlockIdRepairService {
                     };
 
                     block_id_socket_batch.push((bytes, addr));
-                    state.sent_requests.insert(request, now);
+                    state.sent_requests.insert(request, (now, Some(nonce)));
                     state.expect_ping_response(peer_pubkey, addr, now);
 
                     // Update stats
@@ -1000,7 +1010,7 @@ impl BlockIdRepairService {
                     };
 
                     shred_socket_batch.push((bytes, addr));
-                    state.sent_requests.insert(request, now);
+                    state.sent_requests.insert(request, (now, None));
 
                     // Update stats
                     state.request_stats.total_requests += 1;
@@ -1298,14 +1308,16 @@ mod tests {
         });
         state
             .sent_requests
-            .insert(expired_metadata.clone(), expired_time);
+            .insert(expired_metadata.clone(), (expired_time, None));
 
         // 2. Recent metadata request - should stay in sent_requests
         let recent_metadata = OutgoingMessage::Metadata(BlockIdRepairType::ParentAndFecSetCount {
             slot: 101,
             block_id: Hash::new_unique(),
         });
-        state.sent_requests.insert(recent_metadata.clone(), now);
+        state
+            .sent_requests
+            .insert(recent_metadata.clone(), (now, None));
 
         // 3. Expired metadata request (FecSetRoot) - should retry
         let expired_fec_set_root = OutgoingMessage::Metadata(BlockIdRepairType::FecSetRoot {
@@ -1316,7 +1328,7 @@ mod tests {
         });
         state
             .sent_requests
-            .insert(expired_fec_set_root.clone(), expired_time);
+            .insert(expired_fec_set_root.clone(), (expired_time, None));
 
         // 4. Expired shred request, shred NOT in blockstore - should retry
         let expired_shred_not_received = OutgoingMessage::Shred(ShredRepairType::ShredForBlockId {
@@ -1327,7 +1339,7 @@ mod tests {
         });
         state
             .sent_requests
-            .insert(expired_shred_not_received.clone(), expired_time);
+            .insert(expired_shred_not_received.clone(), (expired_time, None));
 
         // 5. Expired shred request, shred IS in blockstore - should NOT retry
         let received_block_id = Hash::new_unique();
@@ -1349,7 +1361,7 @@ mod tests {
             });
         state
             .sent_requests
-            .insert(expired_shred_already_received.clone(), expired_time);
+            .insert(expired_shred_already_received.clone(), (expired_time, None));
 
         // 6. Recent shred request - should stay in sent_requests
         let recent_shred = OutgoingMessage::Shred(ShredRepairType::ShredForBlockId {
@@ -1358,7 +1370,9 @@ mod tests {
             fec_set_merkle_root: Hash::new_unique().into(),
             block_id: Hash::new_unique(),
         });
-        state.sent_requests.insert(recent_shred.clone(), now);
+        state
+            .sent_requests
+            .insert(recent_shred.clone(), (now, None));
 
         // Run the retry logic
         BlockIdRepairService::retry_timed_out_requests(&blockstore, &mut state, now);
@@ -1376,6 +1390,65 @@ mod tests {
         assert!(pending.contains(&expired_fec_set_root));
         assert!(pending.contains(&expired_shred_not_received));
         assert!(!pending.contains(&expired_shred_already_received));
+    }
+
+    #[test]
+    fn test_retry_timed_out_request_invalidates_its_nonce() {
+        // A timed-out metadata request is retried with a fresh nonce. The nonce of
+        // the timed-out attempt must be invalidated, so a peer that held its
+        // response and replies once per still-live nonce cannot pass verification
+        // a second time.
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let (mut state, _bank_forks) = create_test_repair_state();
+
+        let now = timestamp();
+        let expired_time = now - (2 * DELTA.as_millis() as u64) - 100;
+
+        // Send a ParentAndFecSetCount request and track it as sent, like
+        // send_requests does.
+        let slot = 100u64;
+        let parent_slot = 99u64;
+        let parent_block_id = Hash::new_unique();
+        let fec_set_count = 2u32;
+        let fec_set_roots: Vec<Hash> = (0..fec_set_count).map(|_| Hash::new_unique()).collect();
+        let parent_info_leaf = hashv(&[
+            &parent_slot.to_le_bytes(),
+            parent_block_id.as_ref(),
+            &fec_set_count.to_le_bytes(),
+        ]);
+        let mut leaves = fec_set_roots.clone();
+        leaves.push(parent_info_leaf);
+        let (block_id, proofs) = build_merkle_tree(&leaves);
+        let parent_proof = proofs[fec_set_count as usize].clone();
+
+        let request = BlockIdRepairType::ParentAndFecSetCount { slot, block_id };
+        let nonce = state.outstanding_requests.add_request(request, now);
+        state.sent_requests.insert(
+            OutgoingMessage::Metadata(request),
+            (expired_time, Some(nonce)),
+        );
+
+        // The held response verifies for the request, so a peer replying to the
+        // still-live nonce would pass verification.
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count,
+            parent_info: (parent_slot, parent_block_id),
+            parent_proof,
+        };
+        assert!(request.verify_response(&response));
+
+        // Retry the timed-out request: it is requeued and its nonce is invalidated.
+        BlockIdRepairService::retry_timed_out_requests(&blockstore, &mut state, now);
+        assert_eq!(state.pending_repair_requests.len(), 1);
+
+        // A response for the old nonce no longer passes verification.
+        assert!(
+            state
+                .outstanding_requests
+                .register_response(nonce, &response, now, |request| *request)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1409,9 +1482,10 @@ mod tests {
         let nonce = state.outstanding_requests.add_request(request, timestamp());
 
         // Also track in sent_requests
-        state
-            .sent_requests
-            .insert(OutgoingMessage::Metadata(request), timestamp());
+        state.sent_requests.insert(
+            OutgoingMessage::Metadata(request),
+            (timestamp(), Some(nonce)),
+        );
 
         // Build the response
         let response = BlockIdRepairResponse::ParentFecSetCount {
@@ -1493,9 +1567,10 @@ mod tests {
         let nonce = state.outstanding_requests.add_request(request, timestamp());
 
         // Also track in sent_requests
-        state
-            .sent_requests
-            .insert(OutgoingMessage::Metadata(request), timestamp());
+        state.sent_requests.insert(
+            OutgoingMessage::Metadata(request),
+            (timestamp(), Some(nonce)),
+        );
 
         let response = BlockIdRepairResponse::FecSetRoot {
             fec_set_root,
