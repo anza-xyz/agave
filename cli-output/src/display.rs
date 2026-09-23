@@ -581,9 +581,12 @@ fn write_rewards<W: io::Write>(
         )?;
         for reward in rewards {
             let sign = if reward.lamports < 0 { "-" } else { "" };
+            // Amount and New Balance are Strings; a precision on a String truncates
+            // rather than limiting decimal places, so balances whose SOL
+            // representation is longer than 9 characters rendered wrong.
             writeln!(
                 w,
-                "{}  {:<44}  {:^15}  {}◎{:<14.9}  ◎{:<18.9}",
+                "{}  {:<44}  {:^15}  {}◎{:<14}  ◎{:<18}",
                 prefix,
                 reward.pubkey,
                 if let Some(reward_type) = reward.reward_type {
@@ -943,6 +946,28 @@ Rewards:
   4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi        rent        -◎0.0000001       ◎0.0000099         \0
 ".replace("\\0", "") // replace marker used to subvert trailing whitespace linter on CI
         );
+    }
+
+    #[test]
+    fn test_write_rewards_does_not_truncate_balances() {
+        // Amount and New Balance are Strings; the previous `{:<14.9}` precision
+        // truncated any balance whose SOL representation is longer than 9
+        // characters, e.g. 1_234_567_891 lamports displayed as 1.2345678 SOL.
+        let rewards: Rewards = vec![Reward {
+            pubkey: Pubkey::new_from_array([1u8; 32]).to_string(),
+            lamports: 1_234_567_891,
+            post_balance: 2_345_678_912,
+            reward_type: Some(RewardType::Staking),
+            commission: None,
+            commission_bps: None,
+        }];
+
+        let mut write_buffer = BufWriter::new(Vec::new());
+        write_rewards(&mut write_buffer, Some(&rewards), "").unwrap();
+        let output = String::from_utf8(write_buffer.into_inner().unwrap()).unwrap();
+
+        assert!(output.contains("◎1.234567891"), "{output}");
+        assert!(output.contains("◎2.345678912"), "{output}");
     }
 
     #[test]
