@@ -399,6 +399,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         }
 
         // See if program account is part of the instruction
+        // `build_instruction_frame` already checked if the account is part of the transaction.
         let program_id_tx_idx = next_context.get_index_of_program_account_in_transaction()?;
         if instruction_context
             .get_index_of_account_in_instruction(program_id_tx_idx)

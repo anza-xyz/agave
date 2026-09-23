@@ -398,7 +398,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
         dedup_map
     }
 
-    /// Replicate account flags to duplicated accounts
+    /// Replicate account flags to duplicated accounts.
+    /// This function only works if the accounts had been previously deduplicated, like in
+    /// `deduplicate_accounts` and `build_instruction_frame`.
     pub fn replicate_account_flags(
         instruction_accounts: &mut [InstructionAccount],
         dedup_map: &[u8],
@@ -416,6 +418,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 continue;
             };
 
+            // The deduplication procedure must have used the first occurrence of the account
+            // as the source of truths for the flags.
             current_account
                 .set_is_signer(current_account.is_signer() || reference_account.is_signer());
             current_account
