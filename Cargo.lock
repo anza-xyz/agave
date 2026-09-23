@@ -8477,9 +8477,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.8.0"
+version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117d0e878f5a8447ac4a8677bf1f225308e292331bcb035378450d679609b425"
+checksum = "636c729a864ead005d1d37e94159e9660f72b194751ce5ca443623e91bca0a7c"
 dependencies = [
  "bincode",
  "boxcar",
@@ -8504,9 +8504,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "3.6.0"
+version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ce2a1f17252391f44f620d4e47d1e3e0bec173f760a86ee7de2426db9ea7496"
+checksum = "e1b9977653cc6841a1a1192dc1e864226248a43dce611cb8186634b37eb65df7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10576,9 +10576,9 @@ dependencies = [
 
 [[package]]
 name = "solana-signature"
-version = "3.5.2"
+version = "3.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe45ce95700ac8045e422344b88e273843d70185873cc1cc880ba06dd9fa9002"
+checksum = "7ea8b3e375e6191ceafca9ca916c395d445caa9c42f13d83d8ee0419944896b0"
 dependencies = [
  "five8",
  "rand 0.9.4",
