@@ -2,6 +2,7 @@ pub mod ancestor_hashes_service;
 pub mod block_id_repair_service;
 pub mod cluster_slot_state_verifier;
 pub mod duplicate_repair_status;
+#[cfg(feature = "dev-context-only-utils")]
 pub mod malicious_repair_handler;
 pub mod outstanding_requests;
 pub mod packet_threshold;
