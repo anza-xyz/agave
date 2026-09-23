@@ -75,7 +75,7 @@ serde_json = "1.0.151"
 serde_yaml = "0.9.34"
 serial_test = "3.2.0"
 signal-hook = "0.4.4"
-solana-account = "5.0.0"
+solana-account = "5.1.0"
 solana-account-decoder = { path = "../account-decoder", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-address-lookup-table-interface = "4.0.0"
@@ -109,7 +109,7 @@ solana-gossip = { path = "../gossip", version = "=4.5.0-alpha.0", features = ["a
 solana-hash = "4.5.0"
 solana-inflation = "3.1.1"
 solana-instruction = "4.0.0"
-solana-instruction-error = "3.0.0"
+solana-instruction-error = "3.1.0"
 solana-keypair = "4.0.0"
 solana-lattice-hash = { path = "../lattice-hash", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-leader-schedule = { path = "../leader-schedule", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -118,7 +118,7 @@ solana-loader-v3-interface = "9.0.0"
 solana-loader-v4-interface = "3.1.0"
 solana-local-cluster = { path = "../local-cluster", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-measure = { path = "../measure", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
-solana-message = "5.0.0"
+solana-message = "5.1.0"
 solana-metrics = { path = "../metrics", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-native-token = "3.0.0"
 solana-net-utils = { path = "../net-utils", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -143,7 +143,7 @@ solana-signer = "4.0.0"
 solana-signer-store = "0.1.0"
 solana-slot-hashes = "4.0.0"
 solana-slot-history = "3.2.0"
-solana-stake-history = "2.0.0"
+solana-stake-history = "2.1.0"
 solana-stake-interface = "5.0.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -162,14 +162,14 @@ solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "../test-validator", version = "=4.5.0-alpha.0" }
 solana-time-utils = "3.0.0"
 solana-tpu-client = { path = "../tpu-client", version = "=4.5.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
-solana-transaction = "5.0.0"
+solana-transaction = "5.1.0"
 solana-transaction-context = { path = "../transaction-context", version = "=4.5.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
-solana-transaction-error = "4.0.0"
+solana-transaction-error = "4.1.0"
 solana-transaction-status = { path = "../transaction-status", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-version = { path = "../version", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote = { path = "../vote", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
-solana-vote-interface = "7.0.0"
+solana-vote-interface = "7.1.0"
 solana-vote-program = { path = "../programs/vote", version = "=4.5.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 tempfile = "3.23.0"
 thiserror = "2.0.17"
