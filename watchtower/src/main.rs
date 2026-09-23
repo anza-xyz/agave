@@ -19,7 +19,7 @@ use {
     solana_rpc_client_api::{client_error, response::RpcVoteAccountStatus},
     solana_vote_interface::state::VoteStateV4,
     std::{
-        collections::HashMap,
+        collections::{BTreeMap, HashMap},
         error,
         thread::sleep,
         time::{Duration, Instant},
@@ -365,7 +365,7 @@ fn get_minimum_vat_vote_account_balance(
 fn query_endpoint(
     config: &Config,
     endpoint: &mut EndpointData,
-) -> client_error::Result<Option<(&'static str, String)>> {
+) -> client_error::Result<Option<Failure>> {
     info!("Querying {}", endpoint.rpc_client.url());
 
     match get_cluster_info(config, &endpoint.rpc_client) {
@@ -508,11 +508,7 @@ fn query_endpoint(
                 error!("{} sanity failure: {}", failure.0.name(), failure.1);
             }
 
-            // Only report the first failure if any
-            Ok(failures
-                .into_iter()
-                .next()
-                .map(|(test, msg)| (test.name(), msg)))
+            Ok(select_failure(failures))
         }
         Err(err) => {
             if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind()
@@ -529,7 +525,11 @@ fn query_endpoint(
 }
 
 /// A sanity check that can fail during a poll.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Declaration order is reporting priority: cluster-wide problems first, then
+/// validators that are down now, then validators that will be down later.
+/// `select_failure` relies on the derived `Ord`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum SanityTest {
     TransactionCount,
     RecentBlockhash,
@@ -551,6 +551,37 @@ impl SanityTest {
             Self::Balance => "balance",
         }
     }
+}
+
+/// The failure reported for one poll.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Failure {
+    test_name: &'static str,
+    message: String,
+}
+
+impl Failure {
+    fn new(test_name: &'static str, message: String) -> Self {
+        Self { test_name, message }
+    }
+}
+
+/// Reduces the failures of one poll to the single one that gets reported.
+///
+/// Watchtower reports one failure per endpoint per poll; `main` relies on that
+/// to detect endpoints that disagree with each other. The highest-priority test
+/// wins, with its messages joined across identities.
+fn select_failure(failures: Vec<(SanityTest, String)>) -> Option<Failure> {
+    let mut by_test: BTreeMap<SanityTest, Vec<String>> = BTreeMap::new();
+    for (test, msg) in failures {
+        by_test.entry(test).or_default().push(msg);
+    }
+
+    let (test, msgs) = by_test.into_iter().next()?;
+    Some(Failure {
+        test_name: test.name(),
+        message: msgs.join(","),
+    })
 }
 
 fn validate_endpoints(
@@ -629,7 +660,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let mut incident = Hash::new_unique();
 
     loop {
-        let mut failures = HashMap::new(); // test_name -> message
+        let mut failures = HashMap::new(); // test_name -> failure
 
         let mut num_healthy = 0;
         let mut num_reachable = 0;
@@ -640,13 +671,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     num_healthy += 1;
                     num_reachable += 1;
                 }
-                Ok(Some((failure_test_name, failure_error_message))) => {
+                Ok(Some(failure)) => {
                     num_reachable += 1;
 
                     // Collecting only one failure of each type
-                    failures
-                        .entry(failure_test_name)
-                        .or_insert(failure_error_message.clone());
+                    failures.entry(failure.test_name).or_insert(failure);
                 }
                 Err(_) => {}
             }
@@ -660,7 +689,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 num_reachable,
                 endpoints.len()
             );
-            failures.insert("watchtower-reliability", watchtower_unreliable_msg);
+            failures.insert(
+                "watchtower-reliability",
+                Failure::new("watchtower-reliability", watchtower_unreliable_msg),
+            );
         }
 
         if num_healthy < min_agreeing_endpoints {
@@ -670,13 +702,16 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 let watchtower_unreliable_msg = "Watchtower is unreliable, RPC endpoints provide \
                                                  inconsistent information"
                     .into();
-                failures.insert("watchtower-reliability", watchtower_unreliable_msg);
+                failures.insert(
+                    "watchtower-reliability",
+                    Failure::new("watchtower-reliability", watchtower_unreliable_msg),
+                );
             }
 
-            let (failure_test_name, failure_error_message) = failures.iter().next().unwrap();
+            let failure = failures.values().next().unwrap();
             let notification_msg = format!(
                 "agave-watchtower{}: Error: {}: {}",
-                config.name_suffix, failure_test_name, failure_error_message
+                config.name_suffix, failure.test_name, failure.message
             );
             num_consecutive_failures += 1;
             if num_consecutive_failures > config.unhealthy_threshold {
@@ -686,8 +721,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 }
                 datapoint_error!(
                     "watchtower-sanity-failure",
-                    ("test", failure_test_name, String),
-                    ("err", failure_error_message, String)
+                    ("test", failure.test_name, String),
+                    ("err", failure.message, String)
                 );
                 last_notification_msg = notification_msg;
             } else {
@@ -719,5 +754,115 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             incident = Hash::new_unique();
         }
         sleep(config.interval);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_rpc_client::mock_sender::PUBKEY};
+
+    fn failure(test: SanityTest, msg: &str) -> (SanityTest, String) {
+        (test, msg.to_string())
+    }
+
+    fn reported(test: SanityTest, msg: &str) -> Failure {
+        Failure::new(test.name(), msg.to_string())
+    }
+
+    #[test]
+    fn test_select_failure_none_when_healthy() {
+        assert_eq!(select_failure(vec![]), None);
+    }
+
+    #[test]
+    fn test_select_failure_single_failure_is_reported_as_is() {
+        assert_eq!(
+            select_failure(vec![failure(SanityTest::Balance, "A has 1")]),
+            Some(reported(SanityTest::Balance, "A has 1"))
+        );
+    }
+
+    #[test]
+    fn test_select_failure_delinquent_outranks_balance_regardless_of_push_order() {
+        // `balance` is pushed inside the identity loop and `delinquent` after
+        // it, so push order alone would report the balance.
+        assert_eq!(
+            select_failure(vec![
+                failure(SanityTest::Balance, "B has 1"),
+                failure(SanityTest::Delinquent, "A delinquent"),
+            ]),
+            Some(reported(SanityTest::Delinquent, "A delinquent"))
+        );
+    }
+
+    #[test]
+    fn test_select_failure_cluster_checks_outrank_validator_checks() {
+        assert_eq!(
+            select_failure(vec![
+                failure(SanityTest::Delinquent, "A delinquent"),
+                failure(SanityTest::Balance, "A has 1"),
+                failure(SanityTest::TransactionCount, "stuck"),
+            ]),
+            Some(reported(SanityTest::TransactionCount, "stuck"))
+        );
+    }
+
+    #[test]
+    fn test_select_failure_vat_outranks_balance() {
+        assert_eq!(
+            select_failure(vec![
+                failure(SanityTest::Balance, "A has 1"),
+                failure(SanityTest::VatVoteAccountBalance, "A vote account low"),
+            ]),
+            Some(reported(
+                SanityTest::VatVoteAccountBalance,
+                "A vote account low"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_select_failure_joins_same_test_across_identities() {
+        assert_eq!(
+            select_failure(vec![
+                failure(SanityTest::Balance, "A has 1"),
+                failure(SanityTest::Balance, "B has 2"),
+            ]),
+            Some(reported(SanityTest::Balance, "A has 1,B has 2"))
+        );
+    }
+
+    #[test]
+    fn test_query_endpoint_reports_delinquency_over_low_balance() {
+        // The mock RPC reports one delinquent validator (`PUBKEY`) and a
+        // balance of 50 lamports for every account. Monitoring that identity
+        // with a 1 SOL floor fails both the `delinquent` and `balance` checks.
+        let identity: Pubkey = PUBKEY.parse().unwrap();
+        let config = Config {
+            address_labels: HashMap::new(),
+            ignore_http_bad_gateway: false,
+            interval: Duration::from_secs(1),
+            json_rpc_urls: vec!["succeeds".to_string()],
+            rpc_timeout: Duration::from_secs(1),
+            minimum_validator_identity_balance: sol_str_to_lamports("1").unwrap(),
+            monitor_active_stake: false,
+            active_stake_alert_threshold: 80,
+            unhealthy_threshold: 1,
+            validator_identity_pubkeys: vec![identity],
+            name_suffix: String::new(),
+            acceptable_slot_range: 50,
+        };
+        let mut endpoint = EndpointData {
+            rpc_client: RpcClient::new_mock("succeeds"),
+            last_transaction_count: 0,
+            last_recent_blockhash: Hash::default(),
+        };
+
+        let failure = query_endpoint(&config, &mut endpoint)
+            .unwrap()
+            .expect("both checks fail");
+
+        assert_eq!(failure.test_name, "delinquent");
+        assert_eq!(failure.message, format!("{PUBKEY} delinquent"));
     }
 }

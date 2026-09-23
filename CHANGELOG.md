@@ -34,6 +34,11 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* `agave-watchtower` now reports the highest-priority sanity failure of each poll instead of
+  the first one found, so a delinquent validator is reported ahead of a low identity or vote
+  account balance. `balance` and `vat-vote-account-balance` failures now name every affected
+  identity instead of only the first.
+
 ## 4.4.0
 
 ### RPC
