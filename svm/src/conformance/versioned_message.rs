@@ -1,11 +1,15 @@
 use {
-    protosol::protos::TransactionMessage as ProtoTransactionMessage,
+    protosol::protos::{
+        TransactionMessage as ProtoTransactionMessage,
+        TransactionVersion as ProtoTransactionVersion,
+    },
     solana_hash::Hash,
     solana_message::{
         MessageHeader, VersionedMessage,
         compiled_instruction::CompiledInstruction,
         legacy,
         v0::{self, MessageAddressTableLookup},
+        v1::{self, TransactionConfig},
     },
     solana_pubkey::Pubkey,
 };
@@ -49,7 +53,26 @@ pub fn versioned_message_from_proto(value: &ProtoTransactionMessage) -> Versione
         })
         .collect::<Vec<_>>();
 
-    if value.is_legacy {
+    let version = value.version();
+
+    if version == ProtoTransactionVersion::V1 {
+        let config = value.v1_config.as_ref();
+        return VersionedMessage::V1(v1::Message {
+            header,
+            config: TransactionConfig {
+                priority_fee: config.and_then(|c| c.priority_fee),
+                compute_unit_limit: config.and_then(|c| c.compute_unit_limit),
+                loaded_accounts_data_size_limit: config
+                    .and_then(|c| c.loaded_accounts_data_size_limit),
+                heap_size: config.and_then(|c| c.heap_size),
+            },
+            lifetime_specifier: recent_blockhash,
+            account_keys,
+            instructions,
+        });
+    }
+
+    if version == ProtoTransactionVersion::Legacy {
         VersionedMessage::Legacy(legacy::Message {
             header,
             account_keys,
