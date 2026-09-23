@@ -51,6 +51,7 @@ pub struct SVMFeatureSet {
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
+    pub enable_get_leader_syscall: bool,
 }
 
 impl SVMFeatureSet {
@@ -106,6 +107,7 @@ impl SVMFeatureSet {
             define_ltds_fee_only_semantics: true,
             relax_fee_payer_constraint: true,
             loader_v3_set_program_data_to_elf_length: true,
+            enable_get_leader_syscall: true,
         }
     }
 }

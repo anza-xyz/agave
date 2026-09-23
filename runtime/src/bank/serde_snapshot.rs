@@ -219,6 +219,7 @@ mod tests {
                 node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
                 epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
                 bls_pubkey_to_rank_map: OnceLock::new(),
+                leader_schedule: OnceLock::new(),
             },
         );
         assert_eq!(bank.epoch_stakes.len(), 3);
