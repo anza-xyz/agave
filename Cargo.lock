@@ -343,6 +343,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-shred-wire-format"
+version = "4.5.0-alpha.2"
+dependencies = [
+ "bytes",
+ "solana-clock",
+ "solana-hash",
+ "solana-packet",
+ "solana-signature",
+ "static_assertions",
+ "thiserror 2.0.21",
+ "wincode",
+]
+
+[[package]]
 name = "agave-snapshots"
 version = "4.5.0-alpha.2"
 dependencies = [
