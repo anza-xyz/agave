@@ -286,7 +286,7 @@ mod tests {
             assert_eq!(node_pubkey, entry.label().pubkey());
 
             {
-                let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
+                let mut gossip_crds = cluster_info.gossip.crds.write();
 
                 gossip_crds
                     .insert(entry, timestamp(), GossipRoute::LocalMessage)
