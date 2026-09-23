@@ -62,7 +62,7 @@ use {
         tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
     },
     solana_system_interface::{error::SystemError, instruction as system_instruction},
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     std::{ops::Deref, rc::Rc},
 };
 
@@ -1686,9 +1686,10 @@ pub async fn process_stake_authorize(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -1856,9 +1857,10 @@ pub async fn process_deactivate_stake_account(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -1975,9 +1977,10 @@ pub async fn process_withdraw_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2179,9 +2182,10 @@ pub async fn process_split_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2304,9 +2308,10 @@ pub async fn process_merge_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2415,9 +2420,10 @@ pub async fn process_stake_set_lockup(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2980,9 +2986,10 @@ pub async fn process_delegate_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )

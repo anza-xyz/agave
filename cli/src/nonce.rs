@@ -37,7 +37,7 @@ use {
             create_nonce_account_with_seed, upgrade_nonce_account, withdraw_nonce_account,
         },
     },
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     std::rc::Rc,
 };
 
@@ -431,6 +431,7 @@ pub async fn process_authorize_nonce_account(
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
 
+    let tx = VersionedTransaction::from(tx);
     check_account_for_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),
@@ -608,6 +609,7 @@ pub async fn process_new_nonce(
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
+    let tx = VersionedTransaction::from(tx);
     check_account_for_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),
@@ -687,6 +689,7 @@ pub async fn process_withdraw_from_nonce_account(
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
+    let tx = VersionedTransaction::from(tx);
     check_account_for_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),
@@ -724,6 +727,7 @@ pub(crate) async fn process_upgrade_nonce_account(
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
+    let tx = VersionedTransaction::from(tx);
     check_account_for_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),

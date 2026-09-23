@@ -7770,6 +7770,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-test-validator",
  "solana-tpu-client-next",
+ "solana-transaction",
  "solana-transaction-status",
  "solana-version",
  "spl-memo-interface",

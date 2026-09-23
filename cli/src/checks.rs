@@ -1,14 +1,14 @@
 use {
     crate::cli::CliError, solana_cli_output::display::build_balance_message,
-    solana_commitment_config::CommitmentConfig, solana_message::Message, solana_pubkey::Pubkey,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_commitment_config::CommitmentConfig, solana_message::VersionedMessage,
+    solana_pubkey::Pubkey, solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::client_error::Result as ClientResult,
 };
 
 pub async fn check_account_for_fee(
     rpc_client: &RpcClient,
     account_pubkey: &Pubkey,
-    message: &Message,
+    message: &VersionedMessage,
 ) -> Result<(), CliError> {
     check_account_for_multiple_fees(rpc_client, account_pubkey, &[message]).await
 }
@@ -16,7 +16,7 @@ pub async fn check_account_for_fee(
 pub async fn check_account_for_fee_with_commitment(
     rpc_client: &RpcClient,
     account_pubkey: &Pubkey,
-    message: &Message,
+    message: &VersionedMessage,
     commitment: CommitmentConfig,
 ) -> Result<(), CliError> {
     check_account_for_multiple_fees_with_commitment(
@@ -31,7 +31,7 @@ pub async fn check_account_for_fee_with_commitment(
 pub async fn check_account_for_multiple_fees(
     rpc_client: &RpcClient,
     account_pubkey: &Pubkey,
-    messages: &[&Message],
+    messages: &[&VersionedMessage],
 ) -> Result<(), CliError> {
     check_account_for_multiple_fees_with_commitment(
         rpc_client,
@@ -45,7 +45,7 @@ pub async fn check_account_for_multiple_fees(
 pub async fn check_account_for_multiple_fees_with_commitment(
     rpc_client: &RpcClient,
     account_pubkey: &Pubkey,
-    messages: &[&Message],
+    messages: &[&VersionedMessage],
     commitment: CommitmentConfig,
 ) -> Result<(), CliError> {
     check_account_for_spend_multiple_fees_with_commitment(
@@ -62,7 +62,7 @@ pub async fn check_account_for_spend_multiple_fees_with_commitment(
     rpc_client: &RpcClient,
     account_pubkey: &Pubkey,
     balance: u64,
-    messages: &[&Message],
+    messages: &[&VersionedMessage],
     commitment: CommitmentConfig,
 ) -> Result<(), CliError> {
     let fee = get_fee_for_messages(rpc_client, messages).await?;
@@ -118,11 +118,11 @@ pub async fn check_account_for_spend_and_fee_with_commitment(
 
 pub async fn get_fee_for_messages(
     rpc_client: &RpcClient,
-    messages: &[&Message],
+    messages: &[&VersionedMessage],
 ) -> Result<u64, CliError> {
     let mut total_fee = 0u64;
     for message in messages {
-        let fee = rpc_client.get_fee_for_message(*message).await?;
+        let fee = rpc_client.get_fee_for_versioned_message(message).await?;
         total_fee = total_fee
             .checked_add(fee)
             .ok_or(CliError::BadParameter("Fee overflow".to_string()))?;
@@ -179,6 +179,7 @@ mod tests {
     use {
         super::*,
         serde_json::json,
+        solana_message::Message,
         solana_rpc_client_api::{
             request::RpcRequest,
             response::{Response, RpcResponseContext},
@@ -202,11 +203,11 @@ mod tests {
         let pubkey0 = Pubkey::from([0; 32]);
         let pubkey1 = Pubkey::from([1; 32]);
         let ix0 = system_instruction::transfer(&pubkey0, &pubkey1, 1);
-        let message0 = Message::new(&[ix0], Some(&pubkey0));
+        let message0 = VersionedMessage::Legacy(Message::new(&[ix0], Some(&pubkey0)));
 
         let ix0 = system_instruction::transfer(&pubkey0, &pubkey1, 1);
         let ix1 = system_instruction::transfer(&pubkey1, &pubkey0, 1);
-        let message1 = Message::new(&[ix0, ix1], Some(&pubkey0));
+        let message1 = VersionedMessage::Legacy(Message::new(&[ix0, ix1], Some(&pubkey0)));
 
         let mut mocks = HashMap::new();
         mocks.insert(RpcRequest::GetBalance, account_balance_response.clone());
@@ -328,7 +329,7 @@ mod tests {
         let pubkey0 = Pubkey::from([0; 32]);
         let pubkey1 = Pubkey::from([1; 32]);
         let ix0 = system_instruction::transfer(&pubkey0, &pubkey1, 1);
-        let message0 = Message::new(&[ix0], Some(&pubkey0));
+        let message0 = VersionedMessage::Legacy(Message::new(&[ix0], Some(&pubkey0)));
         assert_eq!(
             get_fee_for_messages(&rpc_client, &[&message0])
                 .await
@@ -347,7 +348,7 @@ mod tests {
         let mut mocks = HashMap::new();
         mocks.insert(RpcRequest::GetFeeForMessage, check_fee_response);
         let rpc_client = RpcClient::new_mock_with_mocks("".to_string(), mocks);
-        let message = Message::default();
+        let message = VersionedMessage::Legacy(Message::default());
         assert_eq!(
             get_fee_for_messages(&rpc_client, &[&message, &message])
                 .await
