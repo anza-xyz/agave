@@ -8273,9 +8273,9 @@ dependencies = [
 
 [[package]]
 name = "solana-epoch-schedule"
-version = "3.3.0"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1633cfd10cde127f2caf8f12021b4f8e9a425e7e4eea4326e428c422376d6fd"
+checksum = "43ae73018043cff5d3990b3998d846fab2e823c07e3b2f49be602ea584be3d4f"
 dependencies = [
  "serde",
  "serde_derive",
@@ -8422,9 +8422,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.8.0"
+version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117d0e878f5a8447ac4a8677bf1f225308e292331bcb035378450d679609b425"
+checksum = "636c729a864ead005d1d37e94159e9660f72b194751ce5ca443623e91bca0a7c"
 dependencies = [
  "bincode",
  "boxcar",
@@ -8449,9 +8449,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "3.6.0"
+version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ce2a1f17252391f44f620d4e47d1e3e0bec173f760a86ee7de2426db9ea7496"
+checksum = "e1b9977653cc6841a1a1192dc1e864226248a43dce611cb8186634b37eb65df7"
 dependencies = [
  "proc-macro2",
  "quote",
