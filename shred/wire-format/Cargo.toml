@@ -1,0 +1,35 @@
+[package]
+name = "agave-shred-wire-format"
+description = "Solana shred wire format: layout, headers and section boundaries"
+documentation = "https://docs.rs/agave-shred-wire-format"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+# TODO: reserve `agave-shred-wire-format` on crates.io and drop this; `solana-ledger` is published
+# and cannot depend on an unpublished path crate.
+publish = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+bytes = { workspace = true }
+solana-clock = { workspace = true }
+solana-hash = { workspace = true, features = ["copy", "decode", "wincode"] }
+solana-packet = { workspace = true }
+solana-signature = { workspace = true, features = ["wincode"] }
+static_assertions = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }
+
+[lints]
+workspace = true
