@@ -405,7 +405,7 @@ fn query_endpoint(
                 endpoint.last_transaction_count = transaction_count;
             } else {
                 failures.push((
-                    "transaction-count",
+                    SanityTest::TransactionCount,
                     format!(
                         "Transaction count is not advancing: {transaction_count} <= {0}",
                         endpoint.last_transaction_count
@@ -417,7 +417,7 @@ fn query_endpoint(
                 endpoint.last_recent_blockhash = recent_blockhash;
             } else {
                 failures.push((
-                    "recent-blockhash",
+                    SanityTest::RecentBlockhash,
                     format!("Unable to get new blockhash: {recent_blockhash}"),
                 ));
             }
@@ -426,7 +426,7 @@ fn query_endpoint(
                 && current_stake_percent < config.active_stake_alert_threshold as f64
             {
                 failures.push((
-                    "current-stake",
+                    SanityTest::CurrentStake,
                     format!("Current stake is {current_stake_percent:.2}%"),
                 ));
             }
@@ -459,7 +459,7 @@ fn query_endpoint(
                     && *balance < config.minimum_validator_identity_balance
                 {
                     failures.push((
-                        "balance",
+                        SanityTest::Balance,
                         format!("{} has {}", formatted_validator_identity, Sol(*balance)),
                     ));
                 }
@@ -473,7 +473,7 @@ fn query_endpoint(
                     {
                         let Ok(vote_pubkey) = vote_account.vote_pubkey.parse::<Pubkey>() else {
                             failures.push((
-                                "vat-vote-account-balance",
+                                SanityTest::VatVoteAccountBalance,
                                 format!(
                                     "{} vote account {} is not a valid pubkey",
                                     formatted_validator_identity, vote_account.vote_pubkey
@@ -485,7 +485,7 @@ fn query_endpoint(
                         let balance = endpoint.rpc_client.get_balance(&vote_pubkey)?;
                         if balance < minimum_vat_vote_account_balance {
                             failures.push((
-                                "vat-vote-account-balance",
+                                SanityTest::VatVoteAccountBalance,
                                 format!(
                                     "{} vote account {} has {}, below required VAT balance \
                                      threshold of {}",
@@ -501,14 +501,18 @@ fn query_endpoint(
             }
 
             if !validator_errors.is_empty() {
-                failures.push(("delinquent", validator_errors.join(",")));
+                failures.push((SanityTest::Delinquent, validator_errors.join(",")));
             }
 
             for failure in &failures {
-                error!("{} sanity failure: {}", failure.0, failure.1);
+                error!("{} sanity failure: {}", failure.0.name(), failure.1);
             }
 
-            Ok(failures.into_iter().next()) // Only report the first failure if any
+            // Only report the first failure if any
+            Ok(failures
+                .into_iter()
+                .next()
+                .map(|(test, msg)| (test.name(), msg)))
         }
         Err(err) => {
             if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind()
@@ -520,6 +524,31 @@ fn query_endpoint(
             }
             warn!("rpc-error: {err}");
             Err(err)
+        }
+    }
+}
+
+/// A sanity check that can fail during a poll.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SanityTest {
+    TransactionCount,
+    RecentBlockhash,
+    CurrentStake,
+    Delinquent,
+    VatVoteAccountBalance,
+    Balance,
+}
+
+impl SanityTest {
+    /// The `test` field of the `watchtower-sanity-failure` datapoint.
+    fn name(self) -> &'static str {
+        match self {
+            Self::TransactionCount => "transaction-count",
+            Self::RecentBlockhash => "recent-blockhash",
+            Self::CurrentStake => "current-stake",
+            Self::Delinquent => "delinquent",
+            Self::VatVoteAccountBalance => "vat-vote-account-balance",
+            Self::Balance => "balance",
         }
     }
 }
