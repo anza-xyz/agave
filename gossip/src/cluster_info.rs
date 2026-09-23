@@ -100,6 +100,8 @@ use {
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// Interval between pull requests (in gossip rounds)
 const PULL_REQUEST_PERIOD: usize = 5;
+/// Max times we need send pull request to all entrypoints at bootstrap phase
+const MAX_TIMES_NEED_SEND_TO_ALL_ENTRYPOINTS: usize = 5;
 
 /// Capacity for the [`ClusterInfo::run_socket_consume`] and [`ClusterInfo::run_listen`]
 /// intermediate packet batch buffers.
@@ -142,6 +144,7 @@ fn pull_request_scan_cost(scan_entries: usize, bloom_hash_count: usize) -> u64 {
 
 pub const DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS: u64 = 10_000;
 pub const DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS: u64 = 60_000;
+pub const DEFAULT_APPEND_ENTRYPOINTS_INTERVAL_MILLIS: u64 = 3_000;
 // Limit number of unique pubkeys in the crds table.
 pub(crate) const CRDS_UNIQUE_PUBKEY_CAPACITY: usize = 8192;
 
@@ -1239,35 +1242,12 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         max_bloom_filter_bytes: usize,
         pulls: T,
+        need_append_entrypoints_to_pulls: bool,
     ) -> impl Iterator<Item = (SocketAddr, CrdsFilter)> + use<T> {
         const THROTTLE_DELAY: u64 = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2;
         let mut pulls = pulls.peekable();
-        let entrypoint = {
-            let mut entrypoints = self.entrypoints.write().unwrap();
-            let Some(entrypoint) = entrypoints.choose_mut(&mut rand::rng()) else {
-                return Either::Left(pulls);
-            };
-            if pulls.peek().is_some() {
-                let now = timestamp();
-                if now <= entrypoint.wallclock().saturating_add(THROTTLE_DELAY) {
-                    return Either::Left(pulls);
-                }
-                entrypoint.set_wallclock(now);
-                if let Some(entrypoint_gossip) = entrypoint.gossip()
-                    && self
-                        .time_gossip_read_lock("entrypoint", &self.stats.entrypoint)
-                        .get_nodes_contact_info()
-                        .any(|node| node.gossip() == Some(entrypoint_gossip))
-                {
-                    // Found the entrypoint, no need to pull from it.
-                    return Either::Left(pulls);
-                }
-            }
-            let Some(entrypoint) = entrypoint.gossip() else {
-                return Either::Left(pulls);
-            };
-            entrypoint
-        };
+        let mut entrypoints = self.entrypoints.write().unwrap();
+
         let filters = if pulls.peek().is_none() {
             let _st = ScopedTimer::from(&self.stats.entrypoint2);
             Either::Left(
@@ -1279,8 +1259,60 @@ impl ClusterInfo {
         } else {
             Either::Right(pulls.clone().map(|(_, filter)| filter))
         };
+
+        let mut packets = Vec::<(SocketAddr, _)>::new();
+        if need_append_entrypoints_to_pulls {
+            for entrypoint in entrypoints.iter_mut() {
+                if pulls.peek().is_some() {
+                    if let Some(entrypoint_gossip) = entrypoint.gossip()
+                        && self
+                            .time_gossip_read_lock("entrypoint", &self.stats.entrypoint)
+                            .get_nodes_contact_info()
+                            .any(|node| node.gossip() == Some(entrypoint_gossip))
+                    {
+                        continue;
+                    }
+                }
+                let Some(entrypoint) = entrypoint.gossip() else {
+                    continue;
+                };
+                packets.push((entrypoint, filters.clone()));
+            }
+        } else {
+            let entrypoint = {
+                let Some(entrypoint) = entrypoints.choose_mut(&mut rand::rng()) else {
+                    return Either::Left(pulls);
+                };
+                if pulls.peek().is_some() {
+                    let now = timestamp();
+                    if now <= entrypoint.wallclock().saturating_add(THROTTLE_DELAY) {
+                        return Either::Left(pulls);
+                    }
+                    entrypoint.set_wallclock(now);
+                    if let Some(entrypoint_gossip) = entrypoint.gossip()
+                        && self
+                            .time_gossip_read_lock("entrypoint", &self.stats.entrypoint)
+                            .get_nodes_contact_info()
+                            .any(|node| node.gossip() == Some(entrypoint_gossip))
+                    {
+                        // Found the entrypoint, no need to pull from it.
+                        return Either::Left(pulls);
+                    }
+                }
+                let Some(entrypoint) = entrypoint.gossip() else {
+                    return Either::Left(pulls);
+                };
+                entrypoint
+            };
+            packets.push((entrypoint, filters));
+        }
+
         self.stats.pull_from_entrypoint_count.add_relaxed(1);
-        Either::Right(pulls.chain(repeat(entrypoint).zip(filters)))
+        let pkts = packets.into_iter()
+                      .flat_map(move |(entrypoint, filters)| {
+                          repeat(entrypoint).zip(filters)
+                      });
+        Either::Right(pulls.chain(pkts))
     }
 
     fn new_pull_requests(
@@ -1288,6 +1320,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
         stakes: &HashMap<Pubkey, u64>,
+        need_append_entrypoints_to_pulls: bool,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         let now = timestamp();
         let keypair = self.keypair();
@@ -1317,7 +1350,7 @@ impl ClusterInfo {
         let pings = pings
             .into_iter()
             .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
-        self.append_entrypoint_to_pulls(thread_pool, max_bloom_filter_bytes, pulls)
+        self.append_entrypoint_to_pulls(thread_pool, max_bloom_filter_bytes, pulls, need_append_entrypoints_to_pulls)
             .map(move |(gossip_addr, filter)| {
                 let request = Protocol::PullRequest(filter, self_info.clone());
                 (gossip_addr, request)
@@ -1396,6 +1429,7 @@ impl ClusterInfo {
         gossip_validators: Option<&HashSet<Pubkey>>,
         stakes: &HashMap<Pubkey, u64>,
         generate_pull_requests: bool,
+        need_append_entrypoints_to_pulls: bool,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
         // This will flush local pending push messages before generating
@@ -1403,8 +1437,8 @@ impl ClusterInfo {
         // same values back to the node itself. Note that packets will arrive
         // and are processed out of order.
         let out = self.new_push_requests(stakes);
-        if generate_pull_requests {
-            let reqs = self.new_pull_requests(thread_pool, gossip_validators, stakes);
+        if generate_pull_requests || need_append_entrypoints_to_pulls {
+            let reqs = self.new_pull_requests(thread_pool, gossip_validators, stakes, need_append_entrypoints_to_pulls);
             Either::Right(out.chain(reqs))
         } else {
             Either::Left(out)
@@ -1420,6 +1454,7 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
         sender: &impl ChannelSend<PacketBatch>,
         generate_pull_requests: bool,
+        need_append_entrypoints_to_pulls: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.gossip_transmit_loop_time);
         let mut packet_batch = RecycledPacketBatch::new_with_recycler(recycler, 0, "run_gossip");
@@ -1428,6 +1463,7 @@ impl ClusterInfo {
             gossip_validators,
             stakes,
             generate_pull_requests,
+            need_append_entrypoints_to_pulls,
         )
         .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
         .for_each(|pkt| packet_batch.push(pkt));
@@ -1524,6 +1560,9 @@ impl ClusterInfo {
                 let mut last_contact_info_trace = timestamp();
                 let mut last_contact_info_save = timestamp();
                 let mut entrypoints_processed = false;
+                let mut last_append_entrypoints_to_pulls = 0;
+                let mut need_append_entrypoints_to_pulls_times = 0;
+                let mut next_need_append_entrypoints_to_pulls = false;
                 let recycler = PacketBatchRecycler::default();
 
                 for gossip_round in 0usize.. {
@@ -1554,6 +1593,19 @@ impl ClusterInfo {
                         .map(|es| es.current_epoch_staked_nodes())
                         .unwrap_or_default();
 
+                    let mut need_append_entrypoints_to_pulls = false;
+                    if start - last_append_entrypoints_to_pulls > DEFAULT_APPEND_ENTRYPOINTS_INTERVAL_MILLIS
+                        && need_append_entrypoints_to_pulls_times <= MAX_TIMES_NEED_SEND_TO_ALL_ENTRYPOINTS
+                    {
+                        need_append_entrypoints_to_pulls_times += 1;
+                        last_append_entrypoints_to_pulls = start;
+                        need_append_entrypoints_to_pulls = true;
+                        next_need_append_entrypoints_to_pulls = true;
+                    } else if next_need_append_entrypoints_to_pulls {
+                        need_append_entrypoints_to_pulls = true;
+                        next_need_append_entrypoints_to_pulls = false;
+                    }
+
                     let _ = self.run_gossip(
                         &thread_pool,
                         gossip_validators.as_ref(),
@@ -1562,6 +1614,7 @@ impl ClusterInfo {
                         &sender,
                         // Make pull requests every PULL_REQUEST_PERIOD rounds
                         gossip_round % PULL_REQUEST_PERIOD == 0,
+                        need_append_entrypoints_to_pulls,
                     );
                     self.handle_purge(&thread_pool, &stakes);
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
@@ -2697,7 +2750,7 @@ mod tests {
             Vec<(SocketAddr, Ping)>,     // Ping packets
             Vec<(SocketAddr, Protocol)>, // Pull requests
         ) {
-            self.new_pull_requests(thread_pool, gossip_validators, stakes)
+            self.new_pull_requests(thread_pool, gossip_validators, stakes, false)
                 .partition_map(|(addr, protocol)| {
                     if let Protocol::PingMessage(ping) = protocol {
                         Either::Left((addr, ping))
@@ -2973,6 +3026,40 @@ mod tests {
             None,            // gossip_validators
             &HashMap::new(), // stakes
             true,            // generate_pull_requests
+            false,
+        );
+        //assert none of the addrs are invalid.
+        assert!(reqs.all(|(addr, _)| {
+            ContactInfo::is_valid_address(&addr, &SocketAddrSpace::Unspecified)
+        }));
+    }
+
+    #[test]
+    fn test_cluster_spy_gossip_with_append_entrypoints() {
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        //check that gossip doesn't try to push to invalid addresses
+        let (spy, _, _) = ClusterInfo::spy_node(solana_pubkey::new_rand(), 0);
+        let cluster_info = Arc::new({
+            let keypair = Arc::new(Keypair::new());
+            let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
+            ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
+        });
+        cluster_info.insert_info(spy);
+        cluster_info.gossip.refresh_push_active_set(
+            &cluster_info.keypair(),
+            cluster_info.my_shred_version(),
+            &HashMap::new(), // stakes
+            None,            // gossip validators
+            &cluster_info.ping_cache,
+            &mut Vec::new(), // pings
+            &SocketAddrSpace::Unspecified,
+        );
+        let mut reqs = cluster_info.generate_new_gossip_requests(
+            &thread_pool,
+            None,            // gossip_validators
+            &HashMap::new(), // stakes
+            true,            // generate_pull_requests
+            true,
         );
         //assert none of the addrs are invalid.
         assert!(reqs.all(|(addr, _)| {
