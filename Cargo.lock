@@ -603,7 +603,7 @@ dependencies = [
  "atomic-wait",
  "crossbeam-channel",
  "crossbeam-utils",
- "shuttle 0.7.1",
+ "shuttle",
 ]
 
 [[package]]
@@ -3134,20 +3134,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "generator"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "186014d53bc231d0090ef8d6f03e0920c54d85a5ed22f4f2f74315ec56cf83fb"
-dependencies = [
- "cc",
- "cfg-if 1.0.4",
- "libc",
- "log",
- "rustversion",
- "windows",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4968,12 +4954,6 @@ checksum = "8e22443d1643a904602595ba1cd8f7d896afe56d26712531c5ff73a15b2fbf64"
 
 [[package]]
 name = "owo-colors"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
-
-[[package]]
-name = "owo-colors"
 version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
@@ -6698,25 +6678,6 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shuttle"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d9a8db61a44e2b663f169a08206a789bcbd22ba32011e14951562848e7b9c98"
-dependencies = [
- "assoc",
- "bitvec",
- "generator",
- "hex",
- "owo-colors 3.5.0",
- "rand 0.8.6",
- "rand_core 0.6.4",
- "rand_pcg 0.3.1",
- "scoped-tls",
- "smallvec",
- "tracing",
-]
-
-[[package]]
-name = "shuttle"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9908444fee96d991a0758d93a8375c798f9168d0f6c264adf5f10a9054e530c"
@@ -6726,7 +6687,7 @@ dependencies = [
  "const-siphasher",
  "corosensei",
  "hex",
- "owo-colors 4.4.0",
+ "owo-colors",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rand_pcg 0.3.1",
@@ -6749,7 +6710,7 @@ dependencies = [
  "const-siphasher",
  "corosensei",
  "hex",
- "owo-colors 4.4.0",
+ "owo-colors",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rand_pcg 0.3.1",
@@ -6778,7 +6739,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc4645e9a41d9d9015531e5056bd0f2eb234f80bd989ded3aa11b5b9aaddf87a"
 dependencies = [
  "assoc",
- "owo-colors 4.4.0",
+ "owo-colors",
  "shuttle-engine",
  "smallvec",
  "tracing",
@@ -7416,7 +7377,7 @@ dependencies = [
  "criterion",
  "qualifier_attr",
  "rand 0.9.4",
- "shuttle 0.7.1",
+ "shuttle",
  "solana-account",
  "solana-bincode",
  "solana-bpf-loader-program",
@@ -9337,7 +9298,7 @@ dependencies = [
  "quinn",
  "rand 0.9.4",
  "serde",
- "shuttle 0.7.1",
+ "shuttle",
  "socket2 0.6.5",
  "solana-net-utils",
  "solana-serde",
@@ -9498,7 +9459,7 @@ dependencies = [
  "log",
  "qualifier_attr",
  "rand 0.9.4",
- "shuttle 0.7.1",
+ "shuttle",
  "solana-clock",
  "solana-entry",
  "solana-hash",
@@ -10258,7 +10219,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
- "shuttle 0.7.1",
+ "shuttle",
  "smallvec",
  "solana-account",
  "solana-account-decoder",
@@ -10410,7 +10371,7 @@ dependencies = [
  "log",
  "rand 0.8.6",
  "rustc-demangle",
- "shuttle 0.9.4",
+ "shuttle",
  "thiserror 2.0.20",
  "winapi",
 ]
@@ -10904,7 +10865,7 @@ dependencies = [
  "qualifier_attr",
  "rand 0.9.4",
  "serde",
- "shuttle 0.7.1",
+ "shuttle",
  "solana-account",
  "solana-address-lookup-table-interface",
  "solana-bpf-loader-program",
@@ -11021,7 +10982,7 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "futures 0.3.34",
  "rand 0.9.4",
- "shuttle 0.7.1",
+ "shuttle",
 ]
 
 [[package]]
@@ -13398,39 +13359,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows"
-version = "0.54.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9252e5725dbed82865af151df558e754e4a3c2c30818359eb17465f1346a1b49"
-dependencies = [
- "windows-core",
- "windows-targets",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.54.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12661b9c89351d684a50a8a643ce5f608e20243b9fb84687800163429f161d65"
-dependencies = [
- "windows-result",
- "windows-targets",
-]
-
-[[package]]
 name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
-
-[[package]]
-name = "windows-result"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "749f0da9cc72d82e600d8d2e44cadd0b9eedb9038f71a1c58556ac1c5791813b"
-dependencies = [
- "windows-targets",
-]
 
 [[package]]
 name = "windows-sys"
