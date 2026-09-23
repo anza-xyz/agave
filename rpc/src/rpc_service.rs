@@ -963,6 +963,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_snapshot_stream_closed_receiver_releases_source() {
+        let (stream, dropped) = DropTrackedStream::new(stream::repeat_with(|| {
+            Ok(Bytes::from_static(b"snapshot data"))
+        }));
+        let SnapshotStream {
+            receiver,
+            _sender_task: sender_task,
+        } = SnapshotStream::new(stream, Duration::from_secs(3600));
+        drop(receiver);
+
+        // Keep the task alive so it observes the closed receiver itself.
+        timeout(Duration::from_secs(1), sender_task)
+            .await
+            .unwrap()
+            .unwrap();
+        dropped.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_snapshot_stream_completion_and_read_error() {
         let chunks = vec![
             Ok(Bytes::from_static(b"snapshot ")),
@@ -1022,6 +1041,45 @@ mod tests {
         ) -> Poll<std::io::Result<()>> {
             Pin::new(&mut self.inner).poll_shutdown(cx)
         }
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_stream_completes_http_response() {
+        let (stream, dropped) =
+            DropTrackedStream::new(stream::iter([Ok(Bytes::from_static(b"snapshot data"))]));
+        let mut body = Some(SnapshotStream::new(stream, Duration::from_secs(60)));
+        let (server_io, mut client_io) = tokio::io::duplex(1024);
+        let server = tokio::spawn(async move {
+            hyper::server::conn::Http::new()
+                .serve_connection(
+                    WriteBlockedIo {
+                        inner: server_io,
+                        blocked: None,
+                    },
+                    hyper::service::service_fn(move |_| {
+                        let response = hyper::Response::builder()
+                            .header(hyper::header::CONTENT_LENGTH, 13)
+                            .header(hyper::header::CONNECTION, "close")
+                            .body(hyper::Body::wrap_stream(body.take().unwrap()))
+                            .unwrap();
+                        async { Ok::<_, std::convert::Infallible>(response) }
+                    }),
+                )
+                .await
+        });
+        client_io
+            .write_all(b"GET /snapshot.tar.zst HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        timeout(Duration::from_secs(5), client_io.read_to_end(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert!(response.ends_with(b"\r\n\r\nsnapshot data"));
+        server.await.unwrap().unwrap();
+        dropped.await.unwrap();
     }
 
     #[tokio::test]
@@ -1452,22 +1510,22 @@ mod tests {
         ] {
             let contents = b"snapshot contents";
             std::fs::write(ledger_path.path().join(&path[1..]), contents).unwrap();
-            let RequestMiddlewareAction::Respond { response, .. } = rrm.process_file_get(path)
-            else {
-                panic!("Unexpected RequestMiddlewareAction variant");
-            };
-            runtime.block_on(async {
-                let response = response.await.unwrap();
-                assert_eq!(response.status(), 200);
-                assert_eq!(
-                    response.headers()[hyper::header::CONTENT_LENGTH],
-                    contents.len().to_string()
-                );
-                assert_eq!(
-                    hyper::body::to_bytes(response.into_body()).await.unwrap(),
-                    &contents[..]
-                );
-            });
+            let action = rrm.process_file_get(path);
+            assert!(matches!(action, RequestMiddlewareAction::Respond { .. }));
+            if let RequestMiddlewareAction::Respond { response, .. } = action {
+                runtime.block_on(async {
+                    let response = response.await.unwrap();
+                    assert_eq!(response.status(), 200);
+                    assert_eq!(
+                        response.headers()[hyper::header::CONTENT_LENGTH],
+                        contents.len().to_string()
+                    );
+                    assert_eq!(
+                        hyper::body::to_bytes(response.into_body()).await.unwrap(),
+                        &contents[..]
+                    );
+                });
+            }
         }
     }
 }
