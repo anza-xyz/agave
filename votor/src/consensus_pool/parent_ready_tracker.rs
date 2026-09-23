@@ -49,7 +49,12 @@ pub(crate) struct ParentReadyTracker {
 struct ParentReadyStatus {
     /// Whether this slot has a skip certificate
     skip: bool,
-    /// The blocks that have been notar fallbacked in this slot
+    /// The blocks that have been notar fallbacked in this slot.
+    ///
+    /// Note that since the existence of a Notarize or FastFinalize certificate
+    /// implies the existence of a NotarizeFallback certificate, here we also
+    /// record blocks for which we've observed Notarize or FastFinalize
+    /// certificates.
     notar_fallbacks: Vec<Block>,
     /// The parent blocks that achieve parent ready in this slot,
     /// Theses blocks are all potential parents choosable in this slot
