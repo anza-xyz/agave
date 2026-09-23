@@ -5750,9 +5750,9 @@ dependencies = [
 
 [[package]]
 name = "solana-account-view"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc141b940560430425ebaadb7645496c45f6a10fad9911d719bd03eab7f4d422"
+checksum = "1acd7ff34cf7f09e238921b5aa64d9e517b2e92642c153a5dc15d99c8e25af3d"
 dependencies = [
  "solana-address 2.8.0",
  "solana-program-error",
