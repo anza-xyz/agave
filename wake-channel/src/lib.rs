@@ -15,29 +15,42 @@
 //! [`WakeEvent`]. Any number of channels can feed one event, which is what lets a consumer wait on
 //! several channels without a `select!`.
 //!
+//! # Multiple channels
+//!
+//! [`WakeEvent::recv_with`] takes a poll closure, so a consumer can poll any number of channels of
+//! different types and fold them into one result. Every channel polled inside one `recv_with` call
+//! must have been created on that same event: a channel on another event never wakes this event's
+//! sleepers.
+//!
+//! Every sleeping consumer on an event must also poll every channel on that event. `wake_one()` can
+//! wake any sleeper; if that consumer does not poll the channel with new data, it can go back to
+//! sleep while the data's intended consumer remains asleep. Use separate events for consumers that
+//! drain different sets of channels, and only use [`Receiver::recv`] on an event with a single
+//! channel.
+//!
 //! # Synchronization protocol
 //!
-//! Receivers sleep waiting for new messages when a channel is empty. After the underlying channel's
-//! `try_recv()` returns `Empty`, a receiver registers a waiter and calls `try_recv()` again before
-//! sleeping. If the channel is not empty anymore, the receiver returns the message immediately. If
-//! the channel is still empty, the receiver sleeps until a sender wakes it up.
+//! Receivers sleep waiting for new messages when the channels are empty. After the caller-supplied
+//! `poll()` returns `Empty`, a receiver registers a waiter and calls `poll()` again before
+//! sleeping. If any channel is not empty anymore, the receiver returns the message immediately. If
+//! the channels are still empty, the receiver sleeps until a sender wakes it up.
 //!
-//! When a sender sends a message, it enqueues it into the channel and calls `wake_one()`. If no
-//! receivers are sleeping, `wake_one()` _does nothing_. If any receivers are sleeping, one is woken
-//! up so it can process the message.
+//! When a sender sends a message, it enqueues it into one of the channels and calls `wake_one()`.
+//! If no receivers are sleeping, `wake_one()` _does nothing_. If any receivers are sleeping, one is
+//! woken up so it can process the message.
 //!
 //! The fences in `register_waiter()` and `wake_*()` allow the "`wake_one()` does nothing"
-//! optimization, guaranteeing that either a receiver's second `try_recv()` observes a message, or
-//! the sender observes the registered waiter and so can wake it.
+//! optimization, guaranteeing that either a receiver's second `poll()` observes a message, or the
+//! sender observes the registered waiter and so can wake it.
 
 #![cfg(feature = "agave-unstable-api")]
 
+pub use crossbeam_channel::{RecvError, SendError, TryRecvError, TrySendError};
 #[cfg(feature = "shuttle-test")]
 use shuttle::sync::atomic::AtomicUsize;
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::atomic::AtomicUsize;
 use {
-    crossbeam_channel::{RecvError, SendError, TryRecvError},
     crossbeam_utils::Backoff,
     std::{
         mem,
@@ -51,6 +64,8 @@ use {
 /// Helper to coordinate sleeping and waking between senders and receivers.
 ///
 /// Consumers block in [`WakeEvent::recv_with`]; [`Receiver::recv`] is the single-channel instance.
+/// Several channels can share one event through [`bounded_with_wake_event`]; every consumer
+/// sleeping on the event must then poll all of them, since a wake can go to any of them.
 ///
 /// See the crate docs for the synchronization protocol.
 #[derive(Default)]
@@ -102,6 +117,9 @@ impl WakeEvent {
     /// flag. Every producer of such a condition must call [`wake_one`](Self::wake_one) or
     /// [`wake_all`](Self::wake_all) on this event after making it visible.
     /// `Err(TryRecvError::Disconnected)` from `poll` ends the wait with `Err(RecvError)`.
+    ///
+    /// All consumers sleeping on this event must poll the same set of channels. Otherwise a send
+    /// can wake a consumer that cannot receive the message, leaving the intended consumer asleep.
     pub fn recv_with<T>(
         &self,
         mut poll: impl FnMut() -> Result<T, TryRecvError>,
@@ -180,6 +198,28 @@ impl<T> Sender<T> {
         self.shared.wake_event.wake_one();
         Ok(())
     }
+
+    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+        self.inner.try_send(value)?;
+        self.shared.wake_event.wake_one();
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
+    }
+
+    pub fn wake_event(&self) -> &Arc<WakeEvent> {
+        &self.shared.wake_event
+    }
 }
 
 impl<T> Clone for Sender<T> {
@@ -210,8 +250,31 @@ pub struct Receiver<T> {
 }
 
 impl<T> Receiver<T> {
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+        self.inner.try_recv()
+    }
+
+    /// Blocking receive on this channel alone. Only use this with an event dedicated to this
+    /// channel. Consumers sharing an event across several channels must all poll them through
+    /// [`WakeEvent::recv_with`], so whichever consumer is woken can receive the queued message.
     pub fn recv(&self) -> Result<T, RecvError> {
         self.shared.wake_event.recv_with(|| self.inner.try_recv())
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
+    }
+
+    pub fn wake_event(&self) -> &Arc<WakeEvent> {
+        &self.shared.wake_event
     }
 }
 
@@ -224,11 +287,25 @@ impl<T> Clone for Receiver<T> {
     }
 }
 
+/// Creates a channel of the given capacity on its own [`WakeEvent`].
+///
+/// Panics if `capacity` is zero.
 pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+    bounded_with_wake_event(capacity, Arc::new(WakeEvent::default()))
+}
+
+/// Creates a channel of the given capacity on `event`.
+///
+/// Panics if `capacity` is zero: a zero-capacity crossbeam channel hands each message directly to a
+/// receiver, and this crate wakes a receiver only after the send has completed.
+pub fn bounded_with_wake_event<T>(
+    capacity: usize,
+    event: Arc<WakeEvent>,
+) -> (Sender<T>, Receiver<T>) {
     assert_ne!(capacity, 0, "channel capacity must be nonzero");
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
     let shared = Arc::new(Shared {
-        wake_event: Arc::new(WakeEvent::default()),
+        wake_event: event,
         num_senders: AtomicUsize::new(1),
     });
     (
@@ -271,6 +348,20 @@ mod tests {
     fn wait_for_waiters(event: &WakeEvent, expected: usize) {
         while event.waiters.load(Ordering::Relaxed) != expected {
             thread::yield_now();
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Work {
+        A(u32),
+        B(&'static str),
+    }
+
+    fn poll_both(ra: &Receiver<u32>, rb: &Receiver<&'static str>) -> Result<Work, TryRecvError> {
+        match ra.try_recv() {
+            Ok(value) => Ok(Work::A(value)),
+            Err(TryRecvError::Empty) => rb.try_recv().map(Work::B),
+            Err(err) => Err(err),
         }
     }
 
@@ -337,6 +428,60 @@ mod tests {
             NUM_MESSAGES
         );
         producer.join().unwrap();
+    }
+
+    #[test]
+    fn test_recv_with_wakes_on_either_channel() {
+        let event = Arc::new(WakeEvent::default());
+        let (sa, ra) = bounded_with_wake_event::<u32>(4, Arc::clone(&event));
+        let (sb, rb) = bounded_with_wake_event::<&'static str>(4, Arc::clone(&event));
+
+        let spawn_consumer = || {
+            let event = Arc::clone(&event);
+            let (ra, rb) = (ra.clone(), rb.clone());
+            spawn_with_result(move || event.recv_with(|| poll_both(&ra, &rb)).unwrap())
+        };
+
+        let consumer = spawn_consumer();
+        wait_for_waiters(&event, 1);
+        sb.try_send("b").unwrap();
+        assert_eq!(
+            consumer
+                .recv_timeout(TEST_TIMEOUT)
+                .expect("consumer stranded"),
+            Work::B("b")
+        );
+
+        let consumer = spawn_consumer();
+        wait_for_waiters(&event, 1);
+        sa.try_send(7).unwrap();
+        assert_eq!(
+            consumer
+                .recv_timeout(TEST_TIMEOUT)
+                .expect("consumer stranded"),
+            Work::A(7)
+        );
+    }
+
+    #[test]
+    fn test_channel_disconnect_wakes_multi_channel_sleeper() {
+        let event = Arc::new(WakeEvent::default());
+        let (_sa, ra) = bounded_with_wake_event::<u32>(4, Arc::clone(&event));
+        let (sb, rb) = bounded_with_wake_event::<&'static str>(4, Arc::clone(&event));
+
+        let consumer = {
+            let event = Arc::clone(&event);
+            spawn_with_result(move || event.recv_with(|| poll_both(&ra, &rb)))
+        };
+        wait_for_waiters(&event, 1);
+        // Channel A is still connected; dropping channel B's only sender must still end the wait.
+        drop(sb);
+        assert_eq!(
+            consumer
+                .recv_timeout(TEST_TIMEOUT)
+                .expect("consumer stranded"),
+            Err(RecvError)
+        );
     }
 
     #[test]
