@@ -1,7 +1,7 @@
 //! Shred wire layout parameters.
 //!
 //! Every offset in the shred format is a function of the
-//! [`ShredVariant`](crate::shred_variant::ShredVariant) byte. It defines whether it is a data or
+//! [`ShredVariant`] byte. It defines whether it is a data or
 //! code shred, and whether the shred is `resigned`.
 //!
 //! ```text
@@ -31,10 +31,12 @@
 
 use {
     crate::{
-        headers::{CodeHeader, CommonHeader, DataHeader},
+        headers::{CodeHeader, CommonHeader, DataHeader, ShredFlags},
         kind::{Code, Data, ShredLayout},
+        shred_variant::ShredVariant,
     },
     bytes::{Bytes, BytesMut},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
     solana_signature::Signature,
@@ -142,9 +144,44 @@ pub const SIZE_OF_DATA_PAYLOAD: usize =
 /// where the payload already is instead of into a copy of it.
 pub const SIZE_OF_SHRED_BUFFER: usize = SIZE_OF_CODE_PAYLOAD.saturating_add(SIZE_OF_NONCE);
 
-/// Offset of the [`ShredVariant`](crate::shred_variant::ShredVariant) byte, which follows the
-/// signature.
+// Offsets of the individual header fields within a shred's payload.
+//
+// `sections` brackets the headers as a block, which is what a reader of a whole shred needs. A
+// reader after one field indexes the payload directly instead, and these are where it indexes.
+//
+// Each offset is the running sum of the wincode sizes of the fields that precede it, so the header
+// structs stay the only statement of the layout. The `const_assert_eq!`s below pin both the
+// resulting numbers and the fact that each running sum lands exactly on the end of the header it
+// walks: a field added, removed, resized or reordered is a compile error, as it is a protocol
+// change.
+
+/// Offset of [`CommonHeader::variant`], which follows the signature.
 pub const OFFSET_OF_VARIANT: usize = SIZE_OF_SIGNATURE;
+/// Offset of [`CommonHeader::slot`].
+pub const OFFSET_OF_SLOT: usize = OFFSET_OF_VARIANT + serialized_size_of::<ShredVariant>();
+/// Offset of [`CommonHeader::index`].
+pub const OFFSET_OF_INDEX: usize = OFFSET_OF_SLOT + serialized_size_of::<Slot>();
+/// Offset of [`CommonHeader::version`].
+pub const OFFSET_OF_VERSION: usize = OFFSET_OF_INDEX + serialized_size_of::<u32>();
+/// Offset of [`CommonHeader::fec_set_index`].
+pub const OFFSET_OF_FEC_SET_INDEX: usize = OFFSET_OF_VERSION + serialized_size_of::<u16>();
+/// Offset one past the common header, where the kind's own header begins.
+pub const OFFSET_OF_KIND_HEADER: usize = OFFSET_OF_FEC_SET_INDEX + serialized_size_of::<u32>();
+
+/// Offset of [`DataHeader::parent_offset`].
+pub const OFFSET_OF_PARENT_OFFSET: usize = OFFSET_OF_KIND_HEADER;
+/// Offset of [`DataHeader::flags`].
+pub const OFFSET_OF_FLAGS: usize = OFFSET_OF_PARENT_OFFSET + serialized_size_of::<u16>();
+/// Offset of [`DataHeader::size`].
+pub const OFFSET_OF_DATA_SIZE: usize = OFFSET_OF_FLAGS + serialized_size_of::<ShredFlags>();
+
+/// Offset of [`CodeHeader::num_data_shreds`].
+pub const OFFSET_OF_NUM_DATA_SHREDS: usize = OFFSET_OF_KIND_HEADER;
+/// Offset of [`CodeHeader::num_code_shreds`].
+pub const OFFSET_OF_NUM_CODE_SHREDS: usize =
+    OFFSET_OF_NUM_DATA_SHREDS + serialized_size_of::<u16>();
+/// Offset of [`CodeHeader::position`].
+pub const OFFSET_OF_POSITION: usize = OFFSET_OF_NUM_CODE_SHREDS + serialized_size_of::<u16>();
 
 // this may be a bit excessive, but it is a tripwire in case of breaking changes in wincode
 static_assertions::const_assert_eq!(MERKLE_PROOF_ENTRIES, 6);
@@ -166,6 +203,32 @@ static_assertions::const_assert_eq!(Data::SIZE_OF_BODY_RESIGNED, 899);
 static_assertions::const_assert_eq!(Code::SIZE_OF_BODY, 987);
 static_assertions::const_assert_eq!(Code::SIZE_OF_BODY_RESIGNED, 923);
 static_assertions::const_assert_eq!(SIZE_OF_SHRED_BUFFER, PACKET_DATA_SIZE);
+
+// Each header's fields account for all of it: anything else leaves a running sum off its end.
+static_assertions::const_assert_eq!(
+    OFFSET_OF_KIND_HEADER,
+    SIZE_OF_SIGNATURE.saturating_add(SIZE_OF_COMMON_HEADER)
+);
+static_assertions::const_assert_eq!(
+    OFFSET_OF_DATA_SIZE.saturating_add(serialized_size_of::<u16>()),
+    Data::SIZE_OF_HEADERS
+);
+static_assertions::const_assert_eq!(
+    OFFSET_OF_POSITION.saturating_add(serialized_size_of::<u16>()),
+    Code::SIZE_OF_HEADERS
+);
+static_assertions::const_assert_eq!(OFFSET_OF_VARIANT, 64);
+static_assertions::const_assert_eq!(OFFSET_OF_SLOT, 65);
+static_assertions::const_assert_eq!(OFFSET_OF_INDEX, 73);
+static_assertions::const_assert_eq!(OFFSET_OF_VERSION, 77);
+static_assertions::const_assert_eq!(OFFSET_OF_FEC_SET_INDEX, 79);
+static_assertions::const_assert_eq!(OFFSET_OF_KIND_HEADER, 83);
+static_assertions::const_assert_eq!(OFFSET_OF_PARENT_OFFSET, 83);
+static_assertions::const_assert_eq!(OFFSET_OF_FLAGS, 85);
+static_assertions::const_assert_eq!(OFFSET_OF_DATA_SIZE, 86);
+static_assertions::const_assert_eq!(OFFSET_OF_NUM_DATA_SHREDS, 83);
+static_assertions::const_assert_eq!(OFFSET_OF_NUM_CODE_SHREDS, 85);
+static_assertions::const_assert_eq!(OFFSET_OF_POSITION, 87);
 
 /// A zeroed payload buffer for a shred of kind `K`, allocated at [`SIZE_OF_SHRED_BUFFER`].
 ///
