@@ -62,13 +62,13 @@ clap = { version = "4.5.59", features = ["derive"], optional = true }
 prost = { workspace = true, optional = true }
 protosol = { workspace = true, optional = true }
 serde_json = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-bloom = { workspace = true }
 solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
+solana-feature-gate-interface = { workspace = true, features = ["wincode"] }
 solana-fee-calculator = { workspace = true }
 solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
 solana-hash = { workspace = true }
@@ -80,7 +80,7 @@ solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-message = { workspace = true }
 solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-rent = { workspace = true, features = ["serde"] }
+solana-rent = { workspace = true, features = ["serde", "wincode"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true }
 solana-sanitize = { workspace = true }

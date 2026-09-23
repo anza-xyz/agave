@@ -1,33 +1,33 @@
 //! Definitions related to consensus metrics collection.
 
 use {
-    crate::vote::Vote,
+    crate::{VoteAccountPubkeys, vote::Vote},
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::time::Instant,
 };
 
+#[derive(Debug, PartialEq, Eq)]
 /// Different types of events to notify the metrics container of.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConsensusMetricsEvent {
     /// A vote was received from the node with `id`.
     Vote {
         /// The validator that voted.
-        ids: Vec<Pubkey>,
+        ids: VoteAccountPubkeys,
         /// The type of vote.
         vote: Vote,
     },
-    /// A block hash was seen for `slot` and the `leader` is responsible for producing it.
-    BlockHashSeen {
+    /// A block for `slot` that was produced by `leader` finished replaying.
+    ReplayCompleted {
         /// The leader that produced the block.
         leader: Pubkey,
         /// The slot the block was produced for.
         slot: Slot,
     },
-    /// Start of slot.
-    StartOfSlot {
-        /// The slot that just started.
+    /// ParentReady event was seen.
+    ParentReadySeen {
+        /// The slot for which the parent ready event was seen.
         slot: Slot,
     },
     /// A slot was finalized.
@@ -38,9 +38,9 @@ pub enum ConsensusMetricsEvent {
 }
 
 /// Send side of the channel to send metrics events on.
-pub type ConsensusMetricsEventSender = Sender<(Instant, Vec<ConsensusMetricsEvent>)>;
+pub type ConsensusMetricsEventSender = Sender<(Instant, ConsensusMetricsEvent)>;
 /// Receive side of the channel to receive metrics events on.
-pub type ConsensusMetricsEventReceiver = Receiver<(Instant, Vec<ConsensusMetricsEvent>)>;
+pub type ConsensusMetricsEventReceiver = Receiver<(Instant, ConsensusMetricsEvent)>;
 
 /// Even at 10 events per slot, this supports 1000 slots in flight
 /// With 2000 active validators, we can't have more than:

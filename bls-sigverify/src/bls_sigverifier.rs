@@ -3,11 +3,12 @@
 use {
     crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
-        bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
+        bls_vote_sigverify::verify_and_send_votes,
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
         rewards::{RewardInput, rewards_wants_vote},
         stats::SigVerifierStats,
+        unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
         vote_pool::{VotePool, VotePoolError},
     },
     agave_votor_messages::{
@@ -238,10 +239,7 @@ impl SigVerifier {
         &mut self,
         my_pubkey: &Pubkey,
         datagrams: &[Datagram],
-        votes_buffer: &mut HashMap<
-            VotePayloadToSign,
-            (Vec<UnverifiedVotePayload>, Arc<BLSPubkeyToRankMap>),
-        >,
+        votes_buffer: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
     ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
@@ -334,10 +332,7 @@ impl SigVerifier {
         &mut self,
         my_pubkey: &Pubkey,
         datagrams: &[Datagram],
-        votes_buffer: &mut HashMap<
-            VotePayloadToSign,
-            (Vec<UnverifiedVotePayload>, Arc<BLSPubkeyToRankMap>),
-        >,
+        votes_buffer: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
     ) -> HashMap<CertificateType, Vec<CertPayload>> {
@@ -435,10 +430,7 @@ impl SigVerifier {
         migration_slot: Option<Slot>,
         max_vote_slot: Slot,
         root_bank: &Bank,
-        votes: &mut HashMap<
-            VotePayloadToSign,
-            (Vec<UnverifiedVotePayload>, Arc<BLSPubkeyToRankMap>),
-        >,
+        votes: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
         unverified_vote: UnverifiedVoteMessage,
     ) {
         // votes from self take a different pathway.
@@ -500,8 +492,13 @@ impl SigVerifier {
                     }
                 };
                 match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
-                    Some(payload) => {
-                        e.insert((vec![payload], rank_map));
+                    Some((payload, sender_vote_account_pubkey)) => {
+                        e.insert(UnverifiedBatch::new(
+                            vote_payload_to_sign,
+                            payload,
+                            sender_vote_account_pubkey,
+                            rank_map,
+                        ));
                     }
                     None => {
                         self.stats.num_keep_vote_failed += 1;
@@ -509,10 +506,10 @@ impl SigVerifier {
                 }
             }
             Entry::Occupied(mut e) => {
-                let (list, rank_map) = e.get_mut();
-                match self.keep_vote(rank_map, unverified_vote, sender_identity_pubkey) {
-                    Some(payload) => {
-                        list.push(payload);
+                let batch = e.get_mut();
+                match self.keep_vote(batch.rank_map(), unverified_vote, sender_identity_pubkey) {
+                    Some((payload, sender_vote_account_pubkey)) => {
+                        batch.push(payload, sender_vote_account_pubkey);
                     }
                     None => {
                         self.stats.num_keep_vote_failed += 1;
@@ -528,7 +525,7 @@ impl SigVerifier {
         rank_map: &BLSPubkeyToRankMap,
         msg: UnverifiedVoteMessage,
         sender_identity_pubkey: Pubkey,
-    ) -> Option<UnverifiedVotePayload> {
+    ) -> Option<(UnverifiedVotePayload, Pubkey)> {
         let (rank, entry) = rank_map
             .get_ranked_entry_for_node(&sender_identity_pubkey)
             .or_else(|| {
@@ -536,14 +533,16 @@ impl SigVerifier {
                 None
             })?;
         match self.vote_pool.try_add_vote(&msg, rank, rank_map.len()) {
-            Ok(()) => Some(UnverifiedVotePayload {
-                vote_message: msg,
-                sender_bls_pubkey: entry.bls_pubkey,
-                sender_vote_account_pubkey: entry.vote_account_pubkey,
-                sender_identity_pubkey,
-                stake: entry.stake,
-                rank,
-            }),
+            Ok(()) => Some((
+                UnverifiedVotePayload {
+                    vote_message: msg,
+                    sender_bls_pubkey: entry.bls_pubkey,
+                    sender_identity_pubkey,
+                    stake: entry.stake,
+                    rank,
+                },
+                entry.vote_account_pubkey,
+            )),
             Err(VotePoolError::Duplicate) => {
                 self.stats.vote_pool_duplicate += 1;
                 None
@@ -927,12 +926,14 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
-        let mut received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
-        assert_eq!(received_verified_votes1.len(), 1);
-        assert_eq!(
-            received_verified_votes1.remove(&5).unwrap(),
-            vec![ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey()]
-        );
+        {
+            let (slot, pubkeys) = ctx.repair_receiver.try_recv().unwrap();
+            assert_eq!(slot, 5);
+            assert_eq!(
+                pubkeys.as_slice(),
+                &[ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey()]
+            );
+        }
 
         let vote_rank2 = 3;
         let vote_message2 = create_signed_vote_message(
@@ -957,12 +958,14 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
-        let mut received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
-        assert_eq!(received_verified_votes2.len(), 1);
-        assert_eq!(
-            received_verified_votes2.remove(&6).unwrap(),
-            vec![ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey()]
-        );
+        {
+            let (slot, pubkeys) = ctx.repair_receiver.try_recv().unwrap();
+            assert_eq!(slot, 6);
+            assert_eq!(
+                pubkeys.as_slice(),
+                &[ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey()]
+            );
+        }
 
         let vote_rank3 = 9;
         let vote_message3 = create_signed_vote_message(
@@ -986,12 +989,14 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
-        let mut received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
-        assert_eq!(received_verified_votes3.len(), 1);
-        assert_eq!(
-            received_verified_votes3.remove(&7).unwrap(),
-            vec![ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey()]
-        );
+        {
+            let (slot, pubkeys) = ctx.repair_receiver.try_recv().unwrap();
+            assert_eq!(slot, 7);
+            assert_eq!(
+                pubkeys.as_slice(),
+                &[ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey()]
+            );
+        }
     }
 
     #[test]
@@ -2137,16 +2142,16 @@ mod tests {
         assert_eq!(ctx.verifier.stats.cert_too_far_in_future.0, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
-        let mut map = ctx.repair_receiver.try_recv().unwrap();
-        assert_eq!(map.len(), 1);
-        assert_eq!(
-            map.remove(&max_vote_slot).unwrap(),
-            vec![
-                ctx.validator_keypairs[accepted_vote_rank]
+        {
+            let (slot, pubkeys) = ctx.repair_receiver.try_recv().unwrap();
+            assert_eq!(slot, max_vote_slot);
+            assert_eq!(
+                pubkeys.as_slice(),
+                &[ctx.validator_keypairs[accepted_vote_rank]
                     .vote_keypair
-                    .pubkey(),
-            ]
-        );
+                    .pubkey(),]
+            );
+        }
         expect_no_receive(&ctx.repair_receiver);
     }
 

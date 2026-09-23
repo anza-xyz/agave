@@ -31,7 +31,7 @@ where
 
     let bls_pubkey_compressed = set_bls_pubkey.then(|| {
         let bls_pubkey: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
-        let bls_pubkey_buffer = bincode::serialize(&bls_pubkey).unwrap();
+        let bls_pubkey_buffer = wincode::serialize(&bls_pubkey).unwrap();
         bls_pubkey_buffer.try_into().unwrap()
     });
     let vote_state = VoteStateV4 {

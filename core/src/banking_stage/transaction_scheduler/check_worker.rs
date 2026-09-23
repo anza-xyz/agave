@@ -835,7 +835,7 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::tests::create_slow_genesis_config,
             agave_scheduler_bindings::{SharableTransactionBatchRegion, SharableTransactionRegion},
-            agave_scheduler_handshake::{ClientLogon, client, server::Server},
+            agave_scheduler_handshake::{ClientLogon, setup_local_session},
             agave_scheduling_utils::{
                 pubkeys_ptr::PubkeysPtr, responses_region::CheckResponsesPtr,
             },
@@ -1005,9 +1005,8 @@ pub(crate) mod external {
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
             };
-            let (_agave_session, files) = Server::setup_session(logon).unwrap();
-            let mut client_session = client::setup_session(&logon, files).unwrap();
-            let allocator = client_session.allocators.pop().unwrap();
+            let (_agave_session, client_session) = setup_local_session(logon).unwrap();
+            let allocator = client_session.allocator;
 
             let (pack_to_check_worker, receiver) = shaq::mpmc::pair(16).unwrap();
             let (check_worker_to_pack, response_receiver) = shaq::mpmc::pair(16).unwrap();

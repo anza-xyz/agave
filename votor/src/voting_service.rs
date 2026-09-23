@@ -384,7 +384,9 @@ mod tests {
         },
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
-        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+        solana_net_utils::{
+            SocketAddrSpace, quic_socket::QuicSocket, sockets::bind_to_localhost_unique,
+        },
         solana_perf::packet::packet_config,
         solana_pubkey::Pubkey,
         solana_runtime::{
@@ -563,12 +565,13 @@ mod tests {
             .expect("tokio runtime");
         let socket = bind_to_localhost_unique().expect("bind UDP");
         let addr = socket.local_addr().expect("local addr");
-        let client_socket = bind_to_localhost_unique().expect("bind client UDP");
+        let client_socket =
+            QuicSocket::Kernel(bind_to_localhost_unique().expect("bind client UDP"));
         let (ingress_sender, ingress_receiver) = bounded(4096);
         let (egress, endpoint) = QuicDatagramEndpoint::spawn(
             rt.handle(),
             &keypair,
-            vec![socket],
+            vec![QuicSocket::Kernel(socket)],
             client_socket,
             ingress_sender,
             peer_list_receiver,

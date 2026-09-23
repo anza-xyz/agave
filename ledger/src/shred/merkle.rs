@@ -939,7 +939,7 @@ fn make_shreds_code_header_only(
 pub(crate) fn make_shreds_from_data(
     keypair: &Keypair,
     chained_merkle_root: Hash,
-    data: &[u8], // Serialized &[Entry]
+    mut data: &[u8], // Serialized &[Entry]
     slot: Slot,
     parent_slot: Slot,
     shred_version: u16,
@@ -1003,85 +1003,70 @@ pub(crate) fn make_shreds_from_data(
         }
     };
 
-    let (mut unsigned_data, signed_data) = if is_last_in_slot {
-        // Reserve at least one signed batch (may be empty) at the end.
-        if data.len() > data_buffer_total_size_signed {
-            // sign everything except the last batch
-            let split_at = data.len() - data_buffer_total_size_signed;
-            data.split_at(split_at)
-        } else {
-            // only enough data for one fec set, sign the whole thing
-            (&[][..], data)
-        }
-    } else {
-        // not last fec set, so don't sign
-        (data, &[][..])
-    };
-    stats.data_bytes += unsigned_data.len() + signed_data.len();
+    stats.data_bytes += data.len();
 
-    let unsigned_sets = unsigned_data.len().div_ceil(data_buffer_total_size);
-    let number_of_fec_sets = if is_last_in_slot {
-        unsigned_sets + 1
+    // Data is split into full FEC sets, with the remainder going into a final,
+    // padded, FEC set. Every FEC set but the last one has to be full: a set
+    // containing a data shred below maximum size must carry the batch complete
+    // flag on its last data shred, and the only place a batch may end is at the
+    // end of the data.
+    let (last_set_buffer_size, last_set_total_size) = if is_last_in_slot {
+        (
+            data_buffer_per_shred_size_signed,
+            data_buffer_total_size_signed,
+        )
     } else {
-        unsigned_sets
+        (data_buffer_per_shred_size, data_buffer_total_size)
     };
+    // +1 for the final, potentially empty, FEC set that we always emit: when the data
+    // exactly fills the preceding sets we still have to emit one to carry the batch
+    // complete flag, resigned and with last_in_slot set if it also completes the slot.
+    let number_of_fec_sets = 1 + data
+        .len()
+        .saturating_sub(last_set_total_size)
+        .div_ceil(data_buffer_total_size);
     let mut shreds = Vec::<Shred>::with_capacity(SHREDS_PER_FEC_BLOCK * number_of_fec_sets);
 
-    // Split the data into full erasure batches and initialize data and coding
-    // shreds for each batch.
-    while unsigned_data.len() >= data_buffer_total_size {
-        let (current_batch_data_chunk, rest) = unsigned_data.split_at(data_buffer_total_size);
-        debug_assert_eq!(
-            current_batch_data_chunk.len(),
-            DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size
-        );
-        common_header_data.fec_set_index = common_header_data.index;
-        common_header_code.fec_set_index = common_header_data.fec_set_index;
-        shreds.extend(
-            make_shreds_data(
-                &mut common_header_data,
-                data_header,
-                current_batch_data_chunk.chunks(data_buffer_per_shred_size),
+    while data.len() > last_set_total_size {
+        // When the data is too short to fill a non-resigned FEC set, but still too long for
+        // the final resigned one, a full resigned set is emitted instead.
+        let (resigned, buffer_size, total_size) = if data.len() > data_buffer_total_size {
+            (false, data_buffer_per_shred_size, data_buffer_total_size)
+        } else {
+            debug_assert!(
+                is_last_in_slot,
+                "only the last batch in a slot may emit a resigned FEC set"
+            );
+            (
+                true,
+                data_buffer_per_shred_size_signed,
+                data_buffer_total_size_signed,
             )
-            .map(Shred::ShredData),
-        );
-        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
-        unsigned_data = rest;
-    }
-
-    // Two possibilities for taking this conditional:
-    //
-    // 1.) We have leftover data which is less than a full erasure batch.
-    // AND/OR
-    // 2.) Shreds is_empty, which only happens when we entered w/ zero data.
-    //
-    // In either case, we want to generate empty data shreds.
-    if !unsigned_data.is_empty() || (shreds.is_empty() && !is_last_in_slot) {
-        stats.padding_bytes += data_buffer_total_size - unsigned_data.len();
-        shred_leftover_data(
+        };
+        let (chunk, rest) = data.split_at(total_size);
+        shred_fec_set(
             proof_size,
-            false,
-            unsigned_data,
-            data_buffer_per_shred_size,
+            resigned,
+            chunk,
+            buffer_size,
             &mut common_header_data,
             &mut common_header_code,
             data_header,
             &mut shreds,
         );
+        data = rest;
     }
-    if !signed_data.is_empty() || (shreds.is_empty() && is_last_in_slot) {
-        stats.padding_bytes += data_buffer_total_size_signed - signed_data.len();
-        shred_leftover_data(
-            proof_size,
-            true,
-            signed_data,
-            data_buffer_per_shred_size_signed,
-            &mut common_header_data,
-            &mut common_header_code,
-            data_header,
-            &mut shreds,
-        );
-    }
+    stats.padding_bytes += last_set_total_size - data.len();
+    shred_fec_set(
+        proof_size,
+        is_last_in_slot,
+        data,
+        last_set_buffer_size,
+        &mut common_header_data,
+        &mut common_header_code,
+        data_header,
+        &mut shreds,
+    );
 
     // Adjust flags for the very last data shred.
     if let Some(Shred::ShredData(shred)) = shreds
@@ -1117,7 +1102,7 @@ pub(crate) fn make_shreds_from_data(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn shred_leftover_data(
+fn shred_fec_set(
     proof_size: u8,
     resigned: bool,
     data: &[u8],
@@ -1138,7 +1123,6 @@ fn shred_leftover_data(
     common_header_data.fec_set_index = common_header_data.index;
     common_header_code.fec_set_index = common_header_data.fec_set_index;
     shreds.extend({
-        // Create data chunks out of remaining data + padding.
         let chunks = data
             .chunks(data_buffer_per_shred_size)
             .chain(std::iter::repeat(&[][..])) // possible padding
@@ -1249,7 +1233,11 @@ mod test {
         solana_keypair::Keypair,
         solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
-        std::{cmp::Ordering, collections::HashMap, iter::repeat_with},
+        std::{
+            cmp::Ordering,
+            collections::{HashMap, HashSet},
+            iter::{once, repeat_with},
+        },
         test_case::{test_case, test_matrix},
     };
 
@@ -1552,6 +1540,43 @@ mod test {
         }
     }
 
+    // Data whose size exceeds the capacity of the final, resigned, FEC set but does not fill a
+    // non-resigned one has to be shredded into two resigned FEC sets: the leftover cannot go
+    // into a partially filled non-resigned set. Covers both sides of that window.
+    #[test_case(true)]
+    #[test_case(false)]
+    fn test_make_shreds_from_data_resigned_boundary(is_last_in_slot: bool) {
+        let mut rng = rand::rng();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let fec_set_capacity = |resigned| {
+            DATA_SHREDS_PER_FEC_BLOCK
+                * ShredData::capacity(PROOF_ENTRIES_FOR_32_32_BATCH, resigned).unwrap()
+        };
+        let resigned_capacity = fec_set_capacity(true);
+        let unsigned_capacity = fec_set_capacity(false);
+        let sweep = 16;
+        let data_sizes = (resigned_capacity - sweep..=resigned_capacity + sweep)
+            .chain(once(resigned_capacity.midpoint(unsigned_capacity)))
+            .chain(unsigned_capacity - sweep..=unsigned_capacity + sweep);
+        for data_size in data_sizes {
+            let num_resigned_fec_sets = run_make_shreds_from_data(
+                &mut rng,
+                data_size,
+                is_last_in_slot,
+                &reed_solomon_cache,
+            );
+            let expected_resigned_fec_sets = match is_last_in_slot {
+                false => 0,
+                true if data_size > resigned_capacity && data_size <= unsigned_capacity => 2,
+                true => 1,
+            };
+            assert_eq!(
+                num_resigned_fec_sets, expected_resigned_fec_sets,
+                "data size: {data_size}"
+            );
+        }
+    }
+
     #[ignore]
     #[test_case(true)]
     #[test_case(false)]
@@ -1563,12 +1588,13 @@ mod test {
         }
     }
 
+    // Returns the number of resigned FEC sets in the generated shreds.
     fn run_make_shreds_from_data<R: Rng>(
         rng: &mut R,
         data_size: usize,
         is_last_in_slot: bool,
         reed_solomon_cache: &ReedSolomonCache,
-    ) {
+    ) -> usize {
         let keypair = Keypair::new();
         let chained_merkle_root = Hash::new_from_array(rng.random());
         let slot = 149_745_689;
@@ -1648,12 +1674,36 @@ mod test {
             assert_eq!(data, merkle_root);
             assert!(signature.verify(pubkey.as_ref(), data.as_ref()));
         }
+        // The trailing FEC set(s) of the last shreds in a slot are resigned.
+        let resigned_fec_sets: HashSet<u32> = shreds
+            .iter()
+            .filter(|shred| {
+                matches!(
+                    shred.common_header().shred_variant,
+                    ShredVariant::MerkleData { resigned: true, .. }
+                        | ShredVariant::MerkleCode { resigned: true, .. }
+                )
+            })
+            .map(Shred::fec_set_index)
+            .collect();
+        assert_eq!(!resigned_fec_sets.is_empty(), is_last_in_slot);
+        assert!(
+            resigned_fec_sets.len() <= 2,
+            "at most two FEC sets at the tail of a slot are resigned"
+        );
+        assert!(
+            shreds
+                .iter()
+                .map(|shred| resigned_fec_sets.contains(&shred.fec_set_index()))
+                .is_sorted(),
+            "resigned FEC sets are a suffix of the erasure batches"
+        );
         // Verify common, data and coding headers.
         let mut num_data_shreds = 0;
         let mut num_coding_shreds = 0;
-        for (index, shred) in shreds.iter().enumerate() {
+        for shred in &shreds {
             let common_header = shred.common_header();
-            let resigned = is_last_in_slot && index >= shreds.len() - 64;
+            let resigned = resigned_fec_sets.contains(&shred.fec_set_index());
 
             assert_eq!(common_header.slot, slot);
             assert_eq!(common_header.version, shred_version);
@@ -1750,6 +1800,52 @@ mod test {
                 .contains(ShredFlags::LAST_SHRED_IN_SLOT),
             is_last_in_slot
         );
+        // SIMD-0504: Assert that all FEC sets of this entry batch but its last one are
+        // full, and that any FEC set with a data shred below maximum size has only empty data
+        // shreds after it and ends with the batch complete flag (DATA_COMPLETE_SHRED).
+        // Only the last FEC set of a batch may contain padded shreds.
+        let fec_sets: Vec<Vec<&ShredData>> = data_shreds
+            .iter()
+            .copied()
+            .chunk_by(|shred| shred.common_header.fec_set_index)
+            .into_iter()
+            .map(|(_, shreds)| shreds.collect())
+            .collect();
+        for (batch_index, fec_set) in fec_sets.iter().enumerate() {
+            assert_eq!(
+                fec_set.len(),
+                DATA_SHREDS_PER_FEC_BLOCK,
+                "All FECs must be full"
+            );
+            let capacity = ShredData::capacity(
+                fec_set[0].proof_size().unwrap(),
+                resigned_fec_sets.contains(&fec_set[0].common_header.fec_set_index),
+            )
+            .unwrap();
+            let sizes: Vec<usize> = fec_set
+                .iter()
+                .map(|shred| shred.data().unwrap().len())
+                .collect();
+            let Some(short) = sizes.iter().position(|&size| size < capacity) else {
+                continue;
+            };
+            assert_eq!(
+                batch_index,
+                fec_sets.len() - 1,
+                "only the last FEC set of an entry batch may have a data shred below maximum size"
+            );
+            assert!(
+                sizes[short + 1..].iter().all(|&size| size == 0),
+                "data shreds following a short one must be empty"
+            );
+            assert!(
+                fec_set[DATA_SHREDS_PER_FEC_BLOCK - 1]
+                    .data_header
+                    .flags
+                    .contains(ShredFlags::DATA_COMPLETE_SHRED),
+                "a FEC set with a short data shred must end a batch"
+            );
+        }
         // Assert that the last erasure batch has 32+ data shreds.
         if is_last_in_slot {
             let fec_set_index = shreds.iter().map(Shred::fec_set_index).max().unwrap();
@@ -1793,5 +1889,6 @@ mod test {
         {
             verify_erasure_recovery(rng, shreds, reed_solomon_cache);
         }
+        resigned_fec_sets.len()
     }
 }

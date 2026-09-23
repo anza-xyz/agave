@@ -67,15 +67,14 @@ arc-swap = { workspace = true }
 arrayref = { workspace = true }
 assert_matches = { workspace = true }
 base64 = { workspace = true }
-bincode = { workspace = true }
 bitvec = { workspace = true }
 bytemuck = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 crossbeam-queue = { workspace = true }
 crossbeam-utils = { workspace = true }
-dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
-imbl = { workspace = true, features = ["rayon", "serde"] }
+dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+imbl = { workspace = true, features = ["rayon"] }
 itertools = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
@@ -87,12 +86,11 @@ rand = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
 semver = { workspace = true }
-serde = { workspace = true, features = ["rc"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
-serde_with = { workspace = true }
 shuttle = { workspace = true, optional = true }
-smallvec = { workspace = true, features = ["serde"] }
-solana-account = { workspace = true, features = ["bincode", "wincode"] }
+smallvec = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-decoder = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
@@ -106,7 +104,7 @@ solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
-solana-config-interface = { workspace = true, features = ["bincode"] }
+solana-config-interface = { workspace = true, features = ["wincode"] }
 solana-cost-model = { workspace = true }
 solana-cpi = { workspace = true }
 solana-ed25519-program = { workspace = true }
@@ -114,7 +112,7 @@ solana-entry = { workspace = true }
 solana-epoch-info = { workspace = true }
 solana-epoch-rewards-hasher = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["wincode"] }
-solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
+solana-feature-gate-interface = { workspace = true, features = ["wincode"] }
 solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true, features = ["wincode"] }
 solana-fee-structure = { workspace = true, features = ["serde"] }
@@ -124,7 +122,7 @@ solana-genesis-config = { workspace = true, features = ["serde"] }
 solana-hard-forks = { workspace = true, features = ["serde", "wincode"] }
 solana-hash = { workspace = true, features = ["atomic", "wincode", "rand"] }
 solana-inflation = { workspace = true, features = ["serde", "wincode"] }
-solana-instruction = { workspace = true }
+solana-instruction = { workspace = true, features = ["wincode"] }
 solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-lattice-hash = { workspace = true }
@@ -156,7 +154,7 @@ solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-slot-history = { workspace = true, features = ["wincode"] }
-solana-stake-history = { workspace = true }
+solana-stake-history = { workspace = true, features = ["wincode"] }
 solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-callback = { workspace = true }
@@ -168,7 +166,7 @@ solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-sysvar-id = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-transaction = { workspace = true, features = ["verify"] }
+solana-transaction = { workspace = true, features = ["verify", "wincode"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -205,7 +203,7 @@ solana-signature = { workspace = true, features = ["std"] }
 solana-signer-store = { workspace = true }
 solana-stake-interface = { workspace = true, features = ["bincode"] }
 solana-svm = { path = "../svm", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote-program = { path = "../programs/vote", default-features = false, features = ["agave-unstable-api", "dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }

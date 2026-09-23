@@ -1,5 +1,3 @@
-#[cfg(not(feature = "shuttle-test"))]
-use {bincode::serialize, solana_hash::HASH_BYTES, solana_sha256_hasher::hash};
 use {
     criterion::{Criterion, criterion_group, criterion_main},
     rand::{Rng, SeedableRng, rngs::SmallRng},
@@ -8,6 +6,11 @@ use {
     solana_runtime::bank::BankStatusCache,
     solana_signature::{SIGNATURE_BYTES, Signature},
     std::time::Duration,
+};
+#[cfg(not(feature = "shuttle-test"))]
+use {
+    solana_hash::HASH_BYTES, solana_runtime::serde_snapshot::serialize_status_cache_into,
+    solana_sha256_hasher::hash,
 };
 
 #[cfg(not(feature = "shuttle-test"))]
@@ -30,7 +33,11 @@ fn bench_status_cache_serialize(c: &mut Criterion) {
     assert!(status_cache.roots().contains(&0));
     c.bench_function("bench_status_cache_serialize", |b| {
         // Return the value so criterion black-boxes it for us.
-        b.iter(|| serialize(&status_cache.root_slot_deltas()).unwrap())
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            serialize_status_cache_into(&mut buffer, &status_cache.root_slot_deltas()).unwrap();
+            buffer
+        })
     });
 }
 
@@ -44,7 +51,11 @@ fn bench_status_cache_serialize_max(c: &mut Criterion) {
 
     assert!(status_cache.roots().contains(&0));
     c.bench_function("bench_status_cache_serialize_max", |b| {
-        b.iter(|| serialize(&status_cache.root_slot_deltas()).unwrap())
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            serialize_status_cache_into(&mut buffer, &status_cache.root_slot_deltas()).unwrap();
+            buffer
+        })
     });
 }
 

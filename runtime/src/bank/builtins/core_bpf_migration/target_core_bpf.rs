@@ -47,7 +47,7 @@ impl TargetCoreBpf {
         }
 
         // The program account should have a pointer to its data account.
-        match program_account.deserialize_data::<UpgradeableLoaderState>()? {
+        match wincode::deserialize::<UpgradeableLoaderState>(program_account.data())? {
             UpgradeableLoaderState::Program {
                 programdata_address,
             } if programdata_address == program_data_address => (),
@@ -76,7 +76,7 @@ impl TargetCoreBpf {
             && let UpgradeableLoaderState::ProgramData {
                 upgrade_authority_address,
                 ..
-            } = bincode::deserialize(&program_data_account.data()[..programdata_metadata_size])?
+            } = wincode::deserialize(&program_data_account.data()[..programdata_metadata_size])?
         {
             return Ok(Self {
                 program_address: *program_address,
@@ -124,7 +124,7 @@ mod tests {
         store_account(
             &bank,
             &program_address,
-            &bincode::serialize(&UpgradeableLoaderState::Program {
+            &wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address: program_data_address,
             })
             .unwrap(),
@@ -140,7 +140,7 @@ mod tests {
         store_account(
             &bank,
             &program_address,
-            &bincode::serialize(&UpgradeableLoaderState::Program {
+            &wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address: program_data_address,
             })
             .unwrap(),
@@ -162,7 +162,7 @@ mod tests {
         );
         assert_matches!(
             TargetCoreBpf::new_checked(&bank, &program_address).unwrap_err(),
-            CoreBpfMigrationError::BincodeError(..)
+            CoreBpfMigrationError::WincodeReadError(..)
         );
 
         // Fail if the program account does not have the correct state.
@@ -170,7 +170,7 @@ mod tests {
         store_account(
             &bank,
             &program_address,
-            &bincode::serialize(&UpgradeableLoaderState::ProgramData {
+            &wincode::serialize(&UpgradeableLoaderState::ProgramData {
                 slot: 0,
                 upgrade_authority_address: Some(Pubkey::new_unique()),
             })
@@ -189,7 +189,7 @@ mod tests {
         store_account(
             &bank,
             &program_address,
-            &bincode::serialize(&UpgradeableLoaderState::Program {
+            &wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address: Pubkey::new_unique(), // Not the correct program data account
             })
             .unwrap(),
@@ -201,7 +201,7 @@ mod tests {
         store_account(
             &bank,
             &program_address,
-            &bincode::serialize(&UpgradeableLoaderState::Program {
+            &wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address: program_data_address,
             })
             .unwrap(),
@@ -219,7 +219,7 @@ mod tests {
         store_account(
             &bank,
             &program_data_address,
-            &bincode::serialize(&UpgradeableLoaderState::ProgramData {
+            &wincode::serialize(&UpgradeableLoaderState::ProgramData {
                 slot: 0,
                 upgrade_authority_address: Some(Pubkey::new_unique()),
             })
@@ -242,7 +242,7 @@ mod tests {
         );
         assert_matches!(
             TargetCoreBpf::new_checked(&bank, &program_address).unwrap_err(),
-            CoreBpfMigrationError::BincodeError(..)
+            CoreBpfMigrationError::WincodeReadError(..)
         );
 
         // Fail if the program data account does not have the correct state.
@@ -250,7 +250,7 @@ mod tests {
         store_account(
             &bank,
             &program_data_address,
-            &bincode::serialize(&UpgradeableLoaderState::Program {
+            &wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address: program_data_address,
             })
             .unwrap(),
@@ -270,7 +270,7 @@ mod tests {
             let programdata_metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
             let data_len = programdata_metadata_size + elf.len();
             let mut data = vec![0u8; data_len];
-            bincode::serialize_into(
+            wincode::serialize_into(
                 &mut data[..programdata_metadata_size],
                 &UpgradeableLoaderState::ProgramData {
                     slot: 0,
@@ -293,7 +293,7 @@ mod tests {
             assert_eq!(target_core_bpf.program_address, program_address);
             assert_eq!(target_core_bpf.program_data_address, program_data_address);
             assert_eq!(
-                bincode::deserialize::<UpgradeableLoaderState>(
+                wincode::deserialize::<UpgradeableLoaderState>(
                     &target_core_bpf.program_data_account.data()[..programdata_metadata_size]
                 )
                 .unwrap(),

@@ -89,10 +89,10 @@ impl VoteState {
             info!("did not find vote account for vote_pubkey={vote_pubkey}");
             return None;
         };
-        let versions = match bincode::deserialize(account.account().data()) {
+        let versions = match wincode::deserialize(account.account().data()) {
             Ok(s) => s,
             Err(e) => {
-                info!("bincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
+                info!("wincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
                 return None;
             }
         };
@@ -655,7 +655,7 @@ mod tests {
     }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
-        let versions = bincode::deserialize(account.data()).unwrap();
+        let versions = wincode::deserialize(account.data()).unwrap();
         VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
     }
 
@@ -1053,7 +1053,7 @@ mod tests {
         for validator in validators {
             let vote_pubkey = validator.vote_keypair.pubkey();
             let account = genesis_config.accounts.get_mut(&vote_pubkey).unwrap();
-            let vote_state_versions = bincode::deserialize(&account.data).unwrap();
+            let vote_state_versions = wincode::deserialize(&account.data).unwrap();
             let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
                 panic!();
             };

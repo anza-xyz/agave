@@ -148,7 +148,6 @@ pub fn bank_from_snapshot_archives(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
@@ -266,7 +265,6 @@ pub fn bank_from_snapshot_archives(
 
     let mut measure_verify = Measure::start("verify");
     if !bank.verify_snapshot_bank(
-        accounts_db_skip_shrink || !full_snapshot_archive_info.is_remote(),
         accounts_db_force_initial_clean,
         full_snapshot_archive_info.slot(),
         Some(&info.calculated_accounts_lt_hash),
@@ -307,7 +305,6 @@ pub fn bank_from_latest_snapshot_archives(
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
@@ -341,7 +338,6 @@ pub fn bank_from_latest_snapshot_archives(
         debug_keys,
         None, // leader_for_tests
         limit_load_slot_count_from_snapshot,
-        accounts_db_skip_shrink,
         accounts_db_force_initial_clean,
         verify_index,
         accounts_db_config,
@@ -461,7 +457,6 @@ pub fn bank_from_snapshot_dir(
     bank.status_cache.write().unwrap().append(&slot_deltas);
 
     if !bank.verify_snapshot_bank(
-        true,
         false,
         0, // since force_clean is false, this value is unused
         Some(&info.calculated_accounts_lt_hash),
@@ -1006,7 +1001,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1085,7 +1079,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1187,7 +1180,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1303,7 +1295,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1401,7 +1392,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1443,7 +1433,6 @@ mod tests {
             None,
             Some(*bank.leader()),
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1597,7 +1586,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1728,7 +1716,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1776,7 +1763,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -2152,7 +2138,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,

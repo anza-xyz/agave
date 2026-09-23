@@ -823,7 +823,7 @@ mod tests {
                     // Special case implementation of configure_next_instruction_for_tests()
                     // which avoids the overflow when constructing the dedup_map
                     // by simply not filling it.
-                    let dedup_map = vec![u16::MAX; num_transaction_accounts];
+                    let dedup_map = vec![u8::MAX; num_transaction_accounts];
                     invoke_context
                         .transaction_context
                         .configure_instruction_at_index(

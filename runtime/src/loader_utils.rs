@@ -1,8 +1,7 @@
 #![cfg(feature = "dev-context-only-utils")]
 use {
     crate::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
-    serde::Serialize,
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, WritableAccount},
     solana_client_traits::{Client, SyncClient},
     solana_clock::Clock,
     solana_instruction::{AccountMeta, Instruction},
@@ -54,23 +53,60 @@ pub fn load_program_from_file(name: &str) -> Vec<u8> {
 
 // Creates an unverified program by bypassing the loader built-in program
 pub fn create_program(bank: &Bank, loader_id: &Pubkey, name: &str) -> Pubkey {
+    create_program_with_elf(
+        bank,
+        loader_id,
+        &Pubkey::default(),
+        &load_program_from_file(name),
+    )
+}
+
+pub fn create_program_with_elf(
+    bank: &Bank,
+    loader_id: &Pubkey,
+    upgrade_authority: &Pubkey,
+    elf: &[u8],
+) -> Pubkey {
     let program_id = Pubkey::new_unique();
-    let elf = load_program_from_file(name);
     let rent = Rent::default();
     if bpf_loader_upgradeable::check_id(loader_id) {
         let [(_, program_account), (programdata_id, programdata_account)] =
-            bpf_loader_upgradeable_program_accounts(&program_id, &elf, &rent);
+            bpf_loader_upgradeable_program_accounts(&program_id, elf, upgrade_authority, &rent);
         bank.store_account(&program_id, &AccountSharedData::from(program_account));
         bank.store_account(
             &programdata_id,
             &AccountSharedData::from(programdata_account),
         );
     } else {
-        let (_, mut program_account) = bpf_loader_program_account(&program_id, &elf, &rent);
+        let (_, mut program_account) = bpf_loader_program_account(&program_id, elf, &rent);
         program_account.owner = *loader_id;
         bank.store_account(&program_id, &AccountSharedData::from(program_account));
     }
     program_id
+}
+
+pub fn create_buffer_with_elf(bank: &Bank, authority_address: &Pubkey, elf: &[u8]) -> Pubkey {
+    let buffer_address = Pubkey::new_unique();
+    let size = UpgradeableLoaderState::size_of_buffer(elf.len());
+    let mut account = AccountSharedData::new(
+        bank.get_minimum_balance_for_rent_exemption(size),
+        size,
+        &bpf_loader_upgradeable::id(),
+    );
+    wincode::serialize_into(
+        account.data_as_mut_slice(),
+        &UpgradeableLoaderState::Buffer {
+            authority_address: Some(*authority_address),
+        },
+    )
+    .unwrap();
+    account
+        .data_as_mut_slice()
+        .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
+        .unwrap()
+        .copy_from_slice(elf);
+    bank.store_account(&buffer_address, &account);
+    buffer_address
 }
 
 pub fn load_upgradeable_buffer<T: Client>(
@@ -269,11 +305,11 @@ pub fn set_upgrade_authority<T: Client>(
 
 // Return an Instruction that invokes `program_id` with `data` and required
 // a signature from `from_pubkey`.
-pub fn create_invoke_instruction<T: Serialize>(
+pub fn create_invoke_instruction<T: wincode::Serialize<Src = T>>(
     from_pubkey: Pubkey,
     program_id: Pubkey,
     data: &T,
 ) -> Instruction {
     let account_metas = vec![AccountMeta::new(from_pubkey, true)];
-    Instruction::new_with_bincode(program_id, data, account_metas)
+    Instruction::new_with_wincode(program_id, data, account_metas)
 }

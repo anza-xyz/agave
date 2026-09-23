@@ -120,6 +120,7 @@ solana-vote-program = { workspace = true, optional = true }
 solana-zk-elgamal-proof-program = { workspace = true, optional = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
 
 [dev-dependencies]
@@ -127,7 +128,7 @@ assert_matches = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 rand = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
@@ -154,7 +155,6 @@ solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 spl-token-interface = { workspace = true }
 test-case = { workspace = true }
-wincode = { workspace = true }
 
 [lints]
 workspace = true

@@ -27,6 +27,6 @@ pub mod __private {
         solana_hash::Hash,
         solana_instruction_error::InstructionError,
         solana_rent::Rent,
-        solana_transaction_context::transaction::TransactionContext,
+        solana_transaction_context::{DropOnBailOut, transaction::TransactionContext},
     };
 }

@@ -63,6 +63,8 @@ pub struct ShredFetchStats {
     pub(super) shred_flags_bad_deserialize: usize,
     pub(super) misaligned_last_data_index: usize,
     pub(super) unexpected_data_complete_shred: usize,
+    pub(super) invalid_proof_size: usize,
+    pub(super) invalid_data_size: usize,
     since: Option<Instant>,
     pub overflow_shreds: usize,
 }
@@ -205,7 +207,9 @@ impl ShredFetchStats {
                 "unexpected_data_complete_shred",
                 self.unexpected_data_complete_shred,
                 i64
-            )
+            ),
+            ("invalid_proof_size", self.invalid_proof_size, i64),
+            ("invalid_data_size", self.invalid_data_size, i64)
         );
         *self = Self {
             since: Some(Instant::now()),

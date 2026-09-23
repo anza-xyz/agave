@@ -1,10 +1,10 @@
 use {
     crate::serde_snapshot::SerializedAccountsFileId,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
-    serde::Serialize,
     solana_accounts_db::{
-        ObsoleteAccountItem, ObsoleteAccounts, account_info::Offset,
-        account_storage_entry::AccountStorageEntry, accounts_db::AccountsFileId,
+        ObsoleteAccountItem, ObsoleteAccounts, account_storage_entry::AccountStorageEntry,
+        accounts_db::AccountsFileId, append_vec_file_offset_from_logical,
+        append_vec_logical_offset_from_file,
     },
     solana_clock::Slot,
     std::{collections::HashMap, sync::Arc},
@@ -12,19 +12,19 @@ use {
 };
 
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct SerdeObsoleteAccountItem {
-    /// Offset of the account in the account storage entry
-    pub offset: Offset,
+    /// File offset of the account in the account storage entry
+    pub offset: u64,
     /// Length of the account data
     pub data_len: usize,
     /// Slot when the account was marked obsolete
     pub slot: Slot,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Default, Serialize, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, Default, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccounts {
     /// The ID of the associated account file. Used for verification to ensure the restored
     /// obsolete accounts correspond to the correct account file
@@ -51,14 +51,21 @@ impl SerdeObsoleteAccounts {
         }
     }
 
+    /// Converts this SerdeObsoleteAccounts into its corresponding non-serde types.
     pub(crate) fn into_tuple(self) -> (ObsoleteAccounts, AccountsFileId, usize) {
         let accounts = self
             .accounts
             .into_iter()
-            .map(|item| ObsoleteAccountItem {
-                offset: item.offset,
-                data_len: item.data_len,
-                slot: item.slot,
+            .map(|item| {
+                // yes, append vec impl is hard coded here for now
+                let Some(offset) = append_vec_logical_offset_from_file(item.offset) else {
+                    panic!("invalid logical offset from file offset: {}", item.offset);
+                };
+                ObsoleteAccountItem {
+                    offset,
+                    data_len: item.data_len,
+                    slot: item.slot,
+                }
             })
             .collect();
 
@@ -75,10 +82,14 @@ impl SerdeObsoleteAccounts {
         obsolete_accounts
             .accounts
             .into_iter()
-            .map(|item| SerdeObsoleteAccountItem {
-                offset: item.offset,
-                data_len: item.data_len,
-                slot: item.slot,
+            .map(|item| {
+                // yes, append vec impl is hard coded here for now
+                let offset = append_vec_file_offset_from_logical(item.offset);
+                SerdeObsoleteAccountItem {
+                    offset,
+                    data_len: item.data_len,
+                    slot: item.slot,
+                }
             })
             .collect()
     }
@@ -89,14 +100,13 @@ impl SerdeObsoleteAccounts {
 /// to capture and restore obsolete accounts information for account storages.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        api_digest = "6ExDbK9xTxe5fpFGYp62B73sZFpsX4ixuJFobLASpnck",
         abi_digest = "Bzyq9V5sWxtx4EVzcMQiyco1tgfUngC2Zp4YV54HWaD3",
         abi_serializer = "wincode"
     )
 )]
-#[derive(Serialize, Debug, SchemaRead, SchemaWrite)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccountsMap {
     map: Vec<(Slot, SerdeObsoleteAccounts)>,
 }
@@ -129,6 +139,7 @@ mod test {
     use {
         super::*,
         crate::serde_snapshot::{deserialize_wincode_from, serialize_into},
+        solana_accounts_db::account_info::Offset,
         std::io::Cursor,
         test_case::test_case,
     };
@@ -190,5 +201,21 @@ mod test {
                 deserialized_obsolete_accounts.into_tuple().0
             );
         }
+    }
+
+    #[test_case(1; "unaligned")]
+    #[test_case(1 << 34; "out of range")]
+    #[should_panic(expected = "invalid logical offset from file offset")]
+    fn test_serde_obsolete_accounts_into_tuple_bad_offset(offset: u64) {
+        let serde_obsolete_accounts = SerdeObsoleteAccounts {
+            id: 42,
+            bytes: 136,
+            accounts: vec![SerdeObsoleteAccountItem {
+                offset,
+                data_len: 0,
+                slot: 10,
+            }],
+        };
+        _ = serde_obsolete_accounts.into_tuple();
     }
 }

@@ -1,0 +1,35 @@
+[package]
+name = "agave-jemalloc"
+description = "Agave jemalloc utilities"
+documentation = "https://docs.rs/agave-jemalloc"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib"]
+name = "agave_jemalloc"
+
+[features]
+agave-unstable-api = []
+metrics = ["dep:log", "dep:solana-metrics"]
+
+[dependencies]
+jemalloc-ctl = { workspace = true }
+jemalloc-sys = { workspace = true }
+jemallocator = { workspace = true }
+log = { workspace = true, optional = true }
+solana-metrics = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

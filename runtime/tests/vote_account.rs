@@ -3,9 +3,10 @@
 //! with the blst crate in the vote crate.
 
 use {
-    bincode::Options,
     rand::Rng,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{DEFAULT_VAT_TO_BURN_PER_EPOCH, MAX_ALPENGLOW_VOTE_ACCOUNTS},
@@ -19,7 +20,13 @@ use {
         state::{VoteInit, VoteStateV4, VoteStateVersions},
     },
     std::{collections::HashMap, sync::Arc},
+    wincode::config::Configuration,
 };
+
+/// Varint encoding. `VoteAccounts` must stay transparent in this config as well.
+fn varint_config() -> impl wincode::config::Config + Copy {
+    Configuration::default().with_varint_encoding()
+}
 
 const MIN_STAKE_FOR_STAKED_ACCOUNT: u64 = 1;
 const MAX_STAKE_FOR_STAKED_ACCOUNT: u64 = 997;
@@ -50,8 +57,8 @@ fn test_vote_account_serialize() {
     let vote_account = VoteAccount::try_from(account.clone()).unwrap();
     // Assert that VoteAccount has the same wire format as Account.
     assert_eq!(
-        bincode::serialize(&account).unwrap(),
-        bincode::serialize(&vote_account).unwrap()
+        wincode::serialize(&account).unwrap(),
+        wincode::serialize(&vote_account).unwrap()
     );
 }
 
@@ -65,14 +72,12 @@ fn test_vote_accounts_serialize() {
     let vote_accounts = VoteAccounts::from(Arc::new(vote_accounts_hash_map.clone()));
     assert!(vote_accounts.staked_nodes().len() > 32);
     assert_eq!(
-        bincode::serialize(&vote_accounts).unwrap(),
-        bincode::serialize(&vote_accounts_hash_map).unwrap(),
+        wincode::serialize(&vote_accounts).unwrap(),
+        wincode::serialize(&vote_accounts_hash_map).unwrap(),
     );
     assert_eq!(
-        bincode::options().serialize(&vote_accounts).unwrap(),
-        bincode::options()
-            .serialize(&vote_accounts_hash_map)
-            .unwrap(),
+        wincode::config::serialize(&vote_accounts, varint_config()).unwrap(),
+        wincode::config::serialize(&vote_accounts_hash_map, varint_config()).unwrap(),
     )
 }
 
@@ -83,14 +88,12 @@ fn test_vote_accounts_deserialize() {
         new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT)
             .take(1024)
             .collect();
-    let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
-    let vote_accounts: VoteAccounts = bincode::deserialize(&data).unwrap();
+    let data = wincode::serialize(&vote_accounts_hash_map).unwrap();
+    let vote_accounts: VoteAccounts = wincode::deserialize(&data).unwrap();
     assert!(vote_accounts.staked_nodes().len() > 32);
     assert_eq!(*vote_accounts.as_ref(), vote_accounts_hash_map);
-    let data = bincode::options()
-        .serialize(&vote_accounts_hash_map)
-        .unwrap();
-    let vote_accounts: VoteAccounts = bincode::options().deserialize(&data).unwrap();
+    let data = wincode::config::serialize(&vote_accounts_hash_map, varint_config()).unwrap();
+    let vote_accounts: VoteAccounts = wincode::config::deserialize(&data, varint_config()).unwrap();
     assert_eq!(*vote_accounts.as_ref(), vote_accounts_hash_map);
 }
 
@@ -108,8 +111,8 @@ fn test_vote_accounts_deserialize_invalid_account() {
         AccountSharedData::new_data(42, &vec![0xFF; 42], &solana_sdk_ids::vote::id()).unwrap();
     vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xBB, invalid_account_data));
 
-    let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
-    assert!(bincode::deserialize::<VoteAccounts>(&data).is_err());
+    let data = wincode::serialize(&vote_accounts_hash_map).unwrap();
+    assert!(wincode::deserialize::<VoteAccounts>(&data).is_err());
 
     // wrong owner is also a hard error
     let mut vote_accounts_hash_map = HashMap::<Pubkey, (u64, AccountSharedData)>::new();
@@ -118,8 +121,8 @@ fn test_vote_accounts_deserialize_invalid_account() {
             .unwrap();
     vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xCC, invalid_account_key));
 
-    let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
-    assert!(bincode::deserialize::<VoteAccounts>(&data).is_err());
+    let data = wincode::serialize(&vote_accounts_hash_map).unwrap();
+    assert!(wincode::deserialize::<VoteAccounts>(&data).is_err());
 }
 
 #[test]
@@ -572,7 +575,7 @@ fn test_vote_account_v3_vs_v4_accessor_parity() {
         &solana_clock::Clock::default(),
     );
     let v3_versioned = VoteStateVersions::V3(Box::new(v3_state));
-    let v3_bytes = bincode::serialize(&v3_versioned).unwrap();
+    let v3_bytes = wincode::serialize(&v3_versioned).unwrap();
     let mut v3_account = AccountSharedData::new(
         10_000_000,
         v3_bytes.len(),
@@ -590,7 +593,7 @@ fn test_vote_account_v3_vs_v4_accessor_parity() {
         ..VoteStateV4::default()
     };
     let v4_versioned = VoteStateVersions::new_v4(v4_state);
-    let v4_bytes = bincode::serialize(&v4_versioned).unwrap();
+    let v4_bytes = wincode::serialize(&v4_versioned).unwrap();
     let mut v4_account = AccountSharedData::new(
         10_000_000,
         v4_bytes.len(),

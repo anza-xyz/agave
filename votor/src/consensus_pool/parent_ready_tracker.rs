@@ -15,7 +15,6 @@
 use {
     crate::{common::MAX_NOTAR_FALLBACK_BLOCKS, event::VotorEvent},
     agave_votor_messages::consensus_message::Block,
-    core::fmt,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
@@ -31,17 +30,10 @@ pub(crate) enum BlockProductionParent {
     Parent(Block),
 }
 
-struct DebugIgnore<T>(T);
-
-impl<T> fmt::Debug for DebugIgnore<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<ignored>")
-    }
-}
-
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub(crate) struct ParentReadyTracker {
-    cluster_info: DebugIgnore<Arc<ClusterInfo>>,
+    #[debug(skip)]
+    cluster_info: Arc<ClusterInfo>,
     /// Parent ready status for each slot
     slot_statuses: HashMap<Slot, ParentReadyStatus>,
     /// Root
@@ -104,7 +96,7 @@ impl ParentReadyTracker {
         );
 
         Self {
-            cluster_info: DebugIgnore(cluster_info),
+            cluster_info,
             slot_statuses,
             root: parent_block.slot.min(root),
             highest_with_parent_ready: slot.max(root),
@@ -140,7 +132,7 @@ impl ParentReadyTracker {
         }
         trace!(
             "{}: Adding new notar fallback for {block:?}",
-            self.cluster_info.0.id()
+            self.cluster_info.id()
         );
         status.notar_fallbacks.push(block);
         assert!(status.notar_fallbacks.len() <= MAX_NOTAR_FALLBACK_BLOCKS);
@@ -149,7 +141,7 @@ impl ParentReadyTracker {
         for s in block.slot.saturating_add(1).. {
             trace!(
                 "{}: Adding new parent ready for {s} parent {block:?}",
-                self.cluster_info.0.id()
+                self.cluster_info.id()
             );
             let status = self.slot_statuses.entry(s).or_default();
             if !status.parents_ready.contains(&block) {
@@ -178,7 +170,7 @@ impl ParentReadyTracker {
             return;
         }
 
-        trace!("{}: Adding new skip for {slot:?}", self.cluster_info.0.id());
+        trace!("{}: Adding new skip for {slot:?}", self.cluster_info.id());
         let status = self.slot_statuses.entry(slot).or_default();
         status.skip = true;
 
@@ -217,7 +209,7 @@ impl ParentReadyTracker {
         for s in future_slots {
             trace!(
                 "{}: Adding new parent ready for {s} parents {potential_parents:?}",
-                self.cluster_info.0.id(),
+                self.cluster_info.id(),
             );
             let status = self.slot_statuses.entry(s).or_default();
             for &block in &potential_parents {

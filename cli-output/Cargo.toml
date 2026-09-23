@@ -25,7 +25,7 @@ agave-votor-messages = { workspace = true }
 base64 = { workspace = true }
 bitvec = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
-clap = { version = "2.33.0", default-features = false, features = ["suggestions"] }
+clap = { workspace = true }
 console = { workspace = true }
 humantime = { workspace = true }
 indicatif = { workspace = true }

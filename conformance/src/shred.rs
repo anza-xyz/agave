@@ -10,7 +10,7 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         account_locks::validate_account_locks,
         accounts::Accounts,
@@ -42,6 +42,7 @@ use {
     solana_runtime_transaction::sanitize_config::sanitize_config,
     solana_sdk_ids::sysvar,
     solana_streamer::evicting_sender::EvictingSender,
+    solana_svm::conformance::fd_hash::fd_hash_or_zero,
     solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
     std::{
         borrow::Cow,
@@ -293,7 +294,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
                 completed: true,
                 merkle_root,
                 chained_merkle_root,
-                payload,
+                payload_hash: fd_hash_or_zero(&payload),
                 slot,
                 fec_set_index,
                 parent_offset: slot.saturating_sub(parent) as u32,

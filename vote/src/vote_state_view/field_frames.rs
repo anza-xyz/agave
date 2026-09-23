@@ -84,7 +84,6 @@ impl LockoutItem {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct LockoutListFrame {
     pub(super) len: u8,
 }
@@ -134,7 +133,6 @@ impl BlsPubkeyCompressedView<'_> {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct BlsPubkeyCompressedFrame {
     pub(super) has_pubkey: bool,
 }
@@ -168,7 +166,6 @@ impl BlsPubkeyCompressedFrame {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct LandedVotesListFrame {
     pub(super) len: u8,
 }
@@ -210,7 +207,6 @@ impl ListFrame for LandedVotesListFrame {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct AuthorizedVotersListFrame {
     pub(super) len: u8,
 }
@@ -262,7 +258,6 @@ pub struct EpochCreditsItem {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct EpochCreditsListFrame {
     pub(super) len: u8,
 }
@@ -396,7 +391,6 @@ impl RootSlotView<'_> {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct RootSlotFrame {
     pub(super) has_root_slot: bool,
 }

@@ -1,4 +1,5 @@
 use {
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{collections::HashMap, sync::Arc},
 };
@@ -6,7 +7,11 @@ use {
 pub trait EpochSpecs: Send + Sync {
     fn current_epoch_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, /*stake:*/ u64>>;
     fn epoch_slots(&mut self) -> u64;
+    /// Returns true if shreds of `slot` must carry the Merkle proof size
+    /// implied by a 32:32 FEC set.
+    fn should_enforce_correct_proof_size(&self, slot: Slot) -> bool;
     fn clone_box(&self) -> Box<dyn EpochSpecs>;
+    fn root_slot(&self) -> Slot;
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -14,6 +19,8 @@ pub trait EpochSpecs: Send + Sync {
 pub struct TestEpochSpecs {
     pub staked_nodes: Arc<HashMap<Pubkey, u64>>,
     pub slots_in_epoch: u64,
+    pub enforce_correct_proof_size: bool,
+    pub root_slot: Slot,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -24,7 +31,13 @@ impl EpochSpecs for TestEpochSpecs {
     fn epoch_slots(&mut self) -> u64 {
         self.slots_in_epoch
     }
+    fn should_enforce_correct_proof_size(&self, _slot: Slot) -> bool {
+        self.enforce_correct_proof_size
+    }
     fn clone_box(&self) -> Box<dyn EpochSpecs> {
         Box::new(self.clone())
+    }
+    fn root_slot(&self) -> Slot {
+        self.root_slot
     }
 }

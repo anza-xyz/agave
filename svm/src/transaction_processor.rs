@@ -25,6 +25,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
+    solana_instruction_error::InstructionError,
     solana_message::{
         compiled_instruction::CompiledInstruction,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -58,7 +59,10 @@ use {
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_svm_type_overrides::sync::{Arc, RwLock, RwLockReadGuard},
-    solana_transaction_context::transaction::{ExecutionRecord, TransactionContext},
+    solana_transaction_context::{
+        DropOnBailOut,
+        transaction::{ExecutionRecord, TransactionContext},
+    },
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{
         collections::HashSet,
@@ -144,6 +148,10 @@ pub struct TransactionProcessingConfig<'a> {
     ///
     /// This is a leader-side filtering policy. It must not be enabled for replay.
     pub drop_noop_transactions: bool,
+    /// Drops transactions which bailed out in the program runtime.
+    ///
+    /// This is a leader-side filtering policy. It must not be enabled for replay.
+    pub drop_bail_out_transactions: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -207,6 +215,11 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// ProgramRuntimeEnvironment of the current epoch
     pub program_runtime_environment: ProgramRuntimeEnvironment,
 
+    /// In the final slot of an epoch where we've activated a program runtime
+    /// feature, this override protects us from an `epoch_boundary_preparation`
+    /// environment that is outdated or otherwise incorrect.
+    deployment_env_override: Option<ProgramRuntimeEnvironment>,
+
     /// Builtin program ids for this fork.
     /// Used to see the `builtin_program_cache` between slots via
     /// `new_from()`.
@@ -248,6 +261,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             program_runtime_environment: ProgramRuntimeEnvironment::from(
                 BuiltinProgram::new_loader(VmConfig::default()),
             ),
+            deployment_env_override: None,
             builtin_program_ids: RwLock::new(HashSet::new()),
             builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
             execution_cost: SVMTransactionExecutionCost::default(),
@@ -378,6 +392,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             epoch_boundary_preparation: self.epoch_boundary_preparation.clone(),
             global_program_cache: self.global_program_cache.clone(),
             program_runtime_environment: environments,
+            deployment_env_override: None,
             builtin_program_ids: RwLock::new(builtin_program_ids),
             builtin_program_cache: RwLock::new(builtin_program_cache),
             execution_cost: self.execution_cost,
@@ -421,6 +436,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap()
             .get_upcoming_environment_for_epoch(epoch)
             .unwrap_or_else(|| ProgramRuntimeEnvironment::clone(&self.program_runtime_environment))
+    }
+
+    pub fn deployment_env_override(&self) -> Option<&ProgramRuntimeEnvironment> {
+        self.deployment_env_override.as_ref()
+    }
+
+    pub fn set_deployment_env_override(&mut self, environment: ProgramRuntimeEnvironment) {
+        self.deployment_env_override = Some(environment);
     }
 
     pub fn sysvar_cache(&self) -> RwLockReadGuard<'_, SysvarCache> {
@@ -494,7 +517,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let sysvar_cache = self.sysvar_cache();
 
         // Validate, execute, and collect results from each transaction in order.
-        // With SIMD83, transactions must be executed in order, because transactions
+        // Transactions must be executed in order, because transactions
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
@@ -632,6 +655,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                             Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                         }
+                        // If it bailed out then this transaction will be dropped from the batch.
+                        (
+                            Err(TransactionError::InstructionError(_, InstructionError::BailOut)),
+                            _,
+                        ) => Err(TransactionError::BailOut),
                         // If the transaction failed & drop on failure is set then we don't want to
                         // update the accounts as this transaction will be dropped from the batch.
                         (Err(err), true) => Err(err.clone()),
@@ -736,8 +764,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         } = checked_details;
 
         // If this is a nonce transaction, validate the nonce info.
-        // This must be done for every transaction to support SIMD83 because
-        // it may have changed due to use, authorization, or deallocation.
+        // This must be done for every transaction because the nonce account
+        // may have changed due to use, authorization, or deallocation.
         let nonce_info = if let Some(ref nonce_address) = nonce_address {
             let next_durable_nonce = DurableNonce::from_blockhash(environment_blockhash);
             let nonce_result = Self::validate_transaction_nonce(
@@ -868,11 +896,22 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<NonceInfo> {
-        // When SIMD83 is enabled, if the nonce has been used in this batch already, we must drop
-        // the transaction. This is the same as if it was used in different batches in the same slot.
+        // If the nonce has been used in this batch already, we must drop the transaction.
+        // This is the same as if it was used in different batches in the same slot.
         // It is possible that the nonce account was used, closed, closed and reopened, closed and
         // spoofed by a non-system program, or had its authority changed. Such a transaction cannot
         // be processed, even as fee-only.
+
+        // Check if nonce is writable after write-lock demotion, which runtime may not enforce.
+        if !message
+            .account_keys()
+            .iter()
+            .position(|key| key == nonce_address)
+            .is_some_and(|index| message.is_writable(index))
+        {
+            error_counters.blockhash_not_found += 1;
+            return Err(TransactionError::BlockhashNotFound);
+        }
 
         let Some(mut nonce_account) = account_loader
             .load_transaction_account(nonce_address, true)
@@ -1087,12 +1126,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let compute_budget = loaded_transaction.compute_budget;
 
-        let mut transaction_context = TransactionContext::new(
+        let mut transaction_context = TransactionContext::new_with_feature_flags(
             transaction_accounts,
             environment.rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             tx.num_instructions(),
+            if config.drop_bail_out_transactions {
+                DropOnBailOut::Enabled
+            } else {
+                DropOnBailOut::Disabled
+            },
         );
 
         let relax_post_exec_min_balance_check =
@@ -1648,7 +1692,7 @@ mod tests {
                     i,
                     0,
                     vec![],
-                    vec![u16::MAX; num_transaction_accounts],
+                    vec![u8::MAX; num_transaction_accounts],
                     Cow::Owned(vec![i as u8]),
                     None,
                 )
@@ -2762,6 +2806,7 @@ mod tests {
         BlockhashMismatch,
         AlreadyUsed,
         BadSigner,
+        NotWritable,
     }
 
     #[test_case(ValidateNonce::Success)]
@@ -2770,6 +2815,7 @@ mod tests {
     #[test_case(ValidateNonce::BlockhashMismatch)]
     #[test_case(ValidateNonce::AlreadyUsed)]
     #[test_case(ValidateNonce::BadSigner)]
+    #[test_case(ValidateNonce::NotWritable)]
     fn test_validate_transaction_nonce(case: ValidateNonce) {
         let lamports_per_signature = 5000;
         let previous_durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
@@ -2788,11 +2834,14 @@ mod tests {
             authority_address
         };
 
+        let mut advance_nonce_instruction =
+            system_instruction::advance_nonce_account(&nonce_address, &message_authority);
+        if case == ValidateNonce::NotWritable {
+            advance_nonce_instruction.accounts[0].is_writable = false;
+        }
+
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
-            &[system_instruction::advance_nonce_account(
-                &nonce_address,
-                &message_authority,
-            )],
+            &[advance_nonce_instruction],
             Some(&Pubkey::new_unique()),
             &message_blockhash,
         ));

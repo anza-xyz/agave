@@ -47,6 +47,7 @@ pub(crate) fn new_transport_config(max_datagrams_per_second_per_peer: usize) -> 
         .min_mtu(DATAGRAM_MTU)
         .mtu_discovery_config(None)
         .keep_alive_interval(Some(KEEP_ALIVE_INTERVAL))
+        .enable_segmentation_offload(false)
         .max_idle_timeout(Some(max_idle))
         // Datagrams only - disable streams entirely.
         .max_concurrent_bidi_streams(VarInt::from(0u8))

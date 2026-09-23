@@ -1,16 +1,20 @@
 use {
     agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::{
+        VoteAccountPubkeys,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventReceiver},
         vote::Vote,
     },
     crossbeam_channel::RecvTimeoutError,
     solana_clock::{Epoch, Slot},
-    solana_epoch_schedule::EpochSchedule,
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
+    solana_runtime::{
+        bank_forks::SharableBanks, leader_schedule_utils::first_of_consecutive_leader_slots,
+    },
     std::{
-        collections::{BTreeMap, BTreeSet},
+        collections::{BTreeMap, BTreeSet, HashMap},
+        num::Saturating,
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -62,23 +66,22 @@ impl NodeVoteMetrics {
 #[derive(Debug, Default)]
 struct EpochMetrics {
     /// Used to track this node's view of how the other nodes on the network are voting.
-    node_metrics: BTreeMap<Pubkey, NodeVoteMetrics>,
+    node_metrics: HashMap<Pubkey, NodeVoteMetrics>,
 
-    /// Used to track when this node received blocks from different leaders in the network.
-    leader_metrics: BTreeMap<Pubkey, WelfordStats>,
+    /// Tracks when replay completed when the given leader produced the block.
+    leader_metrics: HashMap<Pubkey, WelfordStats>,
 
-    /// Counts number of times metrics recording failed.
-    metrics_recording_failed: usize,
+    /// Tracks when an event was received before start-of-window event.
+    missing_start_of_window: Saturating<usize>,
 
-    /// Tracks when individual slots began.
-    ///
-    /// Relies on [`TimerManager`] to notify of start of slots.
-    /// The manager uses parent ready event and timeouts as per the Alpenglow protocol to determine start of slots.
-    start_of_slot: BTreeMap<Slot, Instant>,
+    /// Tracks when parent ready event for the given `slot` was seen.
+    parent_ready_seen: HashMap<Slot, Instant>,
 }
 
 /// Tracks various Consensus related metrics.
 pub struct ConsensusMetrics {
+    sharable_banks: SharableBanks,
+
     /// Per-epoch metrics storage.
     epoch_metrics: BTreeMap<Epoch, EpochMetrics>,
 
@@ -88,33 +91,30 @@ pub struct ConsensusMetrics {
     /// The highest finalized slot we've seen.
     highest_finalized_slot: Option<Slot>,
 
-    /// Epoch schedule for computing epoch boundaries.
-    epoch_schedule: EpochSchedule,
-
     /// Receiver for events.
     receiver: ConsensusMetricsEventReceiver,
 }
 
 impl ConsensusMetrics {
-    fn new(epoch_schedule: EpochSchedule, receiver: ConsensusMetricsEventReceiver) -> Self {
+    fn new(sharable_banks: SharableBanks, receiver: ConsensusMetricsEventReceiver) -> Self {
         Self {
             epoch_metrics: BTreeMap::default(),
             emitted_epochs: BTreeSet::default(),
             highest_finalized_slot: None,
-            epoch_schedule,
+            sharable_banks,
             receiver,
         }
     }
 
     pub fn start_metrics_loop(
-        epoch_schedule: EpochSchedule,
+        sharable_banks: SharableBanks,
         receiver: ConsensusMetricsEventReceiver,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         Builder::new()
             .name("solVotorMetrics".into())
             .spawn(move || {
-                let mut metrics = Self::new(epoch_schedule, receiver);
+                let mut metrics = Self::new(sharable_banks, receiver);
                 metrics.run(exit);
             })
             .expect("Failed to start consensus metrics thread")
@@ -123,24 +123,20 @@ impl ConsensusMetrics {
     fn run(&mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             match self.receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok((received, events)) => {
-                    for event in events {
-                        match event {
-                            ConsensusMetricsEvent::Vote { ids, vote } => {
-                                self.record_vote(ids, &vote, received);
-                            }
-                            ConsensusMetricsEvent::BlockHashSeen { leader, slot } => {
-                                self.record_block_hash_seen(leader, slot, received);
-                            }
-                            ConsensusMetricsEvent::StartOfSlot { slot } => {
-                                self.record_start_of_slot(slot, received);
-                            }
-                            ConsensusMetricsEvent::SlotFinalized { slot } => {
-                                self.handle_slot_finalized(slot);
-                            }
-                        }
+                Ok((received, event)) => match event {
+                    ConsensusMetricsEvent::Vote { ids, vote } => {
+                        self.record_vote(ids, &vote, received);
                     }
-                }
+                    ConsensusMetricsEvent::ReplayCompleted { leader, slot } => {
+                        self.record_replay_completed(leader, slot, received);
+                    }
+                    ConsensusMetricsEvent::ParentReadySeen { slot } => {
+                        self.record_parent_ready_seen(slot, received);
+                    }
+                    ConsensusMetricsEvent::SlotFinalized { slot } => {
+                        self.handle_slot_finalized(slot);
+                    }
+                },
                 Err(err) => match err {
                     RecvTimeoutError::Timeout => trace!("ConsensusMetricsEventReceiver timeout"),
                     RecvTimeoutError::Disconnected => {
@@ -153,38 +149,64 @@ impl ConsensusMetrics {
     }
 
     fn epoch_metrics_for_slot(&mut self, slot: Slot) -> &mut EpochMetrics {
-        let epoch = self.epoch_schedule.get_epoch(slot);
+        let epoch = self.sharable_banks.root().epoch_schedule().get_epoch(slot);
         self.epoch_metrics.entry(epoch).or_default()
     }
 
-    /// Records a `vote` from the node with `id`.
-    fn record_vote(&mut self, ids: Vec<Pubkey>, vote: &Vote, received: Instant) {
-        let slot = vote.slot();
-        let epoch_metrics = self.epoch_metrics_for_slot(slot);
+    /// Computes start of slot based on when parent ready event was seen.
+    fn compute_start_of_slot(&self, slot: Slot) -> Option<Instant> {
+        let delta_block =
+            Duration::from_nanos_u128(self.sharable_banks.root().ns_per_slot_at_slot(slot));
+        let first_slot_in_window = first_of_consecutive_leader_slots(slot);
+        let epoch = self.sharable_banks.root().epoch_schedule().get_epoch(slot);
+        let start_of_window = self
+            .epoch_metrics
+            .get(&epoch)?
+            .parent_ready_seen
+            .get(&first_slot_in_window)?;
+        Some(
+            start_of_window
+                .checked_add(
+                    delta_block.saturating_mul(
+                        u32::try_from(slot.saturating_sub(first_slot_in_window))
+                            .expect("leader window must fit in u32"),
+                    ),
+                )
+                .expect("leader window duration must fit"),
+        )
+    }
 
-        let Some(start) = epoch_metrics.start_of_slot.get(&slot) else {
-            epoch_metrics.metrics_recording_failed = epoch_metrics
-                .metrics_recording_failed
-                .saturating_add(ids.len());
+    /// Records a `vote` from the node with `id`.
+    fn record_vote(&mut self, ids: VoteAccountPubkeys, vote: &Vote, received: Instant) {
+        let vote_slot = vote.slot();
+        let maybe_start_of_slot = self.compute_start_of_slot(vote_slot);
+        let epoch_metrics = self.epoch_metrics_for_slot(vote_slot);
+        let Some(start_of_slot) = maybe_start_of_slot else {
+            epoch_metrics.missing_start_of_window += ids.as_slice().len();
             return;
         };
-        let elapsed = received.duration_since(*start);
-        for id in ids {
+        let elapsed = received.duration_since(start_of_slot);
+        let mut record_vote = |id| {
             let node = epoch_metrics.node_metrics.entry(id).or_default();
             node.record_vote(vote, elapsed);
+        };
+        match ids {
+            VoteAccountPubkeys::Owned(ids) => ids.into_iter().for_each(&mut record_vote),
+            VoteAccountPubkeys::Shared(ids) => {
+                ids.iter().copied().for_each(&mut record_vote);
+            }
         }
     }
 
     /// Records when a block for `slot` was seen and the `leader` is responsible for producing it.
-    fn record_block_hash_seen(&mut self, leader: Pubkey, slot: Slot, received: Instant) {
+    fn record_replay_completed(&mut self, leader: Pubkey, slot: Slot, received: Instant) {
+        let maybe_start = self.compute_start_of_slot(slot);
         let epoch_metrics = self.epoch_metrics_for_slot(slot);
-
-        let Some(start) = epoch_metrics.start_of_slot.get(&slot) else {
-            epoch_metrics.metrics_recording_failed =
-                epoch_metrics.metrics_recording_failed.saturating_add(1);
+        let Some(start) = maybe_start else {
+            epoch_metrics.missing_start_of_window += 1;
             return;
         };
-        let elapsed = received.duration_since(*start).as_micros();
+        let elapsed = received.duration_since(start).as_micros();
         let elapsed = match elapsed.try_into() {
             Ok(e) => e,
             Err(err) => {
@@ -202,10 +224,10 @@ impl ConsensusMetrics {
             .add_sample(elapsed);
     }
 
-    /// Records when a given slot started.
-    fn record_start_of_slot(&mut self, slot: Slot, received: Instant) {
+    /// Records that a parent ready was seen.
+    fn record_parent_ready_seen(&mut self, slot: Slot, received: Instant) {
         self.epoch_metrics_for_slot(slot)
-            .start_of_slot
+            .parent_ready_seen
             .entry(slot)
             .or_insert(received);
     }
@@ -222,7 +244,11 @@ impl ConsensusMetrics {
         let Some(highest_finalized) = self.highest_finalized_slot else {
             return;
         };
-        let finalized_epoch = self.epoch_schedule.get_epoch(highest_finalized);
+        let finalized_epoch = self
+            .sharable_banks
+            .root()
+            .epoch_schedule()
+            .get_epoch(highest_finalized);
 
         for (&epoch, epoch_metrics) in &self.epoch_metrics {
             if !self.emitted_epochs.contains(&epoch) && finalized_epoch > epoch {
@@ -270,13 +296,13 @@ impl ConsensusMetrics {
 
         for (addr, stats) in &epoch_metrics.leader_metrics {
             let addr = addr.to_string();
-            datapoint_info!("consensus_block_hash_seen_metrics",
+            datapoint_info!("consensus_replay_completed_metrics",
                 "address" => addr,
                 ("epoch", epoch, i64),
-                ("block_hash_seen_count", stats.count(), i64),
-                ("block_hash_seen_us_mean", stats.mean::<i64>(), Option<i64>),
-                ("block_hash_seen_us_stddev", stats.stddev::<i64>(), Option<i64>),
-                ("block_hash_seen_us_maximum", stats.maximum::<i64>(), Option<i64>),
+                ("replay_completed_count", stats.count(), i64),
+                ("replay_completed_us_mean", stats.mean::<i64>(), Option<i64>),
+                ("replay_completed_us_stddev", stats.stddev::<i64>(), Option<i64>),
+                ("replay_completed_us_maximum", stats.maximum::<i64>(), Option<i64>),
             );
         }
 
@@ -284,13 +310,13 @@ impl ConsensusMetrics {
             "consensus_metrics_internals",
             ("epoch", epoch, i64),
             (
-                "start_of_slot_count",
-                epoch_metrics.start_of_slot.len(),
+                "parent_ready_seen",
+                epoch_metrics.parent_ready_seen.len(),
                 i64
             ),
             (
-                "metrics_recording_failed",
-                epoch_metrics.metrics_recording_failed,
+                "missing_start_of_window",
+                epoch_metrics.missing_start_of_window.0,
                 i64
             ),
         );
@@ -310,14 +336,20 @@ mod tests {
         super::*,
         agave_votor_messages::vote::{SkipVote, Vote},
         crossbeam_channel::bounded,
+        solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
+        solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config},
         solana_signer::Signer,
-        std::thread::sleep,
     };
 
     fn new_metrics() -> ConsensusMetrics {
         let (_, rx) = bounded(1024);
-        ConsensusMetrics::new(EpochSchedule::custom(100, 100, false), rx) // 100 slots/epoch
+        let mut genesis_config = create_genesis_config(10_000).genesis_config;
+        // 100 slots/epoch
+        genesis_config.epoch_schedule = EpochSchedule::custom(100, 100, false);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        ConsensusMetrics::new(sharable_banks, rx)
     }
 
     #[test]
@@ -325,30 +357,35 @@ mod tests {
         let mut metrics = new_metrics();
 
         metrics.record_vote(
-            vec![Keypair::new().pubkey()],
+            VoteAccountPubkeys::Owned(vec![Keypair::new().pubkey()]),
             &Vote::Skip(SkipVote { slot: 42 }),
             Instant::now(),
         );
 
-        assert_eq!(metrics.epoch_metrics[&0].metrics_recording_failed, 1);
+        assert_eq!(metrics.epoch_metrics[&0].missing_start_of_window.0, 1);
     }
 
     #[test]
     fn test_vote_after_slot_start() {
         let mut metrics = new_metrics();
+        let slot = 42;
+        let first_slot_in_window = first_of_consecutive_leader_slots(slot);
         let pubkey = Keypair::new().pubkey();
 
-        metrics.record_start_of_slot(42, Instant::now());
-        sleep(Duration::from_millis(1));
+        let start = Instant::now();
+        let slot_duration =
+            Duration::from_nanos_u128(metrics.sharable_banks.root().ns_per_slot_at_slot(slot));
+        metrics.record_parent_ready_seen(first_slot_in_window, start);
         metrics.record_vote(
-            vec![pubkey],
-            &Vote::Skip(SkipVote { slot: 42 }),
-            Instant::now(),
+            VoteAccountPubkeys::Owned(vec![pubkey]),
+            &Vote::Skip(SkipVote { slot }),
+            start + slot_duration * 2 + Duration::from_millis(1),
         );
 
         let node = &metrics.epoch_metrics[&0].node_metrics[&pubkey];
         assert_eq!(node.skip.count(), 1);
-        assert!(node.skip.mean::<i64>().unwrap() > 0);
+        assert_eq!(node.skip.mean::<i64>(), Some(1_000));
+        assert_eq!(metrics.epoch_metrics[&0].missing_start_of_window.0, 0);
     }
 
     #[test]
@@ -356,8 +393,8 @@ mod tests {
         let mut metrics = new_metrics();
         let t = Instant::now();
 
-        metrics.record_start_of_slot(200, t);
-        metrics.record_start_of_slot(100, t);
+        metrics.record_parent_ready_seen(200, t);
+        metrics.record_parent_ready_seen(100, t);
 
         assert!(metrics.epoch_metrics.contains_key(&1));
         assert!(metrics.epoch_metrics.contains_key(&2));
@@ -367,7 +404,7 @@ mod tests {
     fn test_emit_on_next_epoch() {
         let mut metrics = new_metrics();
 
-        metrics.record_start_of_slot(50, Instant::now());
+        metrics.record_parent_ready_seen(50, Instant::now());
         metrics.handle_slot_finalized(100);
 
         assert!(metrics.emitted_epochs.contains(&0));
@@ -377,7 +414,7 @@ mod tests {
     fn test_no_emit_on_last_slot_of_same_epoch() {
         let mut metrics = new_metrics();
 
-        metrics.record_start_of_slot(50, Instant::now());
+        metrics.record_parent_ready_seen(50, Instant::now());
         metrics.handle_slot_finalized(99);
         assert!(!metrics.emitted_epochs.contains(&0));
 
@@ -389,7 +426,7 @@ mod tests {
     fn test_no_double_emit() {
         let mut metrics = new_metrics();
 
-        metrics.record_start_of_slot(50, Instant::now());
+        metrics.record_parent_ready_seen(50, Instant::now());
         metrics.handle_slot_finalized(100);
         let count_before = metrics.emitted_epochs.iter().filter(|&&e| e == 0).count();
 
@@ -407,7 +444,7 @@ mod tests {
         let mut metrics = new_metrics();
 
         for ix in 0u64..5 {
-            metrics.record_start_of_slot(ix * 100, Instant::now());
+            metrics.record_parent_ready_seen(ix * 100, Instant::now());
         }
         metrics.handle_slot_finalized(400);
 
@@ -429,11 +466,25 @@ mod tests {
     #[test]
     fn test_block_hash_seen() {
         let mut metrics = new_metrics();
+        let slot = 42;
+        let first_slot_in_window = first_of_consecutive_leader_slots(slot);
         let leader = Keypair::new().pubkey();
 
-        metrics.record_start_of_slot(42, Instant::now());
-        metrics.record_block_hash_seen(leader, 42, Instant::now());
+        let start = Instant::now();
+        let slot_duration =
+            Duration::from_nanos_u128(metrics.sharable_banks.root().ns_per_slot_at_slot(slot));
+        metrics.record_parent_ready_seen(first_slot_in_window, start);
+        metrics.record_replay_completed(
+            leader,
+            slot,
+            start + slot_duration * 2 + Duration::from_millis(1),
+        );
 
         assert_eq!(metrics.epoch_metrics[&0].leader_metrics[&leader].count(), 1);
+        assert_eq!(
+            metrics.epoch_metrics[&0].leader_metrics[&leader].mean::<i64>(),
+            Some(1_000)
+        );
+        assert_eq!(metrics.epoch_metrics[&0].missing_start_of_window.0, 0);
     }
 }

@@ -7,6 +7,8 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
 
+#[cfg(feature = "sbf_c")]
+use solana_account::state_traits::StateMutWincode as _;
 #[cfg(not(feature = "sbf_sanity_list"))]
 use solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT;
 #[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
@@ -126,6 +128,7 @@ fn upgradeable_program_accounts(program_id: &Pubkey, program_elf: &[u8]) -> Vec<
     solana_program_binaries::bpf_loader_upgradeable_program_accounts(
         program_id,
         program_elf,
+        &Pubkey::default(),
         &Rent::default(),
     )
     .into()

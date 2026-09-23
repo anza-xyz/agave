@@ -79,6 +79,8 @@ pub struct FeatureSnapshot {
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
+    pub remove_inactive_stakes: bool,
+    pub loader_v3_set_program_data_to_elf_length: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -177,6 +179,10 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
+            remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
+            loader_v3_set_program_data_to_elf_length: is_active(
+                &loader_v3_set_program_data_to_elf_length::ID,
+            ),
         }
     }
 }
@@ -336,6 +342,8 @@ impl FeatureSet {
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
+            loader_v3_set_program_data_to_elf_length: snapshot
+                .loader_v3_set_program_data_to_elf_length,
         }
     }
 }
@@ -1170,10 +1178,6 @@ pub mod enable_transaction_loading_failure_fees {
     solana_pubkey::declare_id!("PaymEPK2oqwT9TXAVfadjztH2H6KfLEB9Hhd5Q5frvP");
 }
 
-pub mod enable_turbine_extended_fanout_experiments {
-    solana_pubkey::declare_id!("turbRpTzBzDU6PJmWvRTbcJXXGxUs19CvQamUrRD9bN");
-}
-
 pub mod deprecate_legacy_vote_ixs {
     solana_pubkey::declare_id!("depVvnQ2UysGrhwdiwU42tCadZL8GcBb1i2GYhMopQv");
 }
@@ -1308,6 +1312,10 @@ pub mod raise_cpi_nesting_limit_to_8 {
 
 pub mod enforce_fixed_fec_set {
     solana_pubkey::declare_id!("fixfecLZYMfkGzwq6NJA11Yw6KYztzXiK9QcL3K78in");
+}
+
+pub mod enforce_correct_proof_size {
+    solana_pubkey::declare_id!("turbzzBJLGMJJikLvgCCJu9e1hTmfxwarrbLndYAsK5");
 }
 
 pub mod provide_instruction_data_offset_in_vm_r2 {
@@ -1512,7 +1520,7 @@ pub mod upgrade_bpf_stake_program_to_v5_1 {
 }
 
 pub mod alpenglow_fast_leader_handover {
-    solana_pubkey::declare_id!("FLHoAWBDjNh6zwmJ5i1NKK4KyD8otAiv7XxvmnFnVnKH");
+    solana_pubkey::declare_id!("FastLeaderHandover11111111111111111111111111");
 }
 
 pub mod relax_fee_payer_constraint {
@@ -1523,6 +1531,14 @@ pub mod double_disinflation_rate {
     solana_pubkey::declare_id!("55oikhjJ2LUi1xdgJ17ueRyHFURZEw32asT3iAKfh7gg");
     /// Taper (yearly disinflation rate) applied from activation onward.
     pub const TAPER: f64 = 0.30;
+}
+
+pub mod remove_inactive_stakes {
+    solana_pubkey::declare_id!("RMsTKfD6hZnBhhNvgGBeKNrqCNkeoP3DYYxNtcuWtRg");
+}
+
+pub mod loader_v3_set_program_data_to_elf_length {
+    solana_pubkey::declare_id!("EhisBfVtGvEA8bVCVN5VMaYEaX6iTfoUrmcDi8LY7Kxy");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2286,10 +2302,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0082: Enable fees for some additional transaction failures",
         ),
         (
-            enable_turbine_extended_fanout_experiments::id(),
-            "enable turbine extended fanout experiments #",
-        ),
-        (
             deprecate_legacy_vote_ixs::id(),
             "Deprecate legacy vote instructions",
         ),
@@ -2446,6 +2458,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enforce_fixed_fec_set::id(),
             "SIMD-0317: Enforce 32 data + 32 coding shreds",
+        ),
+        (
+            enforce_correct_proof_size::id(),
+            "SIMD-0317: Enforce the Merkle proof size of a fixed 32:32 FEC set",
         ),
         (
             provide_instruction_data_offset_in_vm_r2::id(),
@@ -2610,6 +2626,14 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             double_disinflation_rate::id(),
             "SIMD-0550: Double disinflation rate",
+        ),
+        (
+            remove_inactive_stakes::id(),
+            "SIMD-0599: Remove inactive stakes from stake delegations",
+        ),
+        (
+            loader_v3_set_program_data_to_elf_length::id(),
+            "SIMD-0433: Loader V3 Set Program Data to ELF Length",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

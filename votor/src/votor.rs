@@ -272,7 +272,6 @@ impl Votor {
         };
 
         let root_bank = sharable_banks.root();
-        let epoch_schedule = root_bank.epoch_schedule().clone();
 
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
@@ -295,7 +294,7 @@ impl Votor {
         };
 
         let metrics = ConsensusMetrics::start_metrics_loop(
-            epoch_schedule,
+            sharable_banks,
             consensus_metrics_receiver,
             exit.clone(),
         );

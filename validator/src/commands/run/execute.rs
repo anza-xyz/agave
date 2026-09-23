@@ -405,7 +405,8 @@ pub fn execute(
                             tpu: Some(all_positions.clone()),
                             turbine: Some(all_positions.clone()),
                             repair: Some(all_positions.clone()),
-                            gossip: Some(all_positions),
+                            gossip: Some(all_positions.clone()),
+                            votor: Some(all_positions),
                         },
                     },
                     XdpNetworkConfigReport {
@@ -847,7 +848,6 @@ pub fn execute(
         account_paths: account_run_paths,
         account_snapshot_paths,
         accounts_db_config,
-        accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
@@ -875,6 +875,7 @@ pub fn execute(
             usize
         )
         .ok(),
+        replay_arenas: value_t!(matches, "replay_arenas", usize).ok(),
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",

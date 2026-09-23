@@ -446,6 +446,50 @@ impl Blockstore {
         Ok(transaction_status_empty && address_signatures_empty)
     }
 
+    fn recover_slot_components_for_exact_purge(
+        &self,
+        slot: Slot,
+    ) -> Result<Vec<ParsedBlockComponent>> {
+        let (completed_ranges, slot_meta) = self.get_completed_ranges(slot, 0)?;
+        let slot_meta = slot_meta.ok_or(BlockstoreError::SlotUnavailable)?;
+        let replay_fec_set_index = slot_meta
+            .has_update_parent()
+            .then_some(slot_meta.replay_fec_set_index);
+        let mut resume_at = 0;
+        let mut recovered_components = vec![];
+
+        for completed_range in completed_ranges {
+            if completed_range.start < resume_at {
+                continue;
+            }
+            let completed_range_end = completed_range.end;
+            let completed_range = vec![completed_range];
+            match self.get_slot_component_views_in_block(slot, &completed_range, Some(&slot_meta)) {
+                Ok(slot_components) => recovered_components.extend(slot_components),
+                Err(
+                    error @ (BlockstoreError::InvalidShredData(_)
+                    | BlockstoreError::BlockAborted(_)),
+                ) => {
+                    warn!(
+                        "Skipping malformed transaction-history purge component for slot {slot} \
+                         at shred range {:?}: {error}",
+                        completed_range[0]
+                    );
+                    if let Some(replay_fec_set_index) = replay_fec_set_index
+                        && completed_range_end <= replay_fec_set_index
+                    {
+                        resume_at = replay_fec_set_index;
+                    } else {
+                        break;
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(recovered_components)
+    }
+
     /// Purges special columns (using a non-Slot primary-index) exactly, by
     /// deserializing each slot being purged and iterating through all
     /// transactions to determine the keys of individual records.
@@ -465,18 +509,15 @@ impl Blockstore {
 
         for slot in from_slot..=to_slot {
             let mut slot_components = self
-                .get_slot_component_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true);
-            if slot_components.is_err()
-                && let Ok(Some(slot_meta)) = self.meta(slot)
-                && slot_meta.has_update_parent()
-            {
-                slot_components = self.get_slot_component_views_with_shred_info(
-                    slot,
-                    u64::from(slot_meta.replay_fec_set_index),
-                    /*allow_dead_slots:*/ true,
-                );
+                .get_slot_component_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
+                .map(|(components, _, _)| components);
+            if matches!(
+                &slot_components,
+                Err(BlockstoreError::InvalidShredData(_) | BlockstoreError::BlockAborted(_))
+            ) {
+                slot_components = self.recover_slot_components_for_exact_purge(slot);
             }
-            let Ok((slot_components, _, _)) = slot_components else {
+            let Ok(slot_components) = slot_components else {
                 continue;
             };
             let mut transaction_index = 0usize;

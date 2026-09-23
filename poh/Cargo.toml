@@ -50,7 +50,6 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 bincode = { workspace = true }
-criterion = { workspace = true }
 rand = { workspace = true }
 solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
@@ -70,10 +69,6 @@ harness = false
 
 [[bench]]
 name = "poh_verify"
-harness = false
-
-[[bench]]
-name = "transaction_recorder"
 harness = false
 
 [lints]

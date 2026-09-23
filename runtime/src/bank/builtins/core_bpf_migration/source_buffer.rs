@@ -37,7 +37,7 @@ impl SourceBuffer {
         let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
         if buffer_account.data().len() >= buffer_metadata_size
             && let UpgradeableLoaderState::Buffer { .. } =
-                bincode::deserialize(&buffer_account.data()[..buffer_metadata_size])?
+                wincode::deserialize(&buffer_account.data()[..buffer_metadata_size])?
         {
             return Ok(Self {
                 buffer_address: *buffer_address,
@@ -121,7 +121,7 @@ mod tests {
         );
         assert_matches!(
             SourceBuffer::new_checked(&bank, &buffer_address).unwrap_err(),
-            CoreBpfMigrationError::BincodeError(..)
+            CoreBpfMigrationError::WincodeReadError(..)
         );
 
         // Fail if the buffer account does not have the correct state.
@@ -129,7 +129,7 @@ mod tests {
         store_account(
             &bank,
             &buffer_address,
-            &bincode::serialize(&UpgradeableLoaderState::ProgramData {
+            &wincode::serialize(&UpgradeableLoaderState::ProgramData {
                 slot: 0,
                 upgrade_authority_address: None,
             })
@@ -149,7 +149,7 @@ mod tests {
             let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
             let data_len = buffer_metadata_size + elf.len();
             let mut data = vec![0u8; data_len];
-            bincode::serialize_into(
+            wincode::serialize_into(
                 &mut data[..buffer_metadata_size],
                 &UpgradeableLoaderState::Buffer { authority_address },
             )
@@ -162,7 +162,7 @@ mod tests {
 
             assert_eq!(source_buffer.buffer_address, buffer_address);
             assert_eq!(
-                bincode::deserialize::<UpgradeableLoaderState>(
+                wincode::deserialize::<UpgradeableLoaderState>(
                     &source_buffer.buffer_account.data()[..buffer_metadata_size]
                 )
                 .unwrap(),

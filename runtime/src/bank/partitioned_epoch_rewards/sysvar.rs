@@ -146,9 +146,7 @@ impl Bank {
 
     /// Get EpochRewards sysvar. Returns EpochRewards::default() if sysvar
     /// account cannot be found or cannot be deserialized.
-    pub(in crate::bank::partitioned_epoch_rewards) fn get_epoch_rewards_sysvar(
-        &self,
-    ) -> EpochRewards {
+    pub(in crate::bank) fn get_epoch_rewards_sysvar(&self) -> EpochRewards {
         from_account(
             &self
                 .get_account(&sysvar::epoch_rewards::id())

@@ -2,7 +2,6 @@
 //! unnecessary cloning of the underlying vector.
 pub use solana_stake_history::StakeHistoryGetEntry;
 use {
-    serde::{Deserialize, Serialize},
     solana_clock::Epoch,
     solana_stake_history::StakeHistoryEntry,
     std::{
@@ -13,8 +12,8 @@ use {
 };
 
 /// The SDK's stake history with clone-on-write semantics
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Default, Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 pub struct StakeHistory(Arc<StakeHistoryInner>);
 
 impl Deref for StakeHistory {
@@ -109,23 +108,23 @@ mod tests {
 
         // Test: Assert that serializing the outer and inner types produces the same data
         assert_eq!(
-            bincode::serialize(&stake_history_outer).unwrap(),
-            bincode::serialize(&stake_history_inner).unwrap(),
+            wincode::serialize(&stake_history_outer).unwrap(),
+            wincode::serialize(&stake_history_inner).unwrap(),
         );
 
         // Test: Assert that serializing the outer type then deserializing to the inner type
         // produces the same values
         {
-            let data = bincode::serialize(&stake_history_outer).unwrap();
-            let deserialized_inner: StakeHistoryInner = bincode::deserialize(&data).unwrap();
+            let data = wincode::serialize(&stake_history_outer).unwrap();
+            let deserialized_inner: StakeHistoryInner = wincode::deserialize(&data).unwrap();
             assert_eq!(&deserialized_inner, stake_history_outer.deref());
         }
 
         // Test: Assert that serializing the inner type then deserializing to the outer type
         // produces the same values
         {
-            let data = bincode::serialize(&stake_history_inner).unwrap();
-            let deserialized_outer: StakeHistory = bincode::deserialize(&data).unwrap();
+            let data = wincode::serialize(&stake_history_inner).unwrap();
+            let deserialized_outer: StakeHistory = wincode::deserialize(&data).unwrap();
             assert_eq!(deserialized_outer.deref(), &stake_history_inner);
         }
     }

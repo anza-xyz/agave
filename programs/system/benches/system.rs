@@ -2,7 +2,7 @@ use solana_program_runtime::solana_sbpf::program::BuiltinFunctionDefinition;
 #[allow(deprecated)]
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
     solana_nonce::{

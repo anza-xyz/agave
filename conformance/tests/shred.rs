@@ -114,7 +114,7 @@ fn test_recovers_fec_set_and_resets_cached_blockstore() {
     assert_eq!(fec_set.num_coding_shreds, 32);
     assert_eq!(fec_set.merkle_root.len(), 32);
     assert_eq!(fec_set.chained_merkle_root.len(), 32);
-    assert!(!fec_set.payload.is_empty());
+    assert_ne!(fec_set.payload_hash, 0);
 
     let effects = execute_shred_parse(&context_with_shreds(vec![incomplete_shred]));
     assert!(

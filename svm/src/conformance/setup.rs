@@ -29,7 +29,7 @@ use {
     solana_svm_log_collector::LogCollector,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_syscalls::create_program_runtime_environment,
-    solana_transaction_context::transaction::TransactionContext,
+    solana_transaction_context::{DropOnBailOut, transaction::TransactionContext},
     std::{cell::RefCell, rc::Rc},
 };
 
@@ -62,6 +62,7 @@ pub fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
         loader_key,
         compute_budget,
         (*rent).clone(),
+        &instr_context.feature_set,
     );
 
     let (blockhash, blockhash_lamports_per_signature) = recent_blockhash(sysvar_cache);
@@ -151,15 +152,17 @@ pub(crate) fn compile_transaction_context(
     loader_key: &Pubkey,
     compute_budget: &ComputeBudget,
     rent: Rent,
+    _feature_set: &SVMFeatureSet,
 ) -> (SanitizedMessage, TransactionContext<'static>) {
     let (sanitized_message, transaction_accounts) =
         mock_compile_message(instruction, accounts, program_id, loader_key);
-    let transaction_context = TransactionContext::new(
+    let transaction_context = TransactionContext::new_with_feature_flags(
         transaction_accounts,
         rent,
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
         sanitized_message.num_instructions(),
+        DropOnBailOut::Disabled,
     );
     (sanitized_message, transaction_context)
 }
@@ -236,15 +239,15 @@ pub fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache
     cache
 }
 
-/// Read and bincode-decode a sysvar account from the input set, ignoring
+/// Read and wincode-decode a sysvar account from the input set, ignoring
 /// zero-lamport (nonexistent) entries.
 #[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
 pub fn sysvar_from_accounts<T, A>(accounts: &[(Pubkey, A)], id: &Pubkey) -> T
 where
-    T: serde::de::DeserializeOwned,
+    T: wincode::DeserializeOwned<Dst = T>,
     A: ReadableAccount,
 {
-    bincode::deserialize(sysvar_account_data(accounts, id).unwrap()).unwrap()
+    wincode::deserialize(sysvar_account_data(accounts, id).unwrap()).unwrap()
 }
 
 #[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]

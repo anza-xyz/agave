@@ -534,7 +534,7 @@ pub fn serialize_snapshot(
                 accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
                 block_id: Some(bank_fields.block_id),
             };
-            serde_snapshot::serialize_bank_snapshot_into_wincode(
+            serde_snapshot::serialize_bank_snapshot_into(
                 stream,
                 bank_fields,
                 bank_hash_stats,

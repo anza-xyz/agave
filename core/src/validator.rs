@@ -31,6 +31,7 @@ use {
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
+    agave_jemalloc::group::ArenaGroup,
     agave_snapshots::{
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
@@ -99,7 +100,10 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
-    solana_net_utils::{PinnedXdpSender, SocketAddrSpace},
+    solana_net_utils::{
+        PinnedXdpSender, SocketAddrSpace,
+        quic_socket::{into_quic_socket, into_quic_sockets},
+    },
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::PohRecorder,
@@ -381,7 +385,6 @@ pub struct ValidatorConfig {
     pub process_ledger_before_services: bool,
     pub accounts_db_config: AccountsDbConfig,
     pub warp_slot: Option<Slot>,
-    pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub validator_exit: Arc<RwLock<Exit>>,
@@ -399,6 +402,7 @@ pub struct ValidatorConfig {
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub unified_scheduler_handler_threads: Option<usize>,
+    pub replay_arenas: Option<usize>,
     pub ip_echo_server_threads: NonZeroUsize,
     pub rayon_global_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
@@ -463,7 +467,6 @@ impl ValidatorConfig {
             poh_hashes_per_batch: poh_service::DEFAULT_HASHES_PER_BATCH,
             process_ledger_before_services: false,
             warp_slot: None,
-            accounts_db_skip_shrink: false,
             accounts_db_force_initial_clean: false,
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             validator_exit: Arc::new(RwLock::new(Exit::default())),
@@ -483,6 +486,7 @@ impl ValidatorConfig {
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             unified_scheduler_handler_threads: None,
+            replay_arenas: None,
             // Fix threadpools to small and reasonable sizes; unit tests should
             // not be creating excessive load and benches can configure more
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
@@ -561,6 +565,7 @@ pub struct XdpModules {
     pub turbine: Option<Box<[usize]>>,
     pub repair: Option<Box<[usize]>>,
     pub gossip: Option<Box<[usize]>>,
+    pub votor: Option<Box<[usize]>>,
 }
 
 impl XdpModules {
@@ -570,6 +575,7 @@ impl XdpModules {
             ("turbine", &self.turbine),
             ("repair", &self.repair),
             ("gossip", &self.gossip),
+            ("votor", &self.votor),
         ] {
             let Some(positions) = positions else {
                 continue;
@@ -1149,12 +1155,31 @@ impl Validator {
         }
         let banking_tracer_channels = banking_tracer.create_channels();
 
+        // This threshold is the size above which jemalloc will allocate straight from the kernel
+        // instead of the arena. The default is 8MB, which is not good for us since accounts can be
+        // 10MB.
+        const REPLAY_ARENA_OVERSIZE_THRESHOLD: usize = 16 * 1024 * 1024;
+        // Jemalloc allows an allocation to reuse a dirty extent if the allocation is at least
+        // 1/64th the size of the extent. Around the epoch boundary we can spike +-3GB. Cap extent
+        // size so that the memory allocated to serve spikes stays reusable and doesn't become dirty
+        // but unsplittable forever. See jemalloc's lg_extent_max_active_fit.
+        const REPLAY_ARENA_RETAIN_GROW_LIMIT: usize = 64 * 1024 * 1024;
+        let replay_arenas = config.replay_arenas.map(|arena_count| {
+            ArenaGroup::new(
+                arena_count,
+                REPLAY_ARENA_OVERSIZE_THRESHOLD,
+                REPLAY_ARENA_RETAIN_GROW_LIMIT,
+            )
+            .expect("failed to create replay arenas")
+        });
+        let replay_arena = replay_arenas.as_ref().map(|arenas| arenas[0]);
         let scheduler_pool = DefaultSchedulerPool::new(
             config.unified_scheduler_handler_threads,
             config.runtime_config.log_messages_bytes_limit,
             transaction_status_sender.clone(),
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
+            replay_arenas,
         );
         bank_forks
             .write()
@@ -1455,9 +1480,10 @@ impl Validator {
         let (
             xdp_transmitter,
             turbine_xdp_sender,
-            quic_xdp_sender,
+            tpu_xdp_sender,
             repair_xdp_sender,
             gossip_xdp_sender,
+            votor_xdp_sender,
         ) = if let Some(XdpTransmitSetup {
             transmitter_builder,
             src_ip,
@@ -1518,9 +1544,17 @@ impl Validator {
                         SocketAddrV4::new(src_ip, gossip_src_port),
                     )
                 }),
+                modules.votor.map(|positions| {
+                    (
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        src_ip,
+                    )
+                }),
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         let gossip_service = GossipService::new(
@@ -1664,6 +1698,11 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
+        let votor_server_sockets =
+            into_quic_sockets(node.sockets.votor_server, votor_xdp_sender.as_ref()).collect();
+        let votor_client_socket =
+            into_quic_socket(node.sockets.quic_votor_client, votor_xdp_sender.as_ref());
+
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1713,6 +1752,7 @@ impl Validator {
                 bls_sigverify_threads: config.tvu_bls_sigverify_threads,
                 turbine_xdp_sender: turbine_xdp_sender.clone(),
                 repair_xdp_sender,
+                replay_arena,
             },
             &max_slots,
             block_metadata_notifier,
@@ -1737,8 +1777,8 @@ impl Validator {
                 cancel: cancel.child_token(),
                 validator_exit: config.validator_exit.clone(),
                 key_notifiers: key_notifiers.clone(),
-                votor_server_sockets: node.sockets.votor_server,
-                votor_client_socket: node.sockets.quic_votor_client,
+                votor_server_sockets,
+                votor_client_socket,
                 votor_peer_overrides: config.votor_peer_overrides.clone(),
                 highest_finalized,
             },
@@ -1781,7 +1821,7 @@ impl Validator {
             &config.broadcast_stage_type,
             leader_schedule_cache.clone(),
             turbine_xdp_sender,
-            quic_xdp_sender,
+            tpu_xdp_sender,
             exit.clone(),
             node.info.shred_version(),
             vote_tracker,
@@ -2412,7 +2452,6 @@ fn load_blockstore(
         new_hard_forks: config.new_hard_forks.clone(),
         debug_keys: config.debug_keys.clone(),
         accounts_db_config: config.accounts_db_config.clone(),
-        accounts_db_skip_shrink: config.accounts_db_skip_shrink,
         accounts_db_force_initial_clean: config.accounts_db_force_initial_clean,
         runtime_config: config.runtime_config.clone(),
         use_snapshot_archives_at_startup: config.use_snapshot_archives_at_startup,
@@ -3221,6 +3260,7 @@ mod tests {
             turbine: None,
             repair: Some([1, 1].into()),
             gossip: None,
+            votor: None,
         };
         let error = modules.validate_sender_positions(2).unwrap_err();
         assert!(

@@ -8,7 +8,9 @@ use {
         sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_votor_messages::{VerifiedVotorSlotsMessage, migration::MigrationStatus},
+    agave_votor_messages::{
+        VerifiedVotorSlotsMessage, VoteAccountPubkeys, migration::MigrationStatus,
+    },
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     solana_clock::{BankId, Slot},
@@ -917,14 +919,20 @@ impl ClusterInfoVoteListener {
             return;
         }
 
-        let mut verified_voter_slots = HashMap::new();
+        if is_new_vote {
+            if let Some(ref rpc_subscriptions) = notifiers.rpc_subscriptions {
+                rpc_subscriptions.notify_vote(*vote_pubkey, vote, vote_transaction_signature);
+            }
+            for slot in vote_slots.iter().cloned() {
+                let _ = notifiers
+                    .verified_voter_slots_sender
+                    .try_send((slot, VoteAccountPubkeys::Owned(vec![*vote_pubkey])));
+            }
+        }
 
         // Track all vote slots for propagated check (iterates from most recent to oldest)
         for slot in vote_slots
             .into_iter()
-            .inspect(|&slot| {
-                verified_voter_slots.insert(slot, vec![*vote_pubkey]);
-            })
             .filter(|&slot| slot > root && slot >= *latest_vote_slot)
             .rev()
         {
@@ -944,15 +952,6 @@ impl ClusterInfoVoteListener {
         }
 
         *latest_vote_slot = max(*latest_vote_slot, last_vote_slot);
-
-        if is_new_vote {
-            if let Some(ref rpc_subscriptions) = notifiers.rpc_subscriptions {
-                rpc_subscriptions.notify_vote(*vote_pubkey, vote, vote_transaction_signature);
-            }
-            let _ = notifiers
-                .verified_voter_slots_sender
-                .try_send(verified_voter_slots);
-        }
     }
 
     fn filter_and_confirm_with_new_votes(
@@ -1458,13 +1457,12 @@ mod tests {
             .chain(replay_vote_slots.clone())
             .collect();
         let mut pubkey_to_slots: HashMap<Pubkey, BTreeSet<Slot>> = HashMap::new();
-        for map in verified_voter_slots_receiver.try_iter() {
-            for (new_slot, received_pubkeys) in map {
-                assert_eq!(received_pubkeys.len(), 1);
-                let already_received_slots =
-                    pubkey_to_slots.entry(received_pubkeys[0]).or_default();
-                assert!(already_received_slots.insert(new_slot));
-            }
+        for (new_slot, received_pubkeys) in verified_voter_slots_receiver.try_iter() {
+            assert_eq!(received_pubkeys.as_slice().len(), 1);
+            let already_received_slots = pubkey_to_slots
+                .entry(received_pubkeys.as_slice()[0])
+                .or_default();
+            assert!(already_received_slots.insert(new_slot));
         }
         assert_eq!(pubkey_to_slots.len(), validator_voting_keypairs.len());
         for keypairs in &validator_voting_keypairs {
@@ -1644,10 +1642,10 @@ mod tests {
                 .map(|keypairs| {
                     let node_keypair = &keypairs.node_keypair;
                     let vote_keypair = &keypairs.vote_keypair;
-                    expected_voter_slots.push(HashMap::from([(
+                    expected_voter_slots.push((
                         i as Slot + 1,
-                        vec![vote_keypair.pubkey()],
-                    )]));
+                        VoteAccountPubkeys::Owned(vec![vote_keypair.pubkey()]),
+                    ));
                     let tower_sync =
                         TowerSync::new_from_slots(vec![(i as u64 + 1)], bank_hash, None);
                     vote_transaction::new_tower_sync_transaction(
