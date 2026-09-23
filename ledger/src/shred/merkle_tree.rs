@@ -40,7 +40,7 @@ impl MerkleTree {
     ///
     /// [`Error::EmptyIterator`] if the function is called with an empty iterator.
     /// [`Error`] if any of the elements in the iterator contains an [`Error`].
-    pub(crate) fn try_new(
+    pub fn try_new(
         shreds: impl ExactSizeIterator<Item = Result<Hash, Error>>,
     ) -> Result<MerkleTree, Error> {
         if shreds.len() == 0 {

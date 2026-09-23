@@ -49,6 +49,7 @@ solana-frozen-abi-macro = {
 solana-hash = { workspace = true, features = ["copy", "decode", "wincode"] }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signature = { workspace = true, features = ["verify", "wincode"] }
 solana-signer = { workspace = true }
 thiserror = { workspace = true }

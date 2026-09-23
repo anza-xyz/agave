@@ -59,6 +59,7 @@
 pub mod error;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod fixtures;
+pub mod id;
 pub mod policy;
 pub mod provenance;
 pub mod recover;
@@ -67,6 +68,6 @@ pub mod shredder;
 pub mod state;
 
 pub use {
-    agave_shred_verify::merkle,
-    agave_shred_wire_format::{constants, headers, kind, shred_variant, view},
+    agave_shred_verify::{MerkleError, merkle, shred::merkle_tree, sign, verify},
+    agave_shred_wire_format::{constants, error as wire_error, headers, kind, shred_variant, view},
 };

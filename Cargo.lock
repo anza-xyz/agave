@@ -378,6 +378,7 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-pubkey 4.3.0",
+ "solana-sha256-hasher",
  "solana-signature",
  "solana-signer",
  "test-case",

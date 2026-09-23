@@ -13,6 +13,7 @@
 use {
     crate::{
         error::{ParseError, RejectReason},
+        id::{ErasureSetId, ShredId},
         policy::{self, AdmissionPolicy},
         provenance::{Provenance, ShredSource},
         state::{Admissible, Parsed, ShredState, Verified},
@@ -20,7 +21,7 @@ use {
     agave_shred_verify::merkle,
     agave_shred_wire_format::{
         constants::{self, Nonce, ProofEntry},
-        headers::{AnyHeader, CommonHeader, ShredFlags},
+        headers::{AnyHeader, CodeHeader, CommonHeader, DataHeader, ShredFlags},
         kind::{self, Code, Data, ShredLayout},
         shred_variant::{ShredKind, ShredVariant},
         view::{self, AnyShredView, ShredView, ShredViewMut},
@@ -132,27 +133,7 @@ impl<K: ShredLayout> Shred<K, Parsed> {
         self,
         policy: &AdmissionPolicy,
     ) -> Result<Shred<K, Admissible>, RejectReason> {
-        if self.common.version != policy.shred_version {
-            return Err(RejectReason::ShredVersionMismatch {
-                expected: policy.shred_version,
-                found: self.common.version,
-            });
-        }
-        if self.common.slot > policy.max_slot {
-            return Err(RejectReason::SlotOutOfRange {
-                slot: self.common.slot,
-            });
-        }
-        match self.header.into() {
-            AnyHeader::Data(header) => policy::admit_data(&self.common, &header, policy)?,
-            AnyHeader::Code(header) => policy::admit_code(&self.common, &header, policy)?,
-        }
-        if !policy::is_fec_set_aligned(self.common.index, self.common.fec_set_index) {
-            return Err(RejectReason::MisalignedFecSet {
-                index: self.common.index,
-                fec_set_index: self.common.fec_set_index,
-            });
-        }
+        policy::admit(&self.common, &self.header.into(), policy)?;
         Ok(self.transition())
     }
 }
@@ -160,8 +141,18 @@ impl<K: ShredLayout> Shred<K, Parsed> {
 impl<K: ShredLayout> Shred<K, Admissible> {
     /// Checks the leader's signature over the Merkle root this shred's proof reconstructs.
     pub fn verify(self, leader: &Pubkey) -> Result<Shred<K, Verified>, RejectReason> {
+        self.verify_with(leader, agave_shred_verify::verify)
+    }
+
+    /// Like [`verify`](Self::verify), but delegates the signature check itself to `verify`, so a
+    /// caller may consult a cache keyed on the signature, signer and root.
+    pub fn verify_with(
+        self,
+        leader: &Pubkey,
+        verify: impl FnOnce(&Signature, &Pubkey, &Hash) -> bool,
+    ) -> Result<Shred<K, Verified>, RejectReason> {
         let root = self.merkle_root()?;
-        if !agave_shred_verify::verify(self.signature(), leader, &root) {
+        if !verify(self.signature(), leader, &root) {
             return Err(RejectReason::InvalidSignature);
         }
         Ok(self.transition())
@@ -410,6 +401,26 @@ impl<K: ShredLayout, S: ShredState> Shred<K, S> {
 
 /// Accessors that only exist for data shreds.
 impl<S: ShredState> Shred<Data, S> {
+    #[inline]
+    pub const fn id(&self) -> ShredId {
+        ShredId::new(self.common.slot, self.common.index, ShredKind::Data)
+    }
+
+    #[inline]
+    pub const fn erasure_set(&self) -> ErasureSetId {
+        ErasureSetId::new(self.common.slot, self.common.fec_set_index)
+    }
+
+    #[inline]
+    pub fn last_in_slot(&self) -> bool {
+        self.header.flags.last_in_slot()
+    }
+
+    #[inline]
+    pub fn data_complete(&self) -> bool {
+        self.header.flags.data_complete()
+    }
+
     /// Distance in slots back to this shred's parent.
     #[inline]
     pub fn parent_offset(&self) -> u16 {
@@ -447,6 +458,16 @@ impl<S: ShredState> Shred<Data, S> {
 
 /// Accessors that only exist for code shreds.
 impl<S: ShredState> Shred<Code, S> {
+    #[inline]
+    pub const fn id(&self) -> ShredId {
+        ShredId::new(self.common.slot, self.common.index, ShredKind::Code)
+    }
+
+    #[inline]
+    pub const fn erasure_set(&self) -> ErasureSetId {
+        ErasureSetId::new(self.common.slot, self.common.fec_set_index)
+    }
+
     /// Number of data shreds in this shred's FEC set.
     #[inline]
     pub fn num_data_shreds(&self) -> u16 {
@@ -483,6 +504,20 @@ impl<K: ShredLayout, S: ShredState> Clone for Shred<K, S> {
             provenance: self.provenance,
             _state: PhantomData,
         }
+    }
+}
+
+impl<K: ShredLayout, S: ShredState> PartialEq for Shred<K, S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl<K: ShredLayout, S: ShredState> Eq for Shred<K, S> {}
+
+impl<K: ShredLayout, S: ShredState> std::hash::Hash for Shred<K, S> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.bytes.hash(state);
     }
 }
 
@@ -705,7 +740,196 @@ impl<S: ShredState> AnyShred<S> {
     }
 }
 
+/// Kind-erased forms of the accessors that exist for only one kind.
+impl<S: ShredState> AnyShred<S> {
+    #[inline]
+    pub const fn id(&self) -> ShredId {
+        ShredId::new(self.common.slot, self.common.index, self.kind())
+    }
+
+    #[inline]
+    pub const fn erasure_set(&self) -> ErasureSetId {
+        ErasureSetId::new(self.common.slot, self.common.fec_set_index)
+    }
+
+    #[inline]
+    pub const fn is_data(&self) -> bool {
+        matches!(self.header, AnyHeader::Data(_))
+    }
+
+    #[inline]
+    pub const fn is_code(&self) -> bool {
+        matches!(self.header, AnyHeader::Code(_))
+    }
+
+    #[inline]
+    pub fn data_header(&self) -> Option<&DataHeader> {
+        match &self.header {
+            AnyHeader::Data(header) => Some(header),
+            AnyHeader::Code(_) => None,
+        }
+    }
+
+    #[inline]
+    pub fn code_header(&self) -> Option<&CodeHeader> {
+        match &self.header {
+            AnyHeader::Code(header) => Some(header),
+            AnyHeader::Data(_) => None,
+        }
+    }
+
+    #[inline]
+    pub fn flags(&self) -> Option<ShredFlags> {
+        self.data_header().map(|header| header.flags)
+    }
+
+    #[inline]
+    pub fn last_in_slot(&self) -> bool {
+        self.flags().is_some_and(|flags| flags.last_in_slot())
+    }
+
+    #[inline]
+    pub fn data_complete(&self) -> bool {
+        self.flags().is_some_and(|flags| flags.data_complete())
+    }
+
+    #[inline]
+    pub fn reference_tick(&self) -> Option<u8> {
+        self.flags().map(|flags| flags.reference_tick())
+    }
+
+    #[inline]
+    pub fn parent_slot(&self) -> Option<Slot> {
+        let header = self.data_header()?;
+        self.common
+            .slot
+            .checked_sub(Slot::from(header.parent_offset))
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        let header = self.data_header()?;
+        let body = ShredView::<Data>::read_exact(&self.bytes)
+            .expect("the bytes parsed as a data shred already")
+            .body;
+        let len = kind::data_len(header, body.len())
+            .expect("the data size was checked against the body when the shred was read");
+        body.get(..len)
+    }
+
+    #[inline]
+    pub fn num_data_shreds(&self) -> Option<u16> {
+        self.code_header().map(|header| header.num_data_shreds)
+    }
+
+    #[inline]
+    pub fn num_code_shreds(&self) -> Option<u16> {
+        self.code_header().map(|header| header.num_code_shreds)
+    }
+
+    #[inline]
+    pub fn position(&self) -> Option<u16> {
+        self.code_header().map(|header| header.position)
+    }
+
+    pub fn first_code_index(&self) -> Option<u32> {
+        let header = self.code_header()?;
+        self.common.index.checked_sub(u32::from(header.position))
+    }
+
+    /// Whether the two code shreds disagree on the erasure configuration of their FEC set.
+    pub fn erasure_mismatch(&self, other: &Self) -> Option<bool> {
+        let (a, b) = (self.code_header()?, other.code_header()?);
+        Some(
+            a.num_data_shreds != b.num_data_shreds
+                || a.num_code_shreds != b.num_code_shreds
+                || self.first_code_index() != other.first_code_index(),
+        )
+    }
+
+    /// The bytes that identify the shred's content: everything except a trailing retransmitter
+    /// signature, which legitimately differs between copies forwarded by different peers.
+    pub fn content_bytes(&self) -> &[u8] {
+        if self.common.variant.resigned() {
+            let end = self
+                .bytes
+                .len()
+                .saturating_sub(constants::SIZE_OF_SIGNATURE);
+            self.bytes.get(..end).unwrap_or(&self.bytes)
+        } else {
+            &self.bytes
+        }
+    }
+
+    /// Whether `other` is a conflicting copy of this shred: same id, different content.
+    pub fn is_duplicate_of(&self, other: &Self) -> bool {
+        self.id() == other.id() && self.content_bytes() != other.content_bytes()
+    }
+}
+
+impl AnyShred<Parsed> {
+    /// See [`Shred::check_policy`].
+    pub fn check_policy(
+        self,
+        policy: &AdmissionPolicy,
+    ) -> Result<AnyShred<Admissible>, RejectReason> {
+        match self.into_data() {
+            Ok(shred) => shred.check_policy(policy).map(Into::into),
+            Err(shred) => shred
+                .into_code()
+                .unwrap_or_else(|_| unreachable!("a shred is data or code"))
+                .check_policy(policy)
+                .map(Into::into),
+        }
+    }
+}
+
+impl AnyShred<Admissible> {
+    /// See [`Shred::verify`].
+    pub fn verify(self, leader: &Pubkey) -> Result<AnyShred<Verified>, RejectReason> {
+        self.verify_with(leader, agave_shred_verify::verify)
+    }
+
+    /// See [`Shred::verify_with`].
+    pub fn verify_with(
+        self,
+        leader: &Pubkey,
+        verify: impl FnOnce(&Signature, &Pubkey, &Hash) -> bool,
+    ) -> Result<AnyShred<Verified>, RejectReason> {
+        let root = self.merkle_root()?;
+        if !verify(self.signature(), leader, &root) {
+            return Err(RejectReason::InvalidSignature);
+        }
+        Ok(AnyShred {
+            bytes: self.bytes,
+            common: self.common,
+            header: self.header,
+            provenance: self.provenance,
+            _state: PhantomData,
+        })
+    }
+}
+
 impl AnyShred<Verified> {
+    /// See [`Shred::from_blockstore`].
+    pub fn from_blockstore(bytes: Bytes) -> Result<Self, ParseError> {
+        match view::peek_variant(&bytes)?.shred_kind() {
+            ShredKind::Data => Ok(DataShred::from_blockstore(bytes)?.into()),
+            ShredKind::Code => Ok(CodeShred::from_blockstore(bytes)?.into()),
+        }
+    }
+
+    /// See [`Shred::resign`].
+    pub fn resign(self, keypair: &Keypair) -> Result<Self, RejectReason> {
+        match self.into_data() {
+            Ok(shred) => shred.resign(keypair).map(Into::into),
+            Err(shred) => shred
+                .into_code()
+                .unwrap_or_else(|_| unreachable!("a shred is data or code"))
+                .resign(keypair)
+                .map(Into::into),
+        }
+    }
+
     /// Checks `retransmitter`'s signature over this shred's Merkle root.
     ///
     /// See [`Shred::verify_retransmitter`].
@@ -732,6 +956,20 @@ impl<S: ShredState> Clone for AnyShred<S> {
             provenance: self.provenance,
             _state: PhantomData,
         }
+    }
+}
+
+impl<S: ShredState> PartialEq for AnyShred<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl<S: ShredState> Eq for AnyShred<S> {}
+
+impl<S: ShredState> std::hash::Hash for AnyShred<S> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.bytes.hash(state);
     }
 }
 

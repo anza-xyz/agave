@@ -5,7 +5,7 @@
 pub use agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK;
 use {
     crate::error::RejectReason,
-    agave_shred_wire_format::headers::{CodeHeader, CommonHeader, DataHeader},
+    agave_shred_wire_format::headers::{AnyHeader, CodeHeader, CommonHeader, DataHeader},
     solana_clock::Slot,
 };
 
@@ -68,6 +68,35 @@ pub const fn can_end_slot(index: u32) -> bool {
     index
         .saturating_add(1)
         .is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK)
+}
+
+/// Applies every admission check to a shred's headers: the checks common to both kinds, then the
+/// kind-specific ones, then FEC set alignment.
+pub fn admit(
+    common: &CommonHeader,
+    header: &AnyHeader,
+    policy: &AdmissionPolicy,
+) -> Result<(), RejectReason> {
+    if common.version != policy.shred_version {
+        return Err(RejectReason::ShredVersionMismatch {
+            expected: policy.shred_version,
+            found: common.version,
+        });
+    }
+    if common.slot > policy.max_slot {
+        return Err(RejectReason::SlotOutOfRange { slot: common.slot });
+    }
+    match header {
+        AnyHeader::Data(header) => admit_data(common, header, policy)?,
+        AnyHeader::Code(header) => admit_code(common, header, policy)?,
+    }
+    if !is_fec_set_aligned(common.index, common.fec_set_index) {
+        return Err(RejectReason::MisalignedFecSet {
+            index: common.index,
+            fec_set_index: common.fec_set_index,
+        });
+    }
+    Ok(())
 }
 
 /// Applies the admission checks specific to data shreds.

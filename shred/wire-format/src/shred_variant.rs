@@ -30,6 +30,22 @@ pub enum ShredKind {
     Code = 0b0101_1010,
 }
 
+impl From<ShredKind> for u8 {
+    #[inline]
+    fn from(kind: ShredKind) -> u8 {
+        kind as u8
+    }
+}
+
+impl TryFrom<u8> for ShredKind {
+    type Error = ParseError;
+
+    #[inline]
+    fn try_from(byte: u8) -> Result<Self, Self::Error> {
+        wincode::deserialize(&[byte]).map_err(|_| ParseError::InvalidVariant(byte))
+    }
+}
+
 /// The kind of a shred plus the one layout bit that accompanies it.
 ///
 /// The high nibble identifies the kind and whether a retransmitter signature trails the proof; the
