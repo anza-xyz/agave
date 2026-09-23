@@ -12,6 +12,7 @@ use {
         },
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
+    agave_wake_channel::Receiver as WakeReceiver,
     core::time::Duration,
     crossbeam_channel::{Receiver, Sender, unbounded},
     solana_perf::{deduper::Deduper, packet::PacketBatch},
@@ -146,9 +147,13 @@ impl SigVerifierStats {
 }
 
 impl SigVerifyStage {
+    /// Both packet receivers must share one wake event, dedicated to this stage's workers. The
+    /// stage adds its gossip channel to that event, and every worker polls all three channels.
+    ///
+    /// Panics if the packet receivers belong to different wake events.
     pub fn new(
-        packet_receiver: Receiver<PacketBatch>,
-        vote_packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: WakeReceiver<PacketBatch>,
+        vote_packet_receiver: WakeReceiver<PacketBatch>,
         non_vote_sender: BankingPacketSender,
         tpu_vote_sender: BankingPacketSender,
         forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
@@ -305,7 +310,7 @@ impl Drop for SigVerifyStage {
 impl GossipSigVerifyHandle {
     #[cfg(test)]
     pub(crate) fn new_for_tests(
-        worker_sender: Sender<crate::sigverify::GossipVerifyTask>,
+        worker_sender: agave_wake_channel::Sender<crate::sigverify::GossipVerifyTask>,
         verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
     ) -> Self {
         Self {
@@ -353,6 +358,7 @@ mod tests {
     use {
         super::*,
         crate::banking_trace::BankingTracer,
+        agave_wake_channel::WakeEvent,
         crossbeam_channel::bounded,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -413,8 +419,11 @@ mod tests {
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = bounded(1024);
-        let (vote_packet_s, vote_packet_r) = bounded(1024);
+        let wake_event = Arc::new(WakeEvent::default());
+        let (packet_s, packet_r) =
+            agave_wake_channel::bounded_with_wake_event(1024, wake_event.clone());
+        let (vote_packet_s, vote_packet_r) =
+            agave_wake_channel::bounded_with_wake_event(1024, wake_event);
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
@@ -479,8 +488,11 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = bounded(1024);
-        let (vote_packet_s, vote_packet_r) = bounded(1024);
+        let wake_event = Arc::new(WakeEvent::default());
+        let (packet_s, packet_r) =
+            agave_wake_channel::bounded_with_wake_event(1024, wake_event.clone());
+        let (vote_packet_s, vote_packet_r) =
+            agave_wake_channel::bounded_with_wake_event(1024, wake_event);
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
@@ -524,5 +536,40 @@ mod tests {
         drop(vote_packet_s);
         drop(gossip_sigverify_handle);
         stage.join().unwrap();
+    }
+
+    #[test]
+    fn test_sigverify_stage_shutdown_with_live_senders() {
+        let (_, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
+        let wake_event = Arc::new(WakeEvent::default());
+        let (_packet_sender, packet_receiver) =
+            agave_wake_channel::bounded_with_wake_event(4, wake_event.clone());
+        let (_vote_sender, vote_receiver) =
+            agave_wake_channel::bounded_with_wake_event(4, wake_event);
+        let (verified_sender, _verified_receiver) = BankingTracer::channel_for_test();
+        let (verified_vote_sender, _verified_vote_receiver) = BankingTracer::channel_for_test();
+        let (forward_sender, _forward_receiver) = bounded(4);
+        let (stage, _gossip_handle) = SigVerifyStage::new(
+            packet_receiver,
+            vote_receiver,
+            verified_sender,
+            verified_vote_sender,
+            forward_sender,
+            NonZeroUsize::new(4).unwrap(),
+            false,
+            bank_forks.read().unwrap().sharable_banks(),
+            None,
+        );
+
+        // The producers stay connected, so the workers must stop on the exit flag alone.
+        let (done_sender, done_receiver) = bounded(1);
+        thread::spawn(move || {
+            let _ = done_sender.send(stage.join());
+        });
+        done_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("sigverify stage did not shut down")
+            .unwrap();
     }
 }
