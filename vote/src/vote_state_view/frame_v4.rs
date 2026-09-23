@@ -10,7 +10,6 @@ use {
 };
 
 #[derive(Debug, PartialEq, Clone)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(crate) struct VoteStateFrameV4 {
     pub(super) bls_pubkey_compressed_frame: BlsPubkeyCompressedFrame,
     pub(super) votes_frame: LandedVotesListFrame,

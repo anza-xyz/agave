@@ -42,6 +42,7 @@ members = [
     "gossip-cli",
     "install",
     "io-uring",
+    "jemalloc",
     "keygen",
     "lattice-hash",
     "leader-schedule",
@@ -121,6 +122,7 @@ members = [
     "votor",
     "votor-messages",
     "votor-transport",
+    "wake-channel",
     "watchtower",
     "xdp",
     "xdp-ebpf",
@@ -175,6 +177,7 @@ agave-feature-set = { path = "feature-set", version = "=4.5.0-alpha.0", features
 agave-fs = { path = "fs", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = "=5.0.0"
 agave-io-uring = { path = "io-uring", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
+agave-jemalloc = { path = "jemalloc", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-math-utils = { path = "math-utils", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-precompiles = { path = "precompiles", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -188,6 +191,7 @@ agave-transaction-view = "7.0.0"
 agave-votor = { path = "votor", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-transport = { path = "votor-transport", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
+agave-wake-channel = { path = "wake-channel", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-xdp = { path = "xdp", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-xdp-ebpf = { path = "xdp-ebpf", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 ahash = "0.8.12"
@@ -262,6 +266,7 @@ indicatif = "0.18.6"
 io-uring = { version = "0.7.15", features = ["io_safety"] }
 itertools = "0.15.0"
 jemalloc-ctl = { package = "tikv-jemalloc-ctl", version = "0.6.0", features = ["stats"] }
+jemalloc-sys = { package = "tikv-jemalloc-sys", version = "0.6.0" }
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = ["unprefixed_malloc_on_supported_platforms", "stats"] }
 json5 = "1.3.1"
 jsonrpc-core = "18.0.0"
@@ -325,7 +330,7 @@ serde_with = { version = "3.23.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
 shaq = { version = "4.4.0" }
-shuttle = "0.7.1"
+shuttle = "0.9.3"
 signal-hook = "0.4.4"
 slab = "0.4.12"
 slotmap = "1.0.7"
@@ -455,7 +460,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=4.5.0-alpha.0
 solana-runtime = { path = "runtime", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
-solana-sbpf = { version = "=0.24.0", default-features = false }
+solana-sbpf = { version = "=0.25.0", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.1"
 solana-secp256k1-recover = "3.3.0"

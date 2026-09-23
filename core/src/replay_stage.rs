@@ -32,6 +32,7 @@ use {
         voting_service::VoteOp,
         window_service::DuplicateSlotReceiver,
     },
+    agave_jemalloc::jemalloc::Arena,
     agave_votor::{
         event::{
             CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, SwitchBankEvent, VotorEvent,
@@ -444,6 +445,7 @@ pub struct ReplayStageConfig {
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    pub(crate) replay_arena: Option<Arena>,
 }
 
 pub struct ReplaySenders {
@@ -765,6 +767,7 @@ impl ReplayStage {
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
+            replay_arena,
         } = config;
 
         let ReplaySenders {
@@ -818,6 +821,11 @@ impl ReplayStage {
         *replay_highest_frozen.highest_frozen_slot.lock().unwrap() = highest_frozen_slot;
 
         let run_replay = move || {
+            if let Some(arena) = replay_arena {
+                arena
+                    .bind_current_thread_permanently()
+                    .expect("failed to bind replay thread to jemalloc arena");
+            }
             let _exit = Finalizer::new(exit.clone());
 
             if my_pubkey != tower.node_pubkey {

@@ -10,7 +10,6 @@ use {
 /// deserializing it. This is done by parsing and caching metadata
 /// about the layout of the serialized VoteState.
 #[derive(Debug)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub struct VoteStateViewMut<'account> {
     data: &'account mut [u8],
 }

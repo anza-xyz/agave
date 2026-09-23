@@ -236,6 +236,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-jemalloc"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "log",
+ "solana-metrics",
+ "thiserror 2.0.20",
+ "tikv-jemalloc-ctl",
+ "tikv-jemalloc-sys",
+ "tikv-jemallocator",
+]
+
+[[package]]
 name = "agave-ledger-tool"
 version = "4.5.0-alpha.0"
 dependencies = [
@@ -553,6 +565,15 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util 0.7.19",
+]
+
+[[package]]
+name = "agave-wake-channel"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "atomic-wait",
+ "crossbeam-channel",
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -6356,6 +6377,7 @@ dependencies = [
  "agave-bls-sigverify",
  "agave-feature-set",
  "agave-fs",
+ "agave-jemalloc",
  "agave-logger",
  "agave-math-utils",
  "agave-scheduler-bindings",
@@ -6877,6 +6899,7 @@ dependencies = [
  "lazy-lru",
  "log",
  "num-traits",
+ "parking_lot 0.12.5",
  "qualifier_attr",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
@@ -7115,16 +7138,15 @@ dependencies = [
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor-messages",
+ "agave-wake-channel",
  "anyhow",
  "assert_matches",
- "atomic-wait",
  "bitflags 2.13.2",
  "bytes",
  "bzip2",
  "chrono",
  "chrono-humanize",
  "crossbeam-channel",
- "crossbeam-utils",
  "dashmap",
  "eager",
  "fs_extra",
@@ -8076,9 +8098,9 @@ checksum = "dcf09694a0fc14e5ffb18f9b7b7c0f15ecb6eac5b5610bf76a1853459d19daf9"
 
 [[package]]
 name = "solana-sbpf"
-version = "0.24.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59635731a7d919ef964155beede88bb02b82aecb6667b3e8c93594424180d238"
+checksum = "15d33de23e974ac882f28387785ad40ac9f6114d4bf074a01f54543e2508cd68"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
@@ -9047,6 +9069,7 @@ name = "solana-unified-scheduler-pool"
 version = "4.5.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-jemalloc",
  "assert_matches",
  "crossbeam-channel",
  "dashmap",
