@@ -237,7 +237,7 @@ mod tests {
         solana_ledger::{
             blockstore_meta::BlockLocation,
             get_tmp_ledger_path_auto_delete,
-            shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+            shred::{ProcessShredsStats, Shred, Shredder},
         },
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
@@ -259,8 +259,6 @@ mod tests {
             true, // is_last_in_slot
             chained_merkle_root,
             0, // next_shred_index
-            0, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
 

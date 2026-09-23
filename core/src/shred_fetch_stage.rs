@@ -4,7 +4,7 @@ use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::shred::{
-        self,
+        SIZE_OF_NONCE,
         filter::{ShredFilterContext, TurbineMode},
     },
     solana_perf::packet::{PacketBatch, PacketFlags, PacketRef},
@@ -246,9 +246,13 @@ fn verify_repair_nonce(
     outstanding_repair_requests: &mut OutstandingShredRepairs,
 ) -> bool {
     debug_assert!(packet.meta().flags.contains(PacketFlags::REPAIR));
-    let Some((shred, Some(nonce))) = shred::layout::get_shred_and_repair_nonce(packet) else {
+    let Some((shred, nonce)) = packet
+        .data(..)
+        .and_then(|data| data.split_last_chunk::<SIZE_OF_NONCE>())
+    else {
         return false;
     };
+    let nonce = u32::from_le_bytes(*nonce);
     outstanding_repair_requests
         .register_response(nonce, shred, now, |_| ())
         .is_some()

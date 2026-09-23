@@ -466,10 +466,10 @@ impl fmt::Display for CliDuplicateSlotProof {
 
 impl From<DuplicateSlotProof> for CliDuplicateSlotProof {
     fn from(proof: DuplicateSlotProof) -> Self {
-        let shred1 = Shred::new_from_serialized_shred(proof.shred1).unwrap();
-        let shred2 = Shred::new_from_serialized_shred(proof.shred2).unwrap();
-        let erasure_consistency = (shred1.shred_type() == ShredType::Code
-            && shred2.shred_type() == ShredType::Code)
+        let shred1 = Shred::from_blockstore(proof.shred1).unwrap();
+        let shred2 = Shred::from_blockstore(proof.shred2).unwrap();
+        let erasure_consistency = (shred1.kind() == ShredType::Code
+            && shred2.kind() == ShredType::Code)
             .then(|| ErasureMeta::check_erasure_consistency(&shred1, &shred2));
 
         Self {
@@ -485,7 +485,7 @@ impl From<DuplicateSlotProof> for CliDuplicateSlotProof {
 pub struct CliDuplicateShred {
     fec_set_index: u32,
     index: u32,
-    shred_type: ShredType,
+    shred_type: String,
     version: u16,
     merkle_root: Option<Hash>,
     chained_merkle_root: Option<Hash>,
@@ -498,7 +498,7 @@ impl CliDuplicateShred {
     fn write_common(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
         writeln!(
             w,
-            "fec_set_index {}, index {}, shred_type {:?}\n       version {}, merkle_root {:?}, \
+            "fec_set_index {}, index {}, shred_type {}\n       version {}, merkle_root {:?}, \
              chained_merkle_root {:?}, last_in_slot {}",
             self.fec_set_index,
             self.index,
@@ -531,12 +531,12 @@ impl From<Shred> for CliDuplicateShred {
         Self {
             fec_set_index: shred.fec_set_index(),
             index: shred.index(),
-            shred_type: shred.shred_type(),
+            shred_type: format!("{:?}", shred.kind()),
             version: shred.version(),
             merkle_root: shred.merkle_root().ok(),
-            chained_merkle_root: shred.chained_merkle_root().ok(),
+            chained_merkle_root: Some(*shred.chained_merkle_root()),
             last_in_slot: shred.last_in_slot(),
-            payload: Vec::from(shred.into_payload().bytes),
+            payload: shred.into_bytes().to_vec(),
         }
     }
 }

@@ -88,7 +88,7 @@ impl AddrCache {
     ) -> Option<(/*root_distance:*/ u8, &Arc<[SocketAddr]>)> {
         self.cache
             .get(&shred.slot())?
-            .get(shred.shred_type(), shred.index())
+            .get(shred.kind(), shred.index())
     }
 
     // Stores (root-distance, socket-addresses) precomputed speculatively for
@@ -99,7 +99,7 @@ impl AddrCache {
         entry: (/*root_distance:*/ u8, Arc<[SocketAddr]>),
     ) {
         self.get_cache_entry_mut(shred.slot())
-            .put(shred.shred_type(), shred.index(), entry);
+            .put(shred.kind(), shred.index(), entry);
         self.maybe_trim_cache();
     }
 
@@ -128,7 +128,7 @@ impl AddrCache {
         entry.last_shred_in_slot |= stats.last_shred_in_slot;
         for (shred, root_distance, addrs) in std::mem::take(&mut stats.addrs) {
             debug_assert_eq!(shred.slot(), slot);
-            entry.put(shred.shred_type(), shred.index(), (root_distance, addrs));
+            entry.put(shred.kind(), shred.index(), (root_distance, addrs));
         }
         self.maybe_trim_cache();
         debug_assert!(self.verify());

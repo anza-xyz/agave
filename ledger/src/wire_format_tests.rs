@@ -4,18 +4,19 @@
 mod tests {
     use {
         crate::shred::Shred,
+        bytes::Bytes,
         solana_net_utils::tooling_for_tests::{hexdump, validate_packet_format},
         std::path::PathBuf,
     };
 
     fn parse_turbine(bytes: &[u8]) -> anyhow::Result<Shred> {
-        let shred = Shred::new_from_serialized_shred(bytes.to_owned())
-            .map_err(|_e| anyhow::anyhow!("Can not deserialize"))?;
+        let shred = Shred::from_blockstore(Bytes::copy_from_slice(bytes))
+            .map_err(|e| anyhow::anyhow!("Can not deserialize: {e}"))?;
         Ok(shred)
     }
 
     fn serialize(pkt: Shred) -> Vec<u8> {
-        pkt.payload().to_vec()
+        pkt.bytes().to_vec()
     }
 
     fn find_differences(a: &[u8], b: &[u8]) -> Option<usize> {
@@ -45,13 +46,13 @@ mod tests {
         println!(
             "Shred merkle root {:X?}, chained root {:X?}, rtx_sign {:X?}",
             merkle_root.map(|v| v.as_ref().to_vec()),
-            chained_merkle_root.map(|v| v.as_ref().to_vec()),
+            chained_merkle_root.as_ref().to_vec(),
             rtx_sign.map(|v| v.as_ref().to_vec())
         );
         println!(
             "Data shreds: {:?}, Coding shreds: {:?}",
             shred.num_data_shreds(),
-            shred.num_coding_shreds()
+            shred.num_code_shreds()
         );
         hexdump(bytes)?;
         println!("===");

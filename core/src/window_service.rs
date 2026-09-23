@@ -15,7 +15,6 @@ use {
     },
     agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
-    rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
@@ -24,11 +23,10 @@ use {
         },
         blockstore_db::{DBPinnableSlice, WriteBatch},
         blockstore_meta::BlockLocation,
-        shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
+        shred::{self, Shred, filter::ShredRecoveryContext},
     },
     solana_measure::measure::Measure,
     solana_net_utils::PinnedXdpSender,
-    solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
     std::{
@@ -36,7 +34,7 @@ use {
         net::UdpSocket,
         sync::{
             Arc, RwLock,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -49,7 +47,7 @@ pub(crate) type DuplicateSlotReceiver = Receiver<Slot>;
 #[derive(Default)]
 struct WindowServiceMetrics {
     run_insert_count: u64,
-    num_repairs: AtomicUsize,
+    num_repairs: usize,
     num_shreds_received: usize,
     handle_packets_elapsed_us: u64,
     shred_receiver_elapsed_us: u64,
@@ -72,7 +70,7 @@ impl WindowServiceMetrics {
                 i64
             ),
             ("run_insert_count", self.run_insert_count as i64, i64),
-            ("num_repairs", self.num_repairs.load(Ordering::Relaxed), i64),
+            ("num_repairs", self.num_repairs, i64),
             ("num_shreds_received", self.num_shreds_received, i64),
             (
                 "shred_receiver_elapsed_us",
@@ -173,8 +171,7 @@ fn run_check_duplicate(
 
 #[allow(clippy::too_many_arguments)]
 fn run_insert<'db, F>(
-    thread_pool: &ThreadPool,
-    verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
+    verified_receiver: &Receiver<Vec<(Shred, /*is_repaired:*/ bool, BlockLocation)>>,
     blockstore: &'db Blockstore,
     shred_recovery_context: &mut ShredRecoveryContext,
     pinnable_slice: &mut DBPinnableSlice<'db>,
@@ -194,21 +191,13 @@ where
     shred_receiver_elapsed.stop();
     ws_metrics.shred_receiver_elapsed_us += shred_receiver_elapsed.as_us();
     ws_metrics.run_insert_count += 1;
-    let handle_shred = |(shred, repair, block_location): (shred::Payload, bool, BlockLocation)| {
-        if repair {
-            ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
-        }
-        let shred = Shred::new_from_serialized_shred(shred).ok()?;
-        Some((Cow::Owned(shred), repair, block_location))
-    };
     let now = Instant::now();
-    let shreds: Vec<_> = thread_pool.install(|| {
-        shreds
-            .into_par_iter()
-            .with_min_len(32)
-            .filter_map(handle_shred)
-            .collect()
-    });
+    let num_repairs = shreds.iter().filter(|(_, repair, _)| *repair).count();
+    ws_metrics.num_repairs += num_repairs;
+    let shreds: Vec<_> = shreds
+        .into_iter()
+        .map(|(shred, repair, block_location)| (Cow::Owned(shred), repair, block_location))
+        .collect();
     ws_metrics.handle_packets_elapsed_us += now.elapsed().as_micros() as u64;
     ws_metrics.num_shreds_received += shreds.len();
     let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
@@ -229,8 +218,8 @@ where
 }
 
 pub struct WindowServiceChannels {
-    pub verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
-    pub retransmit_sender: EvictingSender<Vec<shred::Payload>>,
+    pub verified_receiver: Receiver<Vec<(Shred, /*is_repaired:*/ bool, BlockLocation)>>,
+    pub retransmit_sender: EvictingSender<Vec<Shred>>,
     pub completed_data_sets_sender: Option<CompletedDataSetsSender>,
     pub duplicate_slots_sender: DuplicateSlotSender,
     pub repair_service_channels: RepairServiceChannels,
@@ -239,8 +228,8 @@ pub struct WindowServiceChannels {
 
 impl WindowServiceChannels {
     pub fn new(
-        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
-        retransmit_sender: EvictingSender<Vec<shred::Payload>>,
+        verified_receiver: Receiver<Vec<(Shred, /*is_repaired:*/ bool, BlockLocation)>>,
+        retransmit_sender: EvictingSender<Vec<Shred>>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         duplicate_slots_sender: DuplicateSlotSender,
         repair_service_channels: RepairServiceChannels,
@@ -374,24 +363,14 @@ impl WindowService {
         blockstore: Arc<Blockstore>,
         sharable_banks: SharableBanks,
         shred_version: u16,
-        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
+        verified_receiver: Receiver<Vec<(Shred, /*is_repaired:*/ bool, BlockLocation)>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
-        retransmit_sender: EvictingSender<Vec<shred::Payload>>,
+        retransmit_sender: EvictingSender<Vec<Shred>>,
     ) -> JoinHandle<()> {
-        let reed_solomon_cache = ReedSolomonCache::default();
         Builder::new()
             .name("solWinInsert".to_string())
             .spawn(move || {
-                let thread_pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(get_thread_count().min(8))
-                    // Use the current thread as one of the workers. This reduces overhead when the
-                    // pool is used to process a small number of shreds, since they'll be processed
-                    // directly on the current thread.
-                    .use_current_thread()
-                    .thread_name(|i| format!("solWinInsert{i:02}"))
-                    .build()
-                    .unwrap();
                 let handle_duplicate = |possible_duplicate_shred| {
                     let _ = check_duplicate_sender.send(possible_duplicate_shred);
                 };
@@ -401,7 +380,6 @@ impl WindowService {
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
                 let mut shred_recovery_context = ShredRecoveryContext::new(
-                    reed_solomon_cache,
                     retransmit_sender,
                     sharable_banks.root(),
                     shred_version,
@@ -413,7 +391,6 @@ impl WindowService {
                     shred_recovery_context.maybe_update(sharable_banks.root());
 
                     if let Err(e) = run_insert(
-                        &thread_pool,
                         &verified_receiver,
                         &blockstore,
                         &mut shred_recovery_context,
@@ -506,8 +483,6 @@ mod test {
             // chained_merkle_root
             Hash::new_from_array(rand::rng().random()),
             0, // next_shred_index
-            0, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         data_shreds
@@ -568,8 +543,8 @@ mod test {
 
         // Make sure the correct duplicate proof was stored
         let duplicate_proof = blockstore.get_duplicate_slot(duplicate_shred_slot).unwrap();
-        assert_eq!(duplicate_proof.shred1, *original_shred.payload());
-        assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
+        assert_eq!(duplicate_proof.shred1, *original_shred.bytes());
+        assert_eq!(duplicate_proof.shred2, *duplicate_shred.bytes());
 
         // Make sure a duplicate signal was sent
         assert_eq!(
@@ -628,7 +603,6 @@ mod test {
                     shreds,
                     false, // is_trusted
                     &mut ShredRecoveryContext::new(
-                        ReedSolomonCache::default(),
                         dummy_retransmit_sender,
                         bank_forks.read().unwrap().root_bank(),
                         0, // shred_version
@@ -648,8 +622,8 @@ mod test {
 
             // Make sure the correct duplicate proof was stored
             let duplicate_proof = blockstore.get_duplicate_slot(slot).unwrap();
-            assert_eq!(duplicate_proof.shred1, *original_shred.payload());
-            assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
+            assert_eq!(duplicate_proof.shred1, *original_shred.bytes());
+            assert_eq!(duplicate_proof.shred2, *duplicate_shred.bytes());
         }
         exit.store(true, Ordering::Relaxed);
         t_check_duplicate.join().unwrap();

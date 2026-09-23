@@ -3,11 +3,12 @@ use {
         bit_vec::{BitVec, BitVecRef},
         blockstore::ParentInfo,
         shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
+            MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
             merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
     },
     bitflags::bitflags,
+    bytes::Bytes,
     smallvec::SmallVec,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::{HASH_BYTES, Hash},
@@ -370,12 +371,6 @@ pub(crate) struct ErasureConfig {
     pub(crate) num_coding: usize,
 }
 
-impl ErasureConfig {
-    pub(crate) fn is_fixed(&self) -> bool {
-        self.num_data == DATA_SHREDS_PER_FEC_BLOCK && self.num_coding == DATA_SHREDS_PER_FEC_BLOCK
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub struct MerkleRootMeta {
     /// The merkle root, `None` for legacy shreds
@@ -388,8 +383,8 @@ pub struct MerkleRootMeta {
 
 #[derive(SchemaRead, SchemaWrite)]
 pub struct DuplicateSlotProof {
-    pub shred1: shred::Payload,
-    pub shred2: shred::Payload,
+    pub shred1: Bytes,
+    pub shred2: Bytes,
 }
 
 /// Which column an associated block currently resides
@@ -722,24 +717,19 @@ impl SlotMetaRepair {
 
 impl ErasureMeta {
     pub(crate) fn from_coding_shred(shred: &Shred) -> Option<Self> {
-        match shred.shred_type() {
-            ShredType::Data => None,
-            ShredType::Code => {
-                let config = ErasureConfig {
-                    num_data: usize::from(shred.num_data_shreds().ok()?),
-                    num_coding: usize::from(shred.num_coding_shreds().ok()?),
-                };
-                let first_coding_index = u64::from(shred.first_coding_index()?);
-                let first_received_coding_index = u64::from(shred.index());
-                let erasure_meta = ErasureMeta {
-                    fec_set_index: shred.fec_set_index(),
-                    config,
-                    first_coding_index,
-                    first_received_coding_index,
-                };
-                Some(erasure_meta)
-            }
-        }
+        let header = shred.code_header()?;
+        let config = ErasureConfig {
+            num_data: usize::from(header.num_data_shreds),
+            num_coding: usize::from(header.num_code_shreds),
+        };
+        let first_coding_index = u64::from(shred.first_code_index()?);
+        let first_received_coding_index = u64::from(shred.index());
+        Some(ErasureMeta {
+            fec_set_index: shred.fec_set_index(),
+            config,
+            first_coding_index,
+            first_received_coding_index,
+        })
     }
 
     // Returns true if the erasure fields on the shred
@@ -817,7 +807,7 @@ impl MerkleRootMeta {
             // a valid duplicate shred proof.
             merkle_root: shred.merkle_root().ok(),
             first_received_shred_index: shred.index(),
-            first_received_shred_type: shred.shred_type(),
+            first_received_shred_type: shred.kind(),
         }
     }
 
@@ -835,14 +825,8 @@ impl MerkleRootMeta {
 }
 
 impl DuplicateSlotProof {
-    pub(crate) fn new<S, T>(shred1: S, shred2: T) -> Self
-    where
-        shred::Payload: From<S> + From<T>,
-    {
-        DuplicateSlotProof {
-            shred1: shred::Payload::from(shred1),
-            shred2: shred::Payload::from(shred2),
-        }
+    pub(crate) fn new(shred1: Bytes, shred2: Bytes) -> Self {
+        DuplicateSlotProof { shred1, shred2 }
     }
 }
 

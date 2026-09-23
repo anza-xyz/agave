@@ -9,8 +9,8 @@ use {
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
-            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shred, ShredData,
-            Shredder, filter::ShredRecoveryContext, max_entries_per_n_shred,
+            DATA_SHREDS_PER_FEC_BLOCK, Data, ProcessShredsStats, Shred, ShredLayout, Shredder,
+            filter::ShredRecoveryContext, max_entries_per_n_shred,
             max_entries_per_n_shred_last_or_not, verify_test_data_shred,
         },
     },
@@ -45,7 +45,6 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     ));
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     ShredRecoveryContext::new(
-        ReedSolomonCache::default(),
         dummy_retransmit_sender,
         root_bank,
         shreds.first().map(Shred::version).unwrap_or_default(),
@@ -77,7 +76,6 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
         })
         .collect();
 
-    let reed_solomon_cache = ReedSolomonCache::default();
     let serialized_entries = wincode::serialize(&entries).unwrap();
 
     let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
@@ -86,8 +84,6 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
         is_last_in_slot,
         Hash::default(), // chained_merkle_root
         0,               // next_shred_index
-        0,               // next_code_index
-        &reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
     let next_index = data_shreds.last().unwrap().index() + 1;
@@ -147,7 +143,7 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
     }
 
     let result = {
-        let shreds = all_shreds.iter().map(Shred::payload);
+        let shreds = all_shreds.iter().map(Shred::bytes);
         Shredder::deshred(shreds).unwrap()
     };
     assert_eq!(serialized_entries[..], result[..serialized_entries.len()]);
@@ -236,7 +232,7 @@ fn setup_different_sized_fec_blocks(
     let keypair1 = Keypair::new();
     let tx0 = system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![tx0]);
-    let merkle_capacity = ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
+    let merkle_capacity = Data::SIZE_OF_BODY_RESIGNED;
     let chained_merkle_root = Hash::default();
 
     assert!(DATA_SHREDS_PER_FEC_BLOCK > 2);
@@ -256,14 +252,12 @@ fn setup_different_sized_fec_blocks(
 
     // Run the shredder twice, generate data and coding shreds
     let mut next_shred_index = 0;
-    let mut next_code_index = 0;
     let mut fec_data = BTreeMap::new();
     let mut fec_coding = BTreeMap::new();
     let mut data_slot_and_index = HashSet::new();
     let mut coding_slot_and_index = HashSet::new();
 
     let total_num_data_shreds: usize = 2 * num_shreds_per_iter;
-    let reed_solomon_cache = ReedSolomonCache::default();
     for i in 0..2 {
         let is_last = i == 1;
 
@@ -273,8 +267,6 @@ fn setup_different_sized_fec_blocks(
             is_last,
             chained_merkle_root,
             next_shred_index,
-            next_code_index,
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
         for shred in &data_shreds {
@@ -290,7 +282,6 @@ fn setup_different_sized_fec_blocks(
         }
         assert_eq!(data_shreds.len(), num_shreds_per_iter);
         next_shred_index = data_shreds.last().unwrap().index() + 1;
-        next_code_index = coding_shreds.last().unwrap().index() + 1;
         sort_data_coding_into_fec_sets(
             data_shreds,
             coding_shreds,

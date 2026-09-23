@@ -10,7 +10,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shredder,
+        DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shredder,
         max_entries_per_n_shred_last_or_not,
     },
     solana_signer::Signer,
@@ -75,14 +75,12 @@ fn make_recoverable_fec_set_at(slot: u64, parent: u64) -> (Vec<Vec<u8>>, Vec<u8>
         false,
         Hash::default(),
         0,
-        0,
-        &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
     assert_eq!(data_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
     assert_eq!(coding_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
 
-    let incomplete_shred = data_shreds[0].payload().to_vec();
+    let incomplete_shred = data_shreds[0].bytes().to_vec();
     let recoverable = data_shreds
         .into_iter()
         .take(DATA_SHREDS_PER_FEC_BLOCK / 2)
@@ -91,7 +89,7 @@ fn make_recoverable_fec_set_at(slot: u64, parent: u64) -> (Vec<Vec<u8>>, Vec<u8>
                 .into_iter()
                 .take(DATA_SHREDS_PER_FEC_BLOCK / 2),
         )
-        .map(|shred| shred.into_payload().to_vec())
+        .map(|shred| shred.into_bytes().to_vec())
         .collect();
     (recoverable, incomplete_shred)
 }

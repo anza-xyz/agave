@@ -8,7 +8,7 @@ use {
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, ShredId, Shredder},
+    solana_ledger::shred::{ProcessShredsStats, ShredId, Shredder},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
@@ -50,7 +50,6 @@ pub(super) struct BroadcastDuplicatesRun {
     chained_merkle_root: Hash,
     carryover_message: Option<WorkingBankMessage>,
     next_shred_index: u32,
-    next_code_index: u32,
     shred_version: u16,
     recent_blockhash: Option<Hash>,
     prev_entry_hash: Option<Hash>,
@@ -58,7 +57,6 @@ pub(super) struct BroadcastDuplicatesRun {
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     original_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
     partition_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
-    reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
 }
@@ -79,7 +77,6 @@ impl BroadcastDuplicatesRun {
             chained_merkle_root: Hash::default(),
             carryover_message: None,
             next_shred_index: u32::MAX,
-            next_code_index: 0,
             shred_version,
             current_slot: 0,
             recent_blockhash: None,
@@ -88,7 +85,6 @@ impl BroadcastDuplicatesRun {
             cluster_nodes_cache,
             original_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
             partition_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
-            reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
         }
@@ -124,7 +120,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             )
             .unwrap();
             self.next_shred_index = 0;
-            self.next_code_index = 0;
             self.current_slot = bank.slot();
             self.prev_entry_hash = None;
             self.num_slots_broadcasted += 1;
@@ -211,23 +206,18 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
+        let (data_shreds, _coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
             keypair,
             component,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
             self.chained_merkle_root,
             self.next_shred_index,
-            self.next_code_index,
-            &self.reed_solomon_cache,
             &mut stats,
         );
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }
         self.next_shred_index += data_shreds.len() as u32;
-        if let Some(index) = coding_shreds.iter().map(Shred::index).max() {
-            self.next_code_index = index + 1;
-        }
         let last_shreds =
             last_entries.map(|(original_last_entry, duplicate_extra_last_entries)| {
                 let (original_last_data_shred, _) = shredder.component_to_merkle_shreds_for_tests(
@@ -236,8 +226,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     true,
                     self.chained_merkle_root,
                     self.next_shred_index,
-                    self.next_code_index,
-                    &self.reed_solomon_cache,
                     &mut stats,
                 );
                 // Don't mark the last shred as last so that validators won't
@@ -249,8 +237,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     true,
                     self.chained_merkle_root,
                     self.next_shred_index,
-                    self.next_code_index,
-                    &self.reed_solomon_cache,
                     &mut stats,
                 );
                 let sigs: Vec<_> = partition_last_data_shred
@@ -292,17 +278,13 @@ impl BroadcastRun for BroadcastDuplicatesRun {
 
         // Special handling of last shred to cause partition
         if let Some((original_last_data_shred, partition_last_data_shred)) = last_shreds {
-            let pubkey = keypair.pubkey();
-            self.original_last_data_shreds.lock().unwrap().extend(
-                original_last_data_shred.iter().map(|shred| {
-                    assert!(shred.verify(&pubkey));
-                    duplicate_shred_key(shred)
-                }),
-            );
+            self.original_last_data_shreds
+                .lock()
+                .unwrap()
+                .extend(original_last_data_shred.iter().map(duplicate_shred_key));
             self.partition_last_data_shreds.lock().unwrap().extend(
                 partition_last_data_shred.iter().map(|shred| {
                     info!("adding {} to partition set", shred.signature());
-                    assert!(shred.verify(&pubkey));
                     duplicate_shred_key(shred)
                 }),
             );
@@ -420,7 +402,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                                 })??;
                                 socket_addr_space
                                     .check(&tvu)
-                                    .then_some((shred.payload(), tvu))
+                                    .then_some((shred.bytes(), tvu))
                             })
                             .collect(),
                     );
@@ -446,7 +428,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     return None;
                 }
 
-                Some(vec![(shred.payload(), node.tvu(Protocol::UDP)?)])
+                Some(vec![(shred.bytes(), node.tvu(Protocol::UDP)?)])
             })
             .flatten()
             .collect();
@@ -490,7 +472,6 @@ mod tests {
     fn test_special_shred_key_distinguishes_shreds_with_shared_signature() {
         let keypair = Keypair::new();
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let mut stats = ProcessShredsStats::default();
         let (data_shreds, _) = shredder.component_to_merkle_shreds_for_tests(
             &keypair,
@@ -498,8 +479,6 @@ mod tests {
             true,
             Hash::default(),
             0,
-            0,
-            &reed_solomon_cache,
             &mut stats,
         );
         let (duplicate_data_shreds, _) = shredder.component_to_merkle_shreds_for_tests(
@@ -508,8 +487,6 @@ mod tests {
             true,
             Hash::default(),
             0,
-            0,
-            &reed_solomon_cache,
             &mut stats,
         );
 

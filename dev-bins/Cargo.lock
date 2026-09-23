@@ -192,6 +192,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-fec-set-recovery"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-shred-verify",
+ "agave-shred-wire-format",
+ "agave-shredder",
+ "bytes",
+ "reed-solomon-erasure",
+ "solana-hash",
+ "solana-signature",
+ "thiserror 2.0.20",
+ "wincode",
+]
+
+[[package]]
 name = "agave-fs"
 version = "4.5.0-alpha.0"
 dependencies = [
@@ -417,6 +432,69 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
  "solana-transaction-error",
+]
+
+[[package]]
+name = "agave-shred"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-fec-set-recovery",
+ "agave-shred-verify",
+ "agave-shred-wire-format",
+ "agave-shredder",
+ "bytes",
+ "solana-clock 4.0.0",
+ "solana-hash",
+ "solana-keypair",
+ "solana-pubkey 4.3.0",
+ "solana-sha256-hasher",
+ "solana-signature",
+ "solana-signer",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "agave-shred-verify"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-shred-wire-format",
+ "solana-hash",
+ "solana-keypair",
+ "solana-pubkey 4.3.0",
+ "solana-sha256-hasher",
+ "solana-signature",
+ "solana-signer",
+ "static_assertions",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "agave-shred-wire-format"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "bytes",
+ "solana-clock 4.0.0",
+ "solana-hash",
+ "solana-packet",
+ "solana-signature",
+ "static_assertions",
+ "thiserror 2.0.20",
+ "wincode",
+]
+
+[[package]]
+name = "agave-shredder"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-shred-verify",
+ "agave-shred-wire-format",
+ "bytes",
+ "reed-solomon-erasure",
+ "solana-clock 4.0.0",
+ "solana-hash",
+ "solana-keypair",
+ "thiserror 2.0.20",
+ "wincode",
 ]
 
 [[package]]
@@ -7135,6 +7213,7 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-shred",
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor-messages",
@@ -7157,14 +7236,12 @@ dependencies = [
  "lru 0.18.4",
  "mockall",
  "num_cpus",
- "num_enum",
  "parking_lot 0.12.5",
  "prost",
  "qualifier_attr",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
- "reed-solomon-erasure",
  "rocksdb",
  "scopeguard",
  "serde",

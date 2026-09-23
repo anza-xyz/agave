@@ -38,8 +38,9 @@ use {
     solana_ledger::{
         blockstore_meta::BlockLocation,
         shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
-            ShredFetchStats, ShredFlags, ShredType, layout::get_merkle_root, merkle_tree,
+            AnyHeader, AnyShredView, Code, DATA_SHREDS_PER_FEC_BLOCK, Data, MAX_FEC_SETS_PER_SLOT,
+            Nonce, SIZE_OF_NONCE, ShredFetchStats, ShredKind, ShredView, merkle, merkle_tree,
+            view::peek_variant,
         },
     },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
@@ -171,26 +172,21 @@ impl RequestResponse for ShredRepairType {
         }
     }
     fn verify_response(&self, shred: &Self::Response) -> bool {
-        #[inline]
-        fn get_shred_index(shred: &[u8]) -> Option<u64> {
-            shred::layout::get_index(shred).map(u64::from)
-        }
-        let Some(shred_slot) = shred::layout::get_slot(shred) else {
+        let Some(view) = read_shred_view(shred) else {
             return false;
         };
+        let shred_slot = view.common.slot;
+        let shred_index = u64::from(view.common.index);
         match self {
             ShredRepairType::Orphan(slot) => shred_slot <= *slot,
             ShredRepairType::HighestShred(slot, index) => {
-                shred_slot == *slot
-                    && get_shred_index(shred).is_some_and(|shred_index| {
-                        shred_index >= *index
-                            || shred::layout::get_flags(shred)
-                                .is_ok_and(|flags| flags.contains(ShredFlags::LAST_SHRED_IN_SLOT))
-                    })
+                let last_in_slot = match view.header {
+                    AnyHeader::Data(header) => header.flags.last_in_slot(),
+                    AnyHeader::Code(_) => false,
+                };
+                shred_slot == *slot && (shred_index >= *index || last_in_slot)
             }
-            ShredRepairType::Shred(slot, index) => {
-                shred_slot == *slot && get_shred_index(shred) == Some(*index)
-            }
+            ShredRepairType::Shred(slot, index) => shred_slot == *slot && shred_index == *index,
             ShredRepairType::ShredForBlockId {
                 slot,
                 index,
@@ -198,14 +194,27 @@ impl RequestResponse for ShredRepairType {
                 ..
             } => {
                 shred_slot == *slot
-                    && matches!(shred::layout::get_shred_type(shred), Ok(ShredType::Data))
-                    && shred::layout::get_index(shred) == Some(*index)
-                    && get_merkle_root(shred).is_some_and(|root| {
-                        merkle_tree::hash_as_merkle_proof_entry(&root)
-                            == fec_set_merkle_root.as_bytes()
-                    })
+                    && view.common.index == *index
+                    && ShredView::<Data>::read_exact(shred)
+                        .ok()
+                        .and_then(|view| merkle::root_of(&view).ok())
+                        .is_some_and(|root| {
+                            merkle_tree::hash_as_merkle_proof_entry(&root)
+                                == fec_set_merkle_root.as_bytes()
+                        })
             }
         }
+    }
+}
+
+fn read_shred_view(shred: &[u8]) -> Option<AnyShredView<'_>> {
+    match peek_variant(shred).ok()?.shred_kind() {
+        ShredKind::Data => ShredView::<Data>::read_exact(shred)
+            .ok()
+            .map(AnyShredView::from),
+        ShredKind::Code => ShredView::<Code>::read_exact(shred)
+            .ok()
+            .map(AnyShredView::from),
     }
 }
 
@@ -2003,14 +2012,12 @@ mod tests {
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             shred::{
-                ProcessShredsStats, ReedSolomonCache, Shred, Shredder, max_ticks_per_n_shreds,
-                merkle_tree::hash_as_merkle_proof_entry,
+                ProcessShredsStats, Shred, Shredder, max_ticks_per_n_shreds,
+                merkle_tree::hash_as_merkle_proof_entry, parse_repair,
             },
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{
-            Packet, PacketFlags, PacketRef, deserialize_slice_from_packet, packet_from_data,
-        },
+        solana_perf::packet::{Packet, PacketRef, deserialize_slice_from_packet, packet_from_data},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
@@ -2043,7 +2050,8 @@ mod tests {
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(123, &keypair);
         let mut pkt = Packet::default();
-        shred.copy_to_packet(&mut pkt);
+        let bytes = shred.bytes();
+        pkt.buffer_mut()[..bytes.len()].copy_from_slice(bytes);
         pkt.meta_mut().size = REPAIR_RESPONSE_SERIALIZED_PING_BYTES;
         let res = deserialize_slice_from_packet::<RepairResponse, _>(&pkt, ..);
         if let Ok(RepairResponse::Ping(ping)) = res {
@@ -2499,21 +2507,15 @@ mod tests {
         );
 
         let index = 1;
-        let mut rv = handler
+        let rv = handler
             .run_highest_window_request(&socketaddr_any!(), slot, index, nonce)
             .expect("packets");
         let request = ShredRepairType::HighestShred(slot, index);
         verify_responses(&request, rv.iter());
 
         let rv: Vec<Shred> = rv
-            .iter_mut()
-            .map(|mut packet| {
-                packet.meta_mut().flags |= PacketFlags::REPAIR;
-                let (shred, repair_nonce) =
-                    shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
-                assert_eq!(repair_nonce.unwrap(), nonce);
-                Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
-            })
+            .iter()
+            .map(|packet| repair_packet_to_shred(packet, nonce))
             .collect();
         assert!(!rv.is_empty());
         let index = blockstore.meta(slot).unwrap().unwrap().received - 1;
@@ -2537,38 +2539,30 @@ mod tests {
         assert!(rv.is_none());
         let shredder = Shredder::new(slot, slot - 1, 0, 2).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let index = 1;
         let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &[],
             true,
             Hash::default(),
-            index as u32,
-            index as u32,
-            &reed_solomon_cache,
+            0,
             &mut ProcessShredsStats::default(),
         );
+        shreds.remove(0);
         shreds.truncate(1);
 
         blockstore
             .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
 
-        let mut rv = handler
+        let rv = handler
             .run_window_request(&socketaddr_any!(), slot, index, nonce)
             .expect("packets");
         let request = ShredRepairType::Shred(slot, index);
         verify_responses(&request, rv.iter());
         let rv: Vec<Shred> = rv
-            .iter_mut()
-            .map(|mut packet| {
-                packet.meta_mut().flags |= PacketFlags::REPAIR;
-                let (shred, repair_nonce) =
-                    shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
-                assert_eq!(repair_nonce.unwrap(), nonce);
-                Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
-            })
+            .iter()
+            .map(|packet| repair_packet_to_shred(packet, nonce))
             .collect();
         assert_eq!(rv[0].index(), 1);
         assert_eq!(rv[0].slot(), slot);
@@ -3089,15 +3083,12 @@ mod tests {
         fn new_test_data_shred(slot: Slot, index: u32) -> Shred {
             let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
             let keypair = Keypair::new();
-            let reed_solomon_cache = ReedSolomonCache::default();
             let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
                 &keypair,
                 &[],
                 true,
                 Hash::default(),
                 0,
-                0,
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             );
             shreds.remove(index as usize)
@@ -3105,15 +3096,12 @@ mod tests {
         fn new_test_coding_shred(slot: Slot, index: u32) -> Shred {
             let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
             let keypair = Keypair::new();
-            let reed_solomon_cache = ReedSolomonCache::default();
             let (_, mut shreds) = shredder.entries_to_merkle_shreds_for_tests(
                 &keypair,
                 &[],
                 true,
                 Hash::default(),
                 0,
-                0,
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             );
             shreds.remove(index as usize)
@@ -3134,33 +3122,33 @@ mod tests {
         // Orphan
         let shred = new_test_data_shred(slot, 0);
         let request = ShredRepairType::Orphan(slot);
-        assert!(request.verify_response(shred.payload()));
+        assert!(request.verify_response(shred.bytes()));
         let shred = new_test_data_shred(slot - 1, 0);
-        assert!(request.verify_response(shred.payload()));
+        assert!(request.verify_response(shred.bytes()));
         let shred = new_test_data_shred(slot + 1, 0);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
 
         // HighestShred
         let shred = new_test_data_shred(slot, index);
         let request = ShredRepairType::HighestShred(slot, index as u64);
-        assert!(request.verify_response(shred.payload()));
+        assert!(request.verify_response(shred.bytes()));
         let shred = new_test_data_shred(slot, index + 1);
-        assert!(request.verify_response(shred.payload()));
+        assert!(request.verify_response(shred.bytes()));
         let shred = new_test_data_shred(slot, index - 1);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
         let shred = new_test_data_shred(slot - 1, index);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
         let shred = new_test_data_shred(slot + 1, index);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
 
         // Shred
         let shred = new_test_data_shred(slot, index);
         let request = ShredRepairType::Shred(slot, index as u64);
-        assert!(request.verify_response(shred.payload()));
+        assert!(request.verify_response(shred.bytes()));
         let shred = new_test_data_shred(slot, index + 1);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
         let shred = new_test_data_shred(slot + 1, index);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
 
         // ShredForBlockId
         let shred = new_test_data_shred(slot, index);
@@ -3177,7 +3165,7 @@ mod tests {
             fec_set_merkle_root,
             block_id: Hash::new_unique(),
         };
-        assert!(request.verify_response(shred.payload()));
+        assert!(request.verify_response(shred.bytes()));
         // bad FEC-set root prefix
         let mut bad_merkle_root = merkle_root.to_bytes();
         bad_merkle_root[0] ^= 0xff;
@@ -3187,16 +3175,16 @@ mod tests {
             fec_set_merkle_root: Hash::new_from_array(bad_merkle_root).into(),
             block_id: Hash::new_unique(),
         };
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
         // coding shred
         let shred = new_test_coding_shred(slot, index);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
         // bad index
         let shred = new_test_data_shred(slot, index + 1);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
         // bad slot
         let shred = new_test_data_shred(slot + 1, index);
-        assert!(!request.verify_response(shred.payload()));
+        assert!(!request.verify_response(shred.bytes()));
     }
 
     fn verify_responses<'a>(
@@ -3204,9 +3192,17 @@ mod tests {
         packets: impl Iterator<Item = PacketRef<'a>>,
     ) {
         for packet in packets {
-            let shred = shred::layout::get_shred(packet).unwrap();
+            let data = packet.data(..).unwrap();
+            let shred = &data[..data.len() - SIZE_OF_NONCE];
             assert!(request.verify_response(shred));
         }
+    }
+
+    fn repair_packet_to_shred(packet: PacketRef, nonce: Nonce) -> Shred {
+        let bytes = bytes::Bytes::copy_from_slice(packet.data(..).unwrap());
+        let (shred, repair_nonce) = parse_repair(bytes).unwrap();
+        assert_eq!(repair_nonce, nonce);
+        Shred::from_blockstore(shred.into_bytes()).unwrap()
     }
 
     #[test]

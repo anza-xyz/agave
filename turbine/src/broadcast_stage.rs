@@ -600,7 +600,7 @@ pub fn broadcast_shreds(
             [maybe_next_leader, maybe_standard_broadcast_peer]
                 .into_iter()
                 .filter_map(move |tvu_addr: Option<SocketAddr>| {
-                    tvu_addr.map(|addr| (shred.payload(), addr))
+                    tvu_addr.map(|addr| (shred.bytes(), addr))
                 })
         })
     });
@@ -621,7 +621,7 @@ pub fn broadcast_shreds(
         BroadcastSocket::Xdp(s) => {
             for (idx, (payload, addr)) in packets.enumerate() {
                 num_packets += 1;
-                if let Err(e) = s.try_send(idx, addr, payload.bytes.clone()) {
+                if let Err(e) = s.try_send(idx, addr, payload.clone()) {
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);
@@ -657,7 +657,7 @@ pub mod test {
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
-            shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
+            shred::{ProcessShredsStats, Shredder, max_ticks_per_n_shreds},
         },
         solana_runtime::bank::Bank,
         solana_signer::Signer,
@@ -693,8 +693,6 @@ pub mod test {
             // chained_merkle_root
             Hash::new_from_array(rand::rng().random()),
             0, // next_shred_index,
-            0, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         (

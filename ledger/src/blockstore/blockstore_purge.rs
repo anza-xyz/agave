@@ -1315,7 +1315,7 @@ pub mod tests {
         let (slot_12, _) = make_slot_entries(12, 5, 5);
         blockstore.insert_shreds(slot_12, false).unwrap();
         blockstore
-            .store_duplicate_slot(5, vec![1], vec![2])
+            .store_duplicate_slot(5, Bytes::from_static(&[1]), Bytes::from_static(&[2]))
             .unwrap();
         assert!(blockstore.has_duplicate_shreds_in_slot(5));
 

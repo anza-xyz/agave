@@ -18,6 +18,7 @@ use {
         duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         protocol::{Ping, PingCache},
     },
+    bytes::Bytes,
     parking_lot::RwLock,
     rand::{CryptoRng, Rng},
     rayon::ThreadPool,
@@ -115,7 +116,7 @@ impl CrdsGossip {
         let chunks = duplicate_shred::from_shred(
             shred.clone(),
             pubkey,
-            Vec::from(other_payload),
+            Bytes::copy_from_slice(other_payload),
             leader_schedule,
             timestamp(),
             max_payload_size,

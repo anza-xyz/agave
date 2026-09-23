@@ -3,6 +3,7 @@ use {
         repair_handler::RepairHandler, repair_response::repair_response_packet_from_bytes,
         standard_repair_handler::StandardRepairHandler,
     },
+    bytes::Bytes,
     log::info,
     solana_clock::Slot,
     solana_entry::entry::Entry,
@@ -11,7 +12,7 @@ use {
     solana_ledger::{
         blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{Nonce, ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{Nonce, ProcessShredsStats, Shred, Shredder},
     },
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_signer::Signer,
@@ -33,7 +34,6 @@ pub struct MaliciousRepairHandler {
     keypair: Arc<Keypair>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     config: MaliciousRepairConfig,
-    reed_solomon_cache: ReedSolomonCache,
     standard_repair_handler: StandardRepairHandler,
 }
 
@@ -50,7 +50,6 @@ impl MaliciousRepairHandler {
             keypair,
             leader_schedule_cache,
             config,
-            reed_solomon_cache: ReedSolomonCache::default(),
         }
     }
 
@@ -96,13 +95,11 @@ impl MaliciousRepairHandler {
         &self,
         original_shred: &Shred,
         shred_index: u64,
-    ) -> Option<Vec<u8>> {
+    ) -> Option<Bytes> {
         let slot = original_shred.slot();
-        let parent_slot = original_shred.parent().ok()?;
+        let parent_slot = original_shred.parent_slot()?;
         let version = original_shred.version();
-        // Use 0 for reference_tick since we can't access the private method
-        // This is fine for equivocation testing purposes
-        let reference_tick = 0u8;
+        let reference_tick = original_shred.reference_tick()?;
 
         // Create a shredder with the same slot parameters
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).ok()?;
@@ -113,7 +110,7 @@ impl MaliciousRepairHandler {
         let fake_entries = vec![Entry::new(&fake_hash, 1, vec![])];
 
         // Generate new shreds signed by our keypair
-        let chained_merkle_root = original_shred.chained_merkle_root().ok()?;
+        let chained_merkle_root = *original_shred.chained_merkle_root();
         let is_last_in_slot = original_shred.last_in_slot();
 
         let shreds = shredder.make_merkle_shreds_from_entries(
@@ -122,8 +119,6 @@ impl MaliciousRepairHandler {
             is_last_in_slot,
             chained_merkle_root,
             shred_index as u32, // next_shred_index
-            0,                  // next_code_index
-            &self.reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
 
@@ -131,7 +126,7 @@ impl MaliciousRepairHandler {
         shreds
             .into_iter()
             .find(|s| s.is_data())
-            .map(|s| s.into_payload().to_vec())
+            .map(Shred::into_bytes)
     }
 }
 
@@ -159,7 +154,7 @@ impl RepairHandler for MaliciousRepairHandler {
         if self.is_leader_for_slot(slot) && self.should_respond_maliciously(slot, shred_index) {
             // Parse the original shred to get its metadata
             if let Ok(original_shred) =
-                Shred::new_from_serialized_shred(original_shred_bytes.clone())
+                Shred::from_blockstore(Bytes::copy_from_slice(&original_shred_bytes))
                 && let Some(equivocating_shred) =
                     self.generate_equivocating_shred(&original_shred, shred_index)
             {

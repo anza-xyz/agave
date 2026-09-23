@@ -2,12 +2,16 @@
 use qualifier_attr::qualifiers;
 use {
     crate::crds_data::sanitize_wallclock,
+    bytes::Bytes,
     itertools::Itertools,
     solana_clock::Slot,
     solana_ledger::{
         blockstore::BlockstoreError,
-        blockstore_meta::{DuplicateSlotProof, ErasureMeta},
-        shred::{self, Shred, ShredType},
+        blockstore_meta::DuplicateSlotProof,
+        shred::{
+            Admissible, AdmissionPolicy, AnyShred, ParseError, RejectReason, Shred, ShredType,
+            parse_turbine,
+        },
     },
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
@@ -117,7 +121,9 @@ pub enum Error {
     #[error("invalid size limit")]
     InvalidSizeLimit,
     #[error(transparent)]
-    InvalidShred(#[from] shred::Error),
+    InvalidShred(#[from] ParseError),
+    #[error(transparent)]
+    RejectedShred(#[from] RejectReason),
     #[error("number of chunks mismatch")]
     NumChunksMismatch,
     #[error("missing data chunk")]
@@ -146,7 +152,8 @@ impl Error {
             | Self::ShredTypeMismatch
             | Self::InvalidDuplicateShreds
             | Self::InvalidLastIndexConflict
-            | Self::InvalidErasureMetaConflict => true,
+            | Self::InvalidErasureMetaConflict
+            | Self::RejectedShred(_) => true,
             Self::BlockstoreInsertFailed(_)
             | Self::DataChunkMismatch
             | Self::DuplicateSlotSenderFailure
@@ -164,10 +171,25 @@ impl Error {
     }
 }
 
+fn parse_proof_shred(bytes: Bytes) -> Result<AnyShred<Admissible>, Error> {
+    let shred = parse_turbine(bytes)?;
+    let policy = AdmissionPolicy {
+        shred_version: shred.version(),
+        root: 0,
+        max_slot: Slot::MAX,
+        max_data_shreds_per_slot: u32::MAX,
+        max_code_shreds_per_slot: u32::MAX,
+    };
+    Ok(shred.check_policy(&policy)?)
+}
+
+fn verify_proof_shred(shred: AnyShred<Admissible>, leader: &Pubkey) -> Result<Shred, Error> {
+    shred.verify(leader).map_err(|_| Error::InvalidSignature)
+}
+
 /// Check that `shred1` and `shred2` indicate a valid duplicate proof
 ///     - Must be for the same slot
 ///     - Must match the expected shred version
-///     - Must both sigverify for the correct leader
 ///     - Must have a merkle root conflict, otherwise `shred1` and `shred2` must have the same `shred_type`
 ///     - If `shred1` and `shred2` share the same index they must be not have equal payloads excluding the
 ///       retransmitter signature
@@ -176,15 +198,7 @@ impl Error {
 ///       LAST_SHRED_IN_SLOT, however the other shred must have a higher index.
 ///     - If `shred1` and `shred2` do not share the same index and are coding shreds
 ///       verify that they have conflicting erasure metas
-fn check_shreds<F>(
-    leader_schedule: Option<F>,
-    shred1: &Shred,
-    shred2: &Shred,
-    shred_version: u16,
-) -> Result<(), Error>
-where
-    F: FnOnce(Slot) -> Option<Pubkey>,
-{
+fn check_shreds(shred1: &Shred, shred2: &Shred, shred_version: u16) -> Result<(), Error> {
     if shred1.slot() != shred2.slot() {
         return Err(Error::SlotMismatch);
     }
@@ -196,36 +210,24 @@ where
         return Err(Error::InvalidShredVersion(shred2.version()));
     }
 
-    if let Some(leader_schedule) = leader_schedule {
-        let slot_leader =
-            leader_schedule(shred1.slot()).ok_or(Error::UnknownSlotLeader(shred1.slot()))?;
-        if !shred1.verify(&slot_leader) || !shred2.verify(&slot_leader) {
-            return Err(Error::InvalidSignature);
-        }
-    }
-
-    // Merkle root conflict check
     if shred1.fec_set_index() == shred2.fec_set_index()
         && shred1.merkle_root().ok() != shred2.merkle_root().ok()
     {
-        // This catches a mixture of legacy and merkle shreds
-        // as well as merkle shreds with different roots in the
-        // same fec set
         return Ok(());
     }
 
-    if shred1.shred_type() != shred2.shred_type() {
+    if shred1.kind() != shred2.kind() {
         return Err(Error::ShredTypeMismatch);
     }
 
     if shred1.index() == shred2.index() {
-        if shred1.is_shred_duplicate(shred2) {
+        if shred1.is_duplicate_of(shred2) {
             return Ok(());
         }
         return Err(Error::InvalidDuplicateShreds);
     }
 
-    if shred1.shred_type() == ShredType::Data {
+    if shred1.kind() == ShredType::Data {
         if shred1.last_in_slot() && shred2.index() > shred1.index() {
             return Ok(());
         }
@@ -241,37 +243,21 @@ where
     // a part of the same fec set. Further work to enhance detection is planned in
     // https://github.com/solana-labs/solana/issues/33037
     if shred1.fec_set_index() == shred2.fec_set_index()
-        && !ErasureMeta::check_erasure_consistency(shred1, shred2)
+        && shred1.erasure_mismatch(shred2) == Some(true)
     {
         return Ok(());
     }
     Err(Error::InvalidErasureMetaConflict)
 }
 
-pub(crate) fn from_shred<T: AsRef<[u8]>, F>(
-    shred: Shred,
-    self_pubkey: Pubkey, // Pubkey of my node broadcasting crds value.
-    other_payload: T,
-    leader_schedule: Option<F>,
+fn chunk_proof(
+    proof: &DuplicateSlotProof,
+    slot: Slot,
+    self_pubkey: Pubkey,
     wallclock: u64,
-    max_size: usize, // Maximum serialized size of each DuplicateShred.
-    shred_version: u16,
-) -> Result<impl Iterator<Item = DuplicateShred>, Error>
-where
-    F: FnOnce(Slot) -> Option<Pubkey>,
-    shred::Payload: From<T>,
-{
-    if shred.payload().as_ref() == other_payload.as_ref() {
-        return Err(Error::InvalidDuplicateShreds);
-    }
-    let other_shred = Shred::new_from_serialized_shred(other_payload)?;
-    check_shreds(leader_schedule, &shred, &other_shred, shred_version)?;
-    let slot = shred.slot();
-    let proof = DuplicateSlotProof {
-        shred1: shred.into_payload(),
-        shred2: other_shred.into_payload(),
-    };
-    let data = wincode::serialize(&proof)?;
+    max_size: usize,
+) -> Result<impl Iterator<Item = DuplicateShred> + use<>, Error> {
+    let data = wincode::serialize(proof)?;
     let chunk_size = if DUPLICATE_SHRED_HEADER_SIZE < max_size {
         max_size - DUPLICATE_SHRED_HEADER_SIZE
     } else {
@@ -293,6 +279,42 @@ where
             _unused_shred_type: ShredType::Code.into(),
         });
     Ok(chunks)
+}
+
+pub(crate) fn from_shred<F>(
+    shred: Shred,
+    self_pubkey: Pubkey, // Pubkey of my node broadcasting crds value.
+    other_payload: Bytes,
+    leader_schedule: Option<F>,
+    wallclock: u64,
+    max_size: usize, // Maximum serialized size of each DuplicateShred.
+    shred_version: u16,
+) -> Result<impl Iterator<Item = DuplicateShred>, Error>
+where
+    F: FnOnce(Slot) -> Option<Pubkey>,
+{
+    if *shred.bytes() == other_payload {
+        return Err(Error::InvalidDuplicateShreds);
+    }
+    let other_shred = match leader_schedule {
+        Some(leader_schedule) => {
+            let other_shred = parse_proof_shred(other_payload)?;
+            if shred.slot() != other_shred.slot() {
+                return Err(Error::SlotMismatch);
+            }
+            let slot_leader =
+                leader_schedule(shred.slot()).ok_or(Error::UnknownSlotLeader(shred.slot()))?;
+            verify_proof_shred(other_shred, &slot_leader)?
+        }
+        None => Shred::from_blockstore(other_payload)?,
+    };
+    check_shreds(&shred, &other_shred, shred_version)?;
+    let slot = shred.slot();
+    let proof = DuplicateSlotProof {
+        shred1: shred.into_bytes(),
+        shred2: other_shred.into_bytes(),
+    };
+    chunk_proof(&proof, slot, self_pubkey, wallclock, max_size)
 }
 
 // Returns a predicate checking if a duplicate-shred chunk matches
@@ -319,7 +341,6 @@ pub(crate) fn into_shreds(
     slot_leader: &Pubkey,
     chunks: impl IntoIterator<Item = DuplicateShred>,
     shred_version: u16,
-    enforce_correct_proof_size: bool,
 ) -> Result<(Shred, Shred), Error> {
     let mut chunks = chunks.into_iter();
     let DuplicateShred {
@@ -353,33 +374,22 @@ pub(crate) fn into_shreds(
     if proof.shred1 == proof.shred2 {
         return Err(Error::InvalidDuplicateSlotProof);
     }
-    let shred1 = Shred::new_from_serialized_shred(proof.shred1)?;
-    let shred2 = Shred::new_from_serialized_shred(proof.shred2)?;
+    let shred1 = parse_proof_shred(proof.shred1)?;
+    let shred2 = parse_proof_shred(proof.shred2)?;
 
     if shred1.slot() != slot || shred2.slot() != slot {
         return Err(Error::SlotMismatch);
     }
-    // Admitting a proof marks the slot duplicate, so the proof size has to be
-    // held to the same rule as on the turbine and repair paths, or nodes
-    // disagree on whether the slot is dead. This covers the proof size only:
-    // unlike shred ingest, nothing here checks fec_set_index alignment, the
-    // erasure config, or the last data shred index.
-    if enforce_correct_proof_size {
-        for shred in [&shred1, &shred2] {
-            if !shred.has_correct_proof_size() {
-                return Err(Error::InvalidShred(shred::Error::InvalidProofSize(
-                    shred.proof_size()?,
-                )));
-            }
-        }
+    if shred1.version() != shred_version {
+        return Err(Error::InvalidShredVersion(shred1.version()));
     }
+    if shred2.version() != shred_version {
+        return Err(Error::InvalidShredVersion(shred2.version()));
+    }
+    let shred1 = verify_proof_shred(shred1, slot_leader)?;
+    let shred2 = verify_proof_shred(shred2, slot_leader)?;
 
-    check_shreds(
-        Some(|_| Some(slot_leader).copied()),
-        &shred1,
-        &shred2,
-        shred_version,
-    )?;
+    check_shreds(&shred1, &shred2, shred_version)?;
     Ok((shred1, shred2))
 }
 
@@ -401,12 +411,11 @@ pub(crate) mod tests {
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        solana_ledger::shred::{ProcessShredsStats, Shredder},
         solana_signature::Signature,
         solana_signer::Signer,
         solana_system_transaction::transfer,
         std::sync::Arc,
-        test_case::test_case,
     };
 
     #[test]
@@ -427,21 +436,18 @@ pub(crate) mod tests {
         assert_eq!(dup_size, DUPLICATE_SHRED_HEADER_SIZE as u64);
     }
 
+    pub(crate) fn rand_fec_set_index<R: Rng>(rng: &mut R) -> u32 {
+        rng.random_range(0..1_000) * 32
+    }
+
     pub(crate) fn new_rand_shred<R: Rng>(
         rng: &mut R,
         next_shred_index: u32,
         shredder: &Shredder,
         keypair: &Keypair,
     ) -> Shred {
-        let (mut data_shreds, _) = new_rand_shreds(
-            rng,
-            next_shred_index,
-            next_shred_index,
-            5,
-            shredder,
-            keypair,
-            true,
-        );
+        let (mut data_shreds, _) =
+            new_rand_shreds(rng, next_shred_index, 5, shredder, keypair, true);
         data_shreds.pop().unwrap()
     }
 
@@ -452,15 +458,8 @@ pub(crate) mod tests {
         keypair: &Keypair,
         is_last_in_slot: bool,
     ) -> Shred {
-        let (mut data_shreds, _) = new_rand_shreds(
-            rng,
-            next_shred_index,
-            next_shred_index,
-            5,
-            shredder,
-            keypair,
-            is_last_in_slot,
-        );
+        let (mut data_shreds, _) =
+            new_rand_shreds(rng, next_shred_index, 5, shredder, keypair, is_last_in_slot);
         data_shreds.pop().unwrap()
     }
 
@@ -471,22 +470,14 @@ pub(crate) mod tests {
         shredder: &Shredder,
         keypair: &Keypair,
     ) -> Vec<Shred> {
-        let (_, coding_shreds) = new_rand_shreds(
-            rng,
-            next_shred_index,
-            next_shred_index,
-            num_entries,
-            shredder,
-            keypair,
-            true,
-        );
+        let (_, coding_shreds) =
+            new_rand_shreds(rng, next_shred_index, num_entries, shredder, keypair, true);
         coding_shreds
     }
 
     fn new_rand_shreds<R: Rng>(
         rng: &mut R,
         next_shred_index: u32,
-        next_code_index: u32,
         num_entries: usize,
         shredder: &Shredder,
         keypair: &Keypair,
@@ -514,8 +505,6 @@ pub(crate) mod tests {
             // chained_merkle_root
             Hash::new_from_array(rng.random()),
             next_shred_index,
-            next_code_index, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
     }
@@ -529,27 +518,10 @@ pub(crate) mod tests {
     ) -> Result<impl Iterator<Item = DuplicateShred>, Error> {
         let slot = shred.slot();
         let proof = DuplicateSlotProof {
-            shred1: shred.into_payload(),
-            shred2: other_shred.into_payload(),
+            shred1: shred.into_bytes(),
+            shred2: other_shred.into_bytes(),
         };
-        let data = wincode::serialize(&proof)?;
-        let chunk_size = max_size - DUPLICATE_SHRED_HEADER_SIZE;
-        let chunks: Vec<_> = data.chunks(chunk_size).map(Vec::from).collect();
-        let num_chunks = u8::try_from(chunks.len())?;
-        let chunks = chunks
-            .into_iter()
-            .enumerate()
-            .map(move |(i, chunk)| DuplicateShred {
-                from: self_pubkey,
-                wallclock,
-                slot,
-                num_chunks,
-                chunk_index: i as u8,
-                chunk,
-                _unused: 0,
-                _unused_shred_type: ShredType::Code.into(),
-            });
-        Ok(chunks)
+        chunk_proof(&proof, slot, self_pubkey, wallclock, max_size)
     }
 
     #[test]
@@ -558,7 +530,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let shred1 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let shred2 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let leader_schedule = |s| {
@@ -571,7 +543,7 @@ pub(crate) mod tests {
         let chunks: Vec<_> = from_shred(
             shred1.clone(),
             Pubkey::new_unique(), // self_pubkey
-            shred2.payload().clone(),
+            shred2.bytes().clone(),
             Some(leader_schedule),
             rng.random(), // wallclock
             512,          // max_size
@@ -580,75 +552,9 @@ pub(crate) mod tests {
         .unwrap()
         .collect();
         assert!(chunks.len() > 4);
-        let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version, true).unwrap();
+        let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version).unwrap();
         assert_eq!(shred1, shred3);
         assert_eq!(shred2, shred4);
-    }
-
-    // Proof heights above PROOF_ENTRIES_FOR_32_32_BATCH shrink the capacity the
-    // shred's own variant implies, so such a shred no longer deserializes and
-    // never reaches the proof size check; only the smaller heights are testable
-    // here.
-    #[test_case(ShredType::Data, 0 ; "data_proof_size_0")]
-    #[test_case(ShredType::Data, 5 ; "data_proof_size_5")]
-    #[test_case(ShredType::Code, 0 ; "code_proof_size_0")]
-    #[test_case(ShredType::Code, 5 ; "code_proof_size_5")]
-    fn test_into_shreds_rejects_bad_proof_size(shred_type: ShredType, proof_size: u8) {
-        let mut rng = rand::rng();
-        let leader = Arc::new(Keypair::new());
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
-        let new_rand_shred = |rng: &mut _| match shred_type {
-            ShredType::Data => new_rand_data_shred(rng, next_shred_index, &shredder, &leader, true),
-            ShredType::Code => {
-                new_rand_coding_shreds(rng, next_shred_index, 5, &shredder, &leader).remove(0)
-            }
-        };
-        let shred1 = new_rand_shred(&mut rng);
-        let shred2 = new_rand_shred(&mut rng);
-        // Rewrite the proof height so that the shred cannot belong to a 32:32
-        // erasure set. This invalidates the signature as well, but the proof
-        // size check runs ahead of signature verification so that such a shred
-        // is rejected on its shape alone.
-        let shred2 = {
-            let mut payload = shred2.payload().to_vec();
-            shred::override_proof_size(&mut payload, proof_size);
-            Shred::new_from_serialized_shred(payload).unwrap()
-        };
-        assert_eq!(shred2.proof_size().unwrap(), proof_size);
-        let chunks: Vec<_> = from_shred_bypass_checks(
-            shred1,
-            Pubkey::new_unique(), // self_pubkey
-            shred2,
-            rng.random(), // wallclock
-            512,          // max_size
-        )
-        .unwrap()
-        .collect();
-        let enforce_correct_proof_size = true;
-        assert_matches!(
-            into_shreds(
-                &leader.pubkey(),
-                chunks.clone(),
-                version,
-                enforce_correct_proof_size
-            ),
-            Err(Error::InvalidShred(shred::Error::InvalidProofSize(size))) if size == proof_size
-        );
-        // Before the feature takes effect for this slot the proof is only
-        // rejected further down, by signature verification. Nodes which have
-        // not yet activated the feature must not diverge on the proof size.
-        let enforce_correct_proof_size = false;
-        assert_matches!(
-            into_shreds(
-                &leader.pubkey(),
-                chunks,
-                version,
-                enforce_correct_proof_size
-            ),
-            Err(Error::InvalidSignature)
-        );
     }
 
     #[test]
@@ -657,7 +563,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -679,7 +585,7 @@ pub(crate) mod tests {
                 from_shred(
                     shred1.clone(),
                     Pubkey::new_unique(), // self_pubkey
-                    shred2.payload().clone(),
+                    shred2.bytes().clone(),
                     Some(leader_schedule),
                     rng.random(), // wallclock
                     512,          // max_size
@@ -701,16 +607,10 @@ pub(crate) mod tests {
             .collect();
             assert!(chunks.len() > 4);
 
-            let enforce_correct_proof_size = true;
             assert_matches!(
-                into_shreds(
-                    &leader.pubkey(),
-                    chunks,
-                    version,
-                    enforce_correct_proof_size
-                )
-                .err()
-                .unwrap(),
+                into_shreds(&leader.pubkey(), chunks, version)
+                    .err()
+                    .unwrap(),
                 Error::InvalidDuplicateSlotProof
             );
         }
@@ -722,7 +622,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -733,18 +633,10 @@ pub(crate) mod tests {
         let test_cases = [
             (
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true),
-                new_rand_data_shred(
-                    &mut rng,
-                    // With Merkle shreds, last erasure batch is padded with
-                    // empty data shreds.
-                    next_shred_index + 30,
-                    &shredder,
-                    &leader,
-                    false,
-                ),
+                new_rand_data_shred(&mut rng, next_shred_index + 32, &shredder, &leader, false),
             ),
             (
-                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, true),
+                new_rand_data_shred(&mut rng, next_shred_index + 128, &shredder, &leader, true),
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true),
             ),
         ];
@@ -752,7 +644,7 @@ pub(crate) mod tests {
             let chunks: Vec<_> = from_shred(
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
-                shred2.payload().clone(),
+                shred2.bytes().clone(),
                 Some(leader_schedule),
                 rng.random(), // wallclock
                 512,          // max_size
@@ -761,14 +653,7 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let enforce_correct_proof_size = true;
-            let (shred3, shred4) = into_shreds(
-                &leader.pubkey(),
-                chunks,
-                version,
-                enforce_correct_proof_size,
-            )
-            .unwrap();
+            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version).unwrap();
             assert_eq!(shred1, &shred3);
             assert_eq!(shred2, &shred4);
         }
@@ -780,7 +665,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -791,19 +676,19 @@ pub(crate) mod tests {
         let test_cases = vec![
             (
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
-                new_rand_data_shred(&mut rng, next_shred_index + 1, &shredder, &leader, true),
+                new_rand_data_shred(&mut rng, next_shred_index + 32, &shredder, &leader, true),
             ),
             (
-                new_rand_data_shred(&mut rng, next_shred_index + 1, &shredder, &leader, true),
+                new_rand_data_shred(&mut rng, next_shred_index + 32, &shredder, &leader, true),
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
             ),
             (
-                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, false),
+                new_rand_data_shred(&mut rng, next_shred_index + 128, &shredder, &leader, false),
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
             ),
             (
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
-                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, false),
+                new_rand_data_shred(&mut rng, next_shred_index + 128, &shredder, &leader, false),
             ),
         ];
         for (shred1, shred2) in test_cases.into_iter() {
@@ -811,7 +696,7 @@ pub(crate) mod tests {
                 from_shred(
                     shred1.clone(),
                     Pubkey::new_unique(), // self_pubkey
-                    shred2.payload().clone(),
+                    shred2.bytes().clone(),
                     Some(leader_schedule),
                     rng.random(), // wallclock
                     512,          // max_size
@@ -833,70 +718,12 @@ pub(crate) mod tests {
             .collect();
             assert!(chunks.len() > 4);
 
-            let enforce_correct_proof_size = true;
             assert_matches!(
-                into_shreds(
-                    &leader.pubkey(),
-                    chunks,
-                    version,
-                    enforce_correct_proof_size,
-                )
-                .err()
-                .unwrap(),
+                into_shreds(&leader.pubkey(), chunks, version)
+                    .err()
+                    .unwrap(),
                 Error::InvalidLastIndexConflict
             );
-        }
-    }
-
-    #[test]
-    fn test_erasure_meta_conflict_round_trip() {
-        let mut rng = rand::rng();
-        let leader = Arc::new(Keypair::new());
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
-        let leader_schedule = |s| {
-            if s == slot {
-                Some(leader.pubkey())
-            } else {
-                None
-            }
-        };
-        let coding_shreds =
-            new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader);
-        let coding_shreds_bigger =
-            new_rand_coding_shreds(&mut rng, next_shred_index, 13, &shredder, &leader);
-        let coding_shreds_smaller =
-            new_rand_coding_shreds(&mut rng, next_shred_index, 7, &shredder, &leader);
-
-        // Same fec-set, different index, different erasure meta
-        let test_cases = vec![
-            (coding_shreds[0].clone(), coding_shreds_bigger[1].clone()),
-            (coding_shreds[0].clone(), coding_shreds_smaller[1].clone()),
-        ];
-        for (shred1, shred2) in test_cases.into_iter() {
-            let chunks: Vec<_> = from_shred(
-                shred1.clone(),
-                Pubkey::new_unique(), // self_pubkey
-                shred2.payload().clone(),
-                Some(leader_schedule),
-                rng.random(), // wallclock
-                512,          // max_size
-                version,
-            )
-            .unwrap()
-            .collect();
-            assert!(chunks.len() > 4);
-            let enforce_correct_proof_size = true;
-            let (shred3, shred4) = into_shreds(
-                &leader.pubkey(),
-                chunks,
-                version,
-                enforce_correct_proof_size,
-            )
-            .unwrap();
-            assert_eq!(shred1, shred3);
-            assert_eq!(shred2, shred4);
         }
     }
 
@@ -906,7 +733,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -917,9 +744,7 @@ pub(crate) mod tests {
         let coding_shreds =
             new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader);
         let coding_shreds_different_fec =
-            new_rand_coding_shreds(&mut rng, next_shred_index + 1, 10, &shredder, &leader);
-        let coding_shreds_different_fec_and_size =
-            new_rand_coding_shreds(&mut rng, next_shred_index + 1, 13, &shredder, &leader);
+            new_rand_coding_shreds(&mut rng, next_shred_index + 32, 10, &shredder, &leader);
 
         let test_cases = vec![
             // Different index, different fec set, same erasure meta
@@ -927,20 +752,11 @@ pub(crate) mod tests {
                 coding_shreds[0].clone(),
                 coding_shreds_different_fec[1].clone(),
             ),
-            // Different index, different fec set, different erasure meta
-            (
-                coding_shreds[0].clone(),
-                coding_shreds_different_fec_and_size[1].clone(),
-            ),
             // Different index, same fec set, same erasure meta
             (coding_shreds[0].clone(), coding_shreds[1].clone()),
             (
                 coding_shreds_different_fec[0].clone(),
                 coding_shreds_different_fec[1].clone(),
-            ),
-            (
-                coding_shreds_different_fec_and_size[0].clone(),
-                coding_shreds_different_fec_and_size[1].clone(),
             ),
         ];
         for (shred1, shred2) in test_cases.into_iter() {
@@ -948,7 +764,7 @@ pub(crate) mod tests {
                 from_shred(
                     shred1.clone(),
                     Pubkey::new_unique(), // self_pubkey
-                    shred2.payload().clone(),
+                    shred2.bytes().clone(),
                     Some(leader_schedule),
                     rng.random(), // wallclock
                     512,          // max_size
@@ -970,16 +786,10 @@ pub(crate) mod tests {
             .collect();
             assert!(chunks.len() > 4);
 
-            let enforce_correct_proof_size = true;
             assert_matches!(
-                into_shreds(
-                    &leader.pubkey(),
-                    chunks,
-                    version,
-                    enforce_correct_proof_size
-                )
-                .err()
-                .unwrap(),
+                into_shreds(&leader.pubkey(), chunks, version)
+                    .err()
+                    .unwrap(),
                 Error::InvalidErasureMetaConflict
             );
         }
@@ -991,7 +801,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1000,25 +810,11 @@ pub(crate) mod tests {
             }
         };
 
-        let (data_shreds, coding_shreds) = new_rand_shreds(
-            &mut rng,
-            next_shred_index,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            false,
-        );
+        let (data_shreds, coding_shreds) =
+            new_rand_shreds(&mut rng, next_shred_index, 10, &shredder, &leader, false);
 
-        let (diff_data_shreds, diff_coding_shreds) = new_rand_shreds(
-            &mut rng,
-            next_shred_index,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            false,
-        );
+        let (diff_data_shreds, diff_coding_shreds) =
+            new_rand_shreds(&mut rng, next_shred_index, 10, &shredder, &leader, false);
 
         let test_cases = vec![
             (data_shreds[0].clone(), diff_data_shreds[1].clone()),
@@ -1030,7 +826,7 @@ pub(crate) mod tests {
             let chunks: Vec<_> = from_shred(
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
-                shred2.payload().clone(),
+                shred2.bytes().clone(),
                 Some(leader_schedule),
                 rng.random(), // wallclock
                 512,          // max_size
@@ -1039,14 +835,7 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let enforce_correct_proof_size = true;
-            let (shred3, shred4) = into_shreds(
-                &leader.pubkey(),
-                chunks,
-                version,
-                enforce_correct_proof_size,
-            )
-            .unwrap();
+            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, version).unwrap();
             assert_eq!(shred1, shred3);
             assert_eq!(shred2, shred4);
         }
@@ -1058,7 +847,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1067,20 +856,12 @@ pub(crate) mod tests {
             }
         };
 
-        let (data_shreds, coding_shreds) = new_rand_shreds(
-            &mut rng,
-            next_shred_index,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            true,
-        );
+        let (data_shreds, coding_shreds) =
+            new_rand_shreds(&mut rng, next_shred_index, 10, &shredder, &leader, true);
 
         let (next_data_shreds, next_coding_shreds) = new_rand_shreds(
             &mut rng,
-            next_shred_index + 1,
-            next_shred_index + 1,
+            next_shred_index + 32,
             10,
             &shredder,
             &leader,
@@ -1102,7 +883,7 @@ pub(crate) mod tests {
                 from_shred(
                     shred1.clone(),
                     Pubkey::new_unique(), // self_pubkey
-                    shred2.payload().clone(),
+                    shred2.bytes().clone(),
                     Some(leader_schedule),
                     rng.random(), // wallclock
                     512,          // max_size
@@ -1124,16 +905,10 @@ pub(crate) mod tests {
             .collect();
             assert!(chunks.len() > 4);
 
-            let enforce_correct_proof_size = true;
             assert_matches!(
-                into_shreds(
-                    &leader.pubkey(),
-                    chunks,
-                    version,
-                    enforce_correct_proof_size
-                )
-                .err()
-                .unwrap(),
+                into_shreds(&leader.pubkey(), chunks, version)
+                    .err()
+                    .unwrap(),
                 Error::ShredTypeMismatch
             );
         }
@@ -1145,7 +920,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1154,39 +929,18 @@ pub(crate) mod tests {
             }
         };
 
-        let (data_shreds, coding_shreds) = new_rand_shreds(
-            &mut rng,
-            next_shred_index,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            true,
-        );
+        let (data_shreds, coding_shreds) =
+            new_rand_shreds(&mut rng, next_shred_index, 10, &shredder, &leader, true);
 
         // Wrong shred version 1
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version + 1).unwrap();
-        let (wrong_data_shreds_1, wrong_coding_shreds_1) = new_rand_shreds(
-            &mut rng,
-            next_shred_index,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            true,
-        );
+        let (wrong_data_shreds_1, wrong_coding_shreds_1) =
+            new_rand_shreds(&mut rng, next_shred_index, 10, &shredder, &leader, true);
 
         // Wrong shred version 2
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version + 2).unwrap();
-        let (wrong_data_shreds_2, wrong_coding_shreds_2) = new_rand_shreds(
-            &mut rng,
-            next_shred_index,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            true,
-        );
+        let (wrong_data_shreds_2, wrong_coding_shreds_2) =
+            new_rand_shreds(&mut rng, next_shred_index, 10, &shredder, &leader, true);
 
         let test_cases = vec![
             // One correct shred version, one wrong
@@ -1218,7 +972,7 @@ pub(crate) mod tests {
                 from_shred(
                     shred1.clone(),
                     Pubkey::new_unique(), // self_pubkey
-                    shred2.payload().clone(),
+                    shred2.bytes().clone(),
                     Some(leader_schedule),
                     rng.random(), // wallclock
                     512,          // max_size
@@ -1239,19 +993,25 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let enforce_correct_proof_size = true;
             assert_matches!(
-                into_shreds(
-                    &leader.pubkey(),
-                    chunks,
-                    version,
-                    enforce_correct_proof_size,
-                )
-                .err()
-                .unwrap(),
+                into_shreds(&leader.pubkey(), chunks, version)
+                    .err()
+                    .unwrap(),
                 Error::InvalidShredVersion(_)
             );
         }
+    }
+
+    fn with_random_retransmitter_signature(shred: &Shred, leader: &Pubkey) -> Shred {
+        assert!(
+            shred.variant().resigned(),
+            "only last-FEC-set shreds carry a retransmitter signature"
+        );
+        let mut bytes = shred.bytes().to_vec();
+        let offset = bytes.len() - 64;
+        bytes[offset..].copy_from_slice(Signature::new_unique().as_ref());
+        let shred = parse_proof_shred(Bytes::from(bytes)).unwrap();
+        shred.verify(leader).unwrap()
     }
 
     #[test]
@@ -1260,7 +1020,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1271,22 +1031,10 @@ pub(crate) mod tests {
         let data_shred = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let coding_shred =
             new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader)[0].clone();
-        let mut data_shred_different_retransmitter_payload = data_shred.clone().into_payload();
-        shred::layout::set_retransmitter_signature(
-            &mut data_shred_different_retransmitter_payload.as_mut(),
-            &Signature::new_unique(),
-        )
-        .unwrap();
         let data_shred_different_retransmitter =
-            Shred::new_from_serialized_shred(data_shred_different_retransmitter_payload).unwrap();
-        let mut coding_shred_different_retransmitter_payload = coding_shred.clone().into_payload();
-        shred::layout::set_retransmitter_signature(
-            &mut coding_shred_different_retransmitter_payload.as_mut(),
-            &Signature::new_unique(),
-        )
-        .unwrap();
+            with_random_retransmitter_signature(&data_shred, &leader.pubkey());
         let coding_shred_different_retransmitter =
-            Shred::new_from_serialized_shred(coding_shred_different_retransmitter_payload).unwrap();
+            with_random_retransmitter_signature(&coding_shred, &leader.pubkey());
 
         let test_cases = [
             (data_shred, data_shred_different_retransmitter),
@@ -1298,7 +1046,7 @@ pub(crate) mod tests {
                 from_shred(
                     shred1.clone(),
                     Pubkey::new_unique(), // self_pubkey
-                    shred2.payload().clone(),
+                    shred2.bytes().clone(),
                     Some(leader_schedule),
                     rng.random(), // wallclock
                     512,          // max_size
@@ -1320,16 +1068,10 @@ pub(crate) mod tests {
             .collect();
             assert!(chunks.len() > 4);
 
-            let enforce_correct_proof_size = true;
             assert_matches!(
-                into_shreds(
-                    &leader.pubkey(),
-                    chunks,
-                    version,
-                    enforce_correct_proof_size
-                )
-                .err()
-                .unwrap(),
+                into_shreds(&leader.pubkey(), chunks, version)
+                    .err()
+                    .unwrap(),
                 Error::InvalidDuplicateShreds
             );
         }

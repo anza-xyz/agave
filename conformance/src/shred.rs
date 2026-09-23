@@ -8,6 +8,7 @@
 use {
     agave_feature_set::FeatureSet,
     agave_votor_messages::migration::MigrationStatus,
+    bytes::Bytes,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
     solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
@@ -26,14 +27,14 @@ use {
         },
         blockstore_processor::verify_ticks,
         shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, ReedSolomonCache,
-            Shred,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Shred,
             filter::{ShredFilterContext, ShredRecoveryContext},
-            wire,
+            parse_turbine,
         },
     },
     solana_message::AccountKeys,
     solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, BankFieldsToDeserialize, BankRc},
@@ -133,15 +134,19 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let mut parsed: Vec<Shred> = Vec::with_capacity(ctx.shreds.len());
     for entry in &ctx.shreds {
         let payload = entry.as_slice();
-        let parsed_shred = Shred::new_from_serialized_shred(entry.clone()).ok();
-        let parses_as_chained = parsed_shred
-            .as_ref()
-            .is_some_and(|shred| shred.chained_merkle_root().is_ok());
-        effects.shred_results.push(parses_as_chained);
+        let parsed_shred = parse_turbine(Bytes::copy_from_slice(payload)).ok();
+        effects.shred_results.push(parsed_shred.is_some());
         if !filter.should_discard_shred(payload)
             && let Some(shred) = parsed_shred
         {
-            parsed.push(shred);
+            let policy = filter.policy(shred.slot());
+            let skip_signature_check = |_: &_, _: &_, _: &_| true;
+            if let Ok(shred) = shred
+                .check_policy(&policy)
+                .and_then(|shred| shred.verify_with(&Pubkey::default(), skip_signature_check))
+            {
+                parsed.push(shred);
+            }
         }
     }
 
@@ -167,13 +172,8 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             open_ledger()
         }
     };
-    let (retransmit_sender, _retransmit_rx) = EvictingSender::<Vec<Payload>>::new_bounded(0);
-    let mut recovery = ShredRecoveryContext::new(
-        ReedSolomonCache::default(),
-        retransmit_sender,
-        bank.clone(),
-        shred_version,
-    );
+    let (retransmit_sender, _retransmit_rx) = EvictingSender::<Vec<Shred>>::new_bounded(0);
+    let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
     let handle_duplicate = |duplicate: PossibleDuplicateShred| {
         let _duplicate_proof = handle_duplicate_shred(
@@ -262,16 +262,14 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             }
             group.sort_unstable_by_key(Shred::index);
             let first = &group[0];
-            let parent = first.parent().unwrap_or(slot);
+            let parent = first.parent_slot().unwrap_or(slot);
             // FD: fd_shred_merkle_root(base_data), derived from the proof bytes.
-            let (Ok(merkle_root), Ok(chained_merkle_root)) =
-                (first.merkle_root(), first.chained_merkle_root())
-            else {
+            let Ok(merkle_root) = first.merkle_root() else {
                 effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
                 break;
             };
             let merkle_root = merkle_root.to_bytes().to_vec();
-            let chained_merkle_root = chained_merkle_root.to_bytes().to_vec();
+            let chained_merkle_root = first.chained_merkle_root().to_bytes().to_vec();
             if let Some(previous) = &prev_merkle_root
                 && chained_merkle_root != *previous
             {
@@ -282,7 +280,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             // which requires the set to end on a DATA_COMPLETE boundary).
             let mut payload = Vec::new();
             for shred in &group {
-                if let Ok(data) = wire::get_data(shred.payload()) {
+                if let Some(data) = shred.data() {
                     payload.extend_from_slice(data);
                 }
             }

@@ -177,7 +177,7 @@ pub(crate) mod tests {
 
         assert!(
             outstanding_requests
-                .register_response(nonce, shred.payload(), expire_timestamp + 1, |_| ())
+                .register_response(nonce, shred.bytes(), expire_timestamp + 1, |_| ())
                 .is_none()
         );
         assert!(outstanding_requests.requests.get(&nonce).is_none());
@@ -205,7 +205,7 @@ pub(crate) mod tests {
         // Response that passes all checks should decrease num_expected_responses.
         assert!(
             outstanding_requests
-                .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
+                .register_response(nonce, shred.bytes(), expire_timestamp - 1, |_| ())
                 .is_some()
         );
         num_expected_responses -= 1;
@@ -221,12 +221,12 @@ pub(crate) mod tests {
         // Response with incorrect nonce is ignored.
         assert!(
             outstanding_requests
-                .register_response(nonce + 1, shred.payload(), expire_timestamp - 1, |_| ())
+                .register_response(nonce + 1, shred.bytes(), expire_timestamp - 1, |_| ())
                 .is_none()
         );
         assert!(
             outstanding_requests
-                .register_response(nonce + 1, shred.payload(), expire_timestamp, |_| ())
+                .register_response(nonce + 1, shred.bytes(), expire_timestamp, |_| ())
                 .is_none()
         );
         assert_eq!(
@@ -242,7 +242,7 @@ pub(crate) mod tests {
         // responses from being accepted.
         assert!(
             outstanding_requests
-                .register_response(nonce, shred.payload(), expire_timestamp, |_| ())
+                .register_response(nonce, shred.bytes(), expire_timestamp, |_| ())
                 .is_none()
         );
         assert!(outstanding_requests.requests.get(&nonce).is_none());
@@ -265,7 +265,7 @@ pub(crate) mod tests {
             assert!(outstanding_requests.requests.get(&nonce).is_some());
             assert!(
                 outstanding_requests
-                    .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
+                    .register_response(nonce, shred.bytes(), expire_timestamp - 1, |_| ())
                     .is_some()
             );
         }

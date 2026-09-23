@@ -1,5 +1,5 @@
 use {
-    crate::shred::{Shred, ShredType},
+    crate::shred::{RejectReason, Shred, ShredKind},
     solana_clock::Slot,
     std::{
         ops::AddAssign,
@@ -9,7 +9,6 @@ use {
 
 #[derive(Default, Clone, Copy)]
 pub struct ProcessShredsStats {
-    // Per-slot elapsed time
     pub shredding_elapsed: u64,
     pub receive_elapsed: u64,
     pub serialize_elapsed: u64,
@@ -18,21 +17,11 @@ pub struct ProcessShredsStats {
     pub coding_send_elapsed: u64,
     pub get_leader_schedule_elapsed: u64,
     pub coalesce_elapsed: u64,
-    // The number of times entry coalescing exited because the maximum number of
-    // bytes was hit.
     pub coalesce_exited_hit_max: u64,
-    // The number of times entry coalescing exited because we were tightly
-    // aligned to an erasure batch boundary.
     pub coalesce_exited_tightly_packed: u64,
-    // The number of times entry coalescing exited because the slot ended.
     pub coalesce_exited_slot_ended: u64,
-    // The number of times entry coalescing exited because the maximum coalesce
-    // duration was reached.
     pub coalesce_exited_rcv_timeout: u64,
-    // Histogram count of num_data_shreds obtained from serializing entries
-    // counted in 5 buckets.
     num_data_shreds_hist: [usize; 5],
-    // If the blockstore already has shreds for the broadcast slot.
     pub num_extant_slots: u64,
     pub(crate) padding_bytes: usize,
     pub(crate) data_bytes: usize,
@@ -43,28 +32,22 @@ pub struct ProcessShredsStats {
 
 #[derive(Default, Debug, Eq, PartialEq)]
 pub struct ShredFetchStats {
-    pub(super) index_overrun: usize,
+    pub index_overrun: usize,
     pub shred_count: usize,
-    pub(super) num_shreds_merkle_code_chained: usize,
-    pub(super) num_shreds_merkle_data_chained: usize,
+    pub num_shreds_code: usize,
+    pub num_shreds_data: usize,
     pub ping_count: usize,
     pub ping_err_verify_count: usize,
-    pub(super) index_bad_deserialize: usize,
-    pub(super) index_out_of_bounds: usize,
-    pub(super) slot_bad_deserialize: usize,
-    pub(super) slot_out_of_range: usize,
-    pub(super) bad_shred_type: usize,
-    pub(super) shred_version_mismatch: usize,
-    pub(super) bad_parent_offset: usize,
-    pub(super) fec_set_index_bad_deserialize: usize,
-    pub(super) misaligned_fec_set: usize,
-    pub(super) erasure_config_bad_deserialize: usize,
-    pub(super) misaligned_erasure_config: usize,
-    pub(super) shred_flags_bad_deserialize: usize,
-    pub(super) misaligned_last_data_index: usize,
-    pub(super) unexpected_data_complete_shred: usize,
-    pub(super) invalid_proof_size: usize,
-    pub(super) invalid_data_size: usize,
+    pub index_out_of_bounds: usize,
+    pub slot_out_of_range: usize,
+    pub shred_version_mismatch: usize,
+    pub bad_parent_offset: usize,
+    pub misaligned_fec_set: usize,
+    pub misaligned_erasure_config: usize,
+    pub misaligned_code_position: usize,
+    pub misaligned_last_data_index: usize,
+    pub unexpected_data_complete_shred: usize,
+    pub other_reject: usize,
     since: Option<Instant>,
     pub overflow_shreds: usize,
 }
@@ -139,15 +122,38 @@ impl ProcessShredsStats {
 
     #[inline]
     pub fn record_shred(&mut self, shred: &Shred) {
-        let num_shreds = match shred.shred_type() {
-            ShredType::Code => &mut self.num_merkle_coding_shreds,
-            ShredType::Data => &mut self.num_merkle_data_shreds,
+        let num_shreds = match shred.kind() {
+            ShredKind::Code => &mut self.num_merkle_coding_shreds,
+            ShredKind::Data => &mut self.num_merkle_data_shreds,
         };
         *num_shreds += 1;
     }
 }
 
 impl ShredFetchStats {
+    pub fn record_reject(&mut self, reason: &RejectReason) {
+        let counter = match reason {
+            RejectReason::ShredVersionMismatch { .. } => &mut self.shred_version_mismatch,
+            RejectReason::SlotOutOfRange { .. } => &mut self.slot_out_of_range,
+            RejectReason::IndexOutOfBounds { .. } => &mut self.index_out_of_bounds,
+            RejectReason::BadParentOffset { .. } => &mut self.bad_parent_offset,
+            RejectReason::MisalignedFecSet { .. } => &mut self.misaligned_fec_set,
+            RejectReason::UnexpectedDataCompleteShred => &mut self.unexpected_data_complete_shred,
+            RejectReason::MisalignedLastDataIndex => &mut self.misaligned_last_data_index,
+            RejectReason::MisalignedErasureConfig { .. } => &mut self.misaligned_erasure_config,
+            RejectReason::MisalignedCodePosition { .. } => &mut self.misaligned_code_position,
+            _ => &mut self.other_reject,
+        };
+        *counter += 1;
+    }
+
+    pub fn record_accept(&mut self, kind: ShredKind) {
+        match kind {
+            ShredKind::Code => self.num_shreds_code += 1,
+            ShredKind::Data => self.num_shreds_data += 1,
+        }
+    }
+
     pub fn maybe_submit(&mut self, name: &'static str, cadence: Duration) -> bool {
         let elapsed = self.since.as_ref().map(Instant::elapsed);
         if elapsed.unwrap_or(Duration::MAX) < cadence {
@@ -157,44 +163,23 @@ impl ShredFetchStats {
             name,
             ("index_overrun", self.index_overrun, i64),
             ("shred_count", self.shred_count, i64),
-            (
-                "num_shreds_merkle_code_chained",
-                self.num_shreds_merkle_code_chained,
-                i64
-            ),
-            (
-                "num_shreds_merkle_data_chained",
-                self.num_shreds_merkle_data_chained,
-                i64
-            ),
+            ("num_shreds_merkle_code_chained", self.num_shreds_code, i64),
+            ("num_shreds_merkle_data_chained", self.num_shreds_data, i64),
             ("ping_count", self.ping_count, i64),
             ("ping_err_verify_count", self.ping_err_verify_count, i64),
-            ("slot_bad_deserialize", self.slot_bad_deserialize, i64),
-            ("index_bad_deserialize", self.index_bad_deserialize, i64),
             ("index_out_of_bounds", self.index_out_of_bounds, i64),
             ("slot_out_of_range", self.slot_out_of_range, i64),
-            ("bad_shred_type", self.bad_shred_type, i64),
             ("shred_version_mismatch", self.shred_version_mismatch, i64),
             ("bad_parent_offset", self.bad_parent_offset, i64),
-            (
-                "fec_set_index_bad_deserialize",
-                self.fec_set_index_bad_deserialize,
-                i64
-            ),
             ("misaligned_fec_set_size", self.misaligned_fec_set, i64),
-            (
-                "erasure_config_bad_deserialize",
-                self.erasure_config_bad_deserialize,
-                i64
-            ),
             (
                 "misaligned_erasure_config",
                 self.misaligned_erasure_config,
                 i64
             ),
             (
-                "shred_flags_bad_deserialize",
-                self.shred_flags_bad_deserialize,
+                "misaligned_code_position",
+                self.misaligned_code_position,
                 i64
             ),
             (
@@ -208,8 +193,7 @@ impl ShredFetchStats {
                 self.unexpected_data_complete_shred,
                 i64
             ),
-            ("invalid_proof_size", self.invalid_proof_size, i64),
-            ("invalid_data_size", self.invalid_data_size, i64)
+            ("other_reject", self.other_reject, i64),
         );
         *self = Self {
             since: Some(Instant::now()),

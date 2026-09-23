@@ -48,8 +48,9 @@ use {
         blockstore_processor::{self, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
-            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+            AdmissionPolicy, DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred, Shredder,
             filter::{TurbineMode, TurbineModeKind},
+            parse_turbine,
         },
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
@@ -5505,8 +5506,8 @@ fn test_duplicate_shreds_switch_failure() {
     let duplicate_leader_ledger_path = cluster.ledger_path(&duplicate_leader_validator_pubkey);
     cluster.exit_node(&duplicate_leader_validator_pubkey);
 
-    let dup_shred1 = Shred::new_from_serialized_shred(duplicate_proof.shred1.clone()).unwrap();
-    let dup_shred2 = Shred::new_from_serialized_shred(duplicate_proof.shred2).unwrap();
+    let dup_shred1 = Shred::from_blockstore(duplicate_proof.shred1.clone()).unwrap();
+    let dup_shred2 = Shred::from_blockstore(duplicate_proof.shred2).unwrap();
     assert_eq!(dup_shred1.slot(), dup_shred2.slot());
     assert_eq!(dup_shred1.slot(), dup_slot);
 
@@ -5796,8 +5797,6 @@ fn test_invalid_forks_persisted_on_restart() {
                 true,            // is_full_slot
                 Hash::default(), // chained_merkle_root
                 0,               // next_shred_index,
-                0,               // next_code_index
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .0;
@@ -5838,7 +5837,19 @@ fn test_invalid_forks_persisted_on_restart() {
                     .expect("Child is full");
                 let mut is_our_block = true;
                 for shred in shreds {
-                    is_our_block &= shred.verify(&target_pubkey);
+                    let policy = AdmissionPolicy {
+                        shred_version: shred.version(),
+                        root: 0,
+                        max_slot: Slot::MAX,
+                        max_data_shreds_per_slot: u32::MAX,
+                        max_code_shreds_per_slot: u32::MAX,
+                    };
+                    is_our_block &= parse_turbine(shred.into_bytes())
+                        .unwrap()
+                        .check_policy(&policy)
+                        .unwrap()
+                        .verify(&target_pubkey)
+                        .is_ok();
                 }
                 if is_our_block {
                     done = true;

@@ -724,7 +724,7 @@ mod tests {
         itertools::Itertools,
         rand::prelude::IndexedRandom as _,
         solana_hash::Hash as SolanaHash,
-        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        solana_ledger::shred::{ProcessShredsStats, Shredder},
         std::{collections::VecDeque, fmt::Debug, hash::Hash},
         test_case::test_case,
     };
@@ -756,8 +756,6 @@ mod tests {
                 true,
                 SolanaHash::default(),
                 0,
-                0,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .0

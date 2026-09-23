@@ -19,6 +19,7 @@ use {
         AsyncVerificationProgress, ConfirmationProgress, ProcessOptions, confirm_full_slot,
         fill_blockstore_slot_with_ticks, process_bank_0,
     },
+    bytes::Bytes,
     crossbeam_channel::bounded,
     itertools::Itertools,
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
@@ -48,7 +49,7 @@ use {
         entry_notifier_service::EntryNotification,
         genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
         get_tmp_ledger_path, get_tmp_ledger_path_auto_delete,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{ProcessShredsStats, Shred, Shredder},
     },
     solana_net_utils::SocketAddrSpace,
     solana_poh::poh_recorder::create_test_recorder,
@@ -231,8 +232,6 @@ fn block_marker_shreds_with_last(
             is_last_in_slot,
             Hash::new_unique(),
             shred_index,
-            shred_index,
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
 }
@@ -993,7 +992,6 @@ fn test_dead_fork_entry_deserialize_failure() {
 
         let shredder = Shredder::new(bank.slot(), bank.parent_slot(), 0, 0).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
 
         shredder
             .make_shreds_from_data_slice(
@@ -1002,8 +1000,6 @@ fn test_dead_fork_entry_deserialize_failure() {
                 true,
                 Hash::default(),
                 0,
-                0,
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             )
             .unwrap()
@@ -4186,7 +4182,9 @@ fn test_unconfirmed_duplicate_slots_and_lockouts_for_non_heaviest_fork() {
     );
 
     // Mark 5 as duplicate
-    blockstore.store_duplicate_slot(5, vec![], vec![]).unwrap();
+    blockstore
+        .store_duplicate_slot(5, Bytes::new(), Bytes::new())
+        .unwrap();
     let mut duplicate_slots_tracker = DuplicateSlotsTracker::default();
     let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
     let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
@@ -4398,7 +4396,9 @@ fn test_unconfirmed_duplicate_slots_and_lockouts() {
 
     // Mark 4 as duplicate, 3 should be the heaviest slot, but should not be votable
     // because of lockout
-    blockstore.store_duplicate_slot(4, vec![], vec![]).unwrap();
+    blockstore
+        .store_duplicate_slot(4, Bytes::new(), Bytes::new())
+        .unwrap();
     let mut duplicate_slots_tracker = DuplicateSlotsTracker::default();
     let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
     let mut epoch_slots_frozen_slots = EpochSlotsFrozenSlots::default();
@@ -4439,7 +4439,9 @@ fn test_unconfirmed_duplicate_slots_and_lockouts() {
     assert_eq!(reset_fork, Some(3));
 
     // Now mark 2, an ancestor of 4, as duplicate
-    blockstore.store_duplicate_slot(2, vec![], vec![]).unwrap();
+    blockstore
+        .store_duplicate_slot(2, Bytes::new(), Bytes::new())
+        .unwrap();
     let bank2_hash = bank_forks.read().unwrap().bank_hash(2).unwrap();
     assert_ne!(bank2_hash, Hash::default());
     let duplicate_state = DuplicateState::new_from_state(
@@ -6638,10 +6640,18 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     .unwrap();
 
     // Mark block 1, 3, 4, 5 as duplicate
-    blockstore.store_duplicate_slot(1, vec![], vec![]).unwrap();
-    blockstore.store_duplicate_slot(3, vec![], vec![]).unwrap();
-    blockstore.store_duplicate_slot(4, vec![], vec![]).unwrap();
-    blockstore.store_duplicate_slot(5, vec![], vec![]).unwrap();
+    blockstore
+        .store_duplicate_slot(1, Bytes::new(), Bytes::new())
+        .unwrap();
+    blockstore
+        .store_duplicate_slot(3, Bytes::new(), Bytes::new())
+        .unwrap();
+    blockstore
+        .store_duplicate_slot(4, Bytes::new(), Bytes::new())
+        .unwrap();
+    blockstore
+        .store_duplicate_slot(5, Bytes::new(), Bytes::new())
+        .unwrap();
 
     let bank1_child =
         Bank::new_from_parent(bank0.clone_without_scheduler(), SlotLeader::default(), 1);

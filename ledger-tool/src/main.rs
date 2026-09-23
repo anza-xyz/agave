@@ -56,7 +56,7 @@ use {
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
         blockstore_processor::ProcessSlotCallback,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{ProcessShredsStats, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
     solana_message::SimpleAddressLoader,
@@ -1319,8 +1319,6 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
                 /*is_last_in_slot:*/ true,
                 chained_merkle_root,
                 /*next_shred_index:*/ 0,
-                /*next_code_index:*/ 0,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .into_iter()

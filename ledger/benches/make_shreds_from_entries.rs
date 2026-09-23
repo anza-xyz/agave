@@ -8,9 +8,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::create_genesis_config,
-        shred::{
-            ProcessShredsStats, ReedSolomonCache, Shred, Shredder, filter::ShredRecoveryContext,
-        },
+        shred::{ProcessShredsStats, Shred, Shredder, filter::ShredRecoveryContext},
     },
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
@@ -28,7 +26,6 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     ShredRecoveryContext::new(
-        ReedSolomonCache::default(),
         dummy_retransmit_sender,
         root_bank,
         shreds.first().map(Shred::version).unwrap_or_default(),
@@ -77,7 +74,6 @@ fn make_shreds_from_entries<R: Rng>(
     entries: &[Entry],
     is_last_in_slot: bool,
     chained_merkle_root: Hash,
-    reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
 ) -> (Vec<Shred>, Vec<Shred>) {
     let (data, code) = shredder.entries_to_merkle_shreds_for_tests(
@@ -85,9 +81,7 @@ fn make_shreds_from_entries<R: Rng>(
         entries,
         is_last_in_slot,
         chained_merkle_root,
-        rng.random_range(0..2_000), // next_shred_index
-        rng.random_range(0..2_000), // next_code_index
-        reed_solomon_cache,
+        rng.random_range(0..64) * 32, // next_shred_index
         stats,
     );
     (black_box(data), black_box(code))
@@ -113,9 +107,8 @@ fn run_make_shreds_from_entries(
     let data_size = num_packets * PACKET_DATA_SIZE;
     let entries = make_dummy_entries(&mut rng, data_size);
     let chained_merkle_root = make_dummy_hash(&mut rng);
-    let reed_solomon_cache = ReedSolomonCache::default();
     let mut stats = ProcessShredsStats::default();
-    // Initialize the thread-pool and warm the Reed-Solomon cache.
+    // Initialize the thread-pool.
     for _ in 0..10 {
         make_shreds_from_entries(
             &mut rng,
@@ -124,7 +117,6 @@ fn run_make_shreds_from_entries(
             &entries,
             is_last_in_slot,
             chained_merkle_root,
-            &reed_solomon_cache,
             &mut stats,
         );
     }
@@ -137,7 +129,6 @@ fn run_make_shreds_from_entries(
                 &entries,
                 is_last_in_slot,
                 chained_merkle_root,
-                &reed_solomon_cache,
                 &mut stats,
             );
             black_box(data);
@@ -167,7 +158,6 @@ fn run_recover_shreds(
     let data_size = num_packets * PACKET_DATA_SIZE;
     let entries = make_dummy_entries(&mut rng, data_size);
     let chained_merkle_root = make_dummy_hash(&mut rng);
-    let reed_solomon_cache = ReedSolomonCache::default();
     let mut stats = ProcessShredsStats::default();
     let (data, code) = make_shreds_from_entries(
         &mut rng,
@@ -176,7 +166,6 @@ fn run_recover_shreds(
         &entries,
         is_last_in_slot,
         chained_merkle_root,
-        &reed_solomon_cache,
         &mut stats,
     );
     let fec_set_index = data[0].fec_set_index();

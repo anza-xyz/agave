@@ -48,49 +48,48 @@ pub fn repair_response_packet_from_bytes(
 mod test {
     use {
         super::*,
+        bytes::Bytes,
         solana_keypair::Keypair,
-        solana_ledger::{
-            shred::Shredder,
-            sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
-        },
-        solana_packet::PacketFlags,
+        solana_ledger::shred::{AdmissionPolicy, Shredder, parse_repair},
         solana_signer::Signer,
-        std::{
-            collections::HashMap,
-            net::{IpAddr, Ipv4Addr},
-            sync::RwLock,
-        },
+        std::net::{IpAddr, Ipv4Addr},
     };
 
-    fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
+    fn run_test_sigverify_shred_repair(slot: Slot) {
         agave_logger::setup();
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(slot, &keypair);
 
         trace!("signature {}", shred.signature());
         let nonce = 9;
-        let mut packet = repair_response_packet_from_bytes(
-            shred.into_payload(),
+        let policy = AdmissionPolicy {
+            shred_version: shred.version(),
+            root: slot.saturating_sub(1),
+            max_slot: slot + 1,
+            max_data_shreds_per_slot: u32::MAX,
+            max_code_shreds_per_slot: u32::MAX,
+        };
+        let packet = repair_response_packet_from_bytes(
+            shred.into_bytes(),
             &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
             nonce,
         )
         .unwrap();
-        packet.meta_mut().flags |= PacketFlags::REPAIR;
+        let bytes = Bytes::copy_from_slice(packet.data(..).unwrap());
 
-        let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        let (parsed, parsed_nonce) = parse_repair(bytes.clone()).unwrap();
+        assert_eq!(parsed_nonce, nonce);
+        let admissible = parsed.check_policy(&policy).unwrap();
+        assert!(admissible.verify(&keypair.pubkey()).is_ok());
 
+        let (parsed, _) = parse_repair(bytes).unwrap();
+        let admissible = parsed.check_policy(&policy).unwrap();
         let wrong_keypair = Keypair::new();
-        let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
-
-        let leader_slots: SlotPubkeys = HashMap::default();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(admissible.verify(&wrong_keypair.pubkey()).is_err());
     }
 
     #[test]
-    fn test_sigverify_shred_cpu_repair() {
-        run_test_sigverify_shred_cpu_repair(0xdead_c0de);
+    fn test_sigverify_shred_repair() {
+        run_test_sigverify_shred_repair(0xdead_c0de);
     }
 }

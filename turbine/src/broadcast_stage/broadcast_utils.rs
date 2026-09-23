@@ -2,6 +2,7 @@ use {
     super::{Error, Result},
     agave_votor::event::{CompletedBlock, VotorEvent, VotorEventSender},
     agave_votor_messages::migration::MigrationStatus,
+    bytes::Bytes,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
     solana_entry::{
@@ -10,7 +11,7 @@ use {
     solana_hash::Hash,
     solana_ledger::{
         blockstore::Blockstore,
-        shred::{self, ProcessShredsStats, get_data_shred_bytes_per_batch_typical},
+        shred::{ProcessShredsStats, Shred, get_data_shred_bytes_per_batch_typical},
     },
     solana_poh::poh_recorder::WorkingBankMessage,
     solana_runtime::bank::Bank,
@@ -249,10 +250,13 @@ pub(super) fn get_chained_merkle_root_from_parent(
             slot: parent,
             index,
         })?;
-    shred::layout::get_merkle_root(&shred).ok_or(Error::InvalidMerkleRoot {
-        slot: parent,
-        index,
-    })
+    Shred::from_blockstore(Bytes::from(shred))
+        .ok()
+        .and_then(|shred| shred.merkle_root().ok())
+        .ok_or(Error::InvalidMerkleRoot {
+            slot: parent,
+            index,
+        })
 }
 
 /// Set the block id on the bank and send it for consideration in voting

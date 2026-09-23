@@ -16,10 +16,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{
-            ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder,
-            merkle_tree::MerkleTree,
-        },
+        shred::{ProcessShredsStats, Shred, Shredder, merkle_tree::MerkleTree},
     },
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
@@ -46,7 +43,6 @@ pub struct StandardBroadcastRun {
     carryover_message: Option<WorkingBankMessage>,
     double_merkle_leaves: Vec<Hash>,
     next_shred_index: u32,
-    next_code_index: u32,
     // If last_tick_height has reached bank.max_tick_height() for this slot
     // and so the slot is completed and all shreds are already broadcast.
     completed: bool,
@@ -59,7 +55,6 @@ pub struct StandardBroadcastRun {
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
     max_data_shreds_per_slot: u32,
@@ -95,7 +90,6 @@ impl StandardBroadcastRun {
             double_merkle_leaves: vec![],
             carryover_message: None,
             next_shred_index: 0,
-            next_code_index: 0,
             completed: true,
             process_shreds_stats: ProcessShredsStats::default(),
             transmit_shreds_stats: Arc::default(),
@@ -106,7 +100,6 @@ impl StandardBroadcastRun {
             num_batches: 0,
             cluster_nodes_cache,
             leader_schedule_cache,
-            reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
             max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
@@ -178,7 +171,6 @@ impl StandardBroadcastRun {
         self.chained_merkle_root = chained_merkle_root;
         self.double_merkle_leaves.clear();
         self.next_shred_index = 0u32;
-        self.next_code_index = 0u32;
         self.completed = false;
         self.slot_broadcast_start = Instant::now();
         self.num_batches = 0;
@@ -206,15 +198,10 @@ impl StandardBroadcastRun {
                 true, // is_last_in_slot,
                 self.chained_merkle_root,
                 self.next_shred_index,
-                self.next_code_index,
-                &self.reed_solomon_cache,
                 &mut self.process_shreds_stats,
             );
         // These shreds will finish the slot so no need to update
-        // self.next_shred_index and self.next_code_index
-        shreds.iter().for_each(|shred| {
-            self.process_shreds_stats.record_shred(shred);
-        });
+        // self.next_shred_index
         if let Some(shred) = shreds.last() {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }
@@ -240,17 +227,10 @@ impl StandardBroadcastRun {
                     is_slot_end,
                     self.chained_merkle_root,
                     self.next_shred_index,
-                    self.next_code_index,
-                    &self.reed_solomon_cache,
                     process_stats,
                 );
         shreds.iter().for_each(|shred| {
-            process_stats.record_shred(shred);
-            let next_index = match shred.shred_type() {
-                ShredType::Code => &mut self.next_code_index,
-                ShredType::Data => &mut self.next_shred_index,
-            };
-            *next_index = (*next_index).max(shred.index() + 1);
+            self.next_shred_index = self.next_shred_index.max(shred.index() + 1);
         });
 
         if self
@@ -271,10 +251,9 @@ impl StandardBroadcastRun {
         } else if let Some(shred) = shreds.last() {
             self.chained_merkle_root = shred.merkle_root().expect("no more legacy shreds");
         }
-        if self.next_shred_index > self.max_data_shreds_per_slot {
-            return Err(BroadcastError::TooManyShreds);
-        }
-        if self.next_code_index > self.max_code_shreds_per_slot {
+        if self.next_shred_index > self.max_data_shreds_per_slot
+            || self.next_shred_index > self.max_code_shreds_per_slot
+        {
             return Err(BroadcastError::TooManyShreds);
         }
         Ok(shreds)
@@ -722,7 +701,7 @@ mod test {
             blockstore_meta::SlotMeta,
             genesis_utils::create_genesis_config,
             get_tmp_ledger_path,
-            shred::{DATA_SHREDS_PER_FEC_BLOCK, ShredFlags, layout, max_ticks_per_n_shreds},
+            shred::{DATA_SHREDS_PER_FEC_BLOCK, max_ticks_per_n_shreds, verify_test_data_shred},
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_pubkey::Pubkey,
@@ -798,7 +777,7 @@ mod test {
         let payloads = shreds
             .iter()
             .filter(|shred| shred.is_data())
-            .map(Shred::payload);
+            .map(Shred::bytes);
         let payload = Shredder::deshred(payloads).unwrap();
         wincode::deserialize(&payload).unwrap()
     }
@@ -857,12 +836,9 @@ mod test {
             BlockComponent::new_block_header(parent_bank.slot(), parent_block_id),
         );
         let header_data_shred = header_shreds.iter().find(|shred| shred.is_data()).unwrap();
-        let flags = layout::get_flags(header_data_shred.payload().as_ref()).unwrap();
-        assert_eq!(
-            (flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(),
-            expected_reference_tick,
-        );
-        assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
+        let flags = header_data_shred.flags().unwrap();
+        assert_eq!(flags.reference_tick(), expected_reference_tick);
+        assert!(!flags.last_in_slot());
         let batch_info = batch_info.unwrap();
         assert_eq!(batch_info.slot, bank.slot());
         assert_eq!(batch_info.num_expected_batches, None);
@@ -994,12 +970,11 @@ mod test {
         assert!(run.completed);
 
         // Set up the slot to be interrupted
-        let next_shred_index = 10;
+        let next_shred_index = 32;
         let slot = 1;
         let parent = 0;
         run.chained_merkle_root = Hash::new_from_array(rand::rng().random());
         run.next_shred_index = next_shred_index;
-        run.next_code_index = 17;
         run.slot = slot;
         run.parent = parent;
         run.completed = false;
@@ -1014,11 +989,19 @@ mod test {
             .expect("Expected a shred that signals an interrupt");
 
         // Validate the shred
-        assert_eq!(shred.parent().unwrap(), parent);
-        assert_eq!(shred.slot(), slot);
-        assert_eq!(shred.index(), next_shred_index);
-        assert!(shred.is_data());
-        assert!(shred.verify(&keypair.pubkey()));
+        let verify = true;
+        let is_last_in_slot = false;
+        let is_last_data = false;
+        verify_test_data_shred(
+            shred,
+            next_shred_index,
+            slot,
+            parent,
+            &keypair.pubkey(),
+            verify,
+            is_last_in_slot,
+            is_last_data,
+        );
     }
 
     #[test_case(MigrationStatus::default(), 1 ; "pre_migration")]
@@ -1503,7 +1486,7 @@ mod test {
             shreds
                 .iter()
                 .filter(|shred| shred.is_data())
-                .all(|shred| shred.parent().unwrap() == 10)
+                .all(|shred| shred.parent_slot() == Some(10))
         );
 
         bs.maybe_update_parent_from_component(&component);
@@ -1535,7 +1518,7 @@ mod test {
             shreds
                 .iter()
                 .filter(|shred| shred.is_data())
-                .all(|shred| shred.parent().unwrap() == 10)
+                .all(|shred| shred.parent_slot() == Some(10))
         );
     }
 }

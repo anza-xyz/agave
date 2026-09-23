@@ -3767,13 +3767,13 @@ mod tests {
         let mut rng = rand::rng();
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = 353;
+        let next_shred_index = 352;
         let leader = Arc::new(Keypair::new());
         let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         let shred2 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         assert!(
             cluster_info
-                .push_duplicate_shred(&shred1, shred2.payload())
+                .push_duplicate_shred(&shred1, shred2.bytes())
                 .is_ok()
         );
         cluster_info.flush_push_queue();
@@ -3788,12 +3788,12 @@ mod tests {
 
         let slot = 53084025;
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = 354;
+        let next_shred_index = 384;
         let shred3 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         let shred4 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         assert!(
             cluster_info
-                .push_duplicate_shred(&shred3, shred4.payload())
+                .push_duplicate_shred(&shred3, shred4.bytes())
                 .is_ok()
         );
         cluster_info.flush_push_queue();

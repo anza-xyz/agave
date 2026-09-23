@@ -1370,9 +1370,7 @@ impl Cluster for LocalCluster {
             .tvu(Protocol::UDP)
             .unwrap();
         for shred in dup_shreds {
-            send_socket
-                .send_to(shred.payload().as_ref(), validator_tvu)
-                .unwrap();
+            send_socket.send_to(shred.bytes(), validator_tvu).unwrap();
         }
     }
 }
