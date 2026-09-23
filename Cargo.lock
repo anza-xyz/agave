@@ -8477,9 +8477,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.8.0"
+version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117d0e878f5a8447ac4a8677bf1f225308e292331bcb035378450d679609b425"
+checksum = "636c729a864ead005d1d37e94159e9660f72b194751ce5ca443623e91bca0a7c"
 dependencies = [
  "bincode",
  "boxcar",
@@ -8504,9 +8504,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "3.6.0"
+version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ce2a1f17252391f44f620d4e47d1e3e0bec173f760a86ee7de2426db9ea7496"
+checksum = "e1b9977653cc6841a1a1192dc1e864226248a43dce611cb8186634b37eb65df7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10699,9 +10699,9 @@ dependencies = [
 
 [[package]]
 name = "solana-stake-history"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a53de4158166c77c5cb008e9c40951cbcbfd267107d12204db7641800ade0a5c"
+checksum = "edab56849103bda42aed2f34ccdd65cd764af9e598117ca54ebc5ec7211292b4"
 dependencies = [
  "serde",
  "serde_derive",

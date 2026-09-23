@@ -5709,7 +5709,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-slot-hashes 4.0.0",
  "solana-slot-history",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-stake-interface",
  "solana-sysvar 5.0.0",
  "solana-vote-interface 7.0.0",
@@ -6201,7 +6201,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-sdk-ids",
  "solana-signature",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-stake-interface",
  "solana-system-interface",
  "solana-transaction",
@@ -7738,7 +7738,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-slot-hashes 4.0.0",
  "solana-stable-layout 4.0.0",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
@@ -7801,7 +7801,7 @@ dependencies = [
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-stake-interface",
  "solana-svm-log-collector",
  "solana-system-interface",
@@ -8221,7 +8221,7 @@ dependencies = [
  "solana-signer-store",
  "solana-slot-hashes 4.0.0",
  "solana-slot-history",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-stake-interface",
  "solana-svm",
  "solana-svm-callback",
@@ -8318,7 +8318,7 @@ dependencies = [
  "solana-sbf-rust-realloc-invoke-dep",
  "solana-sdk-ids",
  "solana-signer",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-svm",
  "solana-svm-feature-set",
  "solana-svm-timings",
@@ -8968,7 +8968,7 @@ dependencies = [
  "solana-program-error",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-sysvar 4.3.0",
  "solana-sysvar-id",
  "wincode",
@@ -9329,9 +9329,9 @@ dependencies = [
 
 [[package]]
 name = "solana-stake-history"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a53de4158166c77c5cb008e9c40951cbcbfd267107d12204db7641800ade0a5c"
+checksum = "edab56849103bda42aed2f34ccdd65cd764af9e598117ca54ebc5ec7211292b4"
 dependencies = [
  "serde",
  "serde_derive",
@@ -9357,7 +9357,7 @@ dependencies = [
  "solana-instruction-error 3.0.0",
  "solana-program-error",
  "solana-pubkey 4.3.0",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-system-interface",
  "wincode",
 ]
@@ -9599,7 +9599,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-sha512-hasher",
  "solana-stable-layout 4.0.0",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-type-overrides",
@@ -9730,7 +9730,7 @@ dependencies = [
  "solana-sdk-macro",
  "solana-slot-hashes 4.0.0",
  "solana-slot-history",
- "solana-stake-history 2.0.0",
+ "solana-stake-history 2.1.0",
  "solana-sysvar-id",
  "wincode",
 ]
