@@ -3,15 +3,16 @@
 use {
     crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
-        bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
+        bls_vote_sigverify::verify_and_send_votes,
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
         rewards::{RewardInput, rewards_wants_vote},
         stats::SigVerifierStats,
+        unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
         vote_pool::{VotePool, VotePoolError},
     },
     agave_votor_messages::{
-        VerifiedVoterSlotsSender,
+        VerifiedVotorSlotsMessage,
         certificate::CertificateType,
         consensus_message::Block,
         metric_types::ConsensusMetricsEventSender,
@@ -34,6 +35,7 @@ use {
     solana_perf::packet::packet_config,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyToRankMap},
+    solana_streamer::evicting_sender::EvictingSender,
     std::{
         cmp,
         collections::{HashMap, HashSet, hash_map::Entry},
@@ -81,7 +83,7 @@ pub struct SigVerifierContext {
 pub struct SigVerifierChannels {
     pub(crate) packet_receiver: Receiver<Datagram>,
     pub(crate) certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
-    pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
+    pub(crate) channel_to_repair: EvictingSender<VerifiedVotorSlotsMessage>,
     pub(crate) channel_to_reward: Sender<RewardInput>,
     pub(crate) channel_to_pool: Sender<SigVerifiedBatch>,
     pub(crate) channel_to_metrics: ConsensusMetricsEventSender,
@@ -91,7 +93,7 @@ impl SigVerifierChannels {
     pub fn new(
         packet_receiver: Receiver<Datagram>,
         certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
-        channel_to_repair: VerifiedVoterSlotsSender,
+        channel_to_repair: EvictingSender<VerifiedVotorSlotsMessage>,
         channel_to_reward: Sender<RewardInput>,
         channel_to_pool: Sender<SigVerifiedBatch>,
         channel_to_metrics: ConsensusMetricsEventSender,
@@ -119,11 +121,6 @@ pub fn spawn_service(
         .name("solSigVerBLS".to_string())
         .spawn(move || verifier.run(exit))
         .unwrap()
-}
-
-struct ExtractedMsgs {
-    certs: HashMap<CertificateType, Vec<CertPayload>>,
-    votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>>,
 }
 
 struct SigVerifier {
@@ -165,14 +162,13 @@ impl SigVerifier {
             .thread_name(|i| format!("solSigVerBLS{i:02}"))
             .build()
             .unwrap();
-        let root_slot = sharable_banks.root().slot();
         Self {
             migration_status,
             ban_sender,
             channels,
             sharable_banks,
             highest_parent_ready,
-            stats: SigVerifierStats::new(root_slot),
+            stats: SigVerifierStats::default(),
             verified_certs: HashSet::new(),
             vote_pool: VotePool::default(),
             last_checked_root_slot: 0,
@@ -187,9 +183,11 @@ impl SigVerifier {
 
     fn run(mut self, exit: Arc<AtomicBool>) {
         let mut datagrams_buffer = Vec::new();
+        let mut votes_buffer = HashMap::new();
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
             datagrams_buffer.clear();
+            votes_buffer.clear();
             let Ok(certificates) = recv_inputs(
                 &self.channels.packet_receiver,
                 &self.channels.certificate_receiver,
@@ -202,12 +200,17 @@ impl SigVerifier {
             if self.migration_status.is_pre_feature_activation() {
                 continue;
             }
+            self.stats.maybe_report(self.sharable_banks.root().slot());
             if datagrams_buffer.is_empty() && certificates.is_empty() {
                 continue;
             }
 
-            let (verify_res, verify_time_us) =
-                measure_us!(self.verify_and_send_inputs(&datagrams_buffer, certificates));
+            let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_inputs(
+                &self.cluster_info.id(),
+                &datagrams_buffer,
+                &mut votes_buffer,
+                certificates
+            ));
             self.stats
                 .verify_and_send_batch_us
                 .add_sample(verify_time_us);
@@ -215,11 +218,8 @@ impl SigVerifier {
                 error!("verify_and_send_batch() failed with {e}. Exiting.");
                 break;
             }
-            self.stats.maybe_report(self.sharable_banks.root().slot());
         }
-        let elapsed = self.stats.elapsed_since_last_report();
-        self.stats
-            .do_report(self.sharable_banks.root().slot(), elapsed);
+        self.stats.do_report(self.sharable_banks.root().slot());
     }
 
     #[cfg(test)]
@@ -227,19 +227,31 @@ impl SigVerifier {
         &mut self,
         datagrams: Vec<Datagram>,
     ) -> Result<(), SigVerifyError> {
-        self.verify_and_send_inputs(&datagrams, vec![])
+        self.verify_and_send_inputs(
+            &self.cluster_info.id(),
+            &datagrams,
+            &mut HashMap::new(),
+            vec![],
+        )
     }
 
     fn verify_and_send_inputs(
         &mut self,
+        my_pubkey: &Pubkey,
         datagrams: &[Datagram],
+        votes_buffer: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
     ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(&root_bank);
 
-        let (extracted_msgs, extract_msgs_us) =
-            measure_us!(self.extract_and_filter_msgs(datagrams, certificates, &root_bank));
+        let (certs, extract_msgs_us) = measure_us!(self.extract_and_filter_msgs(
+            my_pubkey,
+            datagrams,
+            votes_buffer,
+            certificates,
+            &root_bank
+        ));
         self.stats
             .extract_filter_msgs_us
             .add_sample(extract_msgs_us);
@@ -247,10 +259,9 @@ impl SigVerifier {
         let (votes_result, certs_result) = self.thread_pool.join(
             || {
                 verify_and_send_votes(
-                    extracted_msgs.votes,
-                    &self.rank_map_cache,
+                    votes_buffer,
                     &root_bank,
-                    &self.cluster_info,
+                    my_pubkey,
                     &self.leader_schedule,
                     &self.ban_sender,
                     &self.thread_pool,
@@ -259,9 +270,9 @@ impl SigVerifier {
             },
             || {
                 verify_and_send_certificates(
-                    &self.cluster_info.id(),
+                    my_pubkey,
                     &mut self.verified_certs,
-                    extracted_msgs.certs,
+                    certs,
                     &root_bank,
                     &self.channels.channel_to_pool,
                     &self.ban_sender,
@@ -319,16 +330,17 @@ impl SigVerifier {
 
     fn extract_and_filter_msgs(
         &mut self,
+        my_pubkey: &Pubkey,
         datagrams: &[Datagram],
+        votes_buffer: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
-    ) -> ExtractedMsgs {
+    ) -> HashMap<CertificateType, Vec<CertPayload>> {
         let root_slot = root_bank.slot();
         let highest_parent_ready_slot = self.highest_parent_ready.read().unwrap().0;
         let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
         let migration_slot = self.migration_status.migration_slot();
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
-        let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
         for Datagram {
@@ -350,21 +362,15 @@ impl SigVerifier {
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
-                    if let Some(payload) = self.keep_vote(
-                        unverified_vote,
+                    self.extract_and_filter_vote(
+                        my_pubkey,
                         *sender_identity_pubkey,
-                        root_bank,
-                        max_vote_slot,
                         migration_slot,
-                    ) {
-                        let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
-                            payload.vote_message.vote,
-                            payload.vote_message.shred_version,
-                        );
-                        votes.entry(vote_payload_to_sign).or_default().push(payload);
-                    } else {
-                        self.stats.num_keep_vote_failed += 1;
-                    }
+                        max_vote_slot,
+                        root_bank,
+                        votes_buffer,
+                        unverified_vote,
+                    );
                 }
                 DecodedWireConsensusMessage::Certificate(cert) => {
                     let cert_slot = cert.cert_type.slot();
@@ -414,28 +420,27 @@ impl SigVerifier {
             self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
         }
         self.stats.num_pkts += num_pkts;
-        ExtractedMsgs {
-            certs: cert_groups,
-            votes,
-        }
+        cert_groups
     }
 
-    /// If this vote should be verified, then returns the [`UnverifiedVotePayload`].
-    fn keep_vote(
+    fn extract_and_filter_vote(
         &mut self,
-        msg: UnverifiedVoteMessage,
+        my_pubkey: &Pubkey,
         sender_identity_pubkey: Pubkey,
-        root_bank: &Bank,
-        max_vote_slot: Slot,
         migration_slot: Option<Slot>,
-    ) -> Option<UnverifiedVotePayload> {
+        max_vote_slot: Slot,
+        root_bank: &Bank,
+        votes: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
+        unverified_vote: UnverifiedVoteMessage,
+    ) {
         // votes from self take a different pathway.
-        if sender_identity_pubkey == self.cluster_info.id() {
-            return None;
+        if &sender_identity_pubkey == my_pubkey {
+            self.stats.num_keep_vote_failed += 1;
+            return;
         }
         let root_slot = root_bank.slot();
-        let vote_slot = msg.vote.slot();
-        let is_in_range = match msg.vote {
+        let vote_slot = unverified_vote.vote.slot();
+        let is_in_range = match unverified_vote.vote {
             // Genesis votes bypass the normal range check, instead we require that they are only accepted during the
             // migration epoch and less than the migration slot
             Vote::Genesis(_) => {
@@ -445,39 +450,82 @@ impl SigVerifier {
         };
         if !is_in_range {
             self.stats.vote_too_far_in_future += 1;
-            return None;
+            self.stats.num_keep_vote_failed += 1;
+            return;
         }
 
         match vote_slot.cmp(&root_slot) {
             // Genesis votes are allowed on the root slot
-            cmp::Ordering::Equal if msg.vote.is_genesis_vote() => (),
+            cmp::Ordering::Equal if unverified_vote.vote.is_genesis_vote() => (),
             // Votes are allowed at or below the root if they are useful for rewards
             cmp::Ordering::Less | cmp::Ordering::Equal => {
                 if !rewards_wants_vote(
-                    &self.cluster_info,
+                    my_pubkey,
                     &self.leader_schedule,
                     root_slot,
-                    &msg.vote,
+                    &unverified_vote.vote,
                 ) {
                     self.stats.num_old_votes_received += 1;
-                    return None;
+                    self.stats.num_keep_vote_failed += 1;
+                    return;
                 }
             }
             // Votes above the root are always allowed
             cmp::Ordering::Greater => (),
         }
 
-        let vote_epoch = root_bank.epoch_schedule().get_epoch(vote_slot);
-        let rank_map = match self.rank_map_cache.entry(vote_epoch) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
-                    self.stats.discard_vote_no_epoch_stakes += 1;
-                    return None;
+        let vote_payload_to_sign =
+            VotePayloadToSign::new_from_vote(unverified_vote.vote, unverified_vote.shred_version);
+        match votes.entry(vote_payload_to_sign) {
+            Entry::Vacant(e) => {
+                let vote_slot = unverified_vote.vote.slot();
+                let vote_epoch = root_bank.epoch_schedule().get_epoch(vote_slot);
+                let rank_map = match self.rank_map_cache.entry(vote_epoch) {
+                    Entry::Occupied(entry) => entry.get().clone(),
+                    Entry::Vacant(entry) => {
+                        let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
+                            self.stats.discard_vote_no_epoch_stakes += 1;
+                            self.stats.num_keep_vote_failed += 1;
+                            return;
+                        };
+                        entry.insert(rank_map.clone()).clone()
+                    }
                 };
-                entry.insert(rank_map.clone())
+                match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
+                    Some((payload, sender_vote_account_pubkey)) => {
+                        e.insert(UnverifiedBatch::new(
+                            vote_payload_to_sign,
+                            payload,
+                            sender_vote_account_pubkey,
+                            rank_map,
+                        ));
+                    }
+                    None => {
+                        self.stats.num_keep_vote_failed += 1;
+                    }
+                }
             }
-        };
+            Entry::Occupied(mut e) => {
+                let batch = e.get_mut();
+                match self.keep_vote(batch.rank_map(), unverified_vote, sender_identity_pubkey) {
+                    Some((payload, sender_vote_account_pubkey)) => {
+                        batch.push(payload, sender_vote_account_pubkey);
+                    }
+                    None => {
+                        self.stats.num_keep_vote_failed += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// If this vote should be verified, then returns the [`UnverifiedVotePayload`].
+    fn keep_vote(
+        &mut self,
+        rank_map: &BLSPubkeyToRankMap,
+        msg: UnverifiedVoteMessage,
+        sender_identity_pubkey: Pubkey,
+    ) -> Option<(UnverifiedVotePayload, Pubkey)> {
         let (rank, entry) = rank_map
             .get_ranked_entry_for_node(&sender_identity_pubkey)
             .or_else(|| {
@@ -485,14 +533,16 @@ impl SigVerifier {
                 None
             })?;
         match self.vote_pool.try_add_vote(&msg, rank, rank_map.len()) {
-            Ok(()) => Some(UnverifiedVotePayload {
-                vote_message: msg,
-                sender_bls_pubkey: entry.bls_pubkey,
-                sender_vote_account_pubkey: entry.vote_account_pubkey,
-                sender_identity_pubkey,
-                stake: entry.stake,
-                rank,
-            }),
+            Ok(()) => Some((
+                UnverifiedVotePayload {
+                    vote_message: msg,
+                    sender_bls_pubkey: entry.bls_pubkey,
+                    sender_identity_pubkey,
+                    stake: entry.stake,
+                    rank,
+                },
+                entry.vote_account_pubkey,
+            )),
             Err(VotePoolError::Duplicate) => {
                 self.stats.vote_pool_duplicate += 1;
                 None
@@ -550,7 +600,6 @@ mod tests {
             test_create_base3_certificate,
         },
         agave_votor_messages::{
-            VerifiedVoterSlotsReceiver,
             certificate::{Certificate, CertificateType},
             consensus_message::{Block, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
@@ -606,13 +655,13 @@ mod tests {
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
         ban_receiver: mpsc::Receiver<BanCommand>,
         _packet_sender: Sender<Datagram>,
-        repair_receiver: VerifiedVoterSlotsReceiver,
+        repair_receiver: Receiver<VerifiedVotorSlotsMessage>,
         _reward_receiver: Receiver<RewardInput>,
         pool_receiver: Receiver<SigVerifiedBatch>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
         generated_cert_types: Arc<GeneratedCertTypes>,
         _certificate_sender: Sender<(Slot, UnverifiedCertificate)>,
-        _bank_forks: Arc<RwLock<BankForks>>,
+        bank_forks: Arc<RwLock<BankForks>>,
     }
 
     impl TestContext {
@@ -660,7 +709,7 @@ mod tests {
             let leader_schedule =
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
-            let (channel_to_repair, repair_receiver) = bounded(1024);
+            let (channel_to_repair, repair_receiver) = EvictingSender::new_bounded(1024);
             let (channel_to_reward, reward_receiver) = bounded(1024);
             let (packet_sender, packet_receiver) = bounded(1024);
             let (certificate_sender, certificate_receiver) = bounded(1024);
@@ -703,7 +752,7 @@ mod tests {
                 _metrics_receiver: metrics_receiver,
                 generated_cert_types,
                 _certificate_sender: certificate_sender,
-                _bank_forks: bank_forks,
+                bank_forks,
             }
         }
 
@@ -786,13 +835,23 @@ mod tests {
         let slot = 2;
 
         ctx.verifier
-            .verify_and_send_inputs(&[], vec![(slot, certificate.clone())])
+            .verify_and_send_inputs(
+                &ctx.verifier.cluster_info.id(),
+                &[],
+                &mut HashMap::new(),
+                vec![(slot, certificate.clone())],
+            )
             .unwrap();
         expect_no_receive(&ctx.pool_receiver);
 
         ctx.verifier.migration_status.enable_alpenglow_for_tests();
         ctx.verifier
-            .verify_and_send_inputs(&[], vec![(slot, certificate)])
+            .verify_and_send_inputs(
+                &ctx.verifier.cluster_info.id(),
+                &[],
+                &mut HashMap::new(),
+                vec![(slot, certificate)],
+            )
             .unwrap();
         let SigVerifiedBatch::Certificates(certs) = ctx.pool_receiver.try_recv().unwrap() else {
             panic!("expected a certificate batch");
@@ -817,11 +876,16 @@ mod tests {
             Bank::new_from_parent(ctx.verifier.sharable_banks.root(), SlotLeader::default(), 5);
         ctx.verifier.migration_status.enable_alpenglow_for_tests();
 
-        let extracted_msgs =
-            ctx.verifier
-                .extract_and_filter_msgs(&[], vec![(slot, certificate)], &root_bank);
-        assert!(extracted_msgs.certs.is_empty());
-        assert!(extracted_msgs.votes.is_empty());
+        let mut votes_buffer = HashMap::new();
+        let certs = ctx.verifier.extract_and_filter_msgs(
+            &ctx.verifier.cluster_info.id(),
+            &[],
+            &mut votes_buffer,
+            vec![(slot, certificate)],
+            &root_bank,
+        );
+        assert!(certs.is_empty());
+        assert!(votes_buffer.is_empty());
         assert_eq!(ctx.verifier.stats.num_old_certs_received.0, 1);
     }
 
@@ -862,14 +926,14 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
-        let received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
-        assert_eq!(
-            received_verified_votes1,
-            (
-                ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey(),
-                vec![5]
-            )
-        );
+        {
+            let (slot, pubkeys) = ctx.repair_receiver.try_recv().unwrap();
+            assert_eq!(slot, 5);
+            assert_eq!(
+                pubkeys.as_slice(),
+                &[ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey()]
+            );
+        }
 
         let vote_rank2 = 3;
         let vote_message2 = create_signed_vote_message(
@@ -883,7 +947,7 @@ mod tests {
             ConsensusMessage::Vote(vote_message2),
             ctx.validator_keypairs[vote_rank2].node_keypair.pubkey(),
         )];
-        ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
+        ctx.verifier.stats = SigVerifierStats::default();
         ctx.verifier
             .verify_and_send_datagrams(messages_to_datagrams(
                 &messages2,
@@ -894,14 +958,14 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
-        let received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
-        assert_eq!(
-            received_verified_votes2,
-            (
-                ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey(),
-                vec![6]
-            )
-        );
+        {
+            let (slot, pubkeys) = ctx.repair_receiver.try_recv().unwrap();
+            assert_eq!(slot, 6);
+            assert_eq!(
+                pubkeys.as_slice(),
+                &[ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey()]
+            );
+        }
 
         let vote_rank3 = 9;
         let vote_message3 = create_signed_vote_message(
@@ -915,7 +979,7 @@ mod tests {
             ConsensusMessage::Vote(vote_message3),
             ctx.validator_keypairs[vote_rank3].node_keypair.pubkey(),
         )];
-        ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
+        ctx.verifier.stats = SigVerifierStats::default();
         ctx.verifier
             .verify_and_send_datagrams(messages_to_datagrams(
                 &messages3,
@@ -925,14 +989,14 @@ mod tests {
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
-        let received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
-        assert_eq!(
-            received_verified_votes3,
-            (
-                ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey(),
-                vec![7]
-            )
-        );
+        {
+            let (slot, pubkeys) = ctx.repair_receiver.try_recv().unwrap();
+            assert_eq!(slot, 7);
+            assert_eq!(
+                pubkeys.as_slice(),
+                &[ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey()]
+            );
+        }
     }
 
     #[test]
@@ -970,6 +1034,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
+        assert_eq!(ctx.verifier.stats.num_keep_vote_failed.0, 1);
+        assert_eq!(ctx.verifier.stats.discard_vote_no_epoch_stakes.0, 0);
 
         // Expect no messages since the packet was malformed
         expect_no_receive(&ctx.pool_receiver);
@@ -1212,20 +1278,23 @@ mod tests {
 
         ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
-        assert_eq!(batches.len(), 1);
-        let total_votes_verified = batches
+        assert_eq!(batches.len(), 2);
+        let (total_aggregates, total_votes_verified) = batches
             .into_iter()
             .map(|batch| match batch {
                 SigVerifiedBatch::Votes(aggregates) => {
-                    assert_eq!(aggregates.len(), 2);
-                    aggregates
+                    let total_votes = aggregates
                         .iter()
                         .map(|aggregate| aggregate.num_votes())
-                        .sum::<usize>()
+                        .sum::<usize>();
+                    (aggregates.len(), total_votes)
                 }
                 rest => panic!("unexpected type: {rest:?}"),
             })
-            .sum::<usize>();
+            .fold((0, 0), |(num_aggregates, num_votes), batch| {
+                (num_aggregates + batch.0, num_votes + batch.1)
+            });
+        assert_eq!(total_aggregates, 2);
         assert_eq!(total_votes_verified, num_votes);
         assert_eq!(
             ctx.verifier.stats.vote_stats.distinct_votes_stats.count(),
@@ -1293,12 +1362,11 @@ mod tests {
 
         ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
-        assert_eq!(batches.len(), 1);
-        let total_votes_verified = batches
+        assert_eq!(batches.len(), 2);
+        let (total_aggregates, total_votes_verified) = batches
             .into_iter()
             .map(|batch| match batch {
                 SigVerifiedBatch::Votes(aggregates) => {
-                    assert_eq!(aggregates.len(), 3);
                     for aggregate in &aggregates {
                         if aggregate.vote() == &vote2
                             && *aggregate.ranks().get(invalid_rank as usize).unwrap()
@@ -1306,11 +1374,15 @@ mod tests {
                             panic!("invalid vote verified");
                         }
                     }
-                    aggregates.iter().map(|v| v.num_votes()).sum::<usize>()
+                    let total_votes = aggregates.iter().map(|v| v.num_votes()).sum::<usize>();
+                    (aggregates.len(), total_votes)
                 }
                 rest => panic!("unexpected type: {rest:?}"),
             })
-            .sum::<usize>();
+            .fold((0, 0), |(num_aggregates, num_votes), batch| {
+                (num_aggregates + batch.0, num_votes + batch.1)
+            });
+        assert_eq!(total_aggregates, 3);
         assert_eq!(total_votes_verified, num_votes - 1);
     }
 
@@ -1631,66 +1703,20 @@ mod tests {
 
     #[test]
     fn test_verify_old_vote_and_cert() {
-        let (channel_to_pool, pool_receiver) = bounded(1024);
-        let (channel_to_repair, _repair_receiver) = bounded(1024);
-        let (channel_to_metrics, _metrics_receiver) = bounded(1024);
-        let (channel_to_reward, _reward_receiver) = bounded(1024);
-        let validator_keypairs = (0..10)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-        let stakes_vec = (0..validator_keypairs.len())
-            .map(|i| 1_000 - i as u64)
-            .collect::<Vec<_>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stakes_vec,
-        );
-        let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-        let (bank0, _temp_bank_forks) = bank0.wrap_with_bank_forks_for_tests();
-        let bank5 = Bank::new_from_parent(bank0, SlotLeader::default(), 5);
-        let bank_forks = BankForks::new_rw_arc(bank5);
-
-        bank_forks.write().unwrap().set_root(5, None, None);
-
-        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let keypair = Keypair::new();
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = Arc::new(ClusterInfo::new(
-            contact_info,
-            Arc::new(keypair),
-            SocketAddrSpace::Unspecified,
-        ));
-        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
-        let (_packet_sender, packet_receiver) = bounded(1024);
-        let (_certificate_sender, certificate_receiver) = bounded(1024);
-        let (ban_sender, _ban_receiver) = stub_ban_channel_for_tests(1024);
-        let mut sig_verifier = SigVerifier::new(
-            SigVerifierContext {
-                migration_status: Arc::new(MigrationStatus::default()),
-                ban_sender,
-                sharable_banks,
-                highest_parent_ready: Arc::new(RwLock::default()),
-                cluster_info,
-                leader_schedule,
-                num_threads: 4,
-                generated_cert_types: Arc::new(GeneratedCertTypes::default()),
-            },
-            SigVerifierChannels::new(
-                packet_receiver,
-                certificate_receiver,
-                channel_to_repair,
-                channel_to_reward,
-                channel_to_pool,
-                channel_to_metrics,
-            ),
-        );
+        let mut ctx = TestContext::new();
+        let bank5 =
+            Bank::new_from_parent(ctx.verifier.sharable_banks.root(), SlotLeader::default(), 5);
+        {
+            let mut bank_forks = ctx.bank_forks.write().unwrap();
+            bank_forks.insert(bank5);
+            bank_forks.set_root(5, None, None);
+        }
 
         let rank = 0;
         let vote = Vote::new_skip_vote(2);
         let vote_payload =
-            get_vote_payload_to_sign(vote, sig_verifier.cluster_info.my_shred_version());
-        let bls_keypair = &validator_keypairs[rank].bls_keypair;
+            get_vote_payload_to_sign(vote, ctx.verifier.cluster_info.my_shred_version());
+        let bls_keypair = &ctx.validator_keypairs[rank].bls_keypair;
         let signature = SignatureAffine::from(bls_keypair.sign(&vote_payload));
         let consensus_message_vote = ConsensusMessage::Vote(VoteMessage {
             vote,
@@ -1701,38 +1727,35 @@ mod tests {
         let datagrams_vote = messages_to_datagrams(
             &[(
                 consensus_message_vote,
-                validator_keypairs[rank].node_keypair.pubkey(),
+                ctx.validator_keypairs[rank].node_keypair.pubkey(),
             )],
-            sig_verifier.cluster_info.my_shred_version(),
+            ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        sig_verifier
+        ctx.verifier
             .verify_and_send_datagrams(datagrams_vote)
             .unwrap();
-        expect_no_receive(&pool_receiver);
-        assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
+        expect_no_receive(&ctx.pool_receiver);
+        assert_eq!(ctx.verifier.stats.num_old_votes_received.0, 1);
 
         let cert = test_create_base2_certificate(
-            &validator_keypairs
-                .iter()
-                .map(|k| k.bls_keypair.clone())
-                .collect::<Vec<_>>(),
-            sig_verifier.cluster_info.my_shred_version(),
+            &ctx.bls_keypairs(),
+            ctx.verifier.cluster_info.my_shred_version(),
             CertificateType::Finalize(3),
             &[0], // Signer rank 0
         );
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
         let datagrams_cert = messages_to_datagrams(
             &[(consensus_message_cert, Pubkey::new_unique())],
-            sig_verifier.cluster_info.my_shred_version(),
+            ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        sig_verifier
+        ctx.verifier
             .verify_and_send_datagrams(datagrams_cert)
             .unwrap();
-        expect_no_receive(&pool_receiver);
-        assert_eq!(sig_verifier.stats.num_old_certs_received.0, 1);
-        assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
+        expect_no_receive(&ctx.pool_receiver);
+        assert_eq!(ctx.verifier.stats.num_old_certs_received.0, 1);
+        assert_eq!(ctx.verifier.stats.num_old_votes_received.0, 1);
     }
 
     #[test]
@@ -1773,7 +1796,7 @@ mod tests {
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
+        ctx.verifier.stats = SigVerifierStats::default();
         ctx.verifier.verify_and_send_datagrams(datagrams2).unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received.0, 1);
@@ -2113,19 +2136,22 @@ mod tests {
         ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
 
         assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
+        assert_eq!(ctx.verifier.stats.num_keep_vote_failed.0, 1);
+        assert_eq!(ctx.verifier.stats.discard_vote_no_epoch_stakes.0, 0);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_too_far_in_future.0, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
-        assert_eq!(
-            ctx.repair_receiver.try_recv().unwrap(),
-            (
-                ctx.validator_keypairs[accepted_vote_rank]
+        {
+            let (slot, pubkeys) = ctx.repair_receiver.try_recv().unwrap();
+            assert_eq!(slot, max_vote_slot);
+            assert_eq!(
+                pubkeys.as_slice(),
+                &[ctx.validator_keypairs[accepted_vote_rank]
                     .vote_keypair
-                    .pubkey(),
-                vec![max_vote_slot],
-            )
-        );
+                    .pubkey(),]
+            );
+        }
         expect_no_receive(&ctx.repair_receiver);
     }
 
@@ -2230,16 +2256,21 @@ mod tests {
 
         assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 2);
         assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 2);
-        let SigVerifiedBatch::Votes(aggregates) = ctx.pool_receiver.try_recv().unwrap() else {
-            panic!("expected a vote batch");
-        };
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 2);
+        let aggregates = batches
+            .into_iter()
+            .flat_map(|batch| match batch {
+                SigVerifiedBatch::Votes(aggregates) => aggregates,
+                rest => panic!("unexpected type: {rest:?}"),
+            })
+            .collect::<Vec<_>>();
         assert_eq!(aggregates.len(), 2);
         assert!(
             aggregates
                 .iter()
                 .all(|aggregate| aggregate.vote().is_genesis_vote())
         );
-        expect_no_receive(&ctx.pool_receiver);
         expect_no_receive(&ctx.repair_receiver);
     }
 

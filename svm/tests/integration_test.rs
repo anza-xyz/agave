@@ -7,7 +7,9 @@ use {
         create_custom_loader, deploy_program_with_upgrade_authority, load_program, program_address,
         program_data_size, register_builtins,
     },
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -26,8 +28,7 @@ use {
         execution_budget::{
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
         },
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments, ProgramToLoad},
-        program_cache_entry::ProgramCacheEntryOwner,
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
@@ -40,6 +41,7 @@ use {
             TransactionCheckResult,
         },
         nonce_info::NonceInfo,
+        program_loader::filter_executable_program_accounts,
         transaction_execution_result::TransactionExecutionDetails,
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResult,
@@ -166,6 +168,7 @@ impl SvmTestEnvironment<'_> {
             drop_on_failure: test_entry.drop_on_failure,
             all_or_nothing: test_entry.all_or_nothing,
             drop_noop_transactions: test_entry.drop_noop_transactions,
+            drop_bail_out_transactions: test_entry.drop_bail_out_transactions,
             ..Default::default()
         };
 
@@ -354,7 +357,7 @@ impl SvmTestEnvironment<'_> {
         batch_output
     }
 
-    pub fn is_program_blocked(&self, program_id: &Pubkey, deployment_slot: Slot) -> bool {
+    pub fn is_program_blocked(&self, program_id: &Pubkey) -> bool {
         let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
             self.processing_config.account_overrides,
             &self.mock_bank,
@@ -362,15 +365,21 @@ impl SvmTestEnvironment<'_> {
             1,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(EXECUTION_SLOT);
+
+        let missing_programs = filter_executable_program_accounts(
+            &account_loader,
+            &program_cache_for_tx_batch,
+            std::iter::once(program_id),
+        );
+        if missing_programs.is_empty() {
+            // The program won't land in the search list if it's closed.
+            return true;
+        }
+
         let mut execute_timings = ExecuteTimings::default();
         self.batch_processor.replenish_program_cache(
             &account_loader,
-            vec![ProgramToLoad {
-                program_id,
-                loader: ProgramCacheEntryOwner::LoaderV3,
-                deployment_slot,
-                last_modification_slot: deployment_slot,
-            }],
+            missing_programs,
             self.processing_environment
                 .program_runtime_environments
                 .get_env_for_execution(),
@@ -384,7 +393,6 @@ impl SvmTestEnvironment<'_> {
         // in the same batch, a new valid loaderv3 program may have a Loaded entry with a later execution slot
         // in a later batch, the same loaderv3 program will have a DelayedVisibility tombstone
         // a new loaderv1/v2 account will have a FailedVerification tombstone
-        // and a closed loaderv3 program or any loaderv3 buffer will have a Closed tombstone
         program_cache_entry.effective_slot() > EXECUTION_SLOT || program_cache_entry.is_tombstone()
     }
 }
@@ -403,6 +411,9 @@ pub struct SvmTestEntry {
 
     // enables transformation of no-op result into error. false in replay, true in block production
     pub drop_noop_transactions: bool,
+
+    // enables dropping of transactions which bailed out in the program runtime. false in replay, true in block production
+    pub drop_bail_out_transactions: bool,
 
     // programs to deploy to the new svm
     pub initial_programs: Vec<(String, Slot, Option<Pubkey>)>,
@@ -427,6 +438,7 @@ impl Default for SvmTestEntry {
             all_or_nothing: false,
             drop_on_failure: false,
             drop_noop_transactions: false,
+            drop_bail_out_transactions: false,
             initial_programs: Vec::new(),
             initial_accounts: HashMap::new(),
             transaction_batch: Vec::new(),
@@ -2956,7 +2968,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
 
     // test in same entry as program change
     env.execute();
-    assert!(env.is_program_blocked(&program_id, 5));
+    assert!(env.is_program_blocked(&program_id));
 
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
@@ -2971,7 +2983,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
     // test in different entry same slot
     env.test_entry = test_entry;
     env.execute();
-    assert!(env.is_program_blocked(&program_id, 5));
+    assert!(env.is_program_blocked(&program_id));
 }
 
 #[test_case(false; "upgrade::scan_only")]
@@ -3088,7 +3100,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
 
     // test in same entry as program change
     env.execute();
-    assert!(env.is_program_blocked(&target, 5));
+    assert!(env.is_program_blocked(&target));
 
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
@@ -3103,7 +3115,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     // test in different entry same slot
     env.test_entry = test_entry;
     env.execute();
-    assert!(env.is_program_blocked(&target, 5));
+    assert!(env.is_program_blocked(&target));
 }
 
 #[test]

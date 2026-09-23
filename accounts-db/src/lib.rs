@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod account_info;
@@ -34,12 +33,22 @@ pub mod read_only_accounts_cache;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod read_only_accounts_cache;
 mod rolling_bit_field;
+mod split_file;
 pub mod stake_rewards;
 pub mod storable_accounts;
 pub mod utils;
 pub mod waitable_condvar;
 
-pub use obsolete_accounts::{ObsoleteAccountItem, ObsoleteAccounts};
+pub use {
+    // These two append vec functions are temporarily required by
+    // the runtime crate for serialization/deserialization of
+    // ObsoleteAccounts, since its impl uses append vec file offsets.
+    append_vec::{
+        file_offset_from_logical as append_vec_file_offset_from_logical,
+        logical_offset_from_file as append_vec_logical_offset_from_file,
+    },
+    obsolete_accounts::{ObsoleteAccountItem, ObsoleteAccounts},
+};
 
 #[macro_use]
 extern crate solana_metrics;

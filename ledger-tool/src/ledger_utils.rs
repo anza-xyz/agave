@@ -419,6 +419,7 @@ pub fn load_and_process_ledger(
                 transaction_status_sender.clone(),
                 no_replay_vote_sender,
                 no_prioritization_fee_cache,
+                None,
             );
             bank_forks
                 .write()

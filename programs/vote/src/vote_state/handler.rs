@@ -16,7 +16,7 @@ use qualifier_attr::qualifiers;
 use solana_vote_interface::authorized_voters::AuthorizedVoters;
 use {
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_transaction_context::instruction_accounts::BorrowedInstructionAccount,
     solana_vote_interface::{

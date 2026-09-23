@@ -1,10 +1,10 @@
 //! Vote program processor
 
 use {
-    crate::vote_state::{self, NewCommissionCollector, handler::VoteStateTargetVersion},
+    crate::vote_state::{self, handler::VoteStateTargetVersion},
     log::*,
     solana_bincode::limited_deserialize,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_runtime::{
         declare_process_instruction, invoke_context::InvokeContext,
         sysvar_cache::get_sysvar_with_account_check,
@@ -78,22 +78,6 @@ fn is_vote_authorize_with_bls_enabled(invoke_context: &InvokeContext) -> bool {
 fn should_reject_legacy_vote_instructions(invoke_context: &InvokeContext) -> bool {
     invoke_context.is_deprecate_legacy_vote_ixs_active()
         || invoke_context.is_alpenglow_migration_succeeded()
-}
-
-fn read_new_collector_account<'a, 'b>(
-    instruction_context: &'a InstructionContext<'a, 'b>,
-    vote_account: &BorrowedInstructionAccount,
-    index: u16,
-) -> Result<NewCommissionCollector<'a, 'b>, InstructionError>
-where
-    'a: 'b,
-{
-    if instruction_context.get_key_of_instruction_account(index)? == vote_account.get_key() {
-        Ok(NewCommissionCollector::VoteAccount)
-    } else {
-        let collector_account = instruction_context.try_borrow_instruction_account(index)?;
-        Ok(NewCommissionCollector::NewAccount(collector_account))
-    }
 }
 
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
@@ -338,21 +322,18 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
             instruction_context.check_number_of_instruction_accounts(4)?;
 
-            let inflation_rewards_collector =
-                read_new_collector_account(&instruction_context, &me, 2)?;
-
-            let block_revenue_collector = read_new_collector_account(&instruction_context, &me, 3)?;
-
             let sysvar_cache = invoke_context.environment_config.sysvar_cache();
             let clock = sysvar_cache.get_clock()?;
             let rent = sysvar_cache.get_rent()?;
 
+            drop(me);
             vote_state::initialize_account_v2(
-                &mut me,
+                &instruction_context,
+                /* vote_account_index */ 0,
                 target_version,
                 &vote_init_v2,
-                inflation_rewards_collector,
-                block_revenue_collector,
+                /* inflation_rewards_collector_index */ 2,
+                /* block_revenue_collector_index */ 3,
                 &signers,
                 &clock,
                 &rent,
@@ -390,17 +371,18 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             }
 
             instruction_context.check_number_of_instruction_accounts(3)?;
-            let new_collector = read_new_collector_account(&instruction_context, &me, 1)?;
 
             let rent = invoke_context
                 .environment_config
                 .sysvar_cache()
                 .get_rent()?;
 
+            drop(me);
             vote_state::update_commission_collector(
-                &mut me,
+                &instruction_context,
+                /* vote_account_index */ 0,
                 target_version,
-                new_collector,
+                /* new_collector_index */ 1,
                 kind,
                 &signers,
                 &rent,
@@ -464,7 +446,7 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::sysvar,
-        solana_slot_hashes::SlotHashes,
+        solana_slot_hashes::{SlotHash, SlotHashes},
         solana_svm_feature_set::SVMFeatureSet,
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_PROGRAM_COMPUTE_UNITS,
         solana_sysvar_id::SysvarId,
@@ -1304,8 +1286,8 @@ mod tests {
             features,
             &instruction_data,
             vec![
-                (vote_pubkey, vote_account),
-                (node_pubkey, node_account),
+                (vote_pubkey, vote_account.clone()),
+                (node_pubkey, node_account.clone()),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
             ],
@@ -1314,6 +1296,34 @@ mod tests {
             DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
         assert_v4_fields(&accounts[0], vote_pubkey, vote_pubkey);
+
+        // init should pass with both collectors aliased to the same external
+        // account.
+        let mut aliased_instruction_accounts = instruction_accounts.clone();
+        aliased_instruction_accounts[2].pubkey = inflation_rewards_collector;
+        aliased_instruction_accounts[3].pubkey = inflation_rewards_collector;
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &instruction_data,
+            vec![
+                (vote_pubkey, vote_account),
+                (node_pubkey, node_account),
+                (
+                    inflation_rewards_collector,
+                    inflation_rewards_collector_account,
+                ),
+                (sysvar::rent::id(), create_default_rent_account()),
+                (sysvar::clock::id(), create_default_clock_account()),
+            ],
+            aliased_instruction_accounts,
+            Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+        assert_v4_fields(
+            &accounts[0],
+            inflation_rewards_collector,
+            inflation_rewards_collector,
+        );
     }
 
     #[test]
@@ -2150,7 +2160,7 @@ mod tests {
     fn test_vote_signature() {
         let (vote_pubkey, vote_account) = create_test_account();
         let (vote, instruction_datas) = create_serialized_votes();
-        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes = SlotHashes::new(&[SlotHash::new(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = create_sysvar_account(&slot_hashes);
         let mut instruction_accounts = vec![
             AccountMeta {
@@ -2223,7 +2233,7 @@ mod tests {
             // should fail, wrong hash
             transaction_accounts[1] = (
                 sysvar::slot_hashes::id(),
-                create_sysvar_account(&SlotHashes::new(&[(
+                create_sysvar_account(&SlotHashes::new(&[SlotHash::new(
                     *vote.slots.last().unwrap(),
                     solana_sha256_hasher::hash(&[0u8]),
                 )])),
@@ -2239,7 +2249,7 @@ mod tests {
             // should fail, wrong slot
             transaction_accounts[1] = (
                 sysvar::slot_hashes::id(),
-                create_sysvar_account(&SlotHashes::new(&[(0, vote.hash)])),
+                create_sysvar_account(&SlotHashes::new(&[SlotHash::new(0, vote.hash)])),
             );
             process_instruction(
                 features,
@@ -2413,7 +2423,7 @@ mod tests {
 
         // should fail, not signed by authorized voter
         let (vote, instruction_datas) = create_serialized_votes();
-        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes = SlotHashes::new(&[SlotHash::new(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = create_sysvar_account(&slot_hashes);
         transaction_accounts.push((sysvar::slot_hashes::id(), slot_hashes_account));
         instruction_accounts.insert(
@@ -2656,7 +2666,7 @@ mod tests {
 
         // should fail, not signed by authorized voter
         let (vote, instruction_datas) = create_serialized_votes();
-        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes = SlotHashes::new(&[SlotHash::new(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = create_sysvar_account(&slot_hashes);
         transaction_accounts.push((sysvar::slot_hashes::id(), slot_hashes_account));
         instruction_accounts.insert(

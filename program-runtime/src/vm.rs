@@ -11,7 +11,7 @@ use {
         program_cache_entry::ProgramCacheEntry,
         serialization, stable_log,
     },
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_sbpf::{
         ebpf::{self, MM_HEAP_START, MM_RODATA_START, MM_STACK_START},
@@ -286,6 +286,7 @@ pub fn execute<'a, 'b: 'a>(
         }
 
         let compute_meter_prev = invoke_context.get_remaining();
+        let mapped_heap_len = invoke_context.get_compute_budget().heap_size as usize;
         let (mut vm, stack, heap) = unsafe {
             // SAFETY: The `stack`, `heap` and `executable` live past the lifetime of
             // `invoke_context`.
@@ -318,7 +319,7 @@ pub fn execute<'a, 'b: 'a>(
         let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);
-            memory_pool.put_heap(heap);
+            memory_pool.put_heap(heap, mapped_heap_len);
             memory_pool.put_call_frames(call_frames);
             debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
             debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);

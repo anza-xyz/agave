@@ -156,9 +156,10 @@ pub struct EpochBoundaryPreparation {
     pub upcoming_epoch: Epoch,
     /// Anticipated replacement for `environments` at the next epoch
     ///
-    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
-    /// More precisely, it starts with the cache preparation phase a few hundred slots before the epoch boundary,
-    /// and it ends with the first rerooting after the epoch boundary.
+    /// This is only `Some` around the boundaries when a changed environment is
+    /// actually coming. It starts with the cache preparation phase a few
+    /// hundred slots before the epoch boundary, and it ends with the first
+    /// rerooting after the epoch boundary.
     pub upcoming_environment: Option<ProgramRuntimeEnvironment>,
     /// List of loaded programs which should be recompiled before the next epoch (but don't have to).
     pub programs_to_recompile: Vec<(Pubkey, Arc<ProgramCacheEntry>)>,
@@ -209,8 +210,6 @@ pub struct ProgramToLoad<'a> {
     ///
     /// For Loader V1/V2 and builtin programs, this is 0.
     pub deployment_slot: Slot,
-    /// When the program account was last written to (might be after the deployment slot)
-    pub last_modification_slot: Slot,
 }
 
 #[derive(Debug)]
@@ -355,6 +354,12 @@ impl ProgramCacheForTxBatch {
         self.slot
     }
 
+    /// Look up `entries` directly, without the delay visibility rewrite
+    /// `find` performs, so a test can see the entry as it was stored.
+    pub fn get_entry_for_tests(&self, key: &Pubkey) -> Option<&Arc<ProgramCacheEntry>> {
+        self.entries.get(key)
+    }
+
     pub fn set_slot_for_tests(&mut self, slot: Slot) {
         self.slot = slot;
     }
@@ -401,7 +406,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         &mut self,
         program_runtime_environment: &ProgramRuntimeEnvironment,
         key: Pubkey,
-        _last_modification_slot: Slot,
+        _current_slot: Slot,
         entry: Arc<ProgramCacheEntry>,
     ) -> bool {
         debug_assert!(
@@ -732,7 +737,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         program_runtime_environment: &ProgramRuntimeEnvironment,
         current_slot: Slot,
         key: Pubkey,
-        last_modification_slot: Slot,
         loaded_program: Arc<ProgramCacheEntry>,
     ) -> bool {
         match &mut self.index {
@@ -760,7 +764,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 let was_occupied = self.assign_program(
                     program_runtime_environment,
                     key,
-                    last_modification_slot,
+                    current_slot,
                     loaded_program,
                 );
                 self.loading_task_waiter.notify();
@@ -786,7 +790,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Returns the list of entries which are verified and compiled.
-    pub fn get_flattened_entries(&self) -> Vec<(Pubkey, Slot, Arc<ProgramCacheEntry>)> {
+    pub fn get_flattened_entries(&self) -> Vec<(Pubkey, Arc<ProgramCacheEntry>)> {
         match &self.index {
             IndexImplementation::V1 { entries, .. } => entries
                 .iter()
@@ -794,7 +798,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     second_level
                         .iter()
                         .filter_map(move |program| match program.program {
-                            ProgramCacheEntryType::Loaded(_) => Some((*id, 0, program.clone())),
+                            ProgramCacheEntryType::Loaded(_) => Some((*id, program.clone())),
                             _ => None,
                         })
                 })
@@ -828,15 +832,13 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// Unloads programs which were used infrequently
     pub fn sort_and_unload(&mut self, shrink_to_percent: Percent) {
         let mut sorted_candidates = self.get_flattened_entries();
-        sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
-            program.stats.uses.load(Ordering::Relaxed)
-        });
+        sorted_candidates
+            .sort_by_cached_key(|(_id, program)| program.stats.uses.load(Ordering::Relaxed));
         let num_to_unload = sorted_candidates
             .len()
             .saturating_sub(percent_of_max_entries(shrink_to_percent));
-        for (program, last_modification_slot, entry) in sorted_candidates.iter().take(num_to_unload)
-        {
-            self.unload_program_entry(*program, *last_modification_slot, entry);
+        for (program, entry) in sorted_candidates.iter().take(num_to_unload) {
+            self.unload_program_entry(*program, entry);
         }
     }
 
@@ -854,7 +856,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let num_to_unload = candidates
             .len()
             .saturating_sub(percent_of_max_entries(shrink_to_percent));
-        let mut sample_entry = |candidates: &Vec<(Pubkey, u64, Arc<ProgramCacheEntry>)>| {
+        let mut sample_entry = |candidates: &Vec<(Pubkey, Arc<ProgramCacheEntry>)>| {
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
             // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
             #[cfg(feature = "shuttle-test")]
@@ -864,7 +866,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             let usage_counter = candidates
                 .get(index)
                 .expect("Failed to get cached entry")
-                .2
+                .1
                 .retention_score();
             (index, usage_counter)
         };
@@ -890,8 +892,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     break;
                 }
             }
-            let (id, last_modification_slot, entry) = candidates.swap_remove(index);
-            self.unload_program_entry(id, last_modification_slot, &entry);
+            let (id, entry) = candidates.swap_remove(index);
+            self.unload_program_entry(id, &entry);
         }
     }
 
@@ -908,12 +910,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
     /// This function removes the given entry for the given program from the cache.
     /// The function expects that the program and entry exists in the cache. Otherwise it'll panic.
-    fn unload_program_entry(
-        &mut self,
-        id: Pubkey,
-        _last_modification_slot: Slot,
-        remove_entry: &Arc<ProgramCacheEntry>,
-    ) {
+    fn unload_program_entry(&mut self, id: Pubkey, remove_entry: &Arc<ProgramCacheEntry>) {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
                 let second_level = entries.get_mut(&id).expect("Cache lookup failed");
@@ -953,22 +950,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 }
             }
         }
-    }
-}
-
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::AbiExample for ProgramCacheEntry {
-    fn example() -> Self {
-        // ProgramCacheEntry isn't serializable by definition.
-        Self::default()
-    }
-}
-
-#[cfg(feature = "frozen-abi")]
-impl<FG: ForkGraph> solana_frozen_abi::abi_example::AbiExample for ProgramCache<FG> {
-    fn example() -> Self {
-        // ProgramCache isn't serializable by definition.
-        Self::new(Slot::default())
     }
 }
 
@@ -1423,6 +1404,205 @@ pub(crate) mod tests {
             });
     }
 
+    #[test_matrix(
+        (
+            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
+            ProgramCacheEntryType::Closed,
+            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
+            new_loaded_entry(get_mock_program_runtime_environment()),
+            ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+        ),
+        (false, true)
+    )]
+    fn test_assign_program_no_second_level(
+        program: ProgramCacheEntryType,
+        empty_second_level: bool,
+    ) {
+        // Here we test the scenario where no second_level entry exists for the
+        // program. We expect the `second_level.binary_search_by` to return
+        // `Err(0)` and we expect the single entry to land in the cache.
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+
+        if empty_second_level {
+            // Make the entry already exist, but with an empty second level.
+            match &mut cache.index {
+                IndexImplementation::V1 { entries, .. } => {
+                    entries.insert(program_id, Vec::new());
+                }
+            }
+        }
+
+        let entry = Arc::new(ProgramCacheEntry {
+            program,
+            account_owner: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: 10,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+
+        cache.assign_program(&env, program_id, 10, Arc::clone(&entry));
+
+        // We should have just the one single entry we just inserted.
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 1);
+        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &entry));
+
+        // Stats should be incremented by 1 to exactly 1.
+        assert_eq!(cache.stats.insertions.load(Ordering::Relaxed), 1);
+    }
+
+    #[test_matrix(
+        (
+            new_closed_entry,
+            new_builtin_entry,
+            new_failed_verification_entry,
+            new_unloaded_entry,
+            new_loaded_entry,
+        ),
+        ((50, 0), (150, 1), (250, 2), (350, 3))
+    )]
+    fn test_assign_program_new_insertion_deployment_slot(
+        new_program: fn(ProgramRuntimeEnvironment) -> ProgramCacheEntryType,
+        case: (Slot, usize),
+    ) {
+        let (deployment_slot, expected_index) = case;
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+
+        // Entries at distinct deployment slots always coexist.
+        for slot in [100, 200, 300] {
+            cache.assign_program(
+                &env,
+                program_id,
+                slot,
+                new_test_entry_with_owner(
+                    slot,
+                    ProgramCacheEntryOwner::LoaderV3,
+                    new_program(env.clone()),
+                ),
+            );
+        }
+
+        // Only the deployment slot differs, so it alone decides the index.
+        let entry = new_test_entry_with_owner(
+            deployment_slot,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_program(env.clone()),
+        );
+        cache.assign_program(&env, program_id, deployment_slot, Arc::clone(&entry));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 4);
+        assert!(Arc::ptr_eq(
+            slot_versions.get(expected_index).unwrap(),
+            &entry
+        ));
+        assert_eq!(cache.stats.insertions.load(Ordering::Relaxed), 4);
+    }
+
+    #[test_matrix(
+        (new_failed_verification_entry, new_unloaded_entry, new_loaded_entry),
+        (
+            (ProgramCacheEntryOwner::NativeLoader, 0),
+            (ProgramCacheEntryOwner::LoaderV2, 1),
+            (ProgramCacheEntryOwner::LoaderV4, 2),
+        )
+    )]
+    fn test_assign_program_new_insertion_account_owner(
+        new_program: fn(ProgramRuntimeEnvironment) -> ProgramCacheEntryType,
+        case: (ProgramCacheEntryOwner, usize),
+    ) {
+        let (account_owner, expected_index) = case;
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+
+        // Entries at the same deployment slot only coexist when their
+        // environments differ, so give each one its own.
+        for owner in [
+            ProgramCacheEntryOwner::LoaderV1,
+            ProgramCacheEntryOwner::LoaderV3,
+        ] {
+            cache.assign_program(
+                &env,
+                program_id,
+                100,
+                new_test_entry_with_owner(
+                    100,
+                    owner,
+                    new_program(ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock())),
+                ),
+            );
+        }
+
+        // None of the environments are the current one, so the account owner
+        // alone decides the index.
+        let entry = new_test_entry_with_owner(
+            100,
+            account_owner,
+            new_program(ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock())),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 3);
+        assert!(Arc::ptr_eq(
+            slot_versions.get(expected_index).unwrap(),
+            &entry
+        ));
+        assert_eq!(cache.stats.insertions.load(Ordering::Relaxed), 3);
+    }
+
+    #[test_matrix(
+        (new_failed_verification_entry, new_unloaded_entry, new_loaded_entry),
+        (false, true)
+    )]
+    fn test_assign_program_new_insertion_environment(
+        new_program: fn(ProgramRuntimeEnvironment) -> ProgramCacheEntryType,
+        entry_uses_current_env: bool,
+    ) {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        let other_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let program_id = Pubkey::new_unique();
+
+        // Deployment slot and account owner are equal, so entries for the
+        // current environment sort after those which are not.
+        let (existing_env, entry_env, expected_index) = if entry_uses_current_env {
+            (other_env, env.clone(), 1)
+        } else {
+            (env.clone(), other_env, 0)
+        };
+        cache.assign_program(
+            &env,
+            program_id,
+            100,
+            new_test_entry_with_owner(
+                100,
+                ProgramCacheEntryOwner::LoaderV3,
+                new_program(existing_env),
+            ),
+        );
+
+        let entry = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_program(entry_env),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+
+        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
+        assert_eq!(slot_versions.len(), 2);
+        assert!(Arc::ptr_eq(
+            slot_versions.get(expected_index).unwrap(),
+            &entry
+        ));
+        assert_eq!(cache.stats.insertions.load(Ordering::Relaxed), 2);
+    }
+
     #[test]
     #[should_panic(expected = "Unexpected assignment of a DelayVisibility tombstone")]
     fn test_assign_program_delay_visibility_tombstone_panics() {
@@ -1607,47 +1787,64 @@ pub(crate) mod tests {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
         let env = get_mock_program_runtime_environment();
         let program_id = Pubkey::new_unique();
-        let closed_other_slot = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Closed,
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot: 9,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
-        });
-        let closed_current_slot = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Closed,
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot: 10,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
-        });
-        let loaded_entry_current_env = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot: 10,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
-        });
-        let loaded_entry_upcoming_env = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
-                BuiltinProgram::new_mock(),
-            )),
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot: 10,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
-        });
+        let closed_other_slot = new_test_entry_with_owner(
+            9,
+            ProgramCacheEntryOwner::LoaderV2,
+            new_closed_entry(env.clone()),
+        );
+        let closed_current_slot = new_test_entry_with_owner(
+            10,
+            ProgramCacheEntryOwner::LoaderV2,
+            new_closed_entry(env.clone()),
+        );
+        let unloaded_current_env = new_test_entry_with_owner(
+            10,
+            ProgramCacheEntryOwner::LoaderV2,
+            new_unloaded_entry(get_mock_program_runtime_environment()),
+        );
+        let unloaded_upcoming_env = new_test_entry_with_owner(
+            10,
+            ProgramCacheEntryOwner::LoaderV2,
+            new_unloaded_entry(ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock())),
+        );
+
+        // Here the ordering is important.
+        // We have an older `Closed` tombstone for a different slot, so when we
+        // go to insert `Closed` for slot 10, they are allowed to coexist.
         assert!(!cache.assign_program(&env, program_id, 9, closed_other_slot.clone()));
-        assert!(!cache.assign_program(&env, program_id, 10, closed_current_slot));
-        assert!(!cache.assign_program(&env, program_id, 10, loaded_entry_upcoming_env.clone()));
-        assert!(!cache.assign_program(&env, program_id, 10, loaded_entry_current_env.clone()));
-        // Only the conflicting entry in the same slot which does not have a different environment is removed
+        assert!(!cache.assign_program(&env, program_id, 10, closed_current_slot.clone()));
+        assert_eq!(
+            cache.get_slot_versions_for_tests(&program_id),
+            &[closed_other_slot.clone(), closed_current_slot.clone()]
+        );
+
+        // However, if we then insert an `Unloaded` entry for slot 10, it will
+        // nuke the `Closed` tombstone that was there.
+        //
+        // This is because a closed tombstone has no environment, so the
+        // env-based sweep criteria unwraps to `keep=false`.
+        //
+        // Inserting an `env=None` entry here would also cause `keep=false`,
+        // but none such transitions are allowed.
+        assert!(!cache.assign_program(&env, program_id, 10, unloaded_current_env.clone()));
+        assert_eq!(
+            cache.get_slot_versions_for_tests(&program_id),
+            &[
+                closed_other_slot.clone(),
+                unloaded_current_env.clone() // <-- Closed is gone for slot 10
+            ]
+        );
+
+        // Now insert another unloaded entry for the same slot 10, but on a
+        // different environment. When both entries have `env=Some`, they are
+        // actually compared, and if they differ, we get `keep=true`.
+        assert!(!cache.assign_program(&env, program_id, 10, unloaded_upcoming_env.clone()));
         assert_eq!(
             cache.get_slot_versions_for_tests(&program_id),
             &[
                 closed_other_slot,
-                loaded_entry_current_env,
-                loaded_entry_upcoming_env
+                unloaded_current_env,
+                unloaded_upcoming_env
             ]
         );
     }
@@ -2427,7 +2624,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &new_env, true, true);
@@ -2444,7 +2640,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -2531,7 +2726,6 @@ pub(crate) mod tests {
                         program_id: key,
                         loader: entry.account_owner,
                         deployment_slot: entry.deployment_slot,
-                        last_modification_slot: entry.deployment_slot,
                     })
             })
             .collect()
@@ -2822,7 +3016,6 @@ pub(crate) mod tests {
             program_id: &program,
             loader: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 5,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
@@ -2834,7 +3027,6 @@ pub(crate) mod tests {
             program_id: &program,
             loader: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 11,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(12);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
@@ -2989,7 +3181,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 0,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3016,7 +3207,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3044,7 +3234,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3060,7 +3249,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 150,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3092,7 +3280,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3124,7 +3311,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3140,7 +3326,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
@@ -3170,7 +3355,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3193,7 +3377,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3249,7 +3432,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(batch_slot);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3324,7 +3506,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3339,7 +3520,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
@@ -3404,7 +3584,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3431,7 +3610,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(101);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3491,7 +3669,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3505,7 +3682,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
@@ -3531,7 +3707,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(
@@ -3569,7 +3744,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3614,13 +3788,11 @@ pub(crate) mod tests {
                 program_id: &found,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 100,
-                last_modification_slot: 0,
             },
             ProgramToLoad {
                 program_id: &missing,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             },
         ];
         let mut extracted = ProgramCacheForTxBatch::new(200);
@@ -3664,7 +3836,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(extracted.entries.len(), 2);
@@ -3684,7 +3855,6 @@ pub(crate) mod tests {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         let mut extracted = ProgramCacheForTxBatch::new(100);
@@ -3709,7 +3879,6 @@ pub(crate) mod tests {
             program_id: program_ids.first().unwrap(),
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 0,
-            last_modification_slot: 0,
         }];
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(search_for.len(), 1);
@@ -3726,7 +3895,6 @@ pub(crate) mod tests {
             &env,
             100,
             *program_ids.first().unwrap(),
-            50,
             Arc::clone(&loaded),
         );
         assert_ne!(cache.loading_task_waiter.wait(cookie), cookie);
@@ -3741,7 +3909,6 @@ pub(crate) mod tests {
             program_id: program_ids.first().unwrap(),
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(100);
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3767,7 +3934,6 @@ pub(crate) mod tests {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3782,7 +3948,6 @@ pub(crate) mod tests {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3811,7 +3976,6 @@ pub(crate) mod tests {
                 program_id,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 deployment_slot: 0,
-                last_modification_slot: 0,
             })
             .collect();
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3856,7 +4020,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3883,7 +4046,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3929,7 +4091,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 150,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -3959,7 +4120,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 150,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4007,7 +4167,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 50,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4031,7 +4190,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 150,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4072,7 +4230,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 0,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(50);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4117,7 +4274,6 @@ pub(crate) mod tests {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: 100,
-            last_modification_slot: 0,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(300);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4148,7 +4304,7 @@ pub(crate) mod tests {
             // Check that unload_program_entry() does nothing for this entry
             let program_id = Pubkey::new_unique();
             cache.assign_program(&env, program_id, entry.deployment_slot, entry.clone());
-            cache.unload_program_entry(program_id, entry.deployment_slot, &entry);
+            cache.unload_program_entry(program_id, &entry);
             assert_eq!(cache.get_slot_versions_for_tests(&program_id).len(), 1);
             assert!(cache.stats.evictions.is_empty());
         }
@@ -4167,7 +4323,7 @@ pub(crate) mod tests {
         // Check that unload_program_entry() does its work
         let program_id = Pubkey::new_unique();
         cache.assign_program(&env, program_id, entry.deployment_slot, entry.clone());
-        cache.unload_program_entry(program_id, entry.deployment_slot, &entry);
+        cache.unload_program_entry(program_id, &entry);
         assert!(cache.stats.evictions.contains_key(&program_id));
     }
 

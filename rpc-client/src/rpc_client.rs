@@ -28,7 +28,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface::Feature,
     solana_hash::Hash,
-    solana_message::{Message as LegacyMessage, v0},
+    solana_message::{Message as LegacyMessage, v0, v1},
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
@@ -88,6 +88,11 @@ impl SerializableMessage for LegacyMessage {
     }
 }
 impl SerializableMessage for v0::Message {
+    fn serialize(&self) -> Vec<u8> {
+        self.serialize()
+    }
+}
+impl SerializableMessage for v1::Message {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
     }
@@ -1495,6 +1500,21 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_signature_statuses_with_history(signatures))
     }
 
+    /// Gets the statuses of a list of transaction signatures with the given
+    /// [`RpcSignatureStatusConfig`], which can select a commitment level and a
+    /// minimum context slot.
+    ///
+    /// [`RpcSignatureStatusConfig`]: solana_rpc_client_api::config::RpcSignatureStatusConfig
+    pub fn get_signature_statuses_with_config(
+        &self,
+        signatures: &[Signature],
+        config: RpcSignatureStatusConfig,
+    ) -> RpcResult<Vec<Option<TransactionStatus>>> {
+        self.invoke(
+            (self.rpc_client.as_ref()).get_signature_statuses_with_config(signatures, config),
+        )
+    }
+
     /// Check if a transaction has been processed with the given [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
@@ -2604,6 +2624,7 @@ impl RpcClient {
     ///     encoding: Some(UiTransactionEncoding::Json),
     ///     commitment: Some(CommitmentConfig::confirmed()),
     ///     max_supported_transaction_version: Some(0),
+    ///     min_context_slot: None,
     /// };
     /// let transaction = rpc_client.get_transaction_with_config(
     ///     &signature,
@@ -2783,6 +2804,7 @@ impl RpcClient {
     /// let config = RpcLeaderScheduleConfig {
     ///     identity: Some(validator_pubkey_str),
     ///     commitment: Some(CommitmentConfig::processed()),
+    ///     ..RpcLeaderScheduleConfig::default()
     /// };
     /// let leader_schedule = rpc_client.get_leader_schedule_with_config(
     ///     Some(slot),
@@ -4370,10 +4392,10 @@ mod tests {
         solana_account_decoder::{UiAccountData, encode_ui_account},
         solana_account_decoder_client_types::UiAccountEncoding,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
         solana_message::{
-            MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction, v1,
+            MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction,
         },
         solana_rpc_client_api::client_error::ErrorKind,
         solana_signer::Signer,
@@ -4629,6 +4651,35 @@ mod tests {
         assert_eq!(commitment.total_stake, 42);
         let slots = commitment.commitment.expect("commitment available");
         assert_eq!(slots.len(), MAX_LOCKOUT_HISTORY + 1);
+    }
+
+    #[test]
+    fn test_get_signature_statuses_with_config() {
+        let signature = Signature::default();
+        let config = RpcSignatureStatusConfig {
+            search_transaction_history: false,
+            commitment: Some(CommitmentConfig::confirmed()),
+            min_context_slot: Some(1),
+        };
+
+        // The "succeeds" mock answers with one finalized status per signature.
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+        let statuses = rpc_client
+            .get_signature_statuses_with_config(&[signature], config)
+            .unwrap()
+            .value;
+        assert_eq!(statuses.len(), 1);
+        let status = statuses[0].as_ref().unwrap();
+        assert_eq!(status.slot, 1);
+        assert!(status.err.is_none());
+
+        // The "sig_not_found" mock answers with None per signature.
+        let rpc_client = RpcClient::new_mock("sig_not_found".to_string());
+        let statuses = rpc_client
+            .get_signature_statuses_with_config(&[signature], config)
+            .unwrap()
+            .value;
+        assert_eq!(statuses, vec![None]);
     }
 
     #[test]
@@ -5117,7 +5168,13 @@ mod tests {
             }],
             address_table_lookups: vec![],
         }; "v0 message")]
-    fn test_get_fee_for_message_sends_properly_serialized_v0_transaction<M>(message: M)
+    #[test_case(v1::Message::try_compile_with_config(
+        &Pubkey::new_unique(),
+        &[],
+        Hash::new_unique(),
+        v1::TransactionConfig::empty(),
+    ).unwrap(); "v1 message")]
+    fn test_get_fee_for_message_sends_properly_serialized_message<M>(message: M)
     where
         M: SerializableMessage,
     {
@@ -5196,7 +5253,13 @@ mod tests {
         let ix = system_instruction::transfer(&key.pubkey(), &to, 50);
         let tx = VersionedTransaction::try_new(
             VersionedMessage::V1(
-                v1::Message::try_compile(&key.pubkey(), &[ix], blockhash).unwrap(),
+                v1::Message::try_compile_with_config(
+                    &key.pubkey(),
+                    &[ix],
+                    blockhash,
+                    v1::TransactionConfig::empty(),
+                )
+                .unwrap(),
             ),
             &[key],
         )

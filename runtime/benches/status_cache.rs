@@ -1,20 +1,20 @@
-#![feature(test)]
-extern crate test;
-
-#[cfg(not(feature = "shuttle-test"))]
-use {bincode::serialize, solana_hash::HASH_BYTES, solana_sha256_hasher::hash};
 use {
+    criterion::{Criterion, criterion_group, criterion_main},
     rand::{Rng, SeedableRng, rngs::SmallRng},
     solana_accounts_db::ancestors::Ancestors,
     solana_hash::Hash,
     solana_runtime::bank::BankStatusCache,
     solana_signature::{SIGNATURE_BYTES, Signature},
-    test::Bencher,
+    std::time::Duration,
+};
+#[cfg(not(feature = "shuttle-test"))]
+use {
+    solana_hash::HASH_BYTES, solana_runtime::serde_snapshot::serialize_status_cache_into,
+    solana_sha256_hasher::hash,
 };
 
 #[cfg(not(feature = "shuttle-test"))]
-#[bench]
-fn bench_status_cache_serialize(bencher: &mut Bencher) {
+fn bench_status_cache_serialize(c: &mut Criterion) {
     let mut status_cache = BankStatusCache::default();
     status_cache.add_root(0);
     status_cache.clear();
@@ -31,14 +31,18 @@ fn bench_status_cache_serialize(bencher: &mut Bencher) {
         }
     }
     assert!(status_cache.roots().contains(&0));
-    bencher.iter(|| {
-        let _ = serialize(&status_cache.root_slot_deltas()).unwrap();
+    c.bench_function("bench_status_cache_serialize", |b| {
+        // Return the value so criterion black-boxes it for us.
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            serialize_status_cache_into(&mut buffer, &status_cache.root_slot_deltas()).unwrap();
+            buffer
+        })
     });
 }
 
 #[cfg(not(feature = "shuttle-test"))]
-#[bench]
-fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
+fn bench_status_cache_serialize_max(c: &mut Criterion) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let mut status_cache = BankStatusCache::default();
@@ -46,13 +50,16 @@ fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
     fill_status_cache(&mut status_cache, max_root_entries, 100_000);
 
     assert!(status_cache.roots().contains(&0));
-    bencher.iter(|| {
-        let _ = serialize(&status_cache.root_slot_deltas()).unwrap();
+    c.bench_function("bench_status_cache_serialize_max", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            serialize_status_cache_into(&mut buffer, &status_cache.root_slot_deltas()).unwrap();
+            buffer
+        })
     });
 }
 
-#[bench]
-fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
+fn bench_status_cache_root_slot_deltas(c: &mut Criterion) {
     let mut status_cache = BankStatusCache::default();
 
     // fill the status cache
@@ -64,7 +71,9 @@ fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
         status_cache.add_root(*slot);
     }
 
-    bencher.iter(|| test::black_box(status_cache.root_slot_deltas()));
+    c.bench_function("bench_status_cache_root_slot_deltas", |b| {
+        b.iter(|| status_cache.root_slot_deltas())
+    });
 }
 
 fn fill_status_cache(status_cache: &mut BankStatusCache, max_root_entries: u64, num_txs: usize) {
@@ -86,8 +95,11 @@ fn fill_status_cache_slot(
     }
 }
 
-#[bench]
-fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
+// Allowed because the arithmetic is fixed-size bookkeeping over
+// `max_root_entries`. Clippy exempts test code from this lint, and a
+// `harness = false` bench builds as a plain binary.
+#[allow(clippy::arithmetic_side_effects)]
+fn bench_status_cache_check_and_insert(c: &mut Criterion) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let mut status_cache = BankStatusCache::default();
@@ -113,29 +125,61 @@ fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
         tx_hashes.push(Signature::from(sigbytes));
     }
 
-    bencher.iter(|| {
-        for tx_hash in &tx_hashes {
-            if status_cache
-                .get_status(*tx_hash, &blockhash, &ancestors)
-                .is_none()
-            {
-                status_cache.insert(&blockhash, *tx_hash, slot, Ok(()));
+    c.bench_function("bench_status_cache_check_and_insert", |b| {
+        b.iter(|| {
+            for tx_hash in &tx_hashes {
+                if status_cache
+                    .get_status(*tx_hash, &blockhash, &ancestors)
+                    .is_none()
+                {
+                    status_cache.insert(&blockhash, *tx_hash, slot, Ok(()));
+                }
             }
-        }
+        })
     });
 }
 
-#[bench]
-fn bench_status_cache_add_roots(bencher: &mut Bencher) {
+// Allowed because the arithmetic is fixed-size bookkeeping over
+// `max_root_entries`.
+#[allow(clippy::arithmetic_side_effects)]
+fn bench_status_cache_add_roots(c: &mut Criterion) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let mut status_cache = BankStatusCache::default();
     let max_root_entries = status_cache.max_root_entries() as u64;
     fill_status_cache(&mut status_cache, max_root_entries, 100_000);
     let start_slot = max_root_entries + 1;
-    bencher.iter(|| {
-        for root in start_slot..start_slot + max_root_entries {
-            status_cache.add_root(root);
-        }
+    c.bench_function("bench_status_cache_add_roots", |b| {
+        b.iter(|| {
+            for root in start_slot..start_slot + max_root_entries {
+                status_cache.add_root(root);
+            }
+        })
     });
 }
+
+fn bench_status_cache(c: &mut Criterion) {
+    #[cfg(not(feature = "shuttle-test"))]
+    bench_status_cache_serialize(c);
+    #[cfg(not(feature = "shuttle-test"))]
+    bench_status_cache_serialize_max(c);
+    bench_status_cache_root_slot_deltas(c);
+    bench_status_cache_check_and_insert(c);
+    bench_status_cache_add_roots(c);
+}
+
+criterion_group! {
+    name = benches;
+    // Cut total run time by trimming criterion's defaults: 3s of warm-up plus
+    // 5s of measurement per bench dominates what this file costs to run.
+    config = Criterion::default()
+        // 3s default
+        .warm_up_time(Duration::from_millis(150))
+        // 5s default
+        .measurement_time(Duration::from_millis(750))
+        // 100 default, 10 is criterion's minimum
+        .sample_size(10)
+        .without_plots();
+    targets = bench_status_cache
+}
+criterion_main!(benches);

@@ -2,10 +2,8 @@
 
 use {
     agave_feature_set::virtual_address_space_adjustments,
-    agave_precompiles::is_precompile,
     prost::Message,
     protosol::protos::{TxnContext as ProtoTxnContext, TxnResult as ProtoTxnResult},
-    solana_instruction::error::InstructionError,
     solana_svm::conformance::{
         callback::ConformanceCallback,
         direct_mapping::direct_mapping_handle_cu_exhaustion,
@@ -16,7 +14,6 @@ use {
         },
         txn::{context::TxnContext, harness::execute_txn_with_callback},
     },
-    solana_transaction_error::TransactionError,
     std::ffi::c_int,
 };
 
@@ -52,28 +49,7 @@ pub fn execute_txn_proto(input: ProtoTxnContext) -> ProtoTxnResult {
     let mut effects =
         execute_txn_with_callback(&context, &callback, &mut program_cache, &sysvar_cache);
 
-    let precompile_custom_error_index = match &effects.status {
-        Err(TransactionError::InstructionError(index, InstructionError::Custom(_))) => context
-            .message
-            .instructions()
-            .get(usize::from(*index))
-            .and_then(|instruction| {
-                context
-                    .message
-                    .static_account_keys()
-                    .get(usize::from(instruction.program_id_index))
-            })
-            .is_some_and(|program_id| is_precompile(program_id, |_| true))
-            .then_some(*index),
-        _ => None,
-    };
-
-    if let Some(index) = precompile_custom_error_index {
-        effects.status = Err(TransactionError::InstructionError(
-            index,
-            InstructionError::Custom(0),
-        ));
-    }
+    effects.zero_precompile_custom_error(&context.message);
 
     let cu_avail = effects.cu_avail;
     let has_err = effects.status.is_err();
@@ -85,10 +61,7 @@ pub fn execute_txn_proto(input: ProtoTxnContext) -> ProtoTxnResult {
             .is_active(&virtual_address_space_adjustments::id()),
         cu_avail,
         has_err,
-        result
-            .modified_accounts
-            .iter_mut()
-            .map(|account| &mut account.data),
+        result.modified_accounts.iter_mut(),
     );
 
     result
@@ -133,7 +106,7 @@ mod tests {
         protosol::protos::{
             AcctState as ProtoAcctState, CompiledInstruction as ProtoCompiledInstruction,
             MessageHeader as ProtoMessageHeader, SanitizedTransaction as ProtoSanitizedTransaction,
-            TransactionMessage as ProtoTransactionMessage,
+            TransactionMessage as ProtoTransactionMessage, acct_state::DataRepr,
         },
         solana_clock::Clock,
         solana_pubkey::Pubkey,
@@ -182,39 +155,41 @@ mod tests {
                 ProtoAcctState {
                     address: c.to_bytes().to_vec(),
                     lamports: 1,
-                    data: vec![],
+                    data_repr: Some(DataRepr::Data(vec![])),
                     executable: false,
                     owner: system_program::id().to_bytes().to_vec(),
                 },
                 ProtoAcctState {
                     address: b.to_bytes().to_vec(),
                     lamports: 1,
-                    data: vec![],
+                    data_repr: Some(DataRepr::Data(vec![])),
                     executable: false,
                     owner: system_program::id().to_bytes().to_vec(),
                 },
                 ProtoAcctState {
                     address: a.to_bytes().to_vec(),
                     lamports: 1,
-                    data: vec![],
+                    data_repr: Some(DataRepr::Data(vec![])),
                     executable: false,
                     owner: system_program::id().to_bytes().to_vec(),
                 },
                 ProtoAcctState {
                     address: clock_pubkey.to_bytes().to_vec(),
                     lamports: 1,
-                    data: bincode::serialize(&Clock {
-                        slot: 1,
-                        ..Clock::default()
-                    })
-                    .unwrap(),
+                    data_repr: Some(DataRepr::Data(
+                        bincode::serialize(&Clock {
+                            slot: 1,
+                            ..Clock::default()
+                        })
+                        .unwrap(),
+                    )),
                     executable: false,
                     owner: sysvar::id().to_bytes().to_vec(),
                 },
                 ProtoAcctState {
                     address: system_program_id.to_bytes().to_vec(),
                     lamports: system_program_account.lamports,
-                    data: system_program_account.data,
+                    data_repr: Some(DataRepr::Data(system_program_account.data)),
                     executable: system_program_account.executable,
                     owner: system_program_account.owner.to_bytes().to_vec(),
                 },

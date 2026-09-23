@@ -5,10 +5,7 @@ use {
     crossbeam_channel::{RecvTimeoutError, TrySendError, unbounded},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_packet::PacketFlags,
-    solana_perf::{
-        packet::{PacketBatch, PacketBatchRecycler, PacketRefMut},
-        recycler::Recycler,
-    },
+    solana_perf::packet::{PacketBatch, PacketRefMut},
     solana_poh::poh_recorder::PohRecorder,
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -177,8 +174,6 @@ impl FetchStage {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
     ) -> Self {
-        let recycler: PacketBatchRecycler = Recycler::new();
-
         let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
         let tpu_vote_threads: Vec<_> = tpu_vote_sockets
             .into_iter()
@@ -189,10 +184,8 @@ impl FetchStage {
                     socket,
                     exit.clone(),
                     vote_sender.clone(),
-                    recycler.clone(),
                     tpu_vote_stats.clone(),
                     coalesce,
-                    true,
                     true, // only staked connections should be voting
                 )
             })

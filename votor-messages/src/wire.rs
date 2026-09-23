@@ -47,10 +47,13 @@ use {
         vote::Vote,
     },
     serde::{Deserialize, Serialize},
-    solana_bls_signatures::Signature as BLSSignature,
+    solana_bls_signatures::{HashedMessage, Signature as BLSSignature},
     solana_clock::Slot,
+    std::mem::MaybeUninit,
     wincode::{
-        ReadError, SchemaRead, SchemaReadContext, SchemaWrite, config::Config, io::Reader,
+        ReadError, SchemaRead, SchemaReadContext, SchemaWrite,
+        config::{Config, DefaultConfig},
+        io::Reader,
         pod_wrapper,
     },
 };
@@ -69,10 +72,7 @@ pod_wrapper! {
     unsafe struct PodBLSSignature(BLSSignature);
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireVoteSignature {
     #[cfg_attr(
@@ -90,27 +90,21 @@ impl From<VoteMessage> for WireVoteSignature {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireBlockVoteMessage {
     pub(crate) block: Block,
     pub(crate) signature: WireVoteSignature,
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotVoteMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireVoteSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Signature on a wire cert message
@@ -135,17 +129,14 @@ impl From<Certificate> for WireCertSignature {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotCertMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireCertSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// A wire cert message that holds a block.
@@ -156,10 +147,7 @@ pub struct WireBlockCertMessage {
     pub signature: WireCertSignature,
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, AbiEnumVisitor, Serialize)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 pub(crate) enum WireConsensusMessageKind {
@@ -270,10 +258,7 @@ impl WireConsensusMessageKind {
 /// Context wrapper for the expected shred version during deserialization.
 pub struct ExpectedShredVersion(pub u16);
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize, SchemaRead)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, SchemaRead))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite)]
 /// First version of a wire consensus message
 pub struct WireConsensusMessageV1 {
@@ -338,16 +323,8 @@ impl WireConsensusMessageV1 {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(
-        AbiExample,
-        AbiEnumVisitor,
-        StableAbi,
-        StableAbiSample,
-        Serialize,
-        SchemaRead
-    ),
+    derive(StableAbi, StableAbiSample, SchemaRead),
     frozen_abi(
-        digest = "BuNdLfQfseGa7sL29neSwUYqrWo1AVRyTYxMGxLATzia",
         abi_digest = "ErGjoTr18hn3dvPVA7jFgK5WLwb4jgx7a39Yn8dSzB2K",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
@@ -434,9 +411,8 @@ impl VersionedWireConsensusMessage {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        digest = "FaLMAAzQUX8FfCZhUqETKB1xdBwQuC3pwz2mEaC6t3Gb",
         abi_digest = "2aBMTuPyDgGSYeYX1aBbXURgA4qqr92Eh9yiTeHX6qZq",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
@@ -538,6 +514,23 @@ impl VotePayloadToSign {
             | Self::SkipFallback { slot, .. } => *slot,
         }
     }
+
+    /// Serializes `self` into a `HashedMessage`.
+    pub fn to_hashed_msg(&self) -> HashedMessage {
+        // Tag + slot + optional block hash + shred version.
+        const MAX_SERIALIZED_SIZE: usize = 1 + 8 + 32 + 2;
+
+        let mut buffer = [MaybeUninit::uninit(); MAX_SERIALIZED_SIZE];
+        let mut remaining = buffer.as_mut_slice();
+
+        <VotePayloadToSign as SchemaWrite<DefaultConfig>>::write(&mut remaining, self).unwrap();
+        let written = MAX_SERIALIZED_SIZE
+            .checked_sub(remaining.len())
+            .expect("cannot write more than buffer size");
+
+        // SAFETY: `write` returned `Ok`, so the cursor initialized the first `written` bytes.
+        HashedMessage::new(unsafe { buffer[..written].assume_init_ref() })
+    }
 }
 
 impl From<VotePayloadToSign> for Vote {
@@ -560,4 +553,97 @@ impl From<VotePayloadToSign> for Vote {
 pub fn get_vote_payload_to_sign(vote: Vote, shred_version: u16) -> Vec<u8> {
     let vote_to_sign = VotePayloadToSign::new_from_vote(vote, shred_version);
     wincode::serialize(&vote_to_sign).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vote_payloads() -> [VotePayloadToSign; 6] {
+        let block = Block {
+            slot: 42,
+            block_id: solana_hash::Hash::new_from_array([7; 32]),
+        };
+        let shred_version = 123;
+        [
+            VotePayloadToSign::Notar {
+                block,
+                shred_version,
+            },
+            VotePayloadToSign::Finalize {
+                slot: block.slot,
+                shred_version,
+            },
+            VotePayloadToSign::Skip {
+                slot: block.slot,
+                shred_version,
+            },
+            VotePayloadToSign::NotarFallback {
+                block,
+                shred_version,
+            },
+            VotePayloadToSign::SkipFallback {
+                slot: block.slot,
+                shred_version,
+            },
+            VotePayloadToSign::Genesis {
+                block,
+                shred_version,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_vote_payload_to_sign_serialized_sizes() {
+        for payload in vote_payloads() {
+            // Keep this match exhaustive and destructure every field so changes to the shape of
+            // VotePayloadToSign require the stack buffer size to be reconsidered.
+            let expected_size = match payload {
+                VotePayloadToSign::Notar {
+                    block,
+                    shred_version,
+                }
+                | VotePayloadToSign::NotarFallback {
+                    block,
+                    shred_version,
+                }
+                | VotePayloadToSign::Genesis {
+                    block,
+                    shred_version,
+                } => {
+                    let _ = (block, shred_version);
+                    1 + 8 + 32 + 2
+                }
+                VotePayloadToSign::Finalize {
+                    slot,
+                    shred_version,
+                }
+                | VotePayloadToSign::Skip {
+                    slot,
+                    shred_version,
+                }
+                | VotePayloadToSign::SkipFallback {
+                    slot,
+                    shred_version,
+                } => {
+                    let _ = (slot, shred_version);
+                    1 + 8 + 2
+                }
+            };
+
+            assert_eq!(wincode::serialize(&payload).unwrap().len(), expected_size);
+        }
+    }
+
+    #[test]
+    fn test_vote_payload_to_hashed_msg_matches_wincode_serialization() {
+        for payload in vote_payloads() {
+            let serialized = wincode::serialize(&payload).unwrap();
+            assert_eq!(
+                payload.to_hashed_msg(),
+                HashedMessage::new(&serialized),
+                "unexpected hash for {payload:?}",
+            );
+        }
+    }
 }

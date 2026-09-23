@@ -1,5 +1,5 @@
 use {
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_nonce::{
         self as nonce,
         state::{DurableNonce, State},

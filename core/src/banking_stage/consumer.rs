@@ -21,12 +21,12 @@ use {
         StaticMessageWithMeta, TransactionWithMeta,
     },
     solana_svm::{
-        account_loader::validate_fee_payer,
+        account_loader::{TransactionCheckResult, validate_fee_payer},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
-    solana_transaction_error::TransactionError,
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_vote::vote_parser,
     std::num::Saturating,
 };
@@ -131,11 +131,11 @@ impl Consumer {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results =
             SmallVec::<[_; TARGET_NUM_TRANSACTIONS_PER_BATCH]>::from_elem(Ok(()), txs.len());
-        let check_results = bank.check_transactions(
+        let check_results = Self::check_transactions_for_scheduling(
+            bank,
             txs,
             &pre_results,
             bank.max_processing_age(),
-            true,
             &mut error_counters,
         );
         let check_results = check_results
@@ -236,6 +236,7 @@ impl Consumer {
         // were not included in the block should have their cost removed, the rest
         // should update with their actually consumed units.
         QosService::remove_or_update_costs(
+            txs.iter(),
             transaction_qos_cost_results.iter(),
             commit_transactions_result.as_ref().ok(),
             bank,
@@ -366,6 +367,7 @@ impl Consumer {
                     all_or_nothing: flags.all_or_nothing,
                     strict_nonce_size_check: true,
                     drop_noop_transactions: true,
+                    drop_bail_out_transactions: true,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -509,6 +511,17 @@ impl Consumer {
         }
     }
 
+    pub(crate) fn check_transactions_for_scheduling<Tx: TransactionWithMeta>(
+        bank: &Bank,
+        txs: &[impl core::borrow::Borrow<Tx>],
+        lock_results: &[TransactionResult<()>],
+        max_age: usize,
+        error_counters: &mut TransactionErrorMetrics,
+    ) -> Vec<TransactionCheckResult> {
+        bank.check_transactions_external(txs, lock_results, max_age, false, error_counters)
+            .0
+    }
+
     pub fn check_fee_payer_unlocked(
         bank: &Bank,
         transaction: &impl StaticMessageWithMeta,
@@ -554,7 +567,7 @@ mod tests {
         solana_cost_model::cost_model::CostModel,
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_ledger::genesis_utils::{

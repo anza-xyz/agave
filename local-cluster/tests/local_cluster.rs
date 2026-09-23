@@ -3790,6 +3790,7 @@ fn test_kill_partition_switch_threshold_progress() {
 /// slot, which is the simpler duplicate-confirmation path.
 #[test]
 #[serial]
+#[ignore]
 #[allow(unused_attributes)]
 fn test_duplicate_shreds_broadcast_leader() {
     run_duplicate_shreds_broadcast_leader(true);

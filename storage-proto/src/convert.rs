@@ -2,7 +2,7 @@ use {
     crate::{StoredExtendedRewards, StoredTransactionError, StoredTransactionStatusMeta},
     solana_account_decoder::parse_token::{UiTokenAmount, real_number_string_trimmed},
     solana_hash::{HASH_BYTES, Hash},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_message::{
         MessageHeader, VersionedMessage,
         compiled_instruction::CompiledInstruction,
@@ -130,6 +130,7 @@ impl From<Reward> for generated::Reward {
                 Some(RewardType::Staking) => generated::RewardType::Staking,
                 Some(RewardType::Voting) => generated::RewardType::Voting,
                 Some(RewardType::DeactivatedStake) => generated::RewardType::DeactivatedStake,
+                Some(RewardType::VATDebit) => generated::RewardType::VatDebit,
             } as i32,
             commission: reward.commission.map(|c| c.to_string()).unwrap_or_default(),
             commission_bps: reward
@@ -153,6 +154,7 @@ impl From<generated::Reward> for Reward {
                 3 => Some(RewardType::Staking),
                 4 => Some(RewardType::Voting),
                 5 => Some(RewardType::DeactivatedStake),
+                6 => Some(RewardType::VATDebit),
                 _ => None,
             },
             commission: reward.commission.parse::<u8>().ok(),
@@ -884,6 +886,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                 51 => InstructionError::MaxAccountsExceeded,
                 52 => InstructionError::MaxInstructionTraceLengthExceeded,
                 53 => InstructionError::BuiltinProgramsMustConsumeComputeUnits,
+                54 => InstructionError::BailOut,
                 _ => return Err("Invalid InstructionError"),
             };
 
@@ -951,6 +954,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
             36 => TransactionError::UnbalancedTransaction,
             37 => TransactionError::ProgramCacheHitMaxLimit,
             38 => TransactionError::CommitCancelled,
+            39 => TransactionError::BailOut,
             _ => return Err("Invalid TransactionError"),
         })
     }
@@ -1075,6 +1079,11 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 TransactionError::CommitCancelled => {
                     tx_by_addr::TransactionErrorType::CommitCancelled
                 }
+                TransactionError::BailOut => tx_by_addr::TransactionErrorType::BailOutTx,
+                // `TransactionError` is `#[non_exhaustive]`, so the match needs a
+                // wildcard. `test_error_tags` walks `VARIANTS` and fails if any variant
+                // reaches it, which is what makes this unreachable.
+                _ => unreachable!("no tx_by_addr tag for {transaction_error:?}"),
             } as i32,
             instruction_error: match transaction_error {
                 TransactionError::InstructionError(index, ref instruction_error) => {
@@ -1242,6 +1251,11 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                             InstructionError::BuiltinProgramsMustConsumeComputeUnits => {
                                 tx_by_addr::InstructionErrorType::BuiltinProgramsMustConsumeComputeUnits
                             }
+                            InstructionError::BailOut => {
+                                tx_by_addr::InstructionErrorType::BailOut
+                            }
+                            // See the `TransactionErrorType` wildcard note above.
+                            _ => unreachable!("no tx_by_addr tag for {instruction_error:?}"),
                         } as i32,
                         custom: match instruction_error {
                             InstructionError::Custom(custom) => {
@@ -1421,6 +1435,10 @@ mod test {
         assert_eq!(reward, gen_reward.into());
 
         reward.reward_type = Some(RewardType::DeactivatedStake);
+        let gen_reward: generated::Reward = reward.clone().into();
+        assert_eq!(reward, gen_reward.into());
+
+        reward.reward_type = Some(RewardType::VATDebit);
         let gen_reward: generated::Reward = reward.clone().into();
         assert_eq!(reward, gen_reward.into());
     }
@@ -2027,6 +2045,20 @@ mod test {
             transaction_error,
             tx_by_addr_transaction_error.try_into().unwrap()
         );
+    }
+
+    /// Every variant must reach a tag of its own rather than the `#[non_exhaustive]`
+    /// wildcard. This is what lets that wildcard be `unreachable!()`, so a variant
+    /// without a tag panics here instead of in a warehouse node.
+    #[test]
+    fn test_error_tags() {
+        for error in TransactionError::VARIANTS {
+            let _: tx_by_addr::TransactionError = error.into();
+        }
+        for ix_error in InstructionError::VARIANTS {
+            let _: tx_by_addr::TransactionError =
+                TransactionError::InstructionError(0, ix_error).into();
+        }
     }
 
     #[test]

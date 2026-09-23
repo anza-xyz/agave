@@ -3,7 +3,8 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
-            MAX_DATA_SHREDS_PER_SLOT, ShredFlags, max_ticks_per_n_shreds,
+            DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, PROOF_ENTRIES_FOR_32_32_BATCH,
+            ShredData, ShredFlags, max_ticks_per_n_shreds,
             merkle::finish_erasure_batch_for_tests,
             merkle_tree::{
                 SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
@@ -609,6 +610,30 @@ fn test_get_slot_entries3() {
         blockstore
             .insert_shreds(shreds, false)
             .expect("Expected successful write of shreds");
+        assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), entries);
+    }
+}
+
+/// A last-in-slot component whose serialized size lands between the capacity
+/// of the final, resigned, FEC set and that of a normal FEC set is
+/// shredded into two resigned FEC sets. This reproduces this niche scenario.
+#[test]
+fn test_get_slot_entries_last_fec_set_capacity_boundary() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let entry_size = wincode::serialized_size(&create_ticks(2, 0, Hash::default())).unwrap()
+        - wincode::serialized_size(&create_ticks(1, 0, Hash::default())).unwrap();
+    let fec_set_capacity = |resigned| {
+        DATA_SHREDS_PER_FEC_BLOCK as u64
+            * ShredData::capacity(PROOF_ENTRIES_FOR_32_32_BATCH, resigned).unwrap() as u64
+    };
+    let num_entries = (fec_set_capacity(true) - entry_size) / entry_size
+        ..=(fec_set_capacity(false) + entry_size) / entry_size;
+    for (slot, num_entries) in num_entries.enumerate() {
+        let slot = slot as u64 + 1;
+        let entries = create_ticks(num_entries, 0, Hash::default());
+        let shreds = entries_to_test_shreds(&entries, slot, slot - 1, true, 0);
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), entries);
     }
 }
@@ -1843,6 +1868,36 @@ fn test_should_insert_data_shred() {
     );
     assert_eq!(duplicate_shreds[0].slot(), 0);
     assert!(blockstore.has_duplicate_shreds_in_slot(0));
+}
+
+#[test]
+fn test_handle_duplicate_shred_returns_duplicate_proof() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let (shreds, _) = make_many_slot_entries(5, 5, 10);
+    blockstore.insert_shreds(shreds.clone(), false).unwrap();
+    let duplicate_index = 0;
+    let original_shred = shreds[duplicate_index].clone();
+    let duplicate_shred = {
+        let (mut shreds, _) = make_many_slot_entries(5, 1, 10);
+        shreds.swap_remove(duplicate_index)
+    };
+    let duplicate_shred_slot = duplicate_shred.slot();
+    assert!(!blockstore.has_duplicate_shreds_in_slot(duplicate_shred_slot));
+
+    let (returned_shred, conflicting_payload) = handle_duplicate_shred(
+        &blockstore,
+        PossibleDuplicateShred::Exists(duplicate_shred.clone()),
+        true,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(returned_shred.payload(), duplicate_shred.payload());
+    assert_eq!(conflicting_payload, *original_shred.payload());
+    let duplicate_proof = blockstore.get_duplicate_slot(duplicate_shred_slot).unwrap();
+    assert_eq!(duplicate_proof.shred1, *original_shred.payload());
+    assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
 }
 
 #[test]
@@ -7311,6 +7366,120 @@ pub(crate) fn insert_complete_update_parent_slot(
         post_update_starting_transaction_indexes,
         post_update_num_entries,
         update_parent_fec_set_index,
+    }
+}
+
+#[test_case(vec![1, 1, 1], false; "invalid shred data")]
+#[test_case(0u64.to_le_bytes().to_vec(), true; "block aborted")]
+fn test_purge_exact_recovers_malformed_update_parent_slot(
+    malformed_component: Vec<u8>,
+    expect_block_aborted: bool,
+) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let original_parent = 103;
+    let update_parent = 100;
+    let pre_update_entries = make_slot_entries_with_transactions(1);
+    let pre_update_address = pre_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
+    let pre_update_signature =
+        write_transaction_statuses_for_entries(&blockstore, slot, &pre_update_entries)[0];
+    blockstore
+        .write_transaction_memos(&pre_update_signature, slot, "memo".to_string())
+        .unwrap();
+    let post_update_entries = make_slot_entries_with_transactions(1);
+    let post_update_address = post_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
+    let post_update_signature =
+        write_transaction_statuses_for_entries(&blockstore, slot, &post_update_entries)[0];
+    blockstore
+        .write_transaction_memos(&post_update_signature, slot, "memo".to_string())
+        .unwrap();
+
+    let fec_set_size = u32::try_from(DATA_SHREDS_PER_FEC_BLOCK).unwrap();
+    let malformed_fec_set_index = fec_set_size * 2;
+    let update_parent_fec_set_index = fec_set_size * 3;
+    let post_update_fec_set_index = fec_set_size * 4;
+    let mut shreds = create_block_header_shreds(slot, original_parent, Hash::new_unique());
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        pre_update_entries,
+        fec_set_size,
+        false,
+    ));
+    shreds.extend(
+        Shredder::new(slot, original_parent, 0, 0)
+            .unwrap()
+            .make_shreds_from_data_slice(
+                &Keypair::new(),
+                &malformed_component,
+                false,
+                Hash::new_unique(),
+                malformed_fec_set_index,
+                malformed_fec_set_index,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap(),
+    );
+    shreds.extend(create_update_parent_shreds_with_shred_parent(
+        slot,
+        original_parent,
+        update_parent,
+        Hash::new_unique(),
+        update_parent_fec_set_index,
+        false,
+    ));
+    shreds.extend(create_entry_batch_shreds(
+        slot,
+        original_parent,
+        post_update_entries,
+        post_update_fec_set_index,
+        true,
+    ));
+    blockstore.insert_shreds(shreds, true).unwrap();
+
+    assert_matches!(
+        (
+            expect_block_aborted,
+            blockstore.get_slot_component_views_with_shred_info(slot, 0, true)
+        ),
+        (true, Err(BlockstoreError::BlockAborted(_)))
+            | (false, Err(BlockstoreError::InvalidShredData(_)))
+    );
+
+    blockstore
+        .purge_slots(slot, slot, PurgeType::Exact)
+        .unwrap();
+
+    for (signature, address) in [
+        (pre_update_signature, pre_update_address),
+        (post_update_signature, post_update_address),
+    ] {
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .read_transaction_memos(signature, slot)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get((address, slot, 0, signature))
+                .unwrap()
+                .is_none()
+        );
     }
 }
 

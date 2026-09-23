@@ -1,7 +1,7 @@
 use {
     crate::{
-        ProgressBar, admin_rpc_service, format_name_value, new_spinner_progress_bar,
-        println_name_value,
+        ProgressBar, admin_rpc_service, format_name_value, new_multiline_spinner_progress_bar,
+        new_spinner_progress_bar, println_name_value,
     },
     console::style,
     solana_clock::Slot,
@@ -121,7 +121,7 @@ impl Dashboard {
                 }
             }
 
-            let progress_bar = new_spinner_progress_bar();
+            let progress_bar = new_multiline_spinner_progress_bar();
             let mut snapshot_slot_info = None;
             let mut admin_client = None;
             for i in 0.. {

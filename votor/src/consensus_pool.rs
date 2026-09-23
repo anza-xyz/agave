@@ -1087,9 +1087,25 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn test_add_vote_creates_notar_cert() {
+        let block = Block::new_unique(6);
+        test_add_vote_and_create_new_certificate_with_types(
+            Vote::new_notarization_vote(block),
+            vec![CertificateType::Notarize(block)],
+        );
+    }
+
+    #[test]
+    fn test_add_vote_creates_notar_fallback_cert() {
+        let block = Block::new_unique(6);
+        test_add_vote_and_create_new_certificate_with_types(
+            Vote::new_notarization_fallback_vote(block),
+            vec![CertificateType::NotarizeFallback(block)],
+        );
+    }
+
     #[test_case(Vote::new_finalization_vote(5), vec![CertificateType::Finalize(5)])]
-    #[test_case(Vote::new_notarization_vote(Block { slot: 6, block_id: Hash::default() }), vec![CertificateType::Notarize(Block { slot: 6, block_id: Hash::default() })])]
-    #[test_case(Vote::new_notarization_fallback_vote(Block { slot: 7, block_id: Hash::default() }), vec![CertificateType::NotarizeFallback(Block { slot: 7, block_id: Hash::default() })])]
     #[test_case(Vote::new_skip_vote(8), vec![CertificateType::Skip(8)])]
     #[test_case(Vote::new_skip_fallback_vote(9), vec![CertificateType::Skip(9)])]
     fn test_add_vote_and_create_new_certificate_with_types(
@@ -1104,10 +1120,7 @@ mod tests {
         // because finalization requires both Finalize and Notarize certificates
         if vote.is_finalize() {
             let notarize_cert = [Certificate {
-                cert_type: CertificateType::Notarize(Block {
-                    slot: vote.slot(),
-                    block_id: Hash::default(),
-                }),
+                cert_type: CertificateType::Notarize(Block::new_unique(vote.slot())),
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             }];
@@ -1183,19 +1196,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_finalize_fast_cert() {
+        let block = Block::new_unique(6);
+        test_add_certificate_with_types(
+            CertificateType::FinalizeFast(block),
+            Vote::new_notarization_vote(block),
+        );
+    }
+
+    #[test]
+    fn test_notar_cert() {
+        let block = Block::new_unique(6);
+        test_add_certificate_with_types(
+            CertificateType::Notarize(block),
+            Vote::new_notarization_vote(block),
+        );
+    }
+
+    #[test]
+    fn test_notar_fallback_cert() {
+        let block = Block::new_unique(6);
+        test_add_certificate_with_types(
+            CertificateType::NotarizeFallback(block),
+            Vote::new_notarization_fallback_vote(block),
+        );
+    }
+
     #[test_case(CertificateType::Finalize(5), Vote::new_finalization_vote(5))]
-    #[test_case(
-        CertificateType::FinalizeFast(Block { slot: 6, block_id: Hash::default() }),
-        Vote::new_notarization_vote(Block { slot: 6, block_id: Hash::default() })
-    )]
-    #[test_case(
-        CertificateType::Notarize(Block { slot: 6, block_id: Hash::default() }),
-        Vote::new_notarization_vote(Block { slot: 6, block_id: Hash::default() })
-    )]
-    #[test_case(
-        CertificateType::NotarizeFallback(Block { slot: 7, block_id: Hash::default() }),
-        Vote::new_notarization_fallback_vote(Block { slot: 7, block_id: Hash::default() })
-    )]
     #[test_case(CertificateType::Skip(8), Vote::new_skip_vote(8))]
     fn test_add_certificate_with_types(cert_type: CertificateType, vote: Vote) {
         let mut ctx = TestContext::new();
@@ -1210,10 +1238,7 @@ mod tests {
         // because finalization requires both certificates to be present
         if matches!(cert_type, CertificateType::Finalize(slot) if slot == 5) {
             let notarize_cert = Certificate {
-                cert_type: CertificateType::Notarize(Block {
-                    slot: 5,
-                    block_id: Hash::default(),
-                }),
+                cert_type: CertificateType::Notarize(Block::new_unique(5)),
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };

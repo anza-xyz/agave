@@ -7,20 +7,18 @@ use std::sync::Mutex;
 use {
     crate::{bank::BankSlotDelta, serde_snapshot, snapshot_utils, status_cache::KeySlice},
     agave_fs::io_setup::IoSetupState,
-    serde::Serialize,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_transaction_error::TransactionError,
-    std::{collections::HashMap, path::Path, sync::Arc},
+    std::{collections::HashMap, io::Write, path::Path, sync::Arc},
     wincode::{SchemaRead, SchemaWrite},
 };
 
 #[cfg_attr(
     feature = "frozen-abi",
     frozen_abi(
-        api_digest = "AardUUq1At4qq6oNNp9V2JZFsMR5k54RZmBmZkxUfk7m",
-        abi_digest = "AGXdE33medQcQ5Bzq7Mppz3cQ9TNPxBaaX2iUM68pnmC",
+        abi_digest = "HCCRaZoLYwQxPFRGnXJEocFufqKjVNLUTxoTnZuG6kDD",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
@@ -28,6 +26,48 @@ use {
 type SerdeBankSlotDelta = SerdeSlotDelta<Result<(), SerdeTransactionError>>;
 type SerdeSlotDelta<T> = (Slot, bool, SerdeStatus<T>);
 type SerdeStatus<T> = ahash::HashMap<Hash, (usize, Vec<(KeySlice, T)>)>;
+
+/// Wire shape for one slot delta. The read side builds [`SerdeBankSlotDelta`] instead; only
+/// the map's hasher differs.
+type SnapshotSlotDelta = (
+    Slot,
+    bool,
+    HashMap<Hash, (usize, Vec<(KeySlice, Result<(), SerdeTransactionError>)>)>,
+);
+
+fn to_snapshot_slot_deltas(slot_deltas: &[BankSlotDelta]) -> Vec<SnapshotSlotDelta> {
+    slot_deltas
+        .iter()
+        .map(|slot_delta| {
+            let status_map = slot_delta.2.lock().unwrap();
+            let snapshot_status_map = status_map
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        *key,
+                        (
+                            value.0,
+                            value
+                                .1
+                                .iter()
+                                .map(|(key_slice, result)| {
+                                    (
+                                        *key_slice,
+                                        result
+                                            .as_ref()
+                                            .map(|_| ())
+                                            .map_err(SerdeTransactionError::from),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        ),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            (slot_delta.0, slot_delta.1, snapshot_status_map)
+        })
+        .collect()
+}
 
 /// Serializes the status cache's `slot_deltas` to file at `status_cache_path`
 ///
@@ -38,40 +78,17 @@ pub fn serialize_status_cache(
     io_setup: &IoSetupState,
 ) -> agave_snapshots::Result<u64> {
     snapshot_utils::serialize_snapshot_data_file(status_cache_path, io_setup, |stream| {
-        let snapshot_slot_deltas = slot_deltas
-            .iter()
-            .map(|slot_delta| {
-                let status_map = slot_delta.2.lock().unwrap();
-                let snapshot_status_map = status_map
-                    .iter()
-                    .map(|(key, value)| {
-                        (
-                            *key,
-                            (
-                                value.0,
-                                value
-                                    .1
-                                    .iter()
-                                    .map(|(key_slice, result)| {
-                                        (
-                                            *key_slice,
-                                            result
-                                                .as_ref()
-                                                .map(|_| ())
-                                                .map_err(SerdeTransactionError::from),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>();
-                (slot_delta.0, slot_delta.1, snapshot_status_map)
-            })
-            .collect::<Vec<_>>();
-        serde_snapshot::serialize_into(stream, &snapshot_slot_deltas)?;
+        serialize_status_cache_into(stream, slot_deltas)?;
         Ok(())
     })
+}
+
+/// Serializes the status cache's `slot_deltas` into `stream`.
+pub fn serialize_status_cache_into(
+    stream: &mut dyn Write,
+    slot_deltas: &[BankSlotDelta],
+) -> wincode::WriteResult<()> {
+    serde_snapshot::serialize_into(stream, &to_snapshot_slot_deltas(slot_deltas))
 }
 
 /// Deserializes the status cache from file at `status_cache_path`
@@ -117,10 +134,14 @@ pub fn deserialize_status_cache(
 /// contain a string in the BorshIoError variant.
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(api_digest = "5pMgydVNgsYbg64Trhjxbftsug5La7fRDmooyrsHd4wy"),
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+    frozen_abi(
+        abi_digest = "GuuCLDSN7oydnu1szHPBxp29WUqQeeeVdqhvaX1mouMY",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire"
+    ),
+    derive(StableAbi, StableAbiSample)
 )]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
+#[derive(Debug, PartialEq, Eq, Clone, SchemaRead, SchemaWrite)]
 enum SerdeTransactionError {
     AccountInUse,
     AccountLoadedTwice,
@@ -161,6 +182,7 @@ enum SerdeTransactionError {
     UnbalancedTransaction,
     ProgramCacheHitMaxLimit,
     CommitCancelled,
+    BailOut,
 }
 
 impl From<&TransactionError> for SerdeTransactionError {
@@ -229,6 +251,11 @@ impl From<&TransactionError> for SerdeTransactionError {
             TransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
             TransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
             TransactionError::CommitCancelled => Self::CommitCancelled,
+            TransactionError::BailOut => Self::BailOut,
+            // `TransactionError` is `#[non_exhaustive]`, so the match needs a wildcard.
+            // `test_every_transaction_error_is_mirrored` walks `VARIANTS` and fails if
+            // any variant reaches it, which is what makes this unreachable.
+            _ => unreachable!("no SerdeTransactionError mirror for {err:?}"),
         }
     }
 }
@@ -299,6 +326,7 @@ impl From<SerdeTransactionError> for TransactionError {
             SerdeTransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
             SerdeTransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
             SerdeTransactionError::CommitCancelled => Self::CommitCancelled,
+            SerdeTransactionError::BailOut => Self::BailOut,
         }
     }
 }
@@ -306,11 +334,8 @@ impl From<SerdeTransactionError> for TransactionError {
 /// Copy of `InstructionError` type in which the `BorshIoError` variant
 /// contains a string.
 #[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
-)]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, PartialEq, Eq, Clone, SchemaRead, SchemaWrite)]
 enum SerdeInstructionError {
     GenericError,
     InvalidArgument,
@@ -366,6 +391,7 @@ enum SerdeInstructionError {
     MaxAccountsExceeded,
     MaxInstructionTraceLengthExceeded,
     BuiltinProgramsMustConsumeComputeUnits,
+    BailOut,
 }
 
 impl From<SerdeInstructionError> for InstructionError {
@@ -436,6 +462,7 @@ impl From<SerdeInstructionError> for InstructionError {
             SerdeInstructionError::BuiltinProgramsMustConsumeComputeUnits => {
                 Self::BuiltinProgramsMustConsumeComputeUnits
             }
+            SerdeInstructionError::BailOut => Self::BailOut,
         }
     }
 }
@@ -508,6 +535,33 @@ impl From<&InstructionError> for SerdeInstructionError {
             InstructionError::BuiltinProgramsMustConsumeComputeUnits => {
                 Self::BuiltinProgramsMustConsumeComputeUnits
             }
+            InstructionError::BailOut => Self::BailOut,
+            // See the `SerdeTransactionError` wildcard note above.
+            _ => unreachable!("no SerdeInstructionError mirror for {err:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every variant must have a mirror rather than reaching the `#[non_exhaustive]`
+    /// wildcard. This is what lets that wildcard be `unreachable!()`, so a variant
+    /// without a mirror panics here instead of while writing a snapshot.
+    #[test]
+    fn test_every_transaction_error_is_mirrored() {
+        for error in TransactionError::VARIANTS {
+            let mirrored = SerdeTransactionError::from(&error);
+            assert_eq!(TransactionError::from(mirrored), error);
+        }
+    }
+
+    #[test]
+    fn test_every_instruction_error_is_mirrored() {
+        for error in InstructionError::VARIANTS {
+            let mirrored = SerdeInstructionError::from(&error);
+            assert_eq!(InstructionError::from(mirrored), error);
         }
     }
 }

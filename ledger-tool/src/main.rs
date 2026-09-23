@@ -55,6 +55,7 @@ use {
         blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
         blockstore_processor::ProcessSlotCallback,
+        leader_schedule_cache::LeaderScheduleCache,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
@@ -75,7 +76,9 @@ use {
         stake_utils,
         transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::writable_accounts,
+    },
     solana_shred_version::compute_shred_version,
     solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::program as system_program,
@@ -486,7 +489,7 @@ fn compute_slot_cost(
                 num_programs += transaction.message().instructions().len();
 
                 let tx_cost = CostModel::calculate_cost(&transaction, &feature_set);
-                let result = cost_tracker.try_add(&tx_cost);
+                let result = cost_tracker.try_add(&tx_cost, writable_accounts(&transaction));
                 if result.is_err() {
                     println!(
                         "Slot: {slot}, CostModel rejected transaction {transaction:?}, reason \
@@ -841,6 +844,646 @@ fn record_transactions(
 
     for slot in slots.lock().unwrap().iter_mut() {
         slot.transactions.sort_by_key(|a| a.index);
+    }
+}
+
+fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
+    let exit_signal = Arc::new(AtomicBool::new(false));
+    let system_monitor_service = arg_matches
+        .is_present("os_memory_stats_reporting")
+        .then(|| {
+            SystemMonitorService::new(
+                Arc::clone(&exit_signal),
+                SystemMonitorStatsReportConfig {
+                    report_os_memory_stats: true,
+                    report_os_network_stats: false,
+                    xdp_network_config_report: None,
+                    report_os_cpu_stats: false,
+                    report_os_disk_stats: false,
+                },
+            )
+        });
+
+    let is_incremental = arg_matches.is_present("incremental");
+    let is_minimized = arg_matches.is_present("minimized");
+    let output_directory =
+        value_t!(arg_matches, "output_directory", PathBuf).unwrap_or_else(|_| {
+            let snapshot_archive_path = value_t!(arg_matches, "snapshots", String)
+                .ok()
+                .map(PathBuf::from);
+            let incremental_snapshot_archive_path =
+                value_t!(arg_matches, "incremental_snapshot_archive_path", String)
+                    .ok()
+                    .map(PathBuf::from);
+            match (
+                is_incremental,
+                &snapshot_archive_path,
+                &incremental_snapshot_archive_path,
+            ) {
+                (true, _, Some(incremental_snapshot_archive_path)) => {
+                    incremental_snapshot_archive_path.clone()
+                }
+                (_, Some(snapshot_archive_path), _) => snapshot_archive_path.clone(),
+                (_, _, _) => ledger_path.clone(),
+            }
+        });
+    let mut warp_slot = value_t!(arg_matches, "warp_slot", Slot).ok();
+    let remove_stake_accounts = arg_matches.is_present("remove_stake_accounts");
+
+    let faucet_pubkey = pubkey_of(arg_matches, "faucet_pubkey");
+    let faucet_lamports = value_t!(arg_matches, "faucet_lamports", u64).unwrap_or(0);
+
+    let rent_burn_percentage = value_t!(arg_matches, "rent_burn_percentage", u8);
+    let hashes_per_tick = arg_matches.value_of("hashes_per_tick");
+
+    let bootstrap_stake_authorized_pubkey =
+        pubkey_of(arg_matches, "bootstrap_stake_authorized_pubkey");
+    let bootstrap_validator_lamports =
+        value_t_or_exit!(arg_matches, "bootstrap_validator_lamports", u64);
+    let bootstrap_validator_stake_lamports =
+        value_t_or_exit!(arg_matches, "bootstrap_validator_stake_lamports", u64);
+    let rent = Rent::default();
+    let minimum_stake_lamports = rent.minimum_balance(StakeStateV2::size_of());
+    if bootstrap_validator_stake_lamports < minimum_stake_lamports {
+        eprintln!(
+            "Error: insufficient --bootstrap-validator-stake-lamports. Minimum amount is \
+             {minimum_stake_lamports}"
+        );
+        exit(1);
+    }
+    let bootstrap_validator_pubkeys = pubkeys_of(arg_matches, "bootstrap_validator");
+    let accounts_to_remove = pubkeys_of(arg_matches, "accounts_to_remove").unwrap_or_default();
+    let feature_gates_to_deactivate =
+        pubkeys_of(arg_matches, "feature_gates_to_deactivate").unwrap_or_default();
+    let vote_accounts_to_destake: HashSet<_> = pubkeys_of(arg_matches, "vote_accounts_to_destake")
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let snapshot_version =
+        arg_matches
+            .value_of("snapshot_version")
+            .map_or(SnapshotVersion::default(), |s| {
+                s.parse::<SnapshotVersion>().unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    exit(1)
+                })
+            });
+
+    let snapshot_archive_format = {
+        let archive_format_str = value_t_or_exit!(arg_matches, "snapshot_archive_format", String);
+        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
+            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"));
+        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
+            config.compression_level =
+                value_t_or_exit!(arg_matches, "snapshot_zstd_compression_level", i32);
+        }
+        archive_format
+    };
+
+    let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
+    let mut process_options = parse_process_options(&ledger_path, arg_matches);
+
+    let blockstore = Arc::new(open_blockstore(
+        &ledger_path,
+        arg_matches,
+        get_access_type(&process_options),
+    ));
+
+    let snapshot_slot = if Some("ROOT") == arg_matches.value_of("snapshot_slot") {
+        blockstore
+            .rooted_slot_iterator(0)
+            .expect("Failed to get rooted slot iterator")
+            .last()
+            .expect("Failed to get root")
+    } else {
+        value_t_or_exit!(arg_matches, "snapshot_slot", Slot)
+    };
+
+    if blockstore
+        .meta(snapshot_slot)
+        .unwrap()
+        .filter(|m| m.is_full())
+        .is_none()
+    {
+        eprintln!(
+            "Error: snapshot slot {snapshot_slot} does not exist in blockstore or is not full.",
+        );
+        exit(1);
+    }
+    process_options.halt_at_slot = Some(snapshot_slot);
+
+    let ending_slot = if is_minimized {
+        let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
+        if ending_slot <= snapshot_slot {
+            eprintln!(
+                "Error: ending_slot ({ending_slot}) must be greater than snapshot_slot \
+                 ({snapshot_slot})"
+            );
+            exit(1);
+        }
+
+        Some(ending_slot)
+    } else {
+        None
+    };
+
+    let enable_capitalization_change = arg_matches.is_present("enable_capitalization_change");
+
+    let snapshot_type_str = if is_incremental {
+        "incremental "
+    } else if is_minimized {
+        "minimized "
+    } else {
+        ""
+    };
+
+    info!(
+        "Creating {}snapshot of slot {} in {}",
+        snapshot_type_str,
+        snapshot_slot,
+        output_directory.display()
+    );
+
+    let LoadAndProcessLedgerOutput {
+        bank_forks,
+        starting_snapshot_hashes,
+        accounts_background_service,
+        ..
+    } = load_and_process_ledger_or_exit(
+        arg_matches,
+        &genesis_config,
+        blockstore.clone(),
+        process_options,
+        None,
+    );
+
+    let mut bank = bank_forks
+        .read()
+        .unwrap()
+        .get(snapshot_slot)
+        .unwrap_or_else(|| {
+            eprintln!("Error: Slot {snapshot_slot} is not available");
+            exit(1);
+        });
+
+    // If we are creating an incremental snapshot, it must be based on a full snapshot
+    if is_incremental {
+        assert!(
+            bank.accounts()
+                .accounts_db
+                .latest_full_snapshot_slot()
+                .is_some()
+        );
+    }
+
+    // Snapshot creation will implicitly perform AccountsDb
+    // flush and clean operations. These operations cannot be
+    // run concurrently, so ensure ABS is stopped to avoid that
+    // possibility.
+    accounts_background_service.join().unwrap();
+
+    let child_bank_required = rent_burn_percentage.is_ok()
+        || hashes_per_tick.is_some()
+        || remove_stake_accounts
+        || !accounts_to_remove.is_empty()
+        || !feature_gates_to_deactivate.is_empty()
+        || !vote_accounts_to_destake.is_empty()
+        || faucet_pubkey.is_some()
+        || bootstrap_validator_pubkeys.is_some();
+
+    if child_bank_required {
+        let child_slot = bank.slot() + 1;
+        let child_leader = LeaderScheduleCache::new_from_bank(&bank)
+            .slot_leader_at(child_slot, Some(&bank))
+            .unwrap_or_else(|| {
+                eprintln!("Error: Unable to determine the leader of child slot {child_slot}");
+                exit(1);
+            });
+        let mut child_bank = Bank::new_from_parent(bank, child_leader, child_slot);
+
+        if let Ok(rent_burn_percentage) = rent_burn_percentage {
+            child_bank.set_rent_burn_percentage(rent_burn_percentage);
+        }
+
+        if let Some(hashes_per_tick) = hashes_per_tick {
+            child_bank.set_hashes_per_tick(match hashes_per_tick {
+                // Note: Unlike `solana-genesis`, "auto" is not supported here.
+                "sleep" => None,
+                _ => Some(value_t_or_exit!(arg_matches, "hashes_per_tick", u64)),
+            });
+        }
+
+        for address in feature_gates_to_deactivate {
+            let mut account = child_bank.get_account(&address).unwrap_or_else(|| {
+                eprintln!(
+                    "Error: Feature-gate account does not exist, unable to deactivate it: \
+                     {address}"
+                );
+                exit(1);
+            });
+
+            match feature::from_account(&account) {
+                Some(feature) => {
+                    if feature.activated_at.is_none() {
+                        warn!("Feature gate is not yet activated: {address}");
+                    } else {
+                        child_bank.deactivate_feature(&address);
+                    }
+                }
+                None => {
+                    eprintln!("Error: Account is not a `Feature`: {address}");
+                    exit(1);
+                }
+            }
+
+            account.set_lamports(0);
+            child_bank.store_account(&address, &account);
+            debug!("Feature gate deactivated: {address}");
+        }
+
+        bank = Arc::new(child_bank);
+    }
+
+    if let Some(faucet_pubkey) = faucet_pubkey {
+        bank.store_account(
+            &faucet_pubkey,
+            &AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+        );
+    }
+
+    if remove_stake_accounts {
+        for (address, mut account) in bank
+            .get_program_accounts(&stake::program::id())
+            .unwrap()
+            .into_iter()
+        {
+            account.set_lamports(0);
+            bank.store_account(&address, &account);
+        }
+    }
+
+    for address in accounts_to_remove {
+        let mut account = bank.get_account(&address).unwrap_or_else(|| {
+            eprintln!("Error: Account does not exist, unable to remove it: {address}");
+            exit(1);
+        });
+
+        account.set_lamports(0);
+        bank.store_account(&address, &account);
+        debug!("Account removed: {address}");
+    }
+
+    if !vote_accounts_to_destake.is_empty() {
+        for (address, mut account) in bank
+            .get_program_accounts(&stake::program::id())
+            .unwrap()
+            .into_iter()
+        {
+            if let Ok(StakeStateV2::Stake(meta, stake, _)) = account.state()
+                && vote_accounts_to_destake.contains(&stake.delegation.voter_pubkey)
+            {
+                info!(
+                    "Undelegating stake account {address} from validator {}",
+                    stake.delegation.voter_pubkey,
+                );
+                account.set_state(&StakeStateV2::Initialized(meta)).unwrap();
+                bank.store_account(&address, &account);
+            }
+        }
+    }
+
+    if let Some(bootstrap_validator_pubkeys) = bootstrap_validator_pubkeys {
+        assert_eq!(bootstrap_validator_pubkeys.len() % 3, 0);
+
+        // Ensure there are no duplicated pubkeys in the --bootstrap-validator list
+        {
+            let mut v = bootstrap_validator_pubkeys.clone();
+            v.sort();
+            v.dedup();
+            if v.len() != bootstrap_validator_pubkeys.len() {
+                eprintln!("Error: --bootstrap-validator pubkeys cannot be duplicated");
+                exit(1);
+            }
+        }
+
+        // Delete existing vote accounts
+        for (address, mut account) in bank
+            .get_program_accounts(&solana_vote_program::id())
+            .unwrap()
+            .into_iter()
+        {
+            account.set_lamports(0);
+            bank.store_account(&address, &account);
+        }
+
+        // Add a new identity/vote/stake account for each of the provided bootstrap
+        // validators
+        let mut bootstrap_validator_pubkeys_iter = bootstrap_validator_pubkeys.iter();
+        while let Some(identity_pubkey) = bootstrap_validator_pubkeys_iter.next() {
+            let vote_pubkey = bootstrap_validator_pubkeys_iter.next().unwrap();
+            let stake_pubkey = bootstrap_validator_pubkeys_iter.next().unwrap();
+
+            bank.store_account(
+                identity_pubkey,
+                &AccountSharedData::new(bootstrap_validator_lamports, 0, &system_program::id()),
+            );
+
+            let vote_account = vote_state::create_v4_account_with_authorized(
+                identity_pubkey,
+                identity_pubkey,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                identity_pubkey,
+                10000,
+                vote_pubkey,
+                10_000,
+                identity_pubkey,
+                rent.minimum_balance(VoteStateV4::size_of()).max(1),
+            );
+
+            bank.store_account(
+                stake_pubkey,
+                &stake_utils::create_stake_account(
+                    bootstrap_stake_authorized_pubkey
+                        .as_ref()
+                        .unwrap_or(identity_pubkey),
+                    vote_pubkey,
+                    &vote_account,
+                    &rent,
+                    bootstrap_validator_stake_lamports,
+                ),
+            );
+            bank.store_account(vote_pubkey, &vote_account);
+        }
+
+        // Warp ahead at least two epochs to ensure that the leader schedule will be
+        // updated to reflect the new bootstrap validator(s)
+        let minimum_warp_slot = genesis_config
+            .epoch_schedule
+            .get_first_slot_in_epoch(genesis_config.epoch_schedule.get_epoch(snapshot_slot) + 2);
+
+        if let Some(warp_slot) = warp_slot {
+            if warp_slot < minimum_warp_slot {
+                eprintln!("Error: --warp-slot too close.  Must be >= {minimum_warp_slot}");
+                exit(1);
+            }
+        } else {
+            warn!("Warping to slot {minimum_warp_slot}");
+            warp_slot = Some(minimum_warp_slot);
+        }
+    }
+
+    let new_shred_version = compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
+    if child_bank_required {
+        let num_ticks_per_slot = bank.ticks_per_slot();
+        let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
+        let parent_blockhash = bank.last_blockhash();
+        let tick_entries = create_ticks(num_ticks_per_slot, num_hashes_per_tick, parent_blockhash);
+
+        let scheduler = BankWithScheduler::no_scheduler_available();
+        tick_entries.iter().for_each(|tick_entry| {
+            bank.register_tick(&tick_entry.hash, &scheduler);
+        });
+
+        // Calculate and set the block ID so we can read it to
+        // properly chain shreds for the child bank
+        Bank::calculate_and_set_block_id_for_dcou(&bank);
+
+        // Next steps will need write access to the Blockstore
+        // so ensure we have R/W access
+        let rw_blockstore = if blockstore.is_primary_access() {
+            blockstore.clone()
+        } else {
+            Arc::new(open_blockstore(
+                &ledger_path,
+                arg_matches,
+                AccessType::PrimaryForMaintenance,
+            ))
+        };
+
+        // If slot exists, back it up in another Blockstore
+        // just in case and purge from the Blockstore
+        let slot = bank.slot();
+        if blockstore.has_existing_shreds_for_slot(slot) {
+            let shreds = blockstore
+                .get_data_shreds_for_slot(slot, 0)
+                .expect("Blockstore operation must succeed");
+
+            let old_shred_version = shreds.first().expect("Slot must have a shred").version();
+            let backup_directory =
+                format!("{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL}_backup_{old_shred_version}_{slot}");
+            let backup_ledger_path = ledger_path.join(backup_directory);
+            info!("Backing up {slot} at {}", backup_ledger_path.display(),);
+            let backup_blockstore = Arc::new(open_blockstore(
+                &backup_ledger_path,
+                arg_matches,
+                AccessType::PrimaryForMaintenance,
+            ));
+            let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
+            let mut write_batch = backup_blockstore.get_write_batch();
+            let _ = backup_blockstore
+                .insert_cow_shreds(
+                    shreds.into_iter().map(Cow::Owned),
+                    true,
+                    &mut pinnable_slice,
+                    &mut write_batch,
+                )
+                .expect("Blockstore operation must succeed");
+
+            // Purge modifies state so use rw_blockstore
+            info!("Purging slot {slot} from Blockstore");
+            rw_blockstore
+                .purge_slots_cleanup_chaining(slot, slot, PurgeType::Exact)
+                .expect("Blockstore operation must succeed");
+        }
+
+        // Use a "dummy" but deterministic keyapir to sign
+        let keypair = keypair_from_seed(&[0; Keypair::SECRET_KEY_LENGTH])
+            .expect("Keypair creation must succeed");
+        let chained_merkle_root = bank
+            .parent()
+            .expect("Child bank must have parent bank available")
+            .block_id()
+            .expect("Parent bank must have block ID set");
+
+        let shredder = Shredder::new(
+            slot,
+            bank.parent_slot(),
+            /*reference_tick:*/ 0,
+            new_shred_version,
+        )
+        .expect("Shredder creation must succeed");
+        let shreds: Vec<_> = shredder
+            .make_merkle_shreds_from_entries(
+                &keypair,
+                &tick_entries,
+                /*is_last_in_slot:*/ true,
+                chained_merkle_root,
+                /*next_shred_index:*/ 0,
+                /*next_code_index:*/ 0,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+            .into_iter()
+            .filter(Shred::is_data)
+            .map(Cow::Owned)
+            .collect();
+        let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
+        let mut write_batch = rw_blockstore.get_write_batch();
+        rw_blockstore
+            .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
+            .expect("Blockstore operation must succeed");
+    }
+
+    let pre_capitalization = bank.capitalization();
+    let post_capitalization = bank.calculate_capitalization_for_tests();
+    bank.set_capitalization_for_tests(post_capitalization);
+
+    let capitalization_message = if pre_capitalization != post_capitalization {
+        let amount = if pre_capitalization > post_capitalization {
+            format!("-{}", pre_capitalization - post_capitalization)
+        } else {
+            (post_capitalization - pre_capitalization).to_string()
+        };
+        let msg = format!("Capitalization change: {amount} lamports");
+        warn!("{msg}");
+        if !enable_capitalization_change {
+            eprintln!("{msg}\nBut `--enable-capitalization-change flag not provided");
+            exit(1);
+        }
+        Some(msg)
+    } else {
+        None
+    };
+
+    let bank = if let Some(warp_slot) = warp_slot {
+        // Need to flush the write cache in order to use
+        // Storages to calculate the accounts hash, and need to
+        // root `bank` before flushing the cache. Use squash to
+        // root all unrooted parents as well and avoid panicking
+        // during snapshot creation if we try to add roots out
+        // of order.
+        bank.squash();
+        bank.force_flush_accounts_cache();
+        Arc::new(Bank::warp_from_parent(
+            bank.clone(),
+            *bank.leader(),
+            warp_slot,
+        ))
+    } else {
+        bank
+    };
+
+    let minimize_snapshot_possibly_incomplete = if is_minimized {
+        minimize_bank_for_snapshot(
+            &blockstore,
+            &bank,
+            snapshot_slot,
+            ending_slot.unwrap(),
+            arg_matches.is_present("recalculate_accounts_lt_hash"),
+        )
+    } else {
+        false
+    };
+
+    println!(
+        "Creating a version {} {}snapshot of slot {}",
+        snapshot_version,
+        snapshot_type_str,
+        bank.slot(),
+    );
+
+    // The bank must have a block id set to take a snapshot.
+    Bank::calculate_and_set_block_id_for_dcou(&bank);
+
+    let snapshot_config = SnapshotConfig {
+        bank_snapshots_dir: ledger_path.clone(),
+        full_snapshot_archives_dir: output_directory.clone(),
+        incremental_snapshot_archives_dir: output_directory.clone(),
+        archive_format: snapshot_archive_format,
+        snapshot_version,
+        ..SnapshotConfig::default()
+    };
+
+    if is_incremental {
+        if starting_snapshot_hashes.is_none() {
+            eprintln!("Unable to create incremental snapshot without a base full snapshot");
+            exit(1);
+        }
+        let full_snapshot_slot = starting_snapshot_hashes.unwrap().full.0.0;
+        if bank.slot() <= full_snapshot_slot {
+            eprintln!(
+                "Unable to create incremental snapshot: Slot must be greater than full snapshot \
+                 slot. slot: {}, full snapshot slot: {}",
+                bank.slot(),
+                full_snapshot_slot,
+            );
+            exit(1);
+        }
+
+        let incremental_snapshot_archive_info =
+            snapshot_bank_utils::bank_to_incremental_snapshot_archive(
+                &snapshot_config,
+                &bank,
+                full_snapshot_slot,
+            )
+            .unwrap_or_else(|err| {
+                eprintln!("Unable to create incremental snapshot: {err}");
+                exit(1);
+            });
+
+        println!(
+            "Successfully created incremental snapshot for slot {}, hash {}, base slot: {}: {}",
+            bank.slot(),
+            bank.hash(),
+            full_snapshot_slot,
+            incremental_snapshot_archive_info.path().display(),
+        );
+    } else {
+        let full_snapshot_archive_info =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank)
+                .unwrap_or_else(|err| {
+                    eprintln!("Unable to create snapshot: {err}");
+                    exit(1);
+                });
+
+        println!(
+            "Successfully created snapshot for slot {}, hash {}: {}",
+            bank.slot(),
+            bank.hash(),
+            full_snapshot_archive_info.path().display(),
+        );
+
+        if is_minimized {
+            let starting_epoch = bank.epoch_schedule().get_epoch(snapshot_slot);
+            let ending_epoch = bank.epoch_schedule().get_epoch(ending_slot.unwrap());
+            if starting_epoch != ending_epoch {
+                warn!(
+                    "Minimized snapshot range crosses epoch boundary ({} to {}). Bank hashes \
+                     after {} will not match replays from a full snapshot",
+                    starting_epoch,
+                    ending_epoch,
+                    bank.epoch_schedule().get_last_slot_in_epoch(starting_epoch)
+                );
+            }
+
+            if minimize_snapshot_possibly_incomplete {
+                warn!(
+                    "Minimized snapshot may be incomplete due to missing accounts from CPI'd \
+                     address lookup table extensions. This may lead to mismatched bank hashes \
+                     while replaying."
+                );
+            }
+        }
+    }
+
+    if let Some(msg) = capitalization_message {
+        println!("{msg}");
+    }
+    println!("Shred version: {new_shred_version}",);
+
+    if let Some(system_monitor_service) = system_monitor_service {
+        exit_signal.store(true, Ordering::Relaxed);
+        system_monitor_service.join().unwrap();
     }
 }
 
@@ -1712,7 +2355,6 @@ fn main() {
     info!("{} {}", crate_name!(), solana_version::version!());
 
     let ledger_path = PathBuf::from(value_t_or_exit!(matches, "ledger_path", String));
-    let verbose_level = matches.occurrences_of("verbose");
 
     let enforce_nofile_limit = !matches.is_present("ignore_ulimit_nofile_error");
     adjust_nofile_limit(enforce_nofile_limit).unwrap_or_else(|err| {
@@ -1991,680 +2633,7 @@ fn main() {
                     }
                 }
                 ("create-snapshot", Some(arg_matches)) => {
-                    let exit_signal = Arc::new(AtomicBool::new(false));
-                    let system_monitor_service = arg_matches
-                        .is_present("os_memory_stats_reporting")
-                        .then(|| {
-                            SystemMonitorService::new(
-                                Arc::clone(&exit_signal),
-                                SystemMonitorStatsReportConfig {
-                                    report_os_memory_stats: true,
-                                    report_os_network_stats: false,
-                                    xdp_network_config_report: None,
-                                    report_os_cpu_stats: false,
-                                    report_os_disk_stats: false,
-                                },
-                            )
-                        });
-
-                    let is_incremental = arg_matches.is_present("incremental");
-                    let is_minimized = arg_matches.is_present("minimized");
-                    let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
-                        .unwrap_or_else(|_| {
-                            let snapshot_archive_path = value_t!(arg_matches, "snapshots", String)
-                                .ok()
-                                .map(PathBuf::from);
-                            let incremental_snapshot_archive_path =
-                                value_t!(arg_matches, "incremental_snapshot_archive_path", String)
-                                    .ok()
-                                    .map(PathBuf::from);
-                            match (
-                                is_incremental,
-                                &snapshot_archive_path,
-                                &incremental_snapshot_archive_path,
-                            ) {
-                                (true, _, Some(incremental_snapshot_archive_path)) => {
-                                    incremental_snapshot_archive_path.clone()
-                                }
-                                (_, Some(snapshot_archive_path), _) => {
-                                    snapshot_archive_path.clone()
-                                }
-                                (_, _, _) => ledger_path.clone(),
-                            }
-                        });
-                    let mut warp_slot = value_t!(arg_matches, "warp_slot", Slot).ok();
-                    let remove_stake_accounts = arg_matches.is_present("remove_stake_accounts");
-
-                    let faucet_pubkey = pubkey_of(arg_matches, "faucet_pubkey");
-                    let faucet_lamports =
-                        value_t!(arg_matches, "faucet_lamports", u64).unwrap_or(0);
-
-                    let rent_burn_percentage = value_t!(arg_matches, "rent_burn_percentage", u8);
-                    let hashes_per_tick = arg_matches.value_of("hashes_per_tick");
-
-                    let bootstrap_stake_authorized_pubkey =
-                        pubkey_of(arg_matches, "bootstrap_stake_authorized_pubkey");
-                    let bootstrap_validator_lamports =
-                        value_t_or_exit!(arg_matches, "bootstrap_validator_lamports", u64);
-                    let bootstrap_validator_stake_lamports =
-                        value_t_or_exit!(arg_matches, "bootstrap_validator_stake_lamports", u64);
-                    let minimum_stake_lamports = rent.minimum_balance(StakeStateV2::size_of());
-                    if bootstrap_validator_stake_lamports < minimum_stake_lamports {
-                        eprintln!(
-                            "Error: insufficient --bootstrap-validator-stake-lamports. Minimum \
-                             amount is {minimum_stake_lamports}"
-                        );
-                        exit(1);
-                    }
-                    let bootstrap_validator_pubkeys =
-                        pubkeys_of(arg_matches, "bootstrap_validator");
-                    let accounts_to_remove =
-                        pubkeys_of(arg_matches, "accounts_to_remove").unwrap_or_default();
-                    let feature_gates_to_deactivate =
-                        pubkeys_of(arg_matches, "feature_gates_to_deactivate").unwrap_or_default();
-                    let vote_accounts_to_destake: HashSet<_> =
-                        pubkeys_of(arg_matches, "vote_accounts_to_destake")
-                            .unwrap_or_default()
-                            .into_iter()
-                            .collect();
-                    let snapshot_version = arg_matches.value_of("snapshot_version").map_or(
-                        SnapshotVersion::default(),
-                        |s| {
-                            s.parse::<SnapshotVersion>().unwrap_or_else(|e| {
-                                eprintln!("Error: {e}");
-                                exit(1)
-                            })
-                        },
-                    );
-
-                    let snapshot_archive_format = {
-                        let archive_format_str =
-                            value_t_or_exit!(arg_matches, "snapshot_archive_format", String);
-                        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
-                            .unwrap_or_else(|| {
-                                panic!("Archive format not recognized: {archive_format_str}")
-                            });
-                        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
-                            config.compression_level = value_t_or_exit!(
-                                arg_matches,
-                                "snapshot_zstd_compression_level",
-                                i32
-                            );
-                        }
-                        archive_format
-                    };
-
-                    let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let mut process_options = parse_process_options(&ledger_path, arg_matches);
-
-                    let blockstore = Arc::new(open_blockstore(
-                        &ledger_path,
-                        arg_matches,
-                        get_access_type(&process_options),
-                    ));
-
-                    let snapshot_slot = if Some("ROOT") == arg_matches.value_of("snapshot_slot") {
-                        blockstore
-                            .rooted_slot_iterator(0)
-                            .expect("Failed to get rooted slot iterator")
-                            .last()
-                            .expect("Failed to get root")
-                    } else {
-                        value_t_or_exit!(arg_matches, "snapshot_slot", Slot)
-                    };
-
-                    if blockstore
-                        .meta(snapshot_slot)
-                        .unwrap()
-                        .filter(|m| m.is_full())
-                        .is_none()
-                    {
-                        eprintln!(
-                            "Error: snapshot slot {snapshot_slot} does not exist in blockstore or \
-                             is not full.",
-                        );
-                        exit(1);
-                    }
-                    process_options.halt_at_slot = Some(snapshot_slot);
-
-                    let ending_slot = if is_minimized {
-                        let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
-                        if ending_slot <= snapshot_slot {
-                            eprintln!(
-                                "Error: ending_slot ({ending_slot}) must be greater than \
-                                 snapshot_slot ({snapshot_slot})"
-                            );
-                            exit(1);
-                        }
-
-                        Some(ending_slot)
-                    } else {
-                        None
-                    };
-
-                    let enable_capitalization_change =
-                        arg_matches.is_present("enable_capitalization_change");
-
-                    let snapshot_type_str = if is_incremental {
-                        "incremental "
-                    } else if is_minimized {
-                        "minimized "
-                    } else {
-                        ""
-                    };
-
-                    info!(
-                        "Creating {}snapshot of slot {} in {}",
-                        snapshot_type_str,
-                        snapshot_slot,
-                        output_directory.display()
-                    );
-
-                    let LoadAndProcessLedgerOutput {
-                        bank_forks,
-                        starting_snapshot_hashes,
-                        accounts_background_service,
-                        ..
-                    } = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        blockstore.clone(),
-                        process_options,
-                        None,
-                    );
-
-                    let mut bank = bank_forks
-                        .read()
-                        .unwrap()
-                        .get(snapshot_slot)
-                        .unwrap_or_else(|| {
-                            eprintln!("Error: Slot {snapshot_slot} is not available");
-                            exit(1);
-                        });
-
-                    // If we are creating an incremental snapshot, it must be based on a full snapshot
-                    if is_incremental {
-                        assert!(
-                            bank.accounts()
-                                .accounts_db
-                                .latest_full_snapshot_slot()
-                                .is_some()
-                        );
-                    }
-
-                    // Snapshot creation will implicitly perform AccountsDb
-                    // flush and clean operations. These operations cannot be
-                    // run concurrently, so ensure ABS is stopped to avoid that
-                    // possibility.
-                    accounts_background_service.join().unwrap();
-
-                    let child_bank_required = rent_burn_percentage.is_ok()
-                        || hashes_per_tick.is_some()
-                        || remove_stake_accounts
-                        || !accounts_to_remove.is_empty()
-                        || !feature_gates_to_deactivate.is_empty()
-                        || !vote_accounts_to_destake.is_empty()
-                        || faucet_pubkey.is_some()
-                        || bootstrap_validator_pubkeys.is_some();
-
-                    if child_bank_required {
-                        let mut child_bank =
-                            Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
-
-                        if let Ok(rent_burn_percentage) = rent_burn_percentage {
-                            child_bank.set_rent_burn_percentage(rent_burn_percentage);
-                        }
-
-                        if let Some(hashes_per_tick) = hashes_per_tick {
-                            child_bank.set_hashes_per_tick(match hashes_per_tick {
-                                // Note: Unlike `solana-genesis`, "auto" is not supported here.
-                                "sleep" => None,
-                                _ => Some(value_t_or_exit!(arg_matches, "hashes_per_tick", u64)),
-                            });
-                        }
-
-                        for address in feature_gates_to_deactivate {
-                            let mut account =
-                                child_bank.get_account(&address).unwrap_or_else(|| {
-                                    eprintln!(
-                                        "Error: Feature-gate account does not exist, unable to \
-                                         deactivate it: {address}"
-                                    );
-                                    exit(1);
-                                });
-
-                            match feature::from_account(&account) {
-                                Some(feature) => {
-                                    if feature.activated_at.is_none() {
-                                        warn!("Feature gate is not yet activated: {address}");
-                                    } else {
-                                        child_bank.deactivate_feature(&address);
-                                    }
-                                }
-                                None => {
-                                    eprintln!("Error: Account is not a `Feature`: {address}");
-                                    exit(1);
-                                }
-                            }
-
-                            account.set_lamports(0);
-                            child_bank.store_account(&address, &account);
-                            debug!("Feature gate deactivated: {address}");
-                        }
-
-                        bank = Arc::new(child_bank);
-                    }
-
-                    if let Some(faucet_pubkey) = faucet_pubkey {
-                        bank.store_account(
-                            &faucet_pubkey,
-                            &AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
-                        );
-                    }
-
-                    if remove_stake_accounts {
-                        for (address, mut account) in bank
-                            .get_program_accounts(&stake::program::id())
-                            .unwrap()
-                            .into_iter()
-                        {
-                            account.set_lamports(0);
-                            bank.store_account(&address, &account);
-                        }
-                    }
-
-                    for address in accounts_to_remove {
-                        let mut account = bank.get_account(&address).unwrap_or_else(|| {
-                            eprintln!(
-                                "Error: Account does not exist, unable to remove it: {address}"
-                            );
-                            exit(1);
-                        });
-
-                        account.set_lamports(0);
-                        bank.store_account(&address, &account);
-                        debug!("Account removed: {address}");
-                    }
-
-                    if !vote_accounts_to_destake.is_empty() {
-                        for (address, mut account) in bank
-                            .get_program_accounts(&stake::program::id())
-                            .unwrap()
-                            .into_iter()
-                        {
-                            if let Ok(StakeStateV2::Stake(meta, stake, _)) = account.state()
-                                && vote_accounts_to_destake.contains(&stake.delegation.voter_pubkey)
-                            {
-                                if verbose_level > 0 {
-                                    warn!(
-                                        "Undelegating stake account {} from {}",
-                                        address, stake.delegation.voter_pubkey,
-                                    );
-                                }
-                                account.set_state(&StakeStateV2::Initialized(meta)).unwrap();
-                                bank.store_account(&address, &account);
-                            }
-                        }
-                    }
-
-                    if let Some(bootstrap_validator_pubkeys) = bootstrap_validator_pubkeys {
-                        assert_eq!(bootstrap_validator_pubkeys.len() % 3, 0);
-
-                        // Ensure there are no duplicated pubkeys in the --bootstrap-validator list
-                        {
-                            let mut v = bootstrap_validator_pubkeys.clone();
-                            v.sort();
-                            v.dedup();
-                            if v.len() != bootstrap_validator_pubkeys.len() {
-                                eprintln!(
-                                    "Error: --bootstrap-validator pubkeys cannot be duplicated"
-                                );
-                                exit(1);
-                            }
-                        }
-
-                        // Delete existing vote accounts
-                        for (address, mut account) in bank
-                            .get_program_accounts(&solana_vote_program::id())
-                            .unwrap()
-                            .into_iter()
-                        {
-                            account.set_lamports(0);
-                            bank.store_account(&address, &account);
-                        }
-
-                        // Add a new identity/vote/stake account for each of the provided bootstrap
-                        // validators
-                        let mut bootstrap_validator_pubkeys_iter =
-                            bootstrap_validator_pubkeys.iter();
-                        while let Some(identity_pubkey) = bootstrap_validator_pubkeys_iter.next() {
-                            let vote_pubkey = bootstrap_validator_pubkeys_iter.next().unwrap();
-                            let stake_pubkey = bootstrap_validator_pubkeys_iter.next().unwrap();
-
-                            bank.store_account(
-                                identity_pubkey,
-                                &AccountSharedData::new(
-                                    bootstrap_validator_lamports,
-                                    0,
-                                    &system_program::id(),
-                                ),
-                            );
-
-                            let vote_account = vote_state::create_v4_account_with_authorized(
-                                identity_pubkey,
-                                identity_pubkey,
-                                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-                                identity_pubkey,
-                                10000,
-                                vote_pubkey,
-                                10_000,
-                                identity_pubkey,
-                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
-                            );
-
-                            bank.store_account(
-                                stake_pubkey,
-                                &stake_utils::create_stake_account(
-                                    bootstrap_stake_authorized_pubkey
-                                        .as_ref()
-                                        .unwrap_or(identity_pubkey),
-                                    vote_pubkey,
-                                    &vote_account,
-                                    &rent,
-                                    bootstrap_validator_stake_lamports,
-                                ),
-                            );
-                            bank.store_account(vote_pubkey, &vote_account);
-                        }
-
-                        // Warp ahead at least two epochs to ensure that the leader schedule will be
-                        // updated to reflect the new bootstrap validator(s)
-                        let minimum_warp_slot =
-                            genesis_config.epoch_schedule.get_first_slot_in_epoch(
-                                genesis_config.epoch_schedule.get_epoch(snapshot_slot) + 2,
-                            );
-
-                        if let Some(warp_slot) = warp_slot {
-                            if warp_slot < minimum_warp_slot {
-                                eprintln!(
-                                    "Error: --warp-slot too close.  Must be >= {minimum_warp_slot}"
-                                );
-                                exit(1);
-                            }
-                        } else {
-                            warn!("Warping to slot {minimum_warp_slot}");
-                            warp_slot = Some(minimum_warp_slot);
-                        }
-                    }
-
-                    let new_shred_verison =
-                        compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
-                    if child_bank_required {
-                        let num_ticks_per_slot = bank.ticks_per_slot();
-                        let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
-                        let parent_blockhash = bank.last_blockhash();
-                        let tick_entries =
-                            create_ticks(num_ticks_per_slot, num_hashes_per_tick, parent_blockhash);
-
-                        let scheduler = BankWithScheduler::no_scheduler_available();
-                        tick_entries.iter().for_each(|tick_entry| {
-                            bank.register_tick(&tick_entry.hash, &scheduler);
-                        });
-
-                        // Calculate and set the block ID so we can read it to
-                        // properly chain shreds for the child bank
-                        Bank::calculate_and_set_block_id_for_dcou(&bank);
-
-                        // Next steps will need write access to the Blockstore
-                        // so ensure we have R/W access
-                        let rw_blockstore = if blockstore.is_primary_access() {
-                            blockstore.clone()
-                        } else {
-                            Arc::new(open_blockstore(
-                                &ledger_path,
-                                arg_matches,
-                                AccessType::PrimaryForMaintenance,
-                            ))
-                        };
-
-                        // If slot exists, back it up in another Blockstore
-                        // just in case and purge from the Blockstore
-                        let slot = bank.slot();
-                        if blockstore.has_existing_shreds_for_slot(slot) {
-                            let shreds = blockstore
-                                .get_data_shreds_for_slot(slot, 0)
-                                .expect("Blockstore operation must succeed");
-
-                            let old_shred_version =
-                                shreds.first().expect("Slot must have a shred").version();
-                            let backup_directory = format!(
-                                "{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL}_backup_{old_shred_version}_{slot}"
-                            );
-                            let backup_ledger_path = ledger_path.join(backup_directory);
-                            info!("Backing up {slot} at {}", backup_ledger_path.display(),);
-                            let backup_blockstore = Arc::new(open_blockstore(
-                                &backup_ledger_path,
-                                arg_matches,
-                                AccessType::PrimaryForMaintenance,
-                            ));
-                            let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
-                            let mut write_batch = backup_blockstore.get_write_batch();
-                            let _ = backup_blockstore
-                                .insert_cow_shreds(
-                                    shreds.into_iter().map(Cow::Owned),
-                                    true,
-                                    &mut pinnable_slice,
-                                    &mut write_batch,
-                                )
-                                .expect("Blockstore operation must succeed");
-
-                            // Purge modifies state so use rw_blockstore
-                            info!("Purging slot {slot} from Blockstore");
-                            rw_blockstore
-                                .purge_slots_cleanup_chaining(slot, slot, PurgeType::Exact)
-                                .expect("Blockstore operation must succeed");
-                        }
-
-                        // Use a "dummy" but deterministic keyapir to sign
-                        let keypair = keypair_from_seed(&[0; Keypair::SECRET_KEY_LENGTH])
-                            .expect("Keypair creation must succeed");
-                        let chained_merkle_root = bank
-                            .parent()
-                            .expect("Child bank must have parent bank available")
-                            .block_id()
-                            .expect("Parent bank must have block ID set");
-
-                        let shredder = Shredder::new(
-                            slot,
-                            bank.parent_slot(),
-                            /*reference_tick:*/ 0,
-                            new_shred_verison,
-                        )
-                        .expect("Shredder creation must succeed");
-                        let shreds: Vec<_> = shredder
-                            .make_merkle_shreds_from_entries(
-                                &keypair,
-                                &tick_entries,
-                                /*is_last_in_slot:*/ true,
-                                chained_merkle_root,
-                                /*next_shred_index:*/ 0,
-                                /*next_code_index:*/ 0,
-                                &ReedSolomonCache::default(),
-                                &mut ProcessShredsStats::default(),
-                            )
-                            .into_iter()
-                            .filter(Shred::is_data)
-                            .map(Cow::Owned)
-                            .collect();
-                        let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
-                        let mut write_batch = rw_blockstore.get_write_batch();
-                        rw_blockstore
-                            .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
-                            .expect("Blockstore operation must succeed");
-                    }
-
-                    let pre_capitalization = bank.capitalization();
-                    let post_capitalization = bank.calculate_capitalization_for_tests();
-                    bank.set_capitalization_for_tests(post_capitalization);
-
-                    let capitalization_message = if pre_capitalization != post_capitalization {
-                        let amount = if pre_capitalization > post_capitalization {
-                            format!("-{}", pre_capitalization - post_capitalization)
-                        } else {
-                            (post_capitalization - pre_capitalization).to_string()
-                        };
-                        let msg = format!("Capitalization change: {amount} lamports");
-                        warn!("{msg}");
-                        if !enable_capitalization_change {
-                            eprintln!(
-                                "{msg}\nBut `--enable-capitalization-change flag not provided"
-                            );
-                            exit(1);
-                        }
-                        Some(msg)
-                    } else {
-                        None
-                    };
-
-                    let bank = if let Some(warp_slot) = warp_slot {
-                        // Need to flush the write cache in order to use
-                        // Storages to calculate the accounts hash, and need to
-                        // root `bank` before flushing the cache. Use squash to
-                        // root all unrooted parents as well and avoid panicking
-                        // during snapshot creation if we try to add roots out
-                        // of order.
-                        bank.squash();
-                        bank.force_flush_accounts_cache();
-                        Arc::new(Bank::warp_from_parent(
-                            bank.clone(),
-                            *bank.leader(),
-                            warp_slot,
-                        ))
-                    } else {
-                        bank
-                    };
-
-                    let minimize_snapshot_possibly_incomplete = if is_minimized {
-                        minimize_bank_for_snapshot(
-                            &blockstore,
-                            &bank,
-                            snapshot_slot,
-                            ending_slot.unwrap(),
-                            arg_matches.is_present("recalculate_accounts_lt_hash"),
-                        )
-                    } else {
-                        false
-                    };
-
-                    println!(
-                        "Creating a version {} {}snapshot of slot {}",
-                        snapshot_version,
-                        snapshot_type_str,
-                        bank.slot(),
-                    );
-
-                    // The bank must have a block id set to take a snapshot.
-                    Bank::calculate_and_set_block_id_for_dcou(&bank);
-
-                    let snapshot_config = SnapshotConfig {
-                        bank_snapshots_dir: ledger_path.clone(),
-                        full_snapshot_archives_dir: output_directory.clone(),
-                        incremental_snapshot_archives_dir: output_directory.clone(),
-                        archive_format: snapshot_archive_format,
-                        snapshot_version,
-                        ..SnapshotConfig::default()
-                    };
-
-                    if is_incremental {
-                        if starting_snapshot_hashes.is_none() {
-                            eprintln!(
-                                "Unable to create incremental snapshot without a base full \
-                                 snapshot"
-                            );
-                            exit(1);
-                        }
-                        let full_snapshot_slot = starting_snapshot_hashes.unwrap().full.0.0;
-                        if bank.slot() <= full_snapshot_slot {
-                            eprintln!(
-                                "Unable to create incremental snapshot: Slot must be greater than \
-                                 full snapshot slot. slot: {}, full snapshot slot: {}",
-                                bank.slot(),
-                                full_snapshot_slot,
-                            );
-                            exit(1);
-                        }
-
-                        let incremental_snapshot_archive_info =
-                            snapshot_bank_utils::bank_to_incremental_snapshot_archive(
-                                &snapshot_config,
-                                &bank,
-                                full_snapshot_slot,
-                            )
-                            .unwrap_or_else(|err| {
-                                eprintln!("Unable to create incremental snapshot: {err}");
-                                exit(1);
-                            });
-
-                        println!(
-                            "Successfully created incremental snapshot for slot {}, hash {}, base \
-                             slot: {}: {}",
-                            bank.slot(),
-                            bank.hash(),
-                            full_snapshot_slot,
-                            incremental_snapshot_archive_info.path().display(),
-                        );
-                    } else {
-                        let full_snapshot_archive_info =
-                            snapshot_bank_utils::bank_to_full_snapshot_archive(
-                                &snapshot_config,
-                                &bank,
-                            )
-                            .unwrap_or_else(|err| {
-                                eprintln!("Unable to create snapshot: {err}");
-                                exit(1);
-                            });
-
-                        println!(
-                            "Successfully created snapshot for slot {}, hash {}: {}",
-                            bank.slot(),
-                            bank.hash(),
-                            full_snapshot_archive_info.path().display(),
-                        );
-
-                        if is_minimized {
-                            let starting_epoch = bank.epoch_schedule().get_epoch(snapshot_slot);
-                            let ending_epoch =
-                                bank.epoch_schedule().get_epoch(ending_slot.unwrap());
-                            if starting_epoch != ending_epoch {
-                                warn!(
-                                    "Minimized snapshot range crosses epoch boundary ({} to {}). \
-                                     Bank hashes after {} will not match replays from a full \
-                                     snapshot",
-                                    starting_epoch,
-                                    ending_epoch,
-                                    bank.epoch_schedule().get_last_slot_in_epoch(starting_epoch)
-                                );
-                            }
-
-                            if minimize_snapshot_possibly_incomplete {
-                                warn!(
-                                    "Minimized snapshot may be incomplete due to missing accounts \
-                                     from CPI'd address lookup table extensions. This may lead to \
-                                     mismatched bank hashes while replaying."
-                                );
-                            }
-                        }
-                    }
-
-                    if let Some(msg) = capitalization_message {
-                        println!("{msg}");
-                    }
-                    println!("Shred version: {new_shred_verison}",);
-
-                    if let Some(system_monitor_service) = system_monitor_service {
-                        exit_signal.store(true, Ordering::Relaxed);
-                        system_monitor_service.join().unwrap();
-                    }
+                    create_snapshot(ledger_path, arg_matches);
                 }
                 ("simulate-block-production", Some(arg_matches)) => {
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);

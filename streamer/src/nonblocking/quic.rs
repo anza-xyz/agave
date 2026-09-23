@@ -5,20 +5,17 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
-        quic_socket::{QuicSocket, QuicXdpSocketParts, QuicXdpTxSocket},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
     crossbeam_channel::{Sender, TrySendError},
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
-    quinn::{
-        Accept, AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime,
-    },
+    quinn::{Accept, Connecting, Connection, Endpoint},
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
-    solana_net_utils::token_bucket::TokenBucket,
+    solana_net_utils::{quic_socket::QuicSocket, token_bucket::TokenBucket},
     solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
@@ -98,6 +95,9 @@ const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 // observed to use at most 4 chunks.
 // With the new 4096-byte limit, a max-sized transaction normally spans 3 or 4
 // full datagrams. Use 8 to allow headroom for partially filled datagrams.
+// This also sets the point at which PacketAccumulator stops retaining zero-copy
+// datagram slices and coalesces the stream into one owned buffer, so raising it
+// raises the memory a single stream can pin. See `PacketAccumulator::push`.
 const MAX_EXPECTED_TRANSACTION_CHUNKS: usize = 8;
 
 // A struct to accumulate the bytes making up
@@ -111,6 +111,10 @@ struct PacketAccumulator {
     // The capacity here should match or exceed the capacity of the chunks array used
     // by handle_connection().
     pub chunks: SmallVec<[Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS]>,
+    // Set once a stream buffers more than MAX_EXPECTED_TRANSACTION_CHUNKS chunks: from
+    // then on incoming bytes are copied into this single owned buffer rather than
+    // retained as datagram slices. See `PacketAccumulator::push`.
+    coalesced: Option<BytesMut>,
     pub start_time: Instant,
 }
 
@@ -119,7 +123,33 @@ impl PacketAccumulator {
         Self {
             meta,
             chunks: SmallVec::default(),
+            coalesced: None,
             start_time: Instant::now(),
+        }
+    }
+
+    // Coalesce before the SmallVec spills to the heap, releasing retained datagram
+    // slices. For streams that complete successfully, this moves the allocation and
+    // copy earlier: completion reuses this buffer without another allocation or copy.
+    // Allocate to the stream cap so subsequent chunks need no reallocation;
+    // handle_chunks enforces that cap. The frozen buffer keeps that cap-sized
+    // allocation for the packet's lifetime rather than shrinking to the final stream
+    // length, which is acceptable for streams already past the expected chunk count.
+    // Allocating the full cap up front is acceptable because handle_connection reads one
+    // stream per connection at a time, so a peer can hold at most one such buffer per
+    // connection. Revisit this if streams are ever read concurrently or the cap grows
+    // well beyond a few KiB.
+    fn push(&mut self, chunk: Bytes, max_size: usize) {
+        if self.coalesced.is_none() && self.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
+            let mut buf = BytesMut::with_capacity(max_size);
+            for chunk in self.chunks.drain(..) {
+                buf.put_slice(&chunk);
+            }
+            self.coalesced = Some(buf);
+        }
+        match &mut self.coalesced {
+            Some(buf) => buf.put_slice(&chunk),
+            None => self.chunks.push(chunk),
         }
     }
 }
@@ -164,31 +194,9 @@ where
 
     let endpoints = sockets
         .into_iter()
-        .map(|sock| match sock {
-            QuicSocket::Kernel(socket) => Endpoint::new(
-                EndpointConfig::default(),
-                Some(config.clone()),
-                socket,
-                Arc::new(TokioRuntime),
-            )
-            .map_err(QuicServerError::EndpointFailed),
-            QuicSocket::Xdp(QuicXdpSocketParts {
-                socket,
-                fallback_src_ip,
-                xdp_sender,
-            }) => {
-                let socket = Arc::new(
-                    QuicXdpTxSocket::new(socket, fallback_src_ip, xdp_sender)
-                        .map_err(QuicServerError::EndpointFailed)?,
-                ) as Arc<dyn AsyncUdpSocket>;
-                Endpoint::new_with_abstract_socket(
-                    EndpointConfig::default(),
-                    Some(config.clone()),
-                    socket,
-                    Arc::new(TokioRuntime),
-                )
+        .map(|sock| {
+            sock.into_endpoint(Some(config.clone()))
                 .map_err(QuicServerError::EndpointFailed)
-            }
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -705,8 +713,9 @@ async fn handle_connection<Q, C>(
             };
 
             match handle_chunks(
-                // Bytes::clone() is a cheap atomic inc
-                chunks.iter().take(n_chunks).cloned(),
+                // Move the chunks out, so the read buffer does not keep their datagrams pinned until
+                // the slot is overwritten or the stream ends.
+                chunks.iter_mut().take(n_chunks).map(std::mem::take),
                 &mut accum,
                 rtt,
                 &packet_sender,
@@ -781,7 +790,7 @@ fn handle_chunks(
             debug!("invalid stream size {}", accum.meta.size);
             return Err(());
         }
-        accum.chunks.push(chunk);
+        accum.push(chunk, max_stream_data_bytes as usize);
         if peer_type.is_staked() {
             stats
                 .total_staked_chunks_received
@@ -798,18 +807,26 @@ fn handle_chunks(
         return Ok(StreamState::Receiving);
     }
 
+    // A coalesced stream buffered more than MAX_EXPECTED_TRANSACTION_CHUNKS chunks, so it
+    // qualifies even though they have been folded into a single owned buffer.
+    if accum.coalesced.is_some() || accum.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
+        stats
+            .total_packets_at_or_above_chunk_capacity
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    // If the stream switched to coalescing mode, its single owned buffer is the whole
+    // packet; fold it back so the single-chunk (no extra copy) path below handles it.
+    if let Some(buf) = accum.coalesced.take() {
+        accum.chunks.push(buf.freeze());
+    }
+
     if accum.chunks.is_empty() {
         debug!("stream is empty");
         stats
             .total_packet_batches_none
             .fetch_add(1, Ordering::Relaxed);
         return Err(());
-    }
-
-    if accum.chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS {
-        stats
-            .total_packets_at_or_above_chunk_capacity
-            .fetch_add(1, Ordering::Relaxed);
     }
 
     // done receiving chunks
@@ -1167,6 +1184,7 @@ pub mod test {
         super::*,
         crate::nonblocking::{
             qos::NullStreamerCounter,
+            stream_throttle::{MAX_UNSTAKED_TPS, streams_per_throttling_interval},
             swqos::SwQosConfig,
             testing_utilities::{
                 SpawnTestServerResult, check_multiple_streams, create_quic_server_sockets,
@@ -1176,7 +1194,7 @@ pub mod test {
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, bounded},
-        quinn::{ApplicationClose, ConnectionError},
+        quinn::{ApplicationClose, ConnectionError, EndpointConfig, TokioRuntime},
         solana_keypair::Keypair,
         solana_message::v1::MAX_TRANSACTION_SIZE,
         solana_net_utils::sockets::bind_to_localhost_unique,
@@ -2139,8 +2157,9 @@ pub mod test {
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 
-        // unstaked connection can handle up to 100tps, so we should send in ~1s.
-        let expected_num_txs = 100;
+        // Send twice the maximum unstaked quota per throttling window so the
+        // excess streams are throttled. All must still be delivered.
+        let expected_num_txs = 2 * streams_per_throttling_interval(MAX_UNSTAKED_TPS) as usize;
         let start_time = tokio::time::Instant::now();
         for i in 0..expected_num_txs {
             let mut send_stream = client_connection.open_uni().await.unwrap();
@@ -2230,6 +2249,206 @@ pub mod test {
             1
         );
         assert!(receiver.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_packet_accumulator_coalesces_and_releases_datagram_pins() {
+        // `origin` represents shared datagram memory retained by chunk slices.
+        let total_chunks = MAX_EXPECTED_TRANSACTION_CHUNKS + 1;
+        let origin = Bytes::from((0..total_chunks as u8).collect::<Vec<u8>>());
+        let mut accum = PacketAccumulator::new(Meta::default());
+
+        // Retain slices inline up to the expected chunk count.
+        for i in 0..MAX_EXPECTED_TRANSACTION_CHUNKS {
+            accum.meta.size += 1;
+            accum.push(origin.slice(i..i + 1), origin.len());
+        }
+        assert_eq!(accum.chunks.len(), MAX_EXPECTED_TRANSACTION_CHUNKS);
+        assert!(!accum.chunks.spilled());
+        assert!(accum.coalesced.is_none());
+
+        // The next chunk triggers coalescing before `chunks` spills to the heap.
+        let last = MAX_EXPECTED_TRANSACTION_CHUNKS;
+        accum.meta.size += 1;
+        accum.push(origin.slice(last..last + 1), origin.len());
+        assert!(accum.chunks.is_empty());
+        assert!(!accum.chunks.spilled());
+        let buf = accum.coalesced.take().expect("should have coalesced");
+        assert_eq!(&buf[..], &origin[..]);
+        // Prove the buffer is a distinct allocation, not an alias to the `origin`.
+        assert!(buf.freeze().try_into_mut().is_ok());
+    }
+
+    // Drive `handle_chunks` over a grid of stream sizes, chunk counts and batch sizes and
+    // check the invariants that hold across the single-chunk, multi-chunk and coalesced
+    // paths alike. Each stream is cut into exactly `n_chunks` near-equal chunks and handed
+    // over `batch_size` at a time, the way read_chunks() delivers them. Everything is
+    // deterministic.
+    #[test]
+    fn test_handle_chunks_stream_sizes_and_chunk_counts() {
+        const CAP: usize = MAX_TRANSACTION_SIZE;
+        const STREAM_SIZES: [usize; 13] = [
+            0,
+            1,
+            128,
+            193,
+            254,
+            511,
+            786,
+            965,
+            1024,
+            1224,
+            CAP - 1,
+            CAP,
+            CAP + 10,
+        ];
+        const CHUNK_COUNTS: [usize; 8] = [
+            1,
+            4,
+            MAX_EXPECTED_TRANSACTION_CHUNKS - 1,
+            MAX_EXPECTED_TRANSACTION_CHUNKS,
+            MAX_EXPECTED_TRANSACTION_CHUNKS + 1,
+            16,
+            64,
+            128,
+        ];
+        // Chunks per read_chunks() call. 1 is the paced sender that coalescing targets, 3
+        // and 4 are the datagrams a full-size transaction spans, 8 fills the read array.
+        // Together with 5 they also place the chunk that triggers coalescing at every
+        // position within a batch: alone, first, last and in the middle with both inline
+        // pushes before it and copies after it in the same call.
+        const BATCH_SIZES: [usize; 5] = [1, 3, 4, 5, MAX_EXPECTED_TRANSACTION_CHUNKS];
+
+        for &total in &STREAM_SIZES {
+            // A stream cannot be cut into more non-empty chunks than it has bytes, and the
+            // empty stream is delivered as zero chunks exactly once.
+            for &n_chunks in CHUNK_COUNTS.iter().filter(|&&n| n <= total.max(1)) {
+                for &batch_size in &BATCH_SIZES {
+                    check_stream(total, n_chunks, batch_size);
+                }
+            }
+        }
+    }
+
+    // Feed one stream of `total` bytes to `handle_chunks` as `n_chunks` near-equal chunks
+    // (zero chunks when `total` is 0), `batch_size` chunks per call, checking the invariants
+    // after every batch and the outcome at EOF.
+    fn check_stream(total: usize, n_chunks: usize, batch_size: usize) {
+        let shape = format!("total={total} n_chunks={n_chunks} batch_size={batch_size}");
+        let max_stream_data_bytes = MAX_TRANSACTION_SIZE as u32;
+        let cap = max_stream_data_bytes as usize;
+        let rtt = Duration::from_millis(50);
+        let (sender, receiver) = bounded(1);
+        let stats = StreamerStats::default();
+        let mut accum = PacketAccumulator::new(Meta::default());
+
+        // One shared buffer stands in for datagram memory; chunks are slices of it.
+        let payload = Bytes::from((0..total).map(|i| i as u8).collect::<Vec<_>>());
+        let n_chunks = if total == 0 { 0 } else { n_chunks };
+        let mut chunks = Vec::with_capacity(n_chunks);
+        let mut offset = 0;
+        for i in 0..n_chunks {
+            // Spread the remainder over the leading chunks so every chunk is non-empty.
+            let len = total / n_chunks + usize::from(i < total % n_chunks);
+            chunks.push(payload.slice(offset..offset + len));
+            offset += len;
+        }
+        assert_eq!(offset, total, "{shape}");
+
+        let mut delivered_bytes = 0;
+        let mut delivered_chunks = 0;
+        let mut remaining = chunks.as_slice();
+        while !remaining.is_empty() {
+            let batch_len = batch_size.min(remaining.len());
+            let (batch, rest) = remaining.split_at(batch_len);
+            remaining = rest;
+            let batch_bytes: usize = batch.iter().map(Bytes::len).sum();
+
+            let result = handle_chunks(
+                batch.iter().cloned(),
+                &mut accum,
+                rtt,
+                &sender,
+                &stats,
+                ConnectionPeerType::Unstaked,
+                max_stream_data_bytes,
+            );
+
+            // Buffered chunks are bounded and never spill, whatever the shape.
+            assert!(
+                accum.chunks.len() <= MAX_EXPECTED_TRANSACTION_CHUNKS,
+                "{shape}"
+            );
+            assert!(!accum.chunks.spilled(), "{shape}");
+
+            if delivered_bytes + batch_bytes > cap {
+                assert!(
+                    result.is_err(),
+                    "{shape}: stream over the cap must be rejected"
+                );
+                assert_eq!(
+                    stats.invalid_stream_size.load(Ordering::Relaxed),
+                    1,
+                    "{shape}"
+                );
+                assert!(
+                    receiver.try_recv().is_err(),
+                    "{shape}: rejected stream must not emit a packet"
+                );
+                return;
+            }
+            assert!(matches!(result, Ok(StreamState::Receiving)), "{shape}");
+            delivered_bytes += batch_bytes;
+            delivered_chunks += batch_len;
+
+            // Coalescing starts exactly when the expected chunk count is exceeded, and
+            // the coalesced buffer is allocated once at the cap and never regrown.
+            let coalesced = delivered_chunks > MAX_EXPECTED_TRANSACTION_CHUNKS;
+            assert_eq!(accum.coalesced.is_some(), coalesced, "{shape}");
+            if let Some(buf) = &accum.coalesced {
+                assert!(accum.chunks.is_empty(), "{shape}");
+                assert_eq!(buf.len(), delivered_bytes, "{shape}");
+                assert_eq!(buf.capacity(), cap, "{shape}");
+            }
+        }
+
+        let result = handle_chunks(
+            std::iter::empty(), // EOF
+            &mut accum,
+            rtt,
+            &sender,
+            &stats,
+            ConnectionPeerType::Unstaked,
+            max_stream_data_bytes,
+        );
+        if total == 0 {
+            assert!(result.is_err(), "{shape}: empty stream must be rejected");
+            assert_eq!(
+                stats.total_packet_batches_none.load(Ordering::Relaxed),
+                1,
+                "{shape}"
+            );
+            assert!(receiver.try_recv().is_err(), "{shape}");
+            return;
+        }
+        assert!(matches!(result, Ok(StreamState::Finished)), "{shape}");
+        let PacketBatch::Single(packet) = receiver.try_recv().expect("a packet should be sent")
+        else {
+            panic!("{shape}: expected a single-packet batch");
+        };
+        assert_eq!(packet.meta().size, total, "{shape}");
+        assert_eq!(
+            packet.data(..).expect("packet data"),
+            &payload[..],
+            "{shape}"
+        );
+        assert_eq!(
+            stats
+                .total_packets_at_or_above_chunk_capacity
+                .load(Ordering::Relaxed),
+            usize::from(chunks.len() >= MAX_EXPECTED_TRANSACTION_CHUNKS),
+            "{shape}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -4,7 +4,7 @@
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_scheduler_bindings::{SharableTransactionRegion, TpuToPackMessage, tpu_message_flags},
-    agave_scheduling_utils::handshake::AgaveTpuToPackSession,
+    agave_scheduler_handshake::AgaveTpuToPackSession,
     rts_alloc::Allocator,
     solana_packet::PacketFlags,
     std::{

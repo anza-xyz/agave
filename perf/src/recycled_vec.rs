@@ -12,7 +12,7 @@ use {
 
 // A vector wrapper which preallocates vector to be used
 // with a recycler
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct RecycledVec<T: Default + Clone + Sized> {
     x: Vec<T>,

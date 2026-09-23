@@ -14,7 +14,7 @@ use {
         TrySendError,
         multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
     },
-    solana_perf::{packet::PacketBatch, recycler::Recycler},
+    solana_perf::packet::PacketBatch,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
@@ -72,10 +72,8 @@ impl GossipService {
             cluster_info.bind_ip_addrs(),
             exit.clone(),
             request_sender,
-            Recycler::default(),
             gossip_receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
-            false,
             false,
         );
         let (consume_sender, listen_receiver) =
@@ -410,7 +408,7 @@ impl ResponseSender for GossipUdpSocketProvider {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
         let sock = self.socket_provider.current_socket_ref();
-        batch_send(sock, packets.collect::<Vec<_>>())
+        batch_send(sock, packets.collect::<Vec<_>>()).map(|_num_sent| ())
     }
 }
 
@@ -459,18 +457,14 @@ impl ResponseSender for GossipXdpSender {
             } else {
                 io::ErrorKind::WouldBlock
             };
-            return Err(SendPktsError::IoError(
-                io::Error::new(
-                    kind,
-                    format!(
-                        "XDP sender failed to enqueue {num_failed} out of {num_total} gossip \
-                         packets ({num_dropped_full} full queue, {num_dropped_disconnected} \
-                         disconnected)",
-                        num_total = num_sent + num_failed
-                    ),
+            return Err(SendPktsError::IoError(io::Error::new(
+                kind,
+                format!(
+                    "XDP sender failed to enqueue {num_failed} out of {num_total} gossip packets \
+                     ({num_dropped_full} full queue, {num_dropped_disconnected} disconnected)",
+                    num_total = num_sent + num_failed
                 ),
-                num_failed,
-            ));
+            )));
         }
         Ok(())
     }

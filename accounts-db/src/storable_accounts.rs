@@ -148,6 +148,11 @@ pub trait StorableAccounts<'a>: Sync {
     }
     // current slot for account at 'index'
     fn slot(&self, index: usize) -> Slot;
+
+    /// (current slot, pubkey) for each account, in index order
+    fn slots_and_pubkeys(&self) -> impl Iterator<Item = (Slot, &Pubkey)> {
+        (0..self.len()).map(|index| (self.slot(index), self.pubkey(index)))
+    }
     /// slot that all accounts are to be written to
     fn target_slot(&self) -> Slot;
     /// true if no accounts to write
@@ -373,6 +378,14 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     fn slot(&self, index: usize) -> Slot {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].0
+    }
+    fn slots_and_pubkeys(&self) -> impl Iterator<Item = (Slot, &Pubkey)> {
+        // walk the source slices directly, avoiding a `find_internal_index` search per account
+        self.slots_and_accounts.iter().flat_map(|(slot, accounts)| {
+            accounts
+                .iter()
+                .map(move |account| (*slot, account.pubkey()))
+        })
     }
     fn target_slot(&self) -> Slot {
         self.target_slot

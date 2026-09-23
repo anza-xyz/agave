@@ -2,7 +2,7 @@ use {
     crate::repair::serve_repair::ServeRepair,
     crossbeam_channel::{Sender, bounded},
     solana_net_utils::SocketAddrSpace,
-    solana_perf::{packet::PacketBatch, recycler::Recycler},
+    solana_perf::packet::PacketBatch,
     solana_streamer::{
         evicting_sender::EvictingSender,
         sendmmsg::{SendPktsError, batch_send},
@@ -44,10 +44,8 @@ impl ServeRepairService {
             serve_repair_socket.clone(),
             exit.clone(),
             request_sender,
-            Recycler::default(),
             Arc::new(StreamerReceiveStats::new("serve_repair_receiver")),
             Some(Duration::from_millis(1)), // coalesce
-            false,                          // use_pinned_memory
             false,                          // is_staked_service
         );
         let (response_sender, response_receiver) = bounded(RESPONSE_CHANNEL_SIZE);
@@ -100,6 +98,6 @@ struct ServeRepairSocketProvider {
 impl ResponseSender for ServeRepairSocketProvider {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
-        batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>())
+        batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>()).map(|_num_sent| ())
     }
 }

@@ -680,9 +680,7 @@ mod external {
             consume_worker::external::ExternalWorker,
             transaction_scheduler::check_worker::external::ExternalCheckWorker,
         },
-        agave_scheduling_utils::handshake::{
-            AgaveCheckWorkerSession, AgaveSession, AgaveWorkerSession,
-        },
+        agave_scheduler_handshake::{AgaveCheckWorkerSession, AgaveSession, AgaveWorkerSession},
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -700,8 +698,7 @@ mod external {
             info!("Spawning external scheduler");
 
             static_assertions::const_assert!(
-                agave_scheduling_utils::handshake::MAX_WORKERS
-                    == BankingStage::max_num_workers().get()
+                agave_scheduler_handshake::MAX_WORKERS == BankingStage::max_num_workers().get()
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
@@ -830,7 +827,7 @@ pub enum BankingControlMsg {
     },
     #[cfg(unix)]
     External {
-        session: agave_scheduling_utils::handshake::AgaveSession,
+        session: agave_scheduler_handshake::AgaveSession,
     },
 }
 
@@ -900,7 +897,7 @@ mod tests {
         itertools::Itertools,
         solana_entry::{
             entry::{self, EntrySlice},
-            entry_or_marker::EntryOrMarker,
+            recorder_message::RecorderMessage,
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -1079,7 +1076,7 @@ mod tests {
         // capture the entry receiver until we've received all our entries.
         let mut entries = Vec::with_capacity(100);
         loop {
-            if let Ok((_bank, (EntryOrMarker::Entry(entry), _))) = entry_receiver.try_recv() {
+            if let Ok((_bank, (RecorderMessage::Entry(entry), _))) = entry_receiver.try_recv() {
                 let tx_entry = !entry.transactions.is_empty();
                 entries.push(entry);
                 if tx_entry {
@@ -1106,7 +1103,7 @@ mod tests {
         entries.extend(
             entry_receiver
                 .iter()
-                .map(|(_bank, (entry_or_marker, _tick_height))| entry_or_marker.unwrap_entry()),
+                .map(|(_bank, (message, _tick_height))| message.unwrap_entry()),
         );
 
         assert!(
@@ -1223,7 +1220,7 @@ mod tests {
         // check that the balance is what we expect.
         let entries: Vec<_> = entry_receiver
             .iter()
-            .map(|(_bank, (entry_or_marker, _tick_height))| entry_or_marker.unwrap_entry())
+            .map(|(_bank, (message, _tick_height))| message.unwrap_entry())
             .collect();
 
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);

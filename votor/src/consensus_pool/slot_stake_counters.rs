@@ -11,7 +11,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
-    std::{collections::BTreeMap, num::NonZero},
+    std::{collections::HashMap, num::NonZero},
 };
 
 #[derive(Debug)]
@@ -20,7 +20,7 @@ pub(crate) struct SlotStakeCounters {
     total_stake: NonZero<Stake>,
     skip_total: Stake,
     notarize_total: Stake,
-    notarize_entry_total: BTreeMap<Hash, Stake>,
+    notarize_entry_total: HashMap<Hash, Stake>,
     top_notarized_stake: Stake,
     safe_to_notar_sent: Vec<Hash>,
     safe_to_skip_sent: bool,
@@ -33,7 +33,7 @@ impl SlotStakeCounters {
             total_stake,
             skip_total: 0,
             notarize_total: 0,
-            notarize_entry_total: BTreeMap::new(),
+            notarize_entry_total: HashMap::new(),
             top_notarized_stake: 0,
             safe_to_notar_sent: vec![],
             safe_to_skip_sent: false,
@@ -188,12 +188,11 @@ mod tests {
         assert!(pending_safe_to_notar.is_empty());
         assert_eq!(stats.event_safe_to_notarize, 0);
 
+        let block = Block::new_unique(slot);
+        let vote = Vote::new_notarization_vote(block);
         // 40% of stake holders voted notarize
         counters.add_vote(
-            &Vote::new_notarization_vote(Block {
-                slot,
-                block_id: Hash::default(),
-            }),
+            &vote,
             40,
             false,
             &mut events,
@@ -203,9 +202,8 @@ mod tests {
         // First in leader window goes to events directly
         assert_eq!(events.len(), 1);
         match &events[0] {
-            VotorEvent::SafeToNotar(block) => {
-                assert_eq!(block.slot, slot);
-                assert_eq!(block.block_id, Hash::default());
+            VotorEvent::SafeToNotar(b) => {
+                assert_eq!(b, &block);
             }
             rest => panic!("unexpected: {rest:?}"),
         }
@@ -215,10 +213,7 @@ mod tests {
 
         // Adding more notarizations does not trigger more events
         counters.add_vote(
-            &Vote::new_notarization_vote(Block {
-                slot,
-                block_id: Hash::default(),
-            }),
+            &vote,
             20,
             false,
             &mut events,
@@ -340,10 +335,7 @@ mod tests {
         let slot = 2;
         // I voted for notarize b
         counters.add_vote(
-            &Vote::new_notarization_vote(Block {
-                slot,
-                block_id: Hash::default(),
-            }),
+            &Vote::new_notarization_vote(Block::new_unique(slot)),
             10,
             true,
             &mut events,

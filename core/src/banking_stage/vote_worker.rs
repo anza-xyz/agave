@@ -19,7 +19,9 @@ use {
     },
     crossbeam_channel::RecvTimeoutError,
     solana_accounts_db::account_locks::validate_account_locks,
-    solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
+    solana_clock::{
+        FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_TRANSACTION_FORWARDING_DELAY,
+    },
     solana_measure::{measure::Measure, measure_us},
     solana_perf::packet::bytes::Bytes,
     solana_poh::poh_recorder::PohRecorderError,
@@ -411,13 +413,35 @@ impl VoteWorker {
         let filter =
             Self::prepare_filter_for_pending_transactions(transactions.len(), pending_indexes);
 
-        let results = bank.check_transactions_with_forwarding_delay(
-            transactions,
-            &filter,
-            FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
-        );
+        let results = Self::check_transactions_with_forwarding_delay(bank, transactions, &filter);
 
         Self::filter_valid_transaction_indexes(&results)
+    }
+
+    /// A transaction batch check that truncates `max_age` to avoid forwarding soon-to-expire transactions.
+    fn check_transactions_with_forwarding_delay(
+        bank: &Bank,
+        txs: &[impl TransactionWithMeta],
+        lock_results: &[transaction::Result<()>],
+    ) -> Vec<TransactionCheckResult> {
+        // The following code also checks if the blockhash for a transaction is too old
+        // The check accounts for
+        //  1. Transaction forwarding delay
+        //  2. The slot at which the next leader will actually process the transaction
+        // Drop the transaction if it will expire by the time the next node receives and processes it
+        let notional_max_age = bank
+            .max_processing_age()
+            .saturating_sub(MAX_TRANSACTION_FORWARDING_DELAY)
+            .saturating_sub(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET as usize);
+
+        bank.check_transactions_external(
+            txs,
+            lock_results,
+            notional_max_age,
+            false,
+            &mut TransactionErrorMetrics::default(),
+        )
+        .0
     }
 
     /// This function creates a filter of transaction results with Ok() for every pending

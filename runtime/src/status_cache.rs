@@ -4,7 +4,6 @@ use shuttle::sync::{Arc, Mutex};
 use std::sync::{Arc, Mutex};
 use {
     log::*,
-    serde::Serialize,
     smallvec::SmallVec,
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{MAX_RECENT_BLOCKHASHES, Slot},
@@ -46,9 +45,8 @@ type SlotDeltaMap<T> = HashMap<Slot, Status<T>>;
 // construct a new one. Usually derived from a status cache's `SlotDeltaMap`
 pub type SlotDelta<T> = (Slot, bool, Status<T>);
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug)]
-pub struct StatusCache<T: Serialize + Clone> {
+pub struct StatusCache<T: Clone> {
     // cache[blockhash][tx_key] => [(fork1_slot, tx_result), (fork2_slot, tx_result), ...] used to
     // check if a tx_key was seen on a fork and for rpc to retrieve the tx_result
     cache: KeyStatusMap<T>,
@@ -59,7 +57,7 @@ pub struct StatusCache<T: Serialize + Clone> {
     slot_deltas: SlotDeltaMap<T>,
 }
 
-impl<T: Serialize + Clone> Default for StatusCache<T> {
+impl<T: Clone> Default for StatusCache<T> {
     fn default() -> Self {
         Self {
             cache: HashMap::default(),
@@ -71,7 +69,7 @@ impl<T: Serialize + Clone> Default for StatusCache<T> {
     }
 }
 
-impl<T: Serialize + Clone> StatusCache<T> {
+impl<T: Clone> StatusCache<T> {
     /// Clear all entries for a slot.
     ///
     /// This is used when a slot is purged from the cache, see
@@ -351,7 +349,7 @@ mod tests {
 
     type BankStatusCache = StatusCache<()>;
 
-    impl<T: Serialize + Clone> StatusCache<T> {
+    impl<T: Clone> StatusCache<T> {
         fn from_slot_deltas(slot_deltas: &[SlotDelta<T>]) -> Self {
             let mut cache = Self::default();
             cache.append(slot_deltas);
@@ -359,7 +357,7 @@ mod tests {
         }
     }
 
-    impl<T: Serialize + Clone + PartialEq> PartialEq for StatusCache<T> {
+    impl<T: Clone + PartialEq> PartialEq for StatusCache<T> {
         fn eq(&self, other: &Self) -> bool {
             self.roots == other.roots
                 && self

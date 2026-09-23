@@ -51,16 +51,6 @@ pub enum AccountsFile {
 }
 
 impl AccountsFile {
-    /// Create an AccountsFile instance from the specified path.
-    ///
-    /// The second element of the returned tuple is the number of accounts in the
-    /// accounts file.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
-        let (av, num_accounts) = AppendVec::new_from_file(path, current_len)?;
-        Ok((Self::AppendVec(av), num_accounts))
-    }
-
     /// Creates a new AccountsFile for the underlying storage at `file_info`
     ///
     /// This version of `new()` may only be called when reconstructing storages as part of startup.
@@ -72,10 +62,10 @@ impl AccountsFile {
     }
 
     /// if storage is not readonly, reopen another instance that is read only
-    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
-        match self {
-            Self::AppendVec(av) => av.reopen_as_readonly_file_io().map(Self::AppendVec),
-        }
+    pub(crate) fn reopen_as_readonly(&self) -> Result<Option<Self>> {
+        Ok(match self {
+            Self::AppendVec(av) => av.reopen_as_readonly_file_io()?.map(Self::AppendVec),
+        })
     }
 
     /// Detach the on-disk file from this storage's lifetime; see
@@ -83,14 +73,6 @@ impl AccountsFile {
     pub fn disable_remove_on_drop(&self) {
         match self {
             Self::AppendVec(av) => av.disable_remove_on_drop(),
-        }
-    }
-
-    /// Return the total number of bytes of the zero lamport accounts in the storage.
-    /// Those bytes are "dead" and can be shrunk away.
-    pub(crate) fn dead_bytes_due_to_zero_lamport_accounts(&self, count: usize) -> usize {
-        match self {
-            Self::AppendVec(av) => av.dead_bytes_due_to_zero_lamport_accounts(count),
         }
     }
 
@@ -128,7 +110,7 @@ impl AccountsFile {
     /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
     pub fn get_stored_account_without_data_callback<Ret>(
         &self,
-        offset: usize,
+        offset: Offset,
         callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
     ) -> Option<Ret> {
         match self {
@@ -145,7 +127,7 @@ impl AccountsFile {
     /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
-        offset: usize,
+        offset: Offset,
         callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> Option<Ret> {
         match self {
@@ -154,7 +136,7 @@ impl AccountsFile {
     }
 
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
-    pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
+    pub(crate) fn get_account_shared_data(&self, offset: Offset) -> Option<AccountSharedData> {
         match self {
             Self::AppendVec(av) => av.get_account_shared_data(offset),
         }
@@ -203,6 +185,18 @@ impl AccountsFile {
         Ok(())
     }
 
+    /// Scans the file already activated on the reader, preserving archive read-ahead and I/O mode.
+    pub(crate) fn scan_accounts_with<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+    ) -> Result<()> {
+        match self {
+            Self::AppendVec(av) => av.scan_accounts_with(reader, callback)?,
+        }
+        Ok(())
+    }
+
     /// Calculate the amount of storage required for an account with the passed
     /// in data_len
     pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {
@@ -212,9 +206,9 @@ impl AccountsFile {
     }
 
     /// Returns the account data size for each account in `offsets`.
-    pub(crate) fn get_account_data_lens<'a>(
+    pub(crate) fn get_account_data_lens(
         &self,
-        offsets: impl IntoIterator<Item = &'a Offset, IntoIter: ExactSizeIterator>,
+        offsets: impl IntoIterator<Item = Offset, IntoIter: ExactSizeIterator>,
     ) -> Vec<usize> {
         match self {
             Self::AppendVec(av) => av.get_account_data_lens(offsets),
@@ -257,6 +251,23 @@ impl AccountsFile {
             })
         }
     }
+
+    /// Returns the number of bytes required to archive this AccountsFile,
+    /// after excluding `excluded_accounts`.
+    ///
+    /// Note that snapshot archives always use the AppendVec format, so
+    /// this is effectively computing the AppendVec stored size.
+    pub(crate) fn len_for_archive(
+        &self,
+        excluded_accounts: impl IntoIterator<Item = usize>,
+    ) -> usize {
+        let total_size = u64_align!(self.len());
+        let excluded_size: usize = excluded_accounts
+            .into_iter()
+            .map(AppendVec::calculate_stored_size)
+            .sum();
+        total_size - excluded_size
+    }
 }
 
 /// An enum that creates AccountsFile instance with the specified format.
@@ -297,7 +308,7 @@ impl AsRef<File> for OpenFileForArchive<'_> {
 #[derive(Debug)]
 pub struct StoredAccountsInfo {
     /// offset in the storage where each account was stored
-    pub offsets: Vec<usize>,
+    pub offsets: Vec<Offset>,
     /// total size of all the stored accounts
     pub size: usize,
 }

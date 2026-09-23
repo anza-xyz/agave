@@ -8,16 +8,9 @@ use {
 };
 
 /// Snapshot serde-safe AccountsLtHash
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[serde_with::serde_as]
-#[derive(
-    Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, SchemaRead, SchemaWrite,
-)]
-pub struct SerdeAccountsLtHash(
-    // serde only has array support up to 32 elements; anything larger needs to be handled manually
-    // see https://github.com/serde-rs/serde/issues/1937 for more information
-    #[serde_as(as = "[_; LtHash::NUM_ELEMENTS]")] pub [u16; LtHash::NUM_ELEMENTS],
-);
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub struct SerdeAccountsLtHash(pub [u16; LtHash::NUM_ELEMENTS]);
 
 impl From<SerdeAccountsLtHash> for AccountsLtHash {
     fn from(accounts_lt_hash: SerdeAccountsLtHash) -> Self {
@@ -32,8 +25,8 @@ impl From<AccountsLtHash> for SerdeAccountsLtHash {
 
 /// Snapshot serde-safe RentCollector, which is now unused
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, serde::Deserialize, serde::Serialize, Clone, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, Clone, SchemaRead, SchemaWrite)]
 pub struct UnusedRentCollector {
     epoch: Epoch,
     epoch_schedule: EpochSchedule,

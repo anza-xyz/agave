@@ -2,7 +2,7 @@
 
 use {
     crate::memory_context::SerializedAccountMetadata,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_pubkey::Pubkey,
     solana_sbpf::{
@@ -823,7 +823,7 @@ mod tests {
                     // Special case implementation of configure_next_instruction_for_tests()
                     // which avoids the overflow when constructing the dedup_map
                     // by simply not filling it.
-                    let dedup_map = vec![u16::MAX; num_transaction_accounts];
+                    let dedup_map = vec![u8::MAX; num_transaction_accounts];
                     invoke_context
                         .transaction_context
                         .configure_instruction_at_index(

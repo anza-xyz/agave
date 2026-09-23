@@ -26,7 +26,6 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::GenesisConfig,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -438,10 +437,7 @@ mod tests {
         let bank_with_tower_rewards = state.add_tower_rewards(bank_at_migration0);
 
         let genesis_cert = GenesisCert {
-            block: Block {
-                slot: bank_with_tower_rewards.slot(),
-                block_id: Hash::default(),
-            },
+            block: Block::new_unique(bank_with_tower_rewards.slot()),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],

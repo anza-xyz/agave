@@ -11,7 +11,6 @@ use {
 };
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct VoteStateFrameV1_14_11 {
     pub(super) votes_frame: LockoutListFrame,
     pub(super) root_slot_frame: RootSlotFrame,

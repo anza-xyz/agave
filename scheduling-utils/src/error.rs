@@ -94,14 +94,25 @@ pub fn transaction_error_to_not_included_reason(
             not_included_reasons::PROGRAM_CACHE_HIT_MAX_LIMIT
         }
 
-        // SPECIAL CASE - CommitCancelled is an internal error reused to avoid breaking sdk
-        TransactionError::CommitCancelled => {
-            if all_or_nothing {
-                not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
-            } else {
-                not_included_reasons::PARTIAL_BATCH_CANCELLED
-            }
+        // SPECIAL CASE - CommitCancelled is an internal error reused to avoid breaking sdk.
+        // BailOut is the sdk variant that replaces it and carries the same meaning: the
+        // transaction was discarded to protect the leader, never reaching consensus.
+        TransactionError::CommitCancelled | TransactionError::BailOut => {
+            batch_cancelled(all_or_nothing)
         }
+
+        // `TransactionError` is `#[non_exhaustive]`, so the match needs a wildcard.
+        // `test_every_variant_has_a_reason` walks `VARIANTS` and fails if any variant
+        // reaches it, which is what makes this unreachable.
+        _ => unreachable!("no not-included reason for {error:?}"),
+    }
+}
+
+fn batch_cancelled(all_or_nothing: bool) -> u8 {
+    if all_or_nothing {
+        not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
+    } else {
+        not_included_reasons::PARTIAL_BATCH_CANCELLED
     }
 }
 
@@ -119,5 +130,17 @@ mod tests {
             transaction_error_to_not_included_reason(&TransactionError::CommitCancelled, false),
             not_included_reasons::PARTIAL_BATCH_CANCELLED
         );
+    }
+
+    /// Every variant must reach a reason code rather than the `#[non_exhaustive]`
+    /// wildcard. This is what lets that wildcard be `unreachable!()`, so a variant
+    /// without a code panics here instead of in the scheduler.
+    #[test]
+    fn test_every_variant_has_a_reason() {
+        for error in TransactionError::VARIANTS {
+            for all_or_nothing in [false, true] {
+                transaction_error_to_not_included_reason(&error, all_or_nothing);
+            }
+        }
     }
 }

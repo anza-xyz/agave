@@ -9,11 +9,8 @@ use {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
-    frozen_abi(
-        api_digest = "B1L3iQKWwktCs1jEZhvgwn8h4fk6zMVJM2hXbKA1TuZ8",
-        abi_digest = "DsTqqTxSXRHpGKM12HvSqKaYr18D4WGPGEbYV1cs2W3n"
-    )
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(abi_digest = "DsTqqTxSXRHpGKM12HvSqKaYr18D4WGPGEbYV1cs2W3n")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower1_14_11 {

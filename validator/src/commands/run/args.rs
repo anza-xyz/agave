@@ -1097,6 +1097,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<usize>)
             .takes_value(true)
             .help("Pre-allocate the accounts index, assuming this many accounts")
+            .long_help(
+                "Pre-allocate the accounts index, assuming this many accounts. Overrides the \
+                 account count recorded in the local snapshot directory, which is otherwise used \
+                 when starting from local snapshot state rather than a snapshot archive.",
+            )
             .hidden(hidden_unless_forced()),
     )
     .arg(
@@ -1235,6 +1240,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(|s| is_within_range(s, 1..))
             .help(DefaultSchedulerPool::cli_message()),
+    )
+    .arg(
+        Arg::with_name("replay_arenas")
+            .long("experimental-replay-arenas")
+            .value_name("COUNT")
+            .takes_value(true)
+            .validator(|s| is_within_range(s, 1..))
+            .help(
+                "Number of jemalloc arenas for replay. solReplayStage uses arena 0 and unified \
+                 scheduler handler threads use the arenas in round-robin order",
+            ),
     )
     .arg(
         Arg::with_name("no_xdp")

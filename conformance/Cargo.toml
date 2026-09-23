@@ -1,0 +1,114 @@
+[package]
+name = "agave-conformance"
+description = "Cross-domain conformance harnesses for Agave"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+workspace = "../dev-bins"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib", "cdylib"]
+bench = false
+
+[[bin]]
+name = "test_exec_block"
+path = "src/bin/test_exec_block.rs"
+required-features = ["cli", "ffi"]
+
+[[bin]]
+name = "test_exec_cost"
+path = "src/bin/test_exec_cost.rs"
+required-features = ["cli", "ffi"]
+
+[[bin]]
+name = "test_exec_gossip"
+path = "src/bin/test_exec_gossip.rs"
+required-features = ["cli", "ffi"]
+
+[[bin]]
+name = "test_exec_shred"
+path = "src/bin/test_exec_shred.rs"
+required-features = ["cli", "ffi"]
+
+[[bin]]
+name = "test_exec_txn"
+path = "src/bin/test_exec_txn.rs"
+required-features = ["cli", "ffi"]
+
+[features]
+default = ["cli", "ffi"]
+agave-unstable-api = []
+cli = ["dep:clap"]
+dev-context-only-utils = []
+dummy-for-ci-check = ["ffi"]
+ffi = ["dep:prost", "dep:protosol", "agave-unstable-api", "solana-svm/conformance"]
+
+[dependencies]
+agave-feature-set = { workspace = true }
+agave-transaction-view = { workspace = true }
+agave-votor-messages = { workspace = true }
+ahash = { workspace = true }
+bincode = { workspace = true }
+bv = { workspace = true, features = ["serde"] }
+bytes = { workspace = true }
+clap = { version = "4.5.59", features = ["derive"], optional = true }
+prost = { workspace = true, optional = true }
+protosol = { workspace = true, optional = true }
+serde_json = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
+solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
+solana-bloom = { workspace = true }
+solana-clock = { workspace = true }
+solana-cost-model = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-feature-gate-interface = { workspace = true, features = ["wincode"] }
+solana-fee-calculator = { workspace = true }
+solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
+solana-hash = { workspace = true }
+solana-inflation = { workspace = true }
+solana-keypair = { workspace = true }
+solana-lattice-hash = { workspace = true }
+solana-leader-schedule = { workspace = true }
+solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
+solana-message = { workspace = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true, features = ["serde", "wincode"] }
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime-transaction = { workspace = true }
+solana-sanitize = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true }
+solana-stake-interface = { workspace = true }
+solana-streamer = { workspace = true }
+solana-svm = { workspace = true }
+solana-svm-timings = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
+solana-vote = { workspace = true }
+solana-vote-interface = { workspace = true }
+wincode = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
+solana-entry = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
+solana-signer = { workspace = true }
+solana-slot-hashes = { workspace = true }
+solana-slot-history = { workspace = true }
+solana-stake-history = { workspace = true }
+solana-system-transaction = { workspace = true }
+solana-sysvar = { workspace = true }
+solana-sysvar-id = { workspace = true }
+solana-vote-program = { workspace = true }
+
+[lints]
+workspace = true

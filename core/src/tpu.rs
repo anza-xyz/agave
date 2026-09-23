@@ -25,15 +25,16 @@ use {
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
-    agave_votor_messages::VerifiedVoterSlotsSender,
+    agave_votor_messages::VerifiedVotorSlotsMessage,
     agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
+    solana_net_utils::quic_socket::{QuicSocket, into_quic_sockets},
     solana_poh::{
-        poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankEntryOrMarker},
+        poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankMessage},
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
@@ -53,7 +54,6 @@ use {
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
             spawn_simple_qos_server, spawn_stake_weighted_qos_server,
         },
-        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -119,7 +119,7 @@ impl Tpu {
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
-        entry_receiver: Receiver<WorkingBankEntryOrMarker>,
+        entry_receiver: Receiver<WorkingBankMessage>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
         subscriptions: Option<Arc<RpcSubscriptions>>,
@@ -135,7 +135,7 @@ impl Tpu {
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
         alpenglow_slot_clock: SharedAlpenglowSlotClock,
-        verified_voter_slots_sender: VerifiedVoterSlotsSender,
+        verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
@@ -235,7 +235,7 @@ impl Tpu {
 
         // Streamer for TPU
         let transactions_quic_sockets =
-            into_quic_sockets(transactions_quic_sockets, quic_xdp_sender.clone());
+            into_quic_sockets(transactions_quic_sockets, quic_xdp_sender.as_ref());
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
@@ -255,7 +255,7 @@ impl Tpu {
 
         // Streamer for TPU forward
         let transactions_forwards_quic_sockets =
-            into_quic_sockets(transactions_forwards_quic_sockets, quic_xdp_sender);
+            into_quic_sockets(transactions_forwards_quic_sockets, quic_xdp_sender.as_ref());
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
@@ -348,17 +348,17 @@ impl Tpu {
 
         let (entry_receiver, tpu_entry_notifier) =
             if let Some(entry_notification_sender) = entry_notification_sender {
-                // Preserve every entry while bounding memory. If BroadcastStage falls behind,
+                // Preserve every message while bounding memory. If BroadcastStage falls behind,
                 // the notifier blocks here and propagates backpressure to PohRecorder.
-                let (broadcast_entry_sender, broadcast_entry_receiver) =
+                let (broadcast_message_sender, broadcast_message_receiver) =
                     bounded(WORKING_BANK_CHANNEL_CAPACITY);
                 let tpu_entry_notifier = TpuEntryNotifier::new(
                     entry_receiver,
                     entry_notification_sender,
-                    broadcast_entry_sender,
+                    broadcast_message_sender,
                     exit.clone(),
                 );
-                (broadcast_entry_receiver, Some(tpu_entry_notifier))
+                (broadcast_message_receiver, Some(tpu_entry_notifier))
             } else {
                 (entry_receiver, None)
             };
@@ -429,18 +429,4 @@ impl Tpu {
         }
         Ok(())
     }
-}
-
-fn into_quic_sockets(
-    sockets: impl IntoIterator<Item = UdpSocket>,
-    quic_xdp_sender: Option<(XdpSender, Ipv4Addr)>,
-) -> impl Iterator<Item = QuicSocket> {
-    sockets
-        .into_iter()
-        .map(move |socket| match &quic_xdp_sender {
-            Some((xdp_sender, fallback_src_ip)) => {
-                QuicSocket::with_xdp(socket, *fallback_src_ip, xdp_sender.clone())
-            }
-            None => QuicSocket::from(socket),
-        })
 }

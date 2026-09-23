@@ -78,7 +78,6 @@ fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
         ..Default::default()
     }));
 
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -137,7 +136,6 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
     pipeline.set_priority(10);
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_checks_step());
     Ok(pipeline)
 }
@@ -163,6 +161,7 @@ impl PullRequestPipelineFlags {
         let trigger_all = changed_files.iter().any(|file| {
             file.starts_with("ci/xtask/")
                 || file.ends_with("ci/rust-version.sh")
+                || file.ends_with("ci/rust-nightly-version.toml")
                 || file.ends_with("rust-toolchain.toml")
                 || file.ends_with("ci/docker-run-default-image.sh")
                 || file.ends_with("ci/docker-run.sh")
@@ -180,6 +179,7 @@ impl PullRequestPipelineFlags {
                 || rust_changed
                 || changed_files.iter().any(|file| {
                     file.ends_with("ci/test-checks.sh")
+                        || file == "CHANGELOG.md"
                         || file.ends_with("scripts/cargo-for-all-lock-files.sh")
                         || file.ends_with("scripts/check-dev-context-only-utils.sh")
                         || file.ends_with("scripts/agave-build-lists.sh")
@@ -280,7 +280,6 @@ async fn generate_pull_request_pipeline(
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     if flags.shellcheck {
         pipeline.add_step(default_shellcheck_step());
     }
@@ -337,7 +336,6 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -380,17 +378,6 @@ fn default_sanity_step() -> buildkite::Step {
         command: String::from("ci/docker-run-default-image.sh ci/test-sanity.sh"),
         agents: Some(queue_agents()),
         timeout_in_minutes: Some(15),
-        ..Default::default()
-    })
-}
-
-fn default_channel_info_divergence_step() -> buildkite::Step {
-    buildkite::Step::Command(buildkite::CommandStep {
-        name: String::from("channel-info-divergence"),
-        command: String::from("ci/docker-run-default-image.sh ci/test-channel-info-divergence.sh"),
-        agents: Some(queue_agents()),
-        timeout_in_minutes: Some(10),
-        soft_fail: Some(true),
         ..Default::default()
     })
 }
@@ -679,6 +666,23 @@ mod tests {
         assert!(!f.shuttle);
         assert!(!f.coverage);
         assert!(!f.xdp_tests);
+    }
+
+    #[test]
+    fn test_rust_nightly_version_toml_triggers_all() {
+        let f = flags(&["ci/rust-nightly-version.toml"]);
+        assert!(f.checks);
+        assert!(f.feature_check);
+        assert!(f.miri);
+        assert!(f.frozen_abi);
+        assert!(f.stable);
+        assert!(f.local_cluster);
+        assert!(f.docs);
+        assert!(f.localnet);
+        assert!(f.stable_sbf);
+        assert!(f.shuttle);
+        assert!(f.coverage);
+        assert!(f.xdp_tests);
     }
 
     #[test]

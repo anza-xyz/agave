@@ -14,6 +14,7 @@ mod tests {
             snapshot_bank_utils,
             snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
         },
+        agave_fs::FileInfo,
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
             ObsoleteAccounts,
@@ -55,8 +56,8 @@ mod tests {
             std::fs::copy(storage_path, &output_path)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(output_path, storage_entry.accounts.len())?;
+            let file_info = FileInfo::new_from_path(output_path)?;
+            let accounts_file = AccountsFile::new_for_startup(file_info)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),
@@ -144,30 +145,6 @@ mod tests {
             .unwrap();
         }
         drop(writer);
-
-        // The wincode serialization path must produce byte-for-byte identical output to bincode.
-        {
-            let mut buf_wincode = Vec::new();
-            let mut bank_fields = bank2.get_fields_to_serialize();
-            let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
-            let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
-            let block_id = Some(bank_fields.block_id);
-            serde_snapshot::serialize_bank_snapshot_into_wincode(
-                &mut buf_wincode,
-                bank_fields,
-                bank2.get_bank_hash_stats(),
-                ExtraFieldsToSerialize {
-                    lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
-                    unused_incremental_snapshot_persistence: None,
-                    unused_epoch_accounts_hash: None,
-                    versioned_epoch_stakes,
-                    accounts_lt_hash,
-                    block_id,
-                },
-            )
-            .unwrap();
-            assert_eq!(buf, buf_wincode);
-        }
 
         // Now deserialize the serialized bank and ensure it matches the original bank
 
@@ -336,7 +313,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,

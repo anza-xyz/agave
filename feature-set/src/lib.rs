@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 use {
     ahash::{AHashMap, AHashSet},
@@ -78,11 +77,10 @@ pub struct FeatureSnapshot {
     pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
-    pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
-    pub upgrade_bpf_stake_program_to_v5_1: bool,
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
+    pub loader_v3_set_program_data_to_elf_length: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -179,16 +177,16 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
-            enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
-            upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
             remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
+            loader_v3_set_program_data_to_elf_length: is_active(
+                &loader_v3_set_program_data_to_elf_length::ID,
+            ),
         }
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
     active: AHashMap<Pubkey, u64>,
@@ -344,6 +342,8 @@ impl FeatureSet {
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
+            loader_v3_set_program_data_to_elf_length: snapshot
+                .loader_v3_set_program_data_to_elf_length,
         }
     }
 }
@@ -1178,10 +1178,6 @@ pub mod enable_transaction_loading_failure_fees {
     solana_pubkey::declare_id!("PaymEPK2oqwT9TXAVfadjztH2H6KfLEB9Hhd5Q5frvP");
 }
 
-pub mod enable_turbine_extended_fanout_experiments {
-    solana_pubkey::declare_id!("turbRpTzBzDU6PJmWvRTbcJXXGxUs19CvQamUrRD9bN");
-}
-
 pub mod deprecate_legacy_vote_ixs {
     solana_pubkey::declare_id!("depVvnQ2UysGrhwdiwU42tCadZL8GcBb1i2GYhMopQv");
 }
@@ -1318,6 +1314,10 @@ pub mod enforce_fixed_fec_set {
     solana_pubkey::declare_id!("fixfecLZYMfkGzwq6NJA11Yw6KYztzXiK9QcL3K78in");
 }
 
+pub mod enforce_correct_proof_size {
+    solana_pubkey::declare_id!("turbzzBJLGMJJikLvgCCJu9e1hTmfxwarrbLndYAsK5");
+}
+
 pub mod provide_instruction_data_offset_in_vm_r2 {
     solana_pubkey::declare_id!("5xXZc66h4UdB6Yq7FzdBxBiRAFMMScMLwHxk2QZDaNZL");
 }
@@ -1416,19 +1416,19 @@ pub mod set_lamports_per_byte_to_5080 {
 }
 
 pub mod set_lamports_per_byte_to_2575 {
-    solana_pubkey::declare_id!("Ftxb3ZKq7aNqgxDBbP7EonvR2RszZk9ctjdsTX38kQaz");
+    solana_pubkey::declare_id!("rntCigrTppP5JdZz7K8TyN9sMzLdAcXp8SejYpVpX6D");
 
     pub const LAMPORTS_PER_BYTE: u64 = 2575;
 }
 
 pub mod set_lamports_per_byte_to_1322 {
-    solana_pubkey::declare_id!("GsUBNYNDPdMLHPD37TToHzrzcNcjpC9w5n1EcJk5iTaM");
+    solana_pubkey::declare_id!("rntD7invRBswCAdKtRsh1G4psKjrPdS3BKqtnA78C7N");
 
     pub const LAMPORTS_PER_BYTE: u64 = 1322;
 }
 
 pub mod set_lamports_per_byte_to_696 {
-    solana_pubkey::declare_id!("mZdnRh9T2EbDNvqKjkCR3bvo5c816tJaojtE9Xs7iuY");
+    solana_pubkey::declare_id!("rntTjNZ9boq8owDxjGVFHPfWNQPDaKiM5JcjxmDGg47");
 
     pub const LAMPORTS_PER_BYTE: u64 = 696;
 }
@@ -1442,7 +1442,7 @@ pub mod limit_instruction_accounts {
 }
 
 pub mod block_revenue_sharing {
-    solana_pubkey::declare_id!("B1ockRevenueSharing111111111111111111111111");
+    solana_pubkey::declare_id!("7MYx95UBiJufqnumyN7HfskJ9vKdcGMmhreVguqrE97K");
 }
 
 pub mod vote_account_initialize_v2 {
@@ -1494,7 +1494,7 @@ pub mod define_ltds_fee_only_semantics {
 }
 
 pub mod set_lamports_per_byte_to_6960 {
-    solana_pubkey::declare_id!("5AqsUgSb6cgLizSaNiFn3o9XB7VUtKDtDZfcKEjEDmni");
+    solana_pubkey::declare_id!("rnt8ZQpz2HYhX3DkYBDGjJS1a36mYq69oXka7JrhEdi");
 
     pub const LAMPORTS_PER_BYTE: u64 = 6960;
 }
@@ -1517,14 +1517,10 @@ pub mod reduce_slot_time_to_200ms {
 
 pub mod upgrade_bpf_stake_program_to_v5_1 {
     solana_pubkey::declare_id!("s51VGwCAgebo2745DSUris72RavoLkXGUmVJosESCXr");
-
-    pub mod buffer {
-        solana_pubkey::declare_id!("p51x11QCYMHwuVS1MBcLHKb3MezWyqGS5BEB41CA1dk");
-    }
 }
 
 pub mod alpenglow_fast_leader_handover {
-    solana_pubkey::declare_id!("FLHoAWBDjNh6zwmJ5i1NKK4KyD8otAiv7XxvmnFnVnKH");
+    solana_pubkey::declare_id!("FastLeaderHandover11111111111111111111111111");
 }
 
 pub mod relax_fee_payer_constraint {
@@ -1539,6 +1535,10 @@ pub mod double_disinflation_rate {
 
 pub mod remove_inactive_stakes {
     solana_pubkey::declare_id!("RMsTKfD6hZnBhhNvgGBeKNrqCNkeoP3DYYxNtcuWtRg");
+}
+
+pub mod loader_v3_set_program_data_to_elf_length {
+    solana_pubkey::declare_id!("EhisBfVtGvEA8bVCVN5VMaYEaX6iTfoUrmcDi8LY7Kxy");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2302,10 +2302,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0082: Enable fees for some additional transaction failures",
         ),
         (
-            enable_turbine_extended_fanout_experiments::id(),
-            "enable turbine extended fanout experiments #",
-        ),
-        (
             deprecate_legacy_vote_ixs::id(),
             "Deprecate legacy vote instructions",
         ),
@@ -2462,6 +2458,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enforce_fixed_fec_set::id(),
             "SIMD-0317: Enforce 32 data + 32 coding shreds",
+        ),
+        (
+            enforce_correct_proof_size::id(),
+            "SIMD-0317: Enforce the Merkle proof size of a fixed 32:32 FEC set",
         ),
         (
             provide_instruction_data_offset_in_vm_r2::id(),
@@ -2630,6 +2630,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_inactive_stakes::id(),
             "SIMD-0599: Remove inactive stakes from stake delegations",
+        ),
+        (
+            loader_v3_set_program_data_to_elf_length::id(),
+            "SIMD-0433: Loader V3 Set Program Data to ELF Length",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

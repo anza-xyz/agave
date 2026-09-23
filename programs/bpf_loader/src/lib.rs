@@ -6,7 +6,8 @@
 use qualifier_attr::qualifiers;
 use {
     solana_bincode::limited_deserialize,
-    solana_instruction::{AccountMeta, error::InstructionError},
+    solana_instruction::AccountMeta,
+    solana_instruction_error::InstructionError,
     solana_loader_v3_interface::{
         instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, UpgradeableLoaderInstruction},
         state::UpgradeableLoaderState,
@@ -374,6 +375,10 @@ fn process_loader_upgradeable_instruction(
             instruction_context.check_number_of_instruction_accounts(7)?;
             let authority_key = Some(*instruction_context.get_key_of_instruction_account(6)?);
 
+            let set_programdata_to_elf_len = invoke_context
+                .get_feature_set()
+                .loader_v3_set_program_data_to_elf_length;
+
             // Verify Program account
 
             let program = instruction_context.try_borrow_instruction_account(1)?;
@@ -439,14 +444,28 @@ fn process_loader_upgradeable_instruction(
 
             let programdata = instruction_context.try_borrow_instruction_account(0)?;
             let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
-            let programdata_balance_required =
-                1.max(rent.minimum_balance(programdata.get_data().len()));
-            if programdata.get_data().len()
-                < UpgradeableLoaderState::size_of_programdata(buffer_data_len)
-            {
-                ic_logger_msg!(log_collector, "ProgramData account not large enough");
-                return Err(InstructionError::AccountDataTooSmall);
-            }
+            let (programdata_len, programdata_balance_required) = if set_programdata_to_elf_len {
+                // SIMD-0433: we'll resize the programdata account to the new ELF.
+                let new_len = programdata_data_offset.saturating_add(buffer_data_len);
+                if new_len > MAX_PERMITTED_DATA_LENGTH as usize {
+                    ic_logger_msg!(
+                        log_collector,
+                        "Resized ProgramData length of {} bytes exceeds max account data length",
+                        new_len
+                    );
+                    return Err(InstructionError::InvalidAccountData);
+                }
+                (new_len, 1.max(rent.minimum_balance(new_len)))
+            } else {
+                // Before SIMD-0433 accounts must be expanded manually and cannot
+                // change size here.
+                let len = programdata.get_data().len();
+                if len < UpgradeableLoaderState::size_of_programdata(buffer_data_len) {
+                    ic_logger_msg!(log_collector, "ProgramData account not large enough");
+                    return Err(InstructionError::AccountDataTooSmall);
+                }
+                (len, 1.max(rent.minimum_balance(len)))
+            };
             if programdata.get_lamports().saturating_add(buffer_lamports)
                 < programdata_balance_required
             {
@@ -503,10 +522,10 @@ fn process_loader_upgradeable_instruction(
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
 
-            // Update the ProgramData account, record the upgraded data, and zero
-            // the rest
+            // Update the ProgramData account
             let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
             {
+                programdata.set_data_length(programdata_len)?;
                 programdata.set_state(&UpgradeableLoaderState::ProgramData {
                     slot: clock.slot,
                     upgrade_authority_address: authority_key,
@@ -697,21 +716,20 @@ fn process_loader_upgradeable_instruction(
             let mut close_account = instruction_context.try_borrow_instruction_account(0)?;
             let close_key = *close_account.get_key();
             let close_account_state = close_account.get_state()?;
-            close_account.set_data_length(UpgradeableLoaderState::size_of_uninitialized())?;
             match close_account_state {
                 UpgradeableLoaderState::Uninitialized => {
                     let mut recipient_account =
                         instruction_context.try_borrow_instruction_account(1)?;
                     recipient_account.checked_add_lamports(close_account.get_lamports())?;
                     close_account.set_lamports(0)?;
-
+                    close_account
+                        .set_data_length(UpgradeableLoaderState::size_of_uninitialized())?;
                     ic_logger_msg!(log_collector, "Closed Uninitialized {}", close_key);
                 }
                 UpgradeableLoaderState::Buffer { authority_address } => {
                     instruction_context.check_number_of_instruction_accounts(3)?;
                     drop(close_account);
                     common_close_account(&authority_address, &instruction_context, &log_collector)?;
-
                     ic_logger_msg!(log_collector, "Closed Buffer {}", close_key);
                 }
                 UpgradeableLoaderState::ProgramData {
@@ -1022,6 +1040,7 @@ fn common_close_account(
 
     recipient_account.checked_add_lamports(close_account.get_lamports())?;
     close_account.set_lamports(0)?;
+    close_account.set_data_length(UpgradeableLoaderState::size_of_uninitialized())?;
     close_account.set_state(&UpgradeableLoaderState::Uninitialized)?;
     Ok(())
 }
@@ -1100,23 +1119,49 @@ mod tests {
         assert_matches::assert_matches,
         rand::Rng,
         solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
+            AccountSharedData, ReadableAccount, WritableAccount,
+            state_traits::StateMutWincode as StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
-        solana_instruction::{AccountMeta, error::InstructionError},
+        solana_instruction::AccountMeta,
+        solana_instruction_error::InstructionError,
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, loaded_programs::ProgramRuntimeEnvironment,
-            program_metrics::ProgramStatistics, vm::calculate_heap_cost, with_mock_invoke_context,
+            invoke_context::mock_process_instruction_with_feature_set,
+            loaded_programs::ProgramRuntimeEnvironment, program_metrics::ProgramStatistics,
+            vm::calculate_heap_cost, with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sbpf::program::{BuiltinFunctionDefinition, BuiltinProgram},
         solana_sdk_ids::{system_program, sysvar},
+        solana_svm_feature_set::SVMFeatureSet,
         solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
         solana_sysvar_id::SysvarId,
         std::{fs::File, io::Read, ops::Range},
+        test_case::test_case,
     };
+
+    #[derive(Clone, Copy)]
+    struct LoaderV3Features {
+        /// SIMD-0433
+        pub set_programdata_to_elf_length: bool,
+    }
+
+    impl LoaderV3Features {
+        fn all_enabled() -> Self {
+            Self {
+                set_programdata_to_elf_length: true,
+            }
+        }
+    }
+
+    fn setup_features(feature_set: &mut SVMFeatureSet, loader_v3_features: LoaderV3Features) {
+        let LoaderV3Features {
+            set_programdata_to_elf_length,
+        } = loader_v3_features;
+        feature_set.loader_v3_set_program_data_to_elf_length = set_programdata_to_elf_length;
+    }
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
     where
@@ -1143,22 +1188,22 @@ mod tests {
     #[cfg(feature = "shuttle-test")]
     const MOCK_PROCESS_RANDOM_ITERATIONS: usize = 10;
 
-    /// Wrapper around `mock_process_instruction` that runs under
-    /// `shuttle::check_random` when the `shuttle-test` feature is enabled,
-    /// providing the Shuttle scheduler context required by
+    /// Wrapper around `mock_process_instruction_with_feature_set` that runs
+    /// under `shuttle::check_random` when the `shuttle-test` feature is
+    /// enabled, providing the Shuttle scheduler context required by
     /// `solana-svm-type-overrides`'s shuttle-aware atomic types. With default
-    /// features, this is a thin pass-through to `mock_process_instruction`
-    /// with `Entrypoint::register` and an empty post-adjustment closure.
+    /// features, this is a thin pass-through to the harness with
+    /// `Entrypoint::register` and an empty post-adjustment closure.
     ///
-    /// `mock_process_instruction` itself is single-threaded: the only
+    /// The harness itself is single-threaded: the only
     /// Shuttle-backed atomic in the access path is
     /// `ProgramCacheEntry::latest_access_slot` (routed to
     /// `shuttle::sync::atomic::AtomicU64` by `solana_svm_type_overrides`), and
     /// it is touched from one Shuttle thread. Iteration-to-iteration variance
     /// under `shuttle::check_random` is solely scheduler bookkeeping noise, so
-    /// any iteration's captured result is equivalent. If
-    /// `mock_process_instruction` ever spawns Shuttle threads internally,
-    /// this last-write-wins capture must be re-evaluated.
+    /// any iteration's captured result is equivalent. If the harness ever
+    /// spawns Shuttle threads internally, this last-write-wins capture must
+    /// be re-evaluated.
     ///
     /// `setup` is typed as `fn(&mut InvokeContext)` (function pointer, not
     /// `impl Fn`) so it satisfies Shuttle's `Fn + Send + Sync + 'static` bound
@@ -1170,9 +1215,13 @@ mod tests {
         instruction_data: &[u8],
         transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
         instruction_accounts: Vec<AccountMeta>,
+        loader_v3_features: LoaderV3Features,
         expected_result: Result<(), InstructionError>,
         setup: fn(&mut InvokeContext),
     ) -> Vec<AccountSharedData> {
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        setup_features(&mut feature_set, loader_v3_features);
+
         #[cfg(feature = "shuttle-test")]
         {
             let program_id = *program_id;
@@ -1181,7 +1230,7 @@ mod tests {
             let result_for_test = shuttle::sync::Arc::clone(&result);
             shuttle::check_random(
                 move || {
-                    let accounts = mock_process_instruction(
+                    let accounts = mock_process_instruction_with_feature_set(
                         &program_id,
                         &instruction_data,
                         transaction_accounts.clone(),
@@ -1190,6 +1239,7 @@ mod tests {
                         Entrypoint::register,
                         setup,
                         |_invoke_context| {},
+                        &feature_set,
                     );
                     *result_for_test.lock().unwrap() = Some(accounts);
                 },
@@ -1209,7 +1259,7 @@ mod tests {
         }
 
         #[cfg(not(feature = "shuttle-test"))]
-        mock_process_instruction(
+        mock_process_instruction_with_feature_set(
             program_id,
             instruction_data,
             transaction_accounts,
@@ -1218,6 +1268,7 @@ mod tests {
             Entrypoint::register,
             setup,
             |_invoke_context| {},
+            &feature_set,
         )
     }
 
@@ -1233,6 +1284,7 @@ mod tests {
             instruction_data,
             transaction_accounts,
             instruction_accounts,
+            LoaderV3Features::all_enabled(),
             expected_result,
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
@@ -1314,6 +1366,7 @@ mod tests {
             &[],
             vec![(program_id, program_account)],
             Vec::new(),
+            LoaderV3Features::all_enabled(),
             Err(InstructionError::ProgramFailedToComplete),
             |invoke_context| {
                 invoke_context.compute_meter.mock_set_remaining(0);
@@ -1327,6 +1380,7 @@ mod tests {
             &[],
             vec![(program_id, parameter_account.clone())],
             Vec::new(),
+            LoaderV3Features::all_enabled(),
             Err(InstructionError::UnsupportedProgramId),
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
@@ -1715,8 +1769,9 @@ mod tests {
         account.set_data_from_slice(&data);
     }
 
-    #[test]
-    fn test_bpf_loader_upgradeable_upgrade() {
+    #[test_case(true; "simd_0433_enabled")]
+    #[test_case(false; "simd_0433_disabled")]
+    fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf_orig = Vec::new();
         file.read_to_end(&mut elf_orig).unwrap();
@@ -1839,22 +1894,24 @@ mod tests {
             (transaction_accounts, instruction_accounts)
         }
 
-        fn process_instruction(
-            transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
-            instruction_accounts: Vec<AccountMeta>,
-            expected_result: Result<(), InstructionError>,
-        ) -> Vec<AccountSharedData> {
-            let instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
-            process_instruction_with_setup(
-                &bpf_loader_upgradeable::id(),
-                &instruction_data,
-                transaction_accounts,
-                instruction_accounts,
-                expected_result,
-                |_invoke_context| {},
-            )
-        }
+        let process_instruction =
+            |transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+             instruction_accounts: Vec<AccountMeta>,
+             expected_result: Result<(), InstructionError>| {
+                let instruction_data =
+                    bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+                process_instruction_with_setup(
+                    &bpf_loader_upgradeable::id(),
+                    &instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    LoaderV3Features {
+                        set_programdata_to_elf_length,
+                    },
+                    expected_result,
+                    |_invoke_context| {},
+                )
+            };
 
         // Case: Success
         let (transaction_accounts, instruction_accounts) = get_accounts(
@@ -1865,15 +1922,33 @@ mod tests {
             &elf_new,
         );
         let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
-        let min_programdata_balance = Rent::default().minimum_balance(
-            UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
+        let starting_programdata_len =
+            UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len()));
+        let starting_programdata_balance =
+            Rent::default().minimum_balance(starting_programdata_len);
+        let expected_programdata_len = if set_programdata_to_elf_length {
+            UpgradeableLoaderState::size_of_programdata(elf_new.len())
+        } else {
+            starting_programdata_len
+        };
+        let expected_programdata_balance =
+            Rent::default().minimum_balance(expected_programdata_len);
+        assert_eq!(
+            expected_programdata_len,
+            accounts.first().unwrap().data().len()
         );
         assert_eq!(
-            min_programdata_balance,
+            expected_programdata_balance,
             accounts.first().unwrap().lamports()
         );
         assert_eq!(0, accounts.get(2).unwrap().lamports());
-        assert_eq!(1, accounts.get(3).unwrap().lamports());
+        // The buffer's lone lamport, plus any rent freed by the retraction.
+        assert_eq!(
+            starting_programdata_balance
+                .saturating_sub(expected_programdata_balance)
+                .saturating_add(1),
+            accounts.get(3).unwrap().lamports()
+        );
         assert_eq!(
             UpgradeableLoaderState::size_of_buffer(0),
             accounts.get(2).unwrap().data().len()
@@ -2002,6 +2077,9 @@ mod tests {
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
+            LoaderV3Features {
+                set_programdata_to_elf_length,
+            },
             Err(InstructionError::InvalidAccountData),
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
@@ -2232,7 +2310,11 @@ mod tests {
         process_instruction(
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::AccountDataTooSmall),
+            if set_programdata_to_elf_length {
+                Err(InstructionError::InsufficientFunds)
+            } else {
+                Err(InstructionError::AccountDataTooSmall)
+            },
         );
 
         // Case: Buffer account too small
@@ -2336,6 +2418,481 @@ mod tests {
             &upgrade_authority_address,
             &elf_orig,
             &elf_new,
+        );
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::InvalidAccountData),
+        );
+    }
+
+    #[test]
+    fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
+        let mut file = File::open("test_elfs/out/sbpfv3_return_err.so").expect("file open failed");
+        let mut elf_small = Vec::new();
+        file.read_to_end(&mut elf_small).unwrap();
+        let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
+        let mut elf_large = Vec::new();
+        file.read_to_end(&mut elf_large).unwrap();
+        assert!(elf_small.len() < elf_large.len());
+        const SLOT: u64 = 42;
+        let upgrade_authority_address = Pubkey::new_unique();
+
+        fn get_accounts(
+            upgrade_authority_address: &Pubkey,
+            elf_orig: &[u8],
+            elf_new: &[u8],
+            programdata_len: usize,
+            programdata_lamports: u64,
+            buffer_len: usize,
+            buffer_lamports: u64,
+        ) -> (Vec<(Pubkey, AccountSharedData)>, Vec<AccountMeta>) {
+            assert!(programdata_len >= UpgradeableLoaderState::size_of_programdata(elf_orig.len()));
+            assert!(buffer_len >= UpgradeableLoaderState::size_of_buffer(elf_new.len()));
+            let loader_id = bpf_loader_upgradeable::id();
+            let program_address = Pubkey::new_unique();
+            let buffer_address = Pubkey::new_unique();
+            let spill_address = Pubkey::new_unique();
+            let rent = Rent::default();
+            let (programdata_address, _) =
+                Pubkey::find_program_address(&[program_address.as_ref()], &loader_id);
+
+            let mut buffer_account =
+                AccountSharedData::new(buffer_lamports, buffer_len, &loader_id);
+            buffer_account
+                .set_state(&UpgradeableLoaderState::Buffer {
+                    authority_address: Some(*upgrade_authority_address),
+                })
+                .unwrap();
+            let buffer_data_offset = UpgradeableLoaderState::size_of_buffer_metadata();
+            buffer_account
+                .data_as_mut_slice()
+                .get_mut(buffer_data_offset..buffer_data_offset.saturating_add(elf_new.len()))
+                .unwrap()
+                .copy_from_slice(elf_new);
+
+            let mut programdata_account =
+                AccountSharedData::new(programdata_lamports, programdata_len, &loader_id);
+            programdata_account
+                .set_state(&UpgradeableLoaderState::ProgramData {
+                    slot: SLOT,
+                    upgrade_authority_address: Some(*upgrade_authority_address),
+                })
+                .unwrap();
+            let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
+            programdata_account
+                .data_as_mut_slice()
+                .get_mut(
+                    programdata_data_offset..programdata_data_offset.saturating_add(elf_orig.len()),
+                )
+                .unwrap()
+                .copy_from_slice(elf_orig);
+
+            let mut program_account = AccountSharedData::new(
+                rent.minimum_balance(UpgradeableLoaderState::size_of_program()),
+                UpgradeableLoaderState::size_of_program(),
+                &loader_id,
+            );
+            program_account.set_executable(true);
+            program_account
+                .set_state(&UpgradeableLoaderState::Program {
+                    programdata_address,
+                })
+                .unwrap();
+
+            let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+            let rent_account = create_sysvar_account(&rent);
+            let clock_account = create_sysvar_account(&Clock {
+                slot: SLOT.saturating_add(1),
+                ..Clock::default()
+            });
+            let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+            let transaction_accounts = vec![
+                (programdata_address, programdata_account),
+                (program_address, program_account),
+                (buffer_address, buffer_account),
+                (spill_address, spill_account),
+                (sysvar::rent::id(), rent_account),
+                (sysvar::clock::id(), clock_account),
+                (*upgrade_authority_address, upgrade_authority_account),
+            ];
+            let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: programdata_address,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: program_address,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: buffer_address,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: spill_address,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::rent::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: *upgrade_authority_address,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ];
+            (transaction_accounts, instruction_accounts)
+        }
+
+        let process_instruction =
+            |transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+             instruction_accounts: Vec<AccountMeta>,
+             expected_result: Result<(), InstructionError>| {
+                let instruction_data =
+                    bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+                process_instruction_with_setup(
+                    &bpf_loader_upgradeable::id(),
+                    &instruction_data,
+                    transaction_accounts,
+                    instruction_accounts,
+                    LoaderV3Features {
+                        set_programdata_to_elf_length: true,
+                    },
+                    expected_result,
+                    |_invoke_context| {},
+                )
+            };
+
+        let rent = Rent::default();
+        let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
+        let small_len = UpgradeableLoaderState::size_of_programdata(elf_small.len());
+        let large_len = UpgradeableLoaderState::size_of_programdata(elf_large.len());
+        let small_balance = rent.minimum_balance(small_len);
+        let large_balance = rent.minimum_balance(large_len);
+
+        let assert_upgraded =
+            |accounts: &[AccountSharedData], elf_new: &[u8], expected_len: usize| {
+                let programdata = accounts.first().unwrap();
+                // Programdata has expected length.,
+                assert_eq!(expected_len, programdata.data().len());
+                // Rent-exempt for its new size.
+                assert_eq!(rent.minimum_balance(expected_len), programdata.lamports());
+                // ELF is the new ELF.
+                assert_eq!(
+                    elf_new,
+                    programdata
+                        .data()
+                        .get(
+                            programdata_data_offset
+                                ..programdata_data_offset.saturating_add(elf_new.len())
+                        )
+                        .unwrap()
+                );
+                // Metadata unchanged.
+                let state: UpgradeableLoaderState = programdata.state().unwrap();
+                assert_eq!(
+                    UpgradeableLoaderState::ProgramData {
+                        slot: SLOT.saturating_add(1),
+                        upgrade_authority_address: Some(upgrade_authority_address),
+                    },
+                    state
+                );
+                // Buffer cleared.
+                let buffer = accounts.get(2).unwrap();
+                assert_eq!(0, buffer.lamports());
+                assert_eq!(
+                    UpgradeableLoaderState::size_of_buffer(0),
+                    buffer.data().len()
+                );
+            };
+
+        // Case: Shrink success
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_large,
+            &elf_small,
+            large_len,
+            large_balance,
+            UpgradeableLoaderState::size_of_buffer(elf_small.len()),
+            1,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_small, small_len);
+        assert_eq!(
+            large_balance
+                .saturating_sub(small_balance)
+                .saturating_add(1),
+            accounts.get(3).unwrap().lamports()
+        );
+
+        // Case: Shrink success overprovisioned programdata
+        let extended_len = large_len.saturating_add(4096);
+        let extended_balance = rent.minimum_balance(extended_len);
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_large,
+            &elf_small,
+            extended_len,
+            extended_balance,
+            UpgradeableLoaderState::size_of_buffer(elf_small.len()),
+            1,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_small, small_len);
+        assert_eq!(
+            extended_balance
+                .saturating_sub(small_balance)
+                .saturating_add(1),
+            accounts.get(3).unwrap().lamports()
+        );
+
+        // Case: Shrink success larger ELF
+        //
+        // The new ELF is bigger, but the account was over-provisioned past
+        // even that, so it still retracts and still refunds rent.
+        let extended_len = large_len.saturating_add(4096);
+        let extended_balance = rent.minimum_balance(extended_len);
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_small,
+            &elf_large,
+            extended_len,
+            extended_balance,
+            UpgradeableLoaderState::size_of_buffer(elf_large.len()),
+            1,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_large, large_len);
+        assert!(small_len < large_len && large_len < extended_len);
+        assert_eq!(
+            extended_balance
+                .saturating_sub(large_balance)
+                .saturating_add(1),
+            accounts.get(3).unwrap().lamports()
+        );
+
+        // Case: Shrink success overprovisioned buffer
+        let padded_buffer_len =
+            UpgradeableLoaderState::size_of_buffer(elf_small.len()).saturating_add(32);
+        let padded_len = small_len.saturating_add(32);
+        let padded_balance = rent.minimum_balance(padded_len);
+        assert!(padded_len < large_len);
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_large,
+            &elf_small,
+            large_len,
+            large_balance,
+            padded_buffer_len,
+            1,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_small, padded_len);
+        // The padding should still be all zeroes.
+        assert!(
+            accounts
+                .first()
+                .unwrap()
+                .data()
+                .get(programdata_data_offset.saturating_add(elf_small.len())..)
+                .unwrap()
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+        assert_eq!(
+            large_balance
+                .saturating_sub(padded_balance)
+                .saturating_add(1),
+            accounts.get(3).unwrap().lamports()
+        );
+
+        // Case: Shrink success funded for the new size only
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_large,
+            &elf_small,
+            large_len,
+            small_balance, // <-- only enough for the new ELF
+            UpgradeableLoaderState::size_of_buffer(elf_small.len()),
+            0,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_small, small_len);
+        assert_eq!(0, accounts.get(3).unwrap().lamports());
+
+        // Case: Shrink insufficient funds
+        // Same as above, but 1 lamport shy.
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_large,
+            &elf_small,
+            large_len,
+            small_balance.saturating_sub(1),
+            UpgradeableLoaderState::size_of_buffer(elf_small.len()),
+            0,
+        );
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::InsufficientFunds),
+        );
+
+        // Case: Grow success
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_small,
+            &elf_large,
+            small_len,
+            small_balance,
+            UpgradeableLoaderState::size_of_buffer(elf_large.len()),
+            large_balance,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_large, large_len);
+        // The buffer covered the new rent, so ProgramData's whole original
+        // balance spills.
+        assert_eq!(small_balance, accounts.get(3).unwrap().lamports());
+
+        // Case: Grow success overprovisioned programdata
+        let extended_len = small_len.saturating_add(50);
+        let extended_balance = rent.minimum_balance(extended_len);
+        assert!(extended_len < large_len);
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_small,
+            &elf_large,
+            extended_len,
+            extended_balance,
+            UpgradeableLoaderState::size_of_buffer(elf_large.len()),
+            large_balance,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_large, large_len);
+        // ProgramData lands on the new ELF's length, so the extra bytes are
+        // overwritten. Again the buffer covers the rent, so the whole
+        // ProgramData balance is swept.
+        assert_eq!(extended_balance, accounts.get(3).unwrap().lamports());
+
+        // Case: Grow success overprovisioned buffer
+        let padded_buffer_len =
+            UpgradeableLoaderState::size_of_buffer(elf_large.len()).saturating_add(64);
+        let padded_len = large_len.saturating_add(64);
+        let padded_balance = rent.minimum_balance(padded_len);
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_small,
+            &elf_large,
+            small_len,
+            padded_balance,
+            padded_buffer_len,
+            0,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_large, padded_len);
+        assert!(
+            accounts
+                .first()
+                .unwrap()
+                .data()
+                .get(programdata_data_offset.saturating_add(elf_large.len())..)
+                .unwrap()
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+        assert_eq!(0, accounts.get(3).unwrap().lamports());
+
+        // Case: Grow success funded by programdata
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_small,
+            &elf_large,
+            small_len,
+            large_balance,
+            UpgradeableLoaderState::size_of_buffer(elf_large.len()),
+            0,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_large, large_len);
+        // The buffer is empty; ProgramData's own balance covers the new rent.
+        assert_eq!(0, accounts.get(3).unwrap().lamports());
+
+        // Case: Grow, insufficient funds
+        let deficit = large_balance.saturating_sub(small_balance);
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_small,
+            &elf_large,
+            small_len,
+            small_balance,
+            UpgradeableLoaderState::size_of_buffer(elf_large.len()),
+            deficit.saturating_sub(1), // <-- 1 lamport shy
+        );
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::InsufficientFunds),
+        );
+
+        // Case: No resize, ELF length already matches
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_large,
+            &elf_large,
+            large_len,
+            large_balance,
+            UpgradeableLoaderState::size_of_buffer(elf_large.len()),
+            1,
+        );
+        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        assert_upgraded(&accounts, &elf_large, large_len);
+        // Just the buffer lamports get swept.
+        assert_eq!(1, accounts.get(3).unwrap().lamports());
+
+        // Case: Zero-length ELF in the buffer
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_large,
+            &[],
+            large_len,
+            large_balance,
+            UpgradeableLoaderState::size_of_buffer(0),
+            1,
+        );
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        // Case: New length exceeds the max account data length
+        let oversized_elf_len = (MAX_PERMITTED_DATA_LENGTH as usize)
+            .saturating_sub(UpgradeableLoaderState::size_of_buffer_metadata());
+        let mut oversized_elf = elf_large.clone();
+        oversized_elf.resize(oversized_elf_len, 0);
+        assert!(
+            UpgradeableLoaderState::size_of_programdata(oversized_elf.len())
+                > MAX_PERMITTED_DATA_LENGTH as usize
+        );
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &upgrade_authority_address,
+            &elf_small,
+            &oversized_elf,
+            small_len,
+            u64::MAX / 2,
+            UpgradeableLoaderState::size_of_buffer(oversized_elf.len()),
+            0,
         );
         process_instruction(
             transaction_accounts,
@@ -2477,6 +3034,7 @@ mod tests {
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
+                LoaderV3Features::all_enabled(),
                 expected_result,
                 |invoke_context| {
                     // Register the system program for CPI support.

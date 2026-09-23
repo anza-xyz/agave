@@ -29,7 +29,9 @@ lazy-lru = { workspace = true }
 libloading = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
+smallvec = { workspace = true }
 solana-account = { workspace = true }
+solana-account-decoder-client-types = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
@@ -43,6 +45,7 @@ solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
@@ -51,6 +54,8 @@ tokio = { workspace = true }
 agave-votor-messages = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-reward-info = { workspace = true }
+solana-transaction-error = { workspace = true }
 
 [lints]
 workspace = true

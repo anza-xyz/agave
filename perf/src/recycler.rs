@@ -57,15 +57,6 @@ impl<T: Default> Default for RecyclerX<T> {
     }
 }
 
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::AbiExample
-    for RecyclerX<crate::recycled_vec::RecycledVec<solana_packet::Packet>>
-{
-    fn example() -> Self {
-        Self::default()
-    }
-}
-
 pub trait Reset {
     fn reset(&mut self);
     fn warm(&mut self, size_hint: usize);

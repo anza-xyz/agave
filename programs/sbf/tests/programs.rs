@@ -7,6 +7,8 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
 
+#[cfg(feature = "sbf_c")]
+use solana_account::state_traits::StateMutWincode as _;
 #[cfg(not(feature = "sbf_sanity_list"))]
 use solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT;
 #[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
@@ -29,7 +31,8 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{AccountMeta, Instruction},
+    solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
@@ -125,6 +128,7 @@ fn upgradeable_program_accounts(program_id: &Pubkey, program_elf: &[u8]) -> Vec<
     solana_program_binaries::bpf_loader_upgradeable_program_accounts(
         program_id,
         program_elf,
+        &Pubkey::default(),
         &Rent::default(),
     )
     .into()
@@ -1651,7 +1655,7 @@ fn assert_instruction_count() {
             ("solana_sbf_rust_noop", 342),
             ("solana_sbf_rust_param_passing", 108),
             ("solana_sbf_rust_rand", 315),
-            ("solana_sbf_rust_sanity", 14228),
+            ("solana_sbf_rust_sanity", 14499),
             ("solana_sbf_rust_secp256k1_recover", 88615),
             ("solana_sbf_rust_sha", 21998),
         ]);

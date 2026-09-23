@@ -5,7 +5,7 @@ use {
         stats::{SenderStats, VoteSenderStats},
     },
     agave_votor_messages::{
-        VerifiedVoterSlotsSender,
+        VerifiedVotorSlotsMessage, VoteAccountPubkeys,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
@@ -13,7 +13,8 @@ use {
     log::{error, info, warn},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    std::{collections::HashMap, time::Instant},
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
+    std::time::Instant,
 };
 
 const REWARDS_CHANNEL: &str = "channel_to_rewards";
@@ -23,14 +24,13 @@ const REPAIR_CHANNEL: &str = "channel_to_repair";
 
 pub(super) fn send_votes_to_metrics(
     my_pubkey: &Pubkey,
-    votes: Vec<ConsensusMetricsEvent>,
+    event: ConsensusMetricsEvent,
     channel: &ConsensusMetricsEventSender,
     stats: &mut VoteSenderStats,
 ) {
-    let len = votes.len();
-    let msg = (Instant::now(), votes);
+    let msg = (Instant::now(), event);
     match channel.try_send(msg) {
-        Ok(()) => stats.metrics_sender.sent += len as u64,
+        Ok(()) => stats.metrics_sender.sent += 1,
         Err(TrySendError::Full(_)) => {
             warn!("{my_pubkey}: channel \"{METRICS_CHANNEL}\" is full, dropping msg");
             stats.metrics_sender.channel_full += 1;
@@ -101,21 +101,18 @@ pub(super) fn send_sig_verified_batch_to_pool(
 
 pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
-    votes: HashMap<Pubkey, Vec<Slot>>,
-    channel: &VerifiedVoterSlotsSender,
+    msg: (Slot, VoteAccountPubkeys),
+    channel: &EvictingSender<VerifiedVotorSlotsMessage>,
     stats: &mut VoteSenderStats,
 ) {
-    for (pubkey, slots) in votes {
-        match channel.try_send((pubkey, slots)) {
-            Ok(()) => stats.repair_sender.sent += 1,
-            Err(TrySendError::Full(_)) => {
-                warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");
-                stats.repair_sender.channel_full += 1
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" disconnected");
-                return;
-            }
+    match channel.try_send(msg) {
+        Ok(()) => stats.repair_sender.sent += 1,
+        Err(TrySendError::Full(_)) => {
+            warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");
+            stats.repair_sender.channel_full += 1
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" disconnected");
         }
     }
 }

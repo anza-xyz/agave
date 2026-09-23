@@ -9,7 +9,7 @@ use {
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
     },
     solana_clock::Slot,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         elf::{ElfError, Executable},

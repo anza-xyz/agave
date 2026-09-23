@@ -6,6 +6,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
+    solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH,
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{
         BlockTimestamp, LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY,
@@ -88,10 +89,10 @@ impl VoteState {
             info!("did not find vote account for vote_pubkey={vote_pubkey}");
             return None;
         };
-        let versions = match bincode::deserialize(account.account().data()) {
+        let versions = match wincode::deserialize(account.account().data()) {
             Ok(s) => s,
             Err(e) => {
-                info!("bincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
+                info!("wincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
                 return None;
             }
         };
@@ -112,7 +113,12 @@ impl VoteState {
     }
 
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
-        let mut updated_account = AccountSharedData::new(self.lamports, self.space, &self.owner);
+        let mut updated_account = AccountSharedData::new_rent_epoch(
+            self.lamports,
+            self.space,
+            &self.owner,
+            RENT_EXEMPT_RENT_EPOCH,
+        );
         match self
             .handler
             .serialize_into(updated_account.data_as_mut_slice())
@@ -649,7 +655,7 @@ mod tests {
     }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
-        let versions = bincode::deserialize(account.data()).unwrap();
+        let versions = wincode::deserialize(account.data()).unwrap();
         VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
     }
 
@@ -1047,7 +1053,7 @@ mod tests {
         for validator in validators {
             let vote_pubkey = validator.vote_keypair.pubkey();
             let account = genesis_config.accounts.get_mut(&vote_pubkey).unwrap();
-            let vote_state_versions = bincode::deserialize(&account.data).unwrap();
+            let vote_state_versions = wincode::deserialize(&account.data).unwrap();
             let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
                 panic!();
             };

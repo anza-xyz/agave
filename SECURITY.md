@@ -183,11 +183,6 @@ classes of issue are out of scope
   * Those requiring calls from multiple clients
   * Those impacting getProgramAccounts, et al. without secondary indexes enabled and/or
     unfiltered requests, which are known to be slow on clusters with large accounts sets
-* Alpenglow crates (votor, votor-messages, etc) and plumbing. Migration of the
-Alpenglow logic from a feature fork to agave master is currently underway. As
-such there are many partially migrated changes isolated to a few areas. These
-are disqualified from reports and bounties. Bugs in integration logic that impact
-the no-Alpenglow code path remain in scope
 * Loader V4 (the `loader-v4` crate and associated code paths). Loader V4 is
 being removed from the codebase and its feature ID has been stubbed out. Bugs
 relating to Loader V4 functionality are disqualified from reports and bounties.
@@ -210,7 +205,9 @@ one week in order to be eligible for a bounty
 * Participants must complete KYC and sign the participation agreement here when the registrations are open https://solana.foundation/kyc. Security exploits will still be assessed and open for submission at all times. This needs only be done prior to distribution of tokens.
 
 ### Duplicate Reports
-Compensation for duplicative reports will be split among reporters with first to report taking priority using the following equation
+Compensation for duplicative reports will be split among reporters with first to report
+making priority using the following equation. Shares that amount to less than one SOL
+will be deemed ineligible for payment
 ```
 R: total reports
 ri: report priority

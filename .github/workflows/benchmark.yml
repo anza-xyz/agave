@@ -9,6 +9,9 @@ jobs:
     if: github.repository == 'anza-xyz/agave'
     name: benchmark
     runs-on: benchmark
+    # Fail fast on a stalled bench instead of waiting out the 360 minute
+    # default. All jobs run in the order of minutes, well below this cap.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -31,7 +34,10 @@ jobs:
         test:
           - {
               name: "solana-runtime",
-              commands: ["cargo +$rust_nightly bench -p solana-runtime"],
+              commands:
+                [
+                  "cargo bench -p solana-runtime -- --output-format bencher --noplot",
+                ],
             }
           - {
               name: "solana-gossip",
@@ -39,23 +45,25 @@ jobs:
             }
           - {
               name: "solana-poh",
-              commands: ["cargo +$rust_nightly bench -p solana-poh"],
+              commands: ["cargo bench -p solana-poh"],
             }
+          # split because sigverify_stage still uses the bencher harness, which
+          # would treat `--output-format` as a benchmark name filter and run
+          # nothing
           - {
               name: "solana-core",
-              commands: ["cargo +$rust_nightly bench -p solana-core"],
+              commands:
+                [
+                  "cargo bench -p solana-core --bench consensus -- --output-format bencher --noplot",
+                  "cargo bench -p solana-core --bench shredder -- --output-format bencher --noplot",
+                  "cargo bench -p solana-core --bench sigverify_stage",
+                ],
             }
-          # spliting solana-accounts-db because it includes criterion bench
           - {
               name: "solana-accounts-db",
               commands:
                 [
-                  "cargo +$rust_nightly bench -p solana-accounts-db --bench accounts_index",
-                  "cargo +$rust_nightly bench -p solana-accounts-db --bench accounts",
-                  "cargo +$rust_nightly bench -p solana-accounts-db --bench append_vec",
-                  "cargo +$rust_nightly bench -p solana-accounts-db --bench bench_accounts_file -- --output-format bencher",
-                  "cargo +$rust_nightly bench -p solana-accounts-db --bench bench_hashing -- --output-format bencher",
-                  "cargo +$rust_nightly bench -p solana-accounts-db --bench bench_serde -- --output-format bencher",
+                  "cargo bench -p solana-accounts-db -- --output-format bencher --noplot",
                 ],
             }
 
@@ -70,7 +78,9 @@ jobs:
 
       - name: Command
         run: |
-          source ci/rust-version.sh nightly
+          # pipefail: without it the pipeline's status is tee's, so a bench
+          # command that fails to even resolve a target passes silently
+          set -o pipefail
           echo '${{ toJson(matrix.test.commands) }}' | jq -r '.[]' | while read command; do
             eval $command | tee -a benchmark
           done

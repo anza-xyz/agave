@@ -690,10 +690,8 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::{committer::Committer, tests::create_slow_genesis_config},
             agave_scheduler_bindings::{SharableTransactionBatchRegion, processed_codes},
-            agave_scheduling_utils::{
-                handshake::{ClientLogon, client, server::Server},
-                responses_region::ExecutionResponsesPtr,
-            },
+            agave_scheduler_handshake::{ClientLogon, setup_local_session},
+            agave_scheduling_utils::responses_region::ExecutionResponsesPtr,
             crossbeam_channel::bounded,
             solana_genesis_config::GenesisConfig,
             solana_keypair::Keypair,
@@ -886,8 +884,7 @@ pub(crate) mod external {
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
             };
-            let (mut agave_session, files) = Server::setup_session(logon).unwrap();
-            let mut client_session = client::setup_session(&logon, files).unwrap();
+            let (mut agave_session, mut client_session) = setup_local_session(logon).unwrap();
             let agave_worker = agave_session.workers.pop().unwrap();
             let client_worker = client_session.workers.pop().unwrap();
 
@@ -915,7 +912,7 @@ pub(crate) mod external {
                 _bank_forks: bank_forks,
                 _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
-                allocator: client_session.allocators.pop().unwrap(),
+                allocator: client_session.allocator,
                 pack_to_worker: client_worker.pack_to_worker,
                 worker_to_pack: client_worker.worker_to_pack,
                 shared_leader_state,
@@ -2667,20 +2664,19 @@ mod tests {
         // all but one succeed. 6 for initial funding
         assert_eq!(bank.transaction_count(), 6 + 5);
 
-        let already_processed_results = bank
-            .check_transactions(
-                &sanitized_txs,
-                &vec![Ok(()); sanitized_txs.len()],
-                bank.max_processing_age(),
-                true,
-                &mut TransactionErrorMetrics::default(),
-            )
-            .into_iter()
-            .map(|r| match r {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            })
-            .collect::<Vec<_>>();
+        let already_processed_results = Consumer::check_transactions_for_scheduling(
+            bank,
+            &sanitized_txs,
+            &vec![Ok(()); sanitized_txs.len()],
+            bank.max_processing_age(),
+            &mut TransactionErrorMetrics::default(),
+        )
+        .into_iter()
+        .map(|r| match r {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err),
+        })
+        .collect::<Vec<_>>();
         assert_eq!(
             already_processed_results,
             vec![

@@ -139,16 +139,12 @@ fn retransmit_to(
             .filter(|addr| socket_addr_space.check(addr))
             .collect()
     };
-    match multi_target_send(socket, data, &dests) {
-        Ok(()) => (),
-        Err(SendPktsError::IoError(ioerr, num_failed)) => {
-            error!(
-                "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
-                ioerr,
-                num_failed,
-                dests.len(),
-            );
-        }
+    if let Err(SendPktsError::IoError(ioerr)) = multi_target_send(socket, data, &dests) {
+        error!(
+            "retransmit_to multi_target_send error: {:?}, {} destinations",
+            ioerr,
+            dests.len(),
+        );
     }
 }
 
@@ -318,6 +314,8 @@ pub fn cluster_info_scale() {
     let epoch_specs: Box<dyn EpochSpecs> = Box::new(TestEpochSpecs {
         slots_in_epoch,
         staked_nodes: root_bank.current_epoch_staked_nodes(),
+        enforce_correct_proof_size: true,
+        root_slot: root_bank.slot(),
     });
 
     let nodes: Vec<_> = vote_keypairs

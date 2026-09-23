@@ -75,8 +75,8 @@ impl AccountStorageEntry {
     }
 
     /// open a new instance of the storage that is readonly
-    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
-        self.accounts.reopen_as_readonly().map(|accounts| Self {
+    pub(crate) fn reopen_as_readonly(&self) -> Result<Option<Self>, AccountsFileError> {
+        Ok(self.accounts.reopen_as_readonly()?.map(|accounts| Self {
             id: self.id,
             slot: self.slot,
             num_alive_accounts: AtomicUsize::new(self.count()),
@@ -84,7 +84,7 @@ impl AccountStorageEntry {
             accounts,
             tombstone_offsets: RwLock::new(self.tombstone_offsets.read().unwrap().clone()),
             obsolete_accounts: RwLock::new(self.obsolete_accounts.read().unwrap().clone()),
-        })
+        }))
     }
 
     pub fn new_existing(
@@ -133,11 +133,7 @@ impl AccountStorageEntry {
         let obsolete_bytes: usize = self
             .obsolete_accounts_read_lock()
             .filter_obsolete_accounts(slot)
-            .map(|(offset, data_len)| {
-                self.accounts
-                    .calculate_stored_size(data_len)
-                    .min(self.accounts.len() - offset)
-            })
+            .map(|(_offset, data_len)| self.accounts.calculate_stored_size(data_len))
             .sum();
         obsolete_bytes
     }
@@ -178,9 +174,8 @@ impl AccountStorageEntry {
     /// Return the "alive_bytes" minus the bytes of this storage's tombstones
     /// (zero-lamport accounts already purged from the index).
     pub(crate) fn alive_bytes_exclude_zero_lamport_accounts(&self) -> usize {
-        let zero_lamport_dead_bytes = self
-            .accounts
-            .dead_bytes_due_to_zero_lamport_accounts(self.num_tombstones());
+        let zero_lamport_dead_bytes =
+            self.num_tombstones() * self.accounts.calculate_stored_size(0);
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 
@@ -241,24 +236,29 @@ impl AccountStorageEntry {
     }
 
     /// Collect the offsets that should be excluded from scans
-    fn excluded_offsets(&self) -> IntSet<Offset> {
+    fn excluded_offsets(&self, obsolete_slot: Option<Slot>) -> IntSet<Offset> {
         let mut offsets: IntSet<_> = self
             .obsolete_accounts_read_lock()
-            .filter_obsolete_accounts(None)
+            .filter_obsolete_accounts(obsolete_slot)
             .map(|(offset, _)| offset)
             .collect();
         offsets.extend(self.tombstone_offsets_read_lock().iter().copied());
         offsets
     }
 
-    /// Iterate over the alive accounts in this storage, excluding obsolete accounts and tombstones.
-    /// The return value is the number of values excluded from the scan.
+    /// Iterate over the alive accounts in this storage, excluding tombstones
+    /// and obsolete accounts marked as of `obsolete_slot`.
+    ///
+    /// Pass in None for `obsolete_slot` to exclude all accounts marked obsolete.
+    ///
+    /// Returns the number of accounts excluded from the scan.
     pub(crate) fn scan_accounts<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
+        obsolete_slot: Option<Slot>,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<u64, AccountsFileError> {
-        let excluded_offsets = self.excluded_offsets();
+        let excluded_offsets = self.excluded_offsets(obsolete_slot);
         let mut num_excluded = 0;
         self.accounts.scan_accounts(reader, |offset, account| {
             if excluded_offsets.contains(&offset) {
@@ -276,7 +276,7 @@ impl AccountStorageEntry {
         &self,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
     ) -> Result<u64, AccountsFileError> {
-        let excluded_offsets = self.excluded_offsets();
+        let excluded_offsets = self.excluded_offsets(None);
         let mut num_excluded = 0;
         self.accounts
             .scan_accounts_without_data(|offset, account| {
@@ -342,7 +342,7 @@ mod tests {
         // Mark account 1 obsolete and record account 3 as a tombstone.
         let obsolete_offset = offsets[1];
         let tombstone_offset = offsets[3];
-        let data_lens = storage.accounts.get_account_data_lens(&[obsolete_offset]);
+        let data_lens = storage.accounts.get_account_data_lens([obsolete_offset]);
         storage
             .obsolete_accounts()
             .write()
@@ -354,7 +354,7 @@ mod tests {
         let mut reader = new_scan_accounts_reader();
         let mut visited = Vec::new();
         let num_excluded = storage
-            .scan_accounts(&mut reader, |offset, account| {
+            .scan_accounts(&mut reader, None, |offset, account| {
                 visited.push((offset, *account.pubkey()));
             })
             .unwrap();

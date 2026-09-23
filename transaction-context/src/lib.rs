@@ -48,3 +48,12 @@ static_assertions::const_assert_eq!(
 
 /// Index of an account inside of the transaction or an instruction.
 pub type IndexOfAccount = u16;
+
+/// Selects if transactions can be discarded entirely
+#[derive(Clone, Copy, Debug)]
+pub enum DropOnBailOut {
+    /// As follower, in replay: Transactions failing with InstructionError::BailOut are part of consensus
+    Disabled,
+    /// As leader, in block production: Transactions failing with InstructionError::BailOut are dropped
+    Enabled,
+}

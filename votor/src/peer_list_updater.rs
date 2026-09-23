@@ -126,6 +126,7 @@ impl PeerListUpdater {
         let mut new_peers: HashMap<_, _> = cluster_info
             .query_contact_infos(peers.iter().chain(overrides.keys()), |node| {
                 node.alpenglow()
+                    .filter(|addr| cluster_info.socket_addr_space().check(addr))
             })
             .into_iter()
             .map(|(pubkey, socket)| (pubkey, socket.flatten()))
@@ -302,6 +303,20 @@ mod tests {
         num_zero_stake_nodes: usize,
         base_slot: u64,
     ) -> (Arc<RwLock<BankForks>>, ClusterInfo, Vec<Pubkey>) {
+        create_bank_forks_and_cluster_info_with_socket_addr_space(
+            num_nodes,
+            num_zero_stake_nodes,
+            base_slot,
+            SocketAddrSpace::Unspecified,
+        )
+    }
+
+    fn create_bank_forks_and_cluster_info_with_socket_addr_space(
+        num_nodes: usize,
+        num_zero_stake_nodes: usize,
+        base_slot: u64,
+        socket_addr_space: SocketAddrSpace,
+    ) -> (Arc<RwLock<BankForks>>, ClusterInfo, Vec<Pubkey>) {
         let mut rng = rand::rng();
         let validator_keypairs = (0..num_nodes)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -341,7 +356,7 @@ mod tests {
         let mut cluster_info = ClusterInfo::new(
             Node::new_localhost_with_pubkey(&my_keypair.pubkey()).info,
             Arc::new(my_keypair),
-            SocketAddrSpace::Unspecified,
+            socket_addr_space,
         );
         update_cluster_info(&mut cluster_info, node_keypair_map);
         (
@@ -594,5 +609,29 @@ mod tests {
             Some(&Some(pinned)),
             "a pinned address replaces the peer's gossip socket"
         );
+    }
+
+    #[test]
+    fn test_gossip_addresses_respect_socket_addr_space() {
+        let slot_num = 123456789;
+        let (bank_forks, cluster_info, _) =
+            create_bank_forks_and_cluster_info_with_socket_addr_space(
+                4,
+                0,
+                slot_num,
+                SocketAddrSpace::Global,
+            );
+        let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
+        let svc = PeerListUpdater::new_for_tests(
+            bank_forks.read().unwrap().sharable_banks(),
+            peerlist_sender,
+            gossip_resolved_overrides([]),
+        );
+
+        svc.refresh_peer_list(&cluster_info, &cluster_info.id());
+
+        let snapshot = peerlist_receiver.borrow().clone();
+        assert!(!snapshot.peers.is_empty());
+        assert!(snapshot.peers.values().all(Option::is_none));
     }
 }

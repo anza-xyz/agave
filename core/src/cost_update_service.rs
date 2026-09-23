@@ -58,28 +58,8 @@ pub fn report_cost_tracker_stats(
             i64
         ),
         (
-            "transaction_signature_count",
-            stats.transaction_signature_count,
-            i64
-        ),
-        (
-            "secp256k1_instruction_signature_count",
-            stats.secp256k1_instruction_signature_count,
-            i64
-        ),
-        (
-            "ed25519_instruction_signature_count",
-            stats.ed25519_instruction_signature_count,
-            i64
-        ),
-        (
             "inflight_transaction_count",
             stats.in_flight_transaction_count,
-            i64
-        ),
-        (
-            "secp256r1_instruction_signature_count",
-            stats.secp256r1_instruction_signature_count,
             i64
         ),
         ("total_transaction_fee", total_transaction_fee, i64),

@@ -1,5 +1,5 @@
 use {
-    crate::invoke_context::BpfAllocator, solana_instruction::error::InstructionError,
+    crate::invoke_context::BpfAllocator, solana_instruction_error::InstructionError,
     solana_sbpf::memory_region::MemoryMapping,
 };
 

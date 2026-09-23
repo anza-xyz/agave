@@ -12,7 +12,7 @@ use {
 };
 
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct HashInfo {
     fee_calculator: FeeCalculator,
@@ -29,9 +29,8 @@ impl HashInfo {
 /// Low memory overhead, so can be cloned for every checkpoint
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        api_digest = "6dJKUuLbK5FVbUvNf7YwaGxJDkBTWvV9vfXevAFkHR5u",
         abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire"

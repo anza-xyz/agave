@@ -2,10 +2,12 @@
 
 #[cfg(feature = "conformance")]
 use {
-    crate::conformance::{account_state::account_to_proto, err::serialized_error_code},
+    crate::conformance::{
+        account_state::account_to_proto, err::serialized_error_code, fd_hash::fd_hash_or_zero,
+    },
     protosol::protos::InstrEffects as ProtoInstrEffects,
 };
-use {solana_account::Account, solana_instruction::error::InstructionError, solana_pubkey::Pubkey};
+use {solana_account::Account, solana_instruction_error::InstructionError, solana_pubkey::Pubkey};
 
 /// Represents the effects of a single instruction.
 pub struct InstrEffects {
@@ -50,7 +52,7 @@ impl From<InstrEffects> for ProtoInstrEffects {
                 .map(account_to_proto)
                 .collect(),
             cu_avail,
-            return_data,
+            return_data_hash: fd_hash_or_zero(&return_data),
         }
     }
 }

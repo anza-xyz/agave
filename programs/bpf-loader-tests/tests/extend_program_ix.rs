@@ -5,7 +5,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Clock,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, extend_program},

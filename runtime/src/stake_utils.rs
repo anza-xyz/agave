@@ -28,12 +28,14 @@ pub fn get_minimum_delegation(upgrade_bpf_stake_program_to_v5_is_active: bool) -
 
 /// Utility function for creating a stake account from basic parameters.
 /// Only used in tests and CLIs.
-pub fn create_stake_account(
+pub fn create_stake_account_with_activation_and_deactivation_epochs(
     authorized: &Pubkey,
     voter_pubkey: &Pubkey,
     vote_account: &AccountSharedData,
     rent: &Rent,
     lamports: u64,
+    activation_epoch: Epoch,
+    deactivation_epoch: Epoch,
 ) -> AccountSharedData {
     let mut stake_account =
         AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
@@ -53,8 +55,10 @@ pub fn create_stake_account(
         ..Meta::default()
     };
 
+    let mut delegation = Delegation::new(voter_pubkey, stake_amount, activation_epoch);
+    delegation.deactivation_epoch = deactivation_epoch;
     let stake = Stake {
-        delegation: Delegation::new(voter_pubkey, stake_amount, Epoch::MAX),
+        delegation,
         credits_observed,
     };
 
@@ -63,4 +67,24 @@ pub fn create_stake_account(
         .expect("set_state");
 
     stake_account
+}
+
+/// Utility function for creating a stake account from basic parameters.
+/// Only used in tests and CLIs.
+pub fn create_stake_account(
+    authorized: &Pubkey,
+    voter_pubkey: &Pubkey,
+    vote_account: &AccountSharedData,
+    rent: &Rent,
+    lamports: u64,
+) -> AccountSharedData {
+    create_stake_account_with_activation_and_deactivation_epochs(
+        authorized,
+        voter_pubkey,
+        vote_account,
+        rent,
+        lamports,
+        Epoch::MAX,
+        Epoch::MAX,
+    )
 }

@@ -6,7 +6,7 @@ use {
     solana_clock::Clock,
     solana_epoch_rewards::EpochRewards,
     solana_epoch_schedule::EpochSchedule,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_last_restart_slot::LastRestartSlot,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -17,14 +17,6 @@ use {
     solana_sysvar_id::SysvarId,
     solana_transaction_context::{IndexOfAccount, instruction::InstructionContext},
 };
-
-#[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
-    fn example() -> Self {
-        // SysvarCache is not Serialize so just rely on Default.
-        SysvarCache::default()
-    }
-}
 
 #[derive(Default, Clone, Debug)]
 pub struct SysvarCache {
