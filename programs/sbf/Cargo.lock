@@ -6076,6 +6076,7 @@ dependencies = [
  "solana-syscalls",
  "solana-system-interface",
  "solana-transaction-context",
+ "wincode",
 ]
 
 [[package]]
