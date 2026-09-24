@@ -93,6 +93,7 @@ impl<T> Drop for TimedGuard<'_, T> {
 #[derive(Default)]
 pub struct GossipStats {
     pub(crate) bad_prune_destination: Counter,
+    pub(crate) contact_info_received_count: Counter,
     pub(crate) entrypoint2: Counter,
     pub(crate) entrypoint: Counter,
     pub(crate) epoch_slots_filled: Counter,
@@ -119,10 +120,12 @@ pub struct GossipStats {
     pub(crate) handle_batch_pull_requests_time: Counter,
     pub(crate) handle_batch_pull_responses_time: Counter,
     pub(crate) handle_batch_push_messages_time: Counter,
+    pub(crate) liveness_pings_sent: Counter,
     pub(crate) new_pull_requests: Counter,
     pub(crate) new_push_requests2: Counter,
     pub(crate) new_push_requests: Counter,
     pub(crate) num_unverifed_gossip_addrs: Counter,
+    pub(crate) num_unverified_staked_addrs_admitted: Counter,
     pub(crate) packets_received_count: Counter,
     packets_received_ping_messages_count: Counter,
     packets_received_pong_messages_count: Counter,
@@ -138,6 +141,7 @@ pub struct GossipStats {
     packets_sent_pull_requests_count: Counter,
     packets_sent_pull_responses_count: Counter,
     packets_sent_push_messages_count: Counter,
+    pub(crate) ping_timeout_count: Counter,
     pub(crate) process_gossip_packets_time: Counter,
     pub(crate) process_prune: Counter,
     pub(crate) process_pull_response: Counter,
@@ -499,6 +503,22 @@ pub(crate) fn submit_gossip_stats(
         (
             "num_unverifed_gossip_addrs",
             stats.num_unverifed_gossip_addrs.clear(),
+            i64
+        ),
+        (
+            "num_unverified_staked_addrs_admitted",
+            stats.num_unverified_staked_addrs_admitted.clear(),
+            i64
+        ),
+        (
+            "liveness_pings_sent",
+            stats.liveness_pings_sent.clear(),
+            i64
+        ),
+        ("ping_timeout_count", stats.ping_timeout_count.clear(), i64),
+        (
+            "contact_info_received_count",
+            stats.contact_info_received_count.clear(),
             i64
         ),
         (

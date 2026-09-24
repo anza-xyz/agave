@@ -1,6 +1,9 @@
 //! A command-line executable for monitoring a cluster's gossip plane.
 #[allow(deprecated)]
-use solana_gossip::{contact_info::ContactInfo, gossip_service::discover_peers};
+use solana_gossip::{
+    contact_info::ContactInfo,
+    gossip_service::{discover_peers, make_node},
+};
 use {
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name, value_t,
@@ -12,15 +15,35 @@ use {
         input_parsers::{keypair_of, pubkeys_of},
         input_validators::{is_keypair_or_ask_keyword, is_port, is_pubkey},
     },
+    solana_gossip::{
+        cluster_info::ClusterInfo, crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+    },
+    solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     std::{
+        cmp,
+        collections::HashMap,
         error,
+        fs::File,
+        io::BufReader,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         process::exit,
-        time::Duration,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     },
 };
+
+/// Default gossip liveness sampling cadence, matching the one-second loop that
+/// `wait_for_supermajority` runs in the validator.
+const DEFAULT_WFSM_INTERVAL_MS: u64 = 1000;
+// Mirrors the private constant of the same name in core/src/validator.rs.
+const NODE_LIVENESS_TIMEOUT_MS: u64 = 3 * CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
+const WFSM_LOG_TAG: &str = "RRRRRRRRRR";
 
 fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'ab, 'v> {
     let shred_version_arg = Arg::with_name("shred_version")
@@ -153,6 +176,35 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                         .value_name("SECONDS")
                         .takes_value(true)
                         .help("Maximum time to wait in seconds [default: wait forever]"),
+                )
+                .arg(
+                    Arg::with_name("wfsm_stakes")
+                        .long("wfsm-stakes")
+                        .value_name("PATH")
+                        .takes_value(true)
+                        .help(
+                            "Run indefinitely, logging wait-for-supermajority gossip liveness \
+                             samples against the getVoteAccounts snapshot at PATH. The snapshot \
+                             is re-read whenever it changes on disk",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("wfsm_interval_ms")
+                        .long("wfsm-interval-ms")
+                        .value_name("MILLIS")
+                        .takes_value(true)
+                        .requires("wfsm_stakes")
+                        .help("Interval between liveness samples [default: 1000]"),
+                )
+                .arg(
+                    Arg::with_name("wfsm_include_unstaked")
+                        .long("wfsm-include-unstaked")
+                        .takes_value(false)
+                        .requires("wfsm_stakes")
+                        .help(
+                            "Also emit grace-band entries for nodes carrying no stake, reported \
+                             at 0.000%",
+                        ),
                 ),
         )
 }
@@ -289,6 +341,23 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
             .expect("need non-zero shred-version to join the cluster");
     }
 
+    if let Some(stakes_path) = matches.value_of("wfsm_stakes") {
+        let interval = Duration::from_millis(
+            value_t!(matches, "wfsm_interval_ms", u64).unwrap_or(DEFAULT_WFSM_INTERVAL_MS),
+        );
+        return wfsm_spy(
+            identity_keypair,
+            &entrypoint_addrs,
+            &gossip_addr,
+            shred_version,
+            socket_addr_space,
+            stakes_path,
+            interval,
+            matches.is_present("wfsm_include_unstaked"),
+        )
+        .map_err(|err| std::io::Error::other(err.to_string()));
+    }
+
     let discover_timeout = Duration::from_secs(timeout.unwrap_or(u64::MAX));
     #[allow(deprecated)]
     let (_all_peers, validators) = discover_peers(
@@ -311,6 +380,274 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         pubkeys.as_deref(),
     );
 
+    Ok(())
+}
+
+/// Activated stake by node identity, and the total it is a fraction of.
+///
+/// Reads a raw `getVoteAccounts` response, either the full JSON-RPC envelope as
+/// curl leaves it or the bare result object. Delinquent validators are included:
+/// a validator's stake stays in the bank's vote accounts whether or not it is
+/// voting, and this has to reproduce what `wait_for_supermajority` sees.
+fn load_wfsm_stakes(path: &str) -> Result<(HashMap<Pubkey, u64>, u64), Box<dyn error::Error>> {
+    let json: serde_json::Value = serde_json::from_reader(BufReader::new(File::open(path)?))?;
+    let result = if json.get("result").is_some() {
+        &json["result"]
+    } else {
+        &json
+    };
+    let mut stakes = HashMap::<Pubkey, u64>::new();
+    let mut total = 0u64;
+    for kind in ["current", "delinquent"] {
+        let accounts = result
+            .get(kind)
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("{path}: no `{kind}` array in getVoteAccounts response"))?;
+        for account in accounts {
+            let stake = account["activatedStake"].as_u64().unwrap_or_default();
+            if stake == 0 {
+                continue;
+            }
+            let node = account["nodePubkey"]
+                .as_str()
+                .and_then(|key| key.parse::<Pubkey>().ok())
+                .ok_or_else(|| format!("{path}: vote account with no usable nodePubkey"))?;
+            // A node identity can back several vote accounts; gossip sees one node.
+            *stakes.entry(node).or_default() += stake;
+            total = total.saturating_add(stake);
+        }
+    }
+    if total == 0 {
+        return Err(format!("{path}: no activated stake").into());
+    }
+    Ok((stakes, total))
+}
+
+fn timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is before the unix epoch")
+        .as_millis() as u64
+}
+
+fn percentile(sorted: &[u64], quantile: f64) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let last = sorted.len() - 1;
+    sorted[((last as f64) * quantile).round() as usize]
+}
+
+/// Age distribution across one population of nodes, as `(age, local_age)` pairs.
+///
+/// Not part of the format `wfsm_grace.py` parses -- that one only ever carries
+/// the nodes sitting in the grace band, which cannot say how the rest of the
+/// population is distributed. Both clocks are reported: `age` is the
+/// peer-authored wallclock, which delivery latency inflates, while `local_age`
+/// is stamped by us on insert and so answers "when did we last hear anything"
+/// without depending on the peer's clock.
+fn log_age_summary(label: &str, samples: &[(u64, u64)]) {
+    let mut ages: Vec<u64> = samples.iter().map(|&(age, _)| age).collect();
+    let mut local_ages: Vec<u64> = samples.iter().map(|&(_, local_age)| local_age).collect();
+    ages.sort_unstable();
+    local_ages.sort_unstable();
+    let over = |values: &[u64], limit: u64| values.iter().filter(|&&value| value >= limit).count();
+    info!(
+        "{WFSM_LOG_TAG} ages {label} n={} age p50={} p90={} p99={} max={} over15s={} over45s={} \
+         local_age p50={} p90={} p99={} max={} over15s={} over45s={}",
+        samples.len(),
+        percentile(&ages, 0.50),
+        percentile(&ages, 0.90),
+        percentile(&ages, 0.99),
+        ages.last().copied().unwrap_or_default(),
+        over(&ages, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS),
+        over(&ages, NODE_LIVENESS_TIMEOUT_MS),
+        percentile(&local_ages, 0.50),
+        percentile(&local_ages, 0.90),
+        percentile(&local_ages, 0.99),
+        local_ages.last().copied().unwrap_or_default(),
+        over(&local_ages, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS),
+        over(&local_ages, NODE_LIVENESS_TIMEOUT_MS),
+    );
+}
+
+/// One `RRRRRRRRRR` liveness sample, byte-identical in shape to the one the
+/// validator emits from `get_stake_percent_in_gossip`, so the same parsers read
+/// both. The spy carries no bank, so stake comes from the snapshot instead of
+/// `bank.vote_accounts()`; everything downstream of that is the same arithmetic.
+///
+/// With `include_unstaked`, nodes carrying no stake get grace-band entries too,
+/// reported at 0.000% so the stake sums downstream are unaffected. Mainnet is
+/// mostly unstaked nodes, which the stake-driven sample cannot see at all.
+fn wfsm_sample(
+    cluster_info: &ClusterInfo,
+    stakes: &HashMap<Pubkey, u64>,
+    total_stake: u64,
+    include_unstaked: bool,
+) {
+    let now = timestamp_ms();
+    #[allow(deprecated)]
+    let peers: HashMap<_, _> = cluster_info
+        .all_peers()
+        .into_iter()
+        .map(|(node, local_timestamp)| {
+            let age = now.saturating_sub(node.wallclock());
+            let local_age = now.saturating_sub(local_timestamp);
+            (*node.pubkey(), (age, local_age, node.gossip()))
+        })
+        .collect();
+
+    let mut online_stake = 0u64;
+    // Stake that would have been considered online under the old, un-tripled
+    // timeout, and under a timeout applied to our own insert clock instead of
+    // the peer-authored wallclock.
+    let mut online_stake_old_timeout = 0u64;
+    let mut online_stake_local_ts = 0u64;
+    let mut offline_stake = 0u64;
+    // Nodes that are only online thanks to the extended timeout.
+    let mut grace_nodes = vec![];
+
+    for (identity, stake) in stakes {
+        match peers.get(identity) {
+            Some(&(age, local_age, gossip_addr)) if age < NODE_LIVENESS_TIMEOUT_MS => {
+                online_stake += stake;
+                if local_age < CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS {
+                    online_stake_local_ts += stake;
+                }
+                if age < CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS {
+                    online_stake_old_timeout += stake;
+                } else {
+                    grace_nodes.push((*stake, *identity, gossip_addr, age, local_age));
+                }
+            }
+            // Absent from crds, or present but already past the new timeout.
+            _ => offline_stake += stake,
+        }
+    }
+
+    let percent = |stake: u64| (stake as f64 / total_stake as f64) * 100.;
+    info!(
+        "{WFSM_LOG_TAG} {:.3}% of active stake visible in gossip with \
+         {NODE_LIVENESS_TIMEOUT_MS}ms timeout, {:.3}% with {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms \
+         timeout, {:.3}% with {CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS}ms local-insert timeout",
+        percent(online_stake),
+        percent(online_stake_old_timeout),
+        percent(online_stake_local_ts),
+    );
+    grace_nodes.sort_by_key(|node| cmp::Reverse(node.0)); // sort by reverse stake weight
+    for (stake, identity, gossip_addr, age, local_age) in grace_nodes {
+        info!(
+            "{WFSM_LOG_TAG}    {:.3}% - {identity} - gossip {} - age {age}ms - local_age \
+             {local_age}ms",
+            percent(stake),
+            gossip_addr.map_or_else(|| "none".to_string(), |addr| addr.to_string()),
+        );
+    }
+    if include_unstaked {
+        // Same window as the staked entries above -- 15s up to the new timeout --
+        // so grace-band episodes mean the same thing in both populations.
+        let mut unstaked_grace: Vec<_> = peers
+            .iter()
+            .filter(|(identity, _)| !stakes.contains_key(*identity))
+            .filter(|&(_, &(age, _, _))| {
+                (CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS..NODE_LIVENESS_TIMEOUT_MS).contains(&age)
+            })
+            .map(|(identity, &(age, local_age, gossip_addr))| {
+                (*identity, gossip_addr, age, local_age)
+            })
+            .collect();
+        unstaked_grace.sort_unstable_by_key(|node| cmp::Reverse(node.2)); // oldest first
+        for (identity, gossip_addr, age, local_age) in unstaked_grace {
+            info!(
+                "{WFSM_LOG_TAG}    0.000% - {identity} - gossip {} - age {age}ms - local_age \
+                 {local_age}ms",
+                gossip_addr.map_or_else(|| "none".to_string(), |addr| addr.to_string()),
+            );
+        }
+    }
+
+    let (staked_ages, unstaked_ages): (Vec<_>, Vec<_>) = peers
+        .iter()
+        .map(|(identity, &(age, local_age, _))| (stakes.contains_key(identity), (age, local_age)))
+        .partition(|(staked, _)| *staked);
+    log_age_summary(
+        "staked",
+        &staked_ages
+            .into_iter()
+            .map(|(_, ages)| ages)
+            .collect::<Vec<_>>(),
+    );
+    log_age_summary(
+        "unstaked",
+        &unstaked_ages
+            .into_iter()
+            .map(|(_, ages)| ages)
+            .collect::<Vec<_>>(),
+    );
+    // Not part of the parsed format; keeps the offline mass visible in the log.
+    info!(
+        "{WFSM_LOG_TAG} offline {:.3}% of active stake, {} staked identities unseen",
+        percent(offline_stake),
+        stakes.len() - peers.keys().filter(|key| stakes.contains_key(key)).count(),
+    );
+}
+
+/// Run the spy indefinitely, emitting a liveness sample every `interval`.
+fn wfsm_spy(
+    identity_keypair: Option<Keypair>,
+    entrypoint_addrs: &[SocketAddr],
+    gossip_addr: &SocketAddr,
+    shred_version: u16,
+    socket_addr_space: SocketAddrSpace,
+    stakes_path: &str,
+    interval: Duration,
+    include_unstaked: bool,
+) -> Result<(), Box<dyn error::Error>> {
+    let (mut stakes, mut total_stake) = load_wfsm_stakes(stakes_path)?;
+    let mut stakes_mtime = File::open(stakes_path)?.metadata()?.modified()?;
+
+    let exit = Arc::new(AtomicBool::new(false));
+    let (_gossip_service, ip_echo, cluster_info) = make_node(
+        identity_keypair.unwrap_or_else(Keypair::new),
+        entrypoint_addrs,
+        exit.clone(),
+        Some(gossip_addr),
+        shred_version,
+        true, // should_check_duplicate_instance
+        socket_addr_space,
+    );
+    let _ip_echo_server = ip_echo.map(|tcp_listener| {
+        solana_net_utils::ip_echo_server(
+            tcp_listener,
+            solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
+            Some(shred_version),
+        )
+    });
+    info!(
+        "wfsm spy {} at {gossip_addr}, {} staked identities, sampling every {}ms",
+        cluster_info.id(),
+        stakes.len(),
+        interval.as_millis(),
+    );
+
+    while !exit.load(Ordering::Relaxed) {
+        // Picked up without a restart so an external job can refresh the
+        // snapshot each epoch; a snapshot that fails to parse is left in place
+        // rather than taken as an instruction to stop measuring.
+        match File::open(stakes_path).and_then(|file| file.metadata()?.modified()) {
+            Ok(modified) if modified != stakes_mtime => match load_wfsm_stakes(stakes_path) {
+                Ok((fresh, fresh_total)) => {
+                    info!("reloaded {stakes_path}: {} staked identities", fresh.len());
+                    (stakes, total_stake, stakes_mtime) = (fresh, fresh_total, modified);
+                }
+                Err(err) => warn!("keeping previous stakes, {stakes_path} unreadable: {err}"),
+            },
+            Ok(_) => (),
+            Err(err) => warn!("cannot stat {stakes_path}: {err}"),
+        }
+        wfsm_sample(&cluster_info, &stakes, total_stake, include_unstaked);
+        thread::sleep(interval);
+    }
     Ok(())
 }
 

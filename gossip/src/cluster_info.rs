@@ -124,6 +124,11 @@ const GOSSIP_PING_CACHE_CAPACITY: usize = 126976;
 pub(crate) const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
 /// Per-entry Pong wait timeout is drawn uniformly from this range (in milliseconds).
 pub(crate) const GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS: Range<u64> = 1000..2000;
+/// Bound timeout-reporting work in each gossip round.
+const MAX_PING_TIMEOUTS_PER_ROUND: usize = 4096;
+/// Grep tag on the ad-hoc ping/pong/contact-info tracing below, mirroring the
+/// RRRRRRRRRR tag on the wait-for-supermajority gossip liveness logs.
+const PING_LOG_TAG: &str = "PPPPPPPPPP";
 // Per-IP scan budget for incoming pull requests; validators are assumed not
 // to share IPs. Mirrors the ping-pong cache capacity.
 const GOSSIP_PULL_SCAN_BUDGET_CACHE_CAPACITY: usize = GOSSIP_PING_CACHE_CAPACITY;
@@ -197,6 +202,9 @@ pub struct ClusterInfo {
     sigverify_cache: SigVerifyCache,
     /// Alpenglow migration status
     migration_status: OnceLock<Arc<MigrationStatus>>,
+    /// Peers to ping on the next gossip round, queued out of band by
+    /// [`ClusterInfo::queue_liveness_pings`].
+    liveness_ping_queue: Mutex<HashSet<(Pubkey, SocketAddr)>>,
 }
 
 impl ClusterInfo {
@@ -236,6 +244,7 @@ impl ClusterInfo {
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
             migration_status: OnceLock::new(),
+            liveness_ping_queue: Mutex::default(),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -270,6 +279,59 @@ impl ClusterInfo {
         self.bind_ip_addrs.clone()
     }
 
+    /// Queues a ping to each of `peers`, to be sent on the next gossip round.
+    ///
+    /// A pong answers the one question a contact info about to age out cannot:
+    /// whether the node is still there. Liveness checks which would otherwise
+    /// have to read staleness as absence (see
+    /// `validator::get_stake_percent_in_gossip`) use this to probe a peer while
+    /// its contact info is still inside the liveness window.
+    pub fn queue_liveness_pings(&self, peers: impl IntoIterator<Item = (Pubkey, SocketAddr)>) {
+        let peers = peers
+            .into_iter()
+            .filter(|(_, addr)| ContactInfo::is_valid_address(addr, &self.socket_addr_space));
+        self.liveness_ping_queue.lock().unwrap().extend(peers);
+    }
+
+    /// How long ago `peer` last responded to a ping on `addr`, or None if it has
+    /// not responded within the ping cache ttl.
+    pub fn pong_age(&self, peer: Pubkey, addr: SocketAddr) -> Option<Duration> {
+        self.ping_cache
+            .lock()
+            .unwrap()
+            .pong_age(Instant::now(), &(peer, addr))
+    }
+
+    /// Pings queued by [`Self::queue_liveness_pings`]. Nodes with a ping already
+    /// in flight are skipped, so a peer sitting in a caller's at-risk band for
+    /// several rounds is pinged at the ping cache's own rate, not the caller's.
+    fn new_liveness_pings(&self) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
+        let peers = std::mem::take(&mut *self.liveness_ping_queue.lock().unwrap());
+        if peers.is_empty() {
+            return Either::Left(std::iter::empty());
+        }
+        let keypair = self.keypair();
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let pings: Vec<_> = {
+            let mut ping_cache = self.ping_cache.lock().unwrap();
+            peers
+                .into_iter()
+                .filter_map(|node| {
+                    let ping = ping_cache.force_ping(&mut rng, &keypair, now, node)?;
+                    Some((node.0, node.1, ping))
+                })
+                .collect()
+        };
+        self.stats
+            .liveness_pings_sent
+            .add_relaxed(pings.len() as u64);
+        Either::Right(pings.into_iter().map(|(pubkey, addr, ping)| {
+            warn!("{PING_LOG_TAG} gossip_liveness_ping_sent: pubkey={pubkey}, addr={addr}");
+            (addr, Protocol::PingMessage(ping))
+        }))
+    }
+
     fn refresh_push_active_set(
         &self,
         recycler: &PacketBatchRecycler,
@@ -288,9 +350,10 @@ impl ClusterInfo {
             &mut pings,
             &self.socket_addr_space,
         );
-        let pings = pings
-            .into_iter()
-            .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
+        let pings = pings.into_iter().map(|(pubkey, addr, ping)| {
+            warn!("{PING_LOG_TAG} gossip_ping_sent: pubkey={pubkey}, addr={addr}");
+            (addr, Protocol::PingMessage(ping))
+        });
         send_gossip_packets(pings, recycler, sender, &self.stats);
     }
 
@@ -1302,9 +1365,10 @@ impl ClusterInfo {
                 .into_iter()
                 .flatten()
         };
-        let pings = pings
-            .into_iter()
-            .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
+        let pings = pings.into_iter().map(|(pubkey, addr, ping)| {
+            warn!("{PING_LOG_TAG} gossip_ping_sent: pubkey={pubkey}, addr={addr}");
+            (addr, Protocol::PingMessage(ping))
+        });
         self.append_entrypoint_to_pulls(thread_pool, max_bloom_filter_bytes, pulls)
             .map(move |(gossip_addr, filter)| {
                 let request = Protocol::PullRequest(filter, self_info.clone());
@@ -1390,7 +1454,9 @@ impl ClusterInfo {
         // pull-request bloom filters, preventing pull responses to return the
         // same values back to the node itself. Note that packets will arrive
         // and are processed out of order.
-        let out = self.new_push_requests(stakes);
+        let out = self
+            .new_push_requests(stakes)
+            .chain(self.new_liveness_pings());
         if generate_pull_requests {
             let reqs = self.new_pull_requests(thread_pool, gossip_validators, stakes);
             Either::Right(out.chain(reqs))
@@ -1551,6 +1617,7 @@ impl ClusterInfo {
                         gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
                     self.handle_purge(&thread_pool, &stakes);
+                    self.report_ping_timeouts();
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
@@ -1674,6 +1741,10 @@ impl ClusterInfo {
             if let Some(ping) = ping {
                 let ping = Protocol::PingMessage(ping);
                 if let Some(pkt) = make_gossip_packet(node.1, &ping, &self.stats) {
+                    warn!(
+                        "{PING_LOG_TAG} gossip_ping_sent: pubkey={}, addr={}",
+                        node.0, node.1
+                    );
                     packet_batch.push(pkt);
                 }
             }
@@ -1886,22 +1957,54 @@ impl ClusterInfo {
         let keypair = self.keypair();
         let pongs = pings.into_iter().map(|(addr, ping)| {
             let pong = Pong::new(&ping, &keypair);
+            // We pong unconditionally, so this stands in for the pong we send back.
+            warn!(
+                "{PING_LOG_TAG} gossip_ping_received: pubkey={}, addr={}",
+                ping.pubkey(),
+                addr.borrow()
+            );
             (addr, Protocol::PongMessage(pong))
         });
         send_gossip_packets(pongs, recycler, response_sender, &self.stats);
     }
 
-    fn handle_batch_pong_messages<I>(&self, pongs: I, now: Instant)
-    where
-        I: IntoIterator<Item = (SocketAddr, Pong)>,
-    {
+    fn handle_batch_pong_messages(&self, pongs: Vec<(SocketAddr, Pong)>, now: Instant) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pong_messages_time);
-        let mut pongs = pongs.into_iter().peekable();
-        if pongs.peek().is_some() {
-            let mut ping_cache = self.ping_cache.lock().unwrap();
-            for (addr, pong) in pongs {
-                ping_cache.add(&pong, addr, now);
+        if !pongs.is_empty() {
+            let received = {
+                let mut ping_cache = self.ping_cache.lock().unwrap();
+                pongs
+                    .into_iter()
+                    .map(|(addr, pong)| {
+                        let pubkey = *pong.from();
+                        let accepted = ping_cache.add(&pong, addr, now);
+                        (pubkey, addr, accepted)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            for (pubkey, addr, accepted) in received {
+                warn!(
+                    "{PING_LOG_TAG} gossip_pong_received: pubkey={pubkey}, addr={addr}, \
+                     accepted={accepted}"
+                );
             }
+        }
+    }
+
+    fn report_ping_timeouts(&self) {
+        let timeouts = self
+            .ping_cache
+            .lock()
+            .unwrap()
+            .report_ping_timeouts(MAX_PING_TIMEOUTS_PER_ROUND);
+        self.stats
+            .ping_timeout_count
+            .add_relaxed(timeouts.len() as u64);
+        for (pubkey, addr) in timeouts {
+            warn!(
+                "{PING_LOG_TAG} gossip_ping_timeout: pubkey={pubkey}, addr={addr}, timeout_ms={}",
+                GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS.end
+            );
         }
     }
 
@@ -2057,7 +2160,10 @@ impl ClusterInfo {
                 value,
                 &self.socket_addr_space,
                 &self.ping_cache,
+                &self.gossip.crds,
+                stakes,
                 &mut pings,
+                &self.stats,
             ) {
                 true
             } else {
@@ -2117,9 +2223,10 @@ impl ClusterInfo {
                 Protocol::PongMessage(pong) => pong_messages.push((from_addr, pong)),
             }
         }
-        let pings = pings
-            .into_iter()
-            .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
+        let pings = pings.into_iter().map(|(pubkey, addr, ping)| {
+            warn!("{PING_LOG_TAG} gossip_ping_sent: pubkey={pubkey}, addr={addr}");
+            (addr, Protocol::PingMessage(ping))
+        });
         send_gossip_packets(pings, recycler, response_sender, &self.stats);
         self.handle_batch_ping_messages(ping_messages, recycler, response_sender);
         self.handle_batch_prune_messages(prune_messages, stakes);
@@ -2544,8 +2651,13 @@ fn get_node_addr(
     query(node).filter(|addr| socket_addr_space.check(addr))
 }
 
-// If the CRDS value is an unstaked contact-info, verifies if
-// it has responded to ping on its gossip socket address.
+// If the CRDS value is a contact-info, verifies if it has responded to ping on
+// its gossip socket address.
+// A staked node which is already in CRDS under the same gossip IP is exempt: its
+// address has been verified before, so the refreshed contact-info is admitted
+// while the renewal ping is still in flight. Without this, a staked node whose
+// ping-cache entry has aged out goes unseen until a full ping/pong round-trip
+// completes, which shows up as a liveness gap.
 // Returns false if the CRDS value should be discarded.
 #[must_use]
 fn verify_gossip_addr<R: Rng + CryptoRng>(
@@ -2554,25 +2666,66 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     value: &CrdsValue,
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
-    pings: &mut Vec<(SocketAddr, Ping)>,
+    crds: &RwLock<Crds>,
+    stakes: &HashMap<Pubkey, u64>,
+    pings: &mut Vec<(Pubkey, SocketAddr, Ping)>,
+    stats: &GossipStats,
 ) -> bool {
-    let (pubkey, addr) = match value.data() {
-        CrdsData::ContactInfo(node) => (node.pubkey(), node.gossip()),
-        _ => return true, // If not a contact-info, nothing to verify.
+    let CrdsData::ContactInfo(node) = value.data() else {
+        return true; // If not a contact-info, nothing to verify.
     };
+    let (pubkey, addr, version) = (node.pubkey(), node.gossip(), node.version());
+    stats.contact_info_received_count.add_relaxed(1);
+    // Age of the value by the peer's own clock, as seen by ours. This is the same
+    // quantity the wait-for-supermajority liveness check ages out on, so a value
+    // that is already stale on arrival indicates clock skew rather than staleness.
+    let wallclock_age = timestamp().saturating_sub(node.wallclock());
+    warn!(
+        "{PING_LOG_TAG} gossip_contact_info_received: pubkey={pubkey}, addr={}, software={}, \
+         version={version}, wallclock_age={wallclock_age}ms",
+        addr.map_or_else(|| "none".to_string(), |addr| addr.to_string()),
+        version.client(),
+    );
     // Invalid addresses are not verifiable.
     let Some(addr) = addr.filter(|addr| socket_addr_space.check(addr)) else {
         return false;
     };
     let (out, ping) = {
         let node = (*pubkey, addr);
+        let now = Instant::now();
         let mut ping_cache = ping_cache.lock().unwrap();
-        ping_cache.check(rng, keypair, Instant::now(), node)
+        ping_cache.check(rng, keypair, now, node)
     };
+    // Sent regardless of the verdict below, so that an exempted staked node's
+    // ping-cache entry is renewed rather than left to keep missing.
     if let Some(ping) = ping {
-        pings.push((addr, ping));
+        pings.push((*pubkey, addr, ping));
     }
-    out
+    out || is_known_staked_gossip_addr(pubkey, addr, crds, stakes, stats)
+}
+
+// Whether the node is staked and already in CRDS under a contact-info with the
+// same gossip IP, in which case a pending ping need not hold up the update.
+fn is_known_staked_gossip_addr(
+    pubkey: &Pubkey,
+    addr: SocketAddr,
+    crds: &RwLock<Crds>,
+    stakes: &HashMap<Pubkey, u64>,
+    stats: &GossipStats,
+) -> bool {
+    if stakes.get(pubkey).copied().unwrap_or_default() == 0u64 {
+        return false;
+    }
+    let known = {
+        let crds = crds.read().unwrap();
+        crds.get::<&ContactInfo>(*pubkey)
+            .and_then(ContactInfo::gossip)
+            .is_some_and(|known| known.ip() == addr.ip())
+    };
+    if known {
+        stats.num_unverified_staked_addrs_admitted.add_relaxed(1);
+    }
+    known
 }
 
 fn send_gossip_packets<S: Borrow<SocketAddr>>(
