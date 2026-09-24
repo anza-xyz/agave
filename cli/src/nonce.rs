@@ -3,7 +3,7 @@ use {
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error,
+            log_instruction_custom_error, sign_transaction,
         },
         compute_budget::{
             ComputeUnitConfig, WithComputeUnitConfig, simulate_and_update_compute_unit_limit,
@@ -23,7 +23,7 @@ use {
     },
     solana_cli_output::CliNonceAccount,
     solana_hash::Hash,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_nonce::state::State,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -37,7 +37,6 @@ use {
             create_nonce_account_with_seed, upgrade_nonce_account, withdraw_nonce_account,
         },
     },
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
     std::rc::Rc,
 };
 
@@ -426,12 +425,10 @@ pub async fn process_authorize_nonce_account(
         compute_unit_price,
         compute_unit_limit,
     });
-    let mut message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
+    let mut message =
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&config.signers[0].pubkey())));
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&config.signers, latest_blockhash)?;
-
-    let tx = VersionedTransaction::from(tx);
+    let tx = sign_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),
@@ -512,7 +509,7 @@ pub async fn process_create_nonce_account(
                 compute_unit_limit,
             })
         };
-        Message::new(&ixs, Some(&config.signers[0].pubkey()))
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&config.signers[0].pubkey())))
     };
 
     let latest_blockhash = rpc_client.get_latest_blockhash().await?;
@@ -546,8 +543,7 @@ pub async fn process_create_nonce_account(
         .into());
     }
 
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&config.signers, latest_blockhash)?;
+    let tx = sign_transaction(message, &config.signers, latest_blockhash, false)?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -605,11 +601,10 @@ pub async fn process_new_nonce(
         compute_unit_limit,
     });
     let latest_blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
+    let mut message =
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&config.signers[0].pubkey())));
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&config.signers, latest_blockhash)?;
-    let tx = VersionedTransaction::from(tx);
+    let tx = sign_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),
@@ -685,11 +680,10 @@ pub async fn process_withdraw_from_nonce_account(
         compute_unit_price,
         compute_unit_limit,
     });
-    let mut message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
+    let mut message =
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&config.signers[0].pubkey())));
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&config.signers, latest_blockhash)?;
-    let tx = VersionedTransaction::from(tx);
+    let tx = sign_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),
@@ -723,11 +717,10 @@ pub(crate) async fn process_upgrade_nonce_account(
             compute_unit_price,
             compute_unit_limit,
         });
-    let mut message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
+    let mut message =
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&config.signers[0].pubkey())));
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&config.signers, latest_blockhash)?;
-    let tx = VersionedTransaction::from(tx);
+    let tx = sign_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),

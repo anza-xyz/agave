@@ -2,7 +2,7 @@ use {
     crate::{
         checks::{check_account_for_balance_with_commitment, get_fee_for_messages},
         cli::CliError,
-        compute_budget::{UpdateComputeUnitLimitResult, simulate_and_update_compute_unit_limit},
+        compute_budget::{set_compute_unit_limit, simulate_and_update_compute_unit_limit},
         stake, vote,
     },
     clap::ArgMatches,
@@ -12,7 +12,7 @@ use {
     solana_cli_output::display::build_balance_message,
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
-    solana_message::{Message, VersionedMessage},
+    solana_message::VersionedMessage,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
 };
@@ -73,9 +73,9 @@ pub async fn resolve_spend_tx_and_check_account_balance<F>(
     compute_unit_limit: ComputeUnitLimit,
     build_message: F,
     commitment: CommitmentConfig,
-) -> Result<(Message, u64), CliError>
+) -> Result<(VersionedMessage, u64), CliError>
 where
-    F: Fn(u64) -> Message,
+    F: Fn(u64) -> VersionedMessage,
 {
     resolve_spend_tx_and_check_account_balances(
         rpc_client,
@@ -101,9 +101,9 @@ pub async fn resolve_spend_tx_and_check_account_balances<F>(
     compute_unit_limit: ComputeUnitLimit,
     build_message: F,
     commitment: CommitmentConfig,
-) -> Result<(Message, u64), CliError>
+) -> Result<(VersionedMessage, u64), CliError>
 where
-    F: Fn(u64) -> Message,
+    F: Fn(u64) -> VersionedMessage,
 {
     if sign_only {
         let (message, SpendAndFee { spend, fee: _ }) = resolve_spend_message(
@@ -215,9 +215,9 @@ async fn resolve_spend_message<F>(
     from_rent_exempt_minimum: u64,
     compute_unit_limit: ComputeUnitLimit,
     build_message: F,
-) -> Result<(Message, SpendAndFee), CliError>
+) -> Result<(VersionedMessage, SpendAndFee), CliError>
 where
-    F: Fn(u64) -> Message,
+    F: Fn(u64) -> VersionedMessage,
 {
     let (fee, compute_unit_info) = match blockhash {
         Some(blockhash) => {
@@ -252,23 +252,15 @@ where
             };
             let mut dummy_message = build_message(lamports);
 
-            dummy_message.recent_blockhash = *blockhash;
-            let compute_unit_info =
-                if let UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) =
-                    simulate_and_update_compute_unit_limit(
-                        &compute_unit_limit,
-                        rpc_client,
-                        &mut dummy_message,
-                    )
-                    .await?
-                {
-                    Some((ix_index, dummy_message.instructions[ix_index].data.clone()))
-                } else {
-                    None
-                };
+            dummy_message.set_recent_blockhash(*blockhash);
+            let compute_unit_info = simulate_and_update_compute_unit_limit(
+                &compute_unit_limit,
+                rpc_client,
+                &mut dummy_message,
+            )
+            .await?;
             (
-                get_fee_for_messages(rpc_client, &[&VersionedMessage::Legacy(dummy_message)])
-                    .await?,
+                get_fee_for_messages(rpc_client, &[&dummy_message]).await?,
                 compute_unit_info,
             )
         }
@@ -314,8 +306,8 @@ where
         }
     };
     // After build message, update with correct compute units
-    if let Some((ix_index, ix_data)) = compute_unit_info {
-        message.instructions[ix_index].data = ix_data;
+    if let Some(limit) = compute_unit_info {
+        set_compute_unit_limit(&mut message, limit);
     }
     Ok((message, spend_and_fee))
 }
@@ -327,6 +319,7 @@ mod tests {
         serde_json::json,
         solana_account::Account,
         solana_account_decoder::{UiAccountEncoding, encode_ui_account},
+        solana_message::Message,
         solana_rpc_client_api::{
             request::RpcRequest,
             response::{Response, RpcResponseContext},
@@ -390,7 +383,7 @@ mod tests {
             &fee_payer,
             ComputeUnitLimit::Default,
             |lamports| {
-                Message::new(
+                VersionedMessage::Legacy(Message::new(
                     &[withdraw(
                         &vote_account_pubkey,
                         &withdraw_authority,
@@ -398,7 +391,7 @@ mod tests {
                         &destination_pubkey,
                     )],
                     Some(&fee_payer),
-                )
+                ))
             },
             CommitmentConfig::processed(),
         )
