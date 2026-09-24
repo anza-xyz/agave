@@ -314,7 +314,26 @@ pub struct Sections {
     pub erasure_shard: Section,
 }
 
-/// The section layout of a shred of kind `K`
+/// The section layout of a shred of kind `K`, whose Merkle proof is [`MERKLE_PROOF_ENTRIES`] long.
+///
+/// # This is not the layout of an arbitrary shred
+///
+/// The proof length is assumed, not read. A shred whose variant byte claims any other length has
+/// every boundary from [`Sections::body`] onwards somewhere else, and this function will not say so
+/// — it returns the fixed layout regardless, so a caller that guessed wrong reads the wrong bytes
+/// silently rather than failing.
+///
+/// That is sound only where the proof length has already been established as
+/// [`MERKLE_PROOF_ENTRIES`], which inside this crate means after
+/// [`peek_variant`](crate::view::peek_variant) has decoded the byte: [`ShredVariant`] has a tag per
+/// legal byte and no others, so a variant that exists at all has the fixed proof length.
+///
+/// The incumbent parser in `solana-ledger` has established no such thing. It masks the low nibble
+/// and accepts proof lengths `0..=15`, because SIMD-317's enforcement is still gated on a slot
+/// number, so shreds of other depths are still addressable. Every `solana-ledger` caller must
+/// therefore use [`sections_with_proof_entries`] and pass the length the shred itself claims.
+//TODO: once SIMD-317's enforcement is unconditional this distinction disappears along with
+// `sections_with_proof_entries`, and this becomes the only layout function.
 pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
     match sections_with_proof_entries::<K>(MERKLE_PROOF_ENTRIES, resigned) {
         Some(sections) => sections,
@@ -326,8 +345,17 @@ pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
 /// if a proof that long leaves no room for a body.
 ///
 /// Exists only because the incumbent parser in `solana-ledger` still addresses shreds whose proof
-/// is not [`MERKLE_PROOF_ENTRIES`] long.
-//TODO: Delete this once relevant feature gate is active.
+/// is not [`MERKLE_PROOF_ENTRIES`] long: it masks the low nibble of the variant byte and accepts
+/// `0..=15`, and SIMD-317's enforcement of the fixed 32:32 batch is gated on a slot number
+/// (`enforce_correct_proof_size_from`) rather than unconditional. Until that gate is always on,
+/// a `solana-ledger` caller that reached for [`sections`] instead would mislocate every boundary
+/// after the body of any shred a peer sent at another depth, so this is the one it must use.
+///
+/// `solana-ledger`'s `shred::merkle::test::test_sections_match_legacy_offsets` pins the result
+/// against the arithmetic that crate used before it took the layout from here, for every length it
+/// accepts.
+//TODO: Delete this, its ledger-side callers and that test once SIMD-317's enforcement is
+// unconditional; `sections` is then correct everywhere.
 pub const fn sections_with_proof_entries<K: ShredLayout>(
     proof_entries: usize,
     resigned: bool,

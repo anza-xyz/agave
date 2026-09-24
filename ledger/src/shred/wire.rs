@@ -374,7 +374,8 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            SHREDS_PER_FEC_BLOCK, Shred, make_merkle_shreds_for_tests, traits::ShredData,
+            SHREDS_PER_FEC_BLOCK, Shred, make_merkle_shreds_for_tests,
+            traits::{ShredCode as _, ShredData},
         },
         assert_matches::assert_matches,
         rand::Rng,
@@ -600,11 +601,21 @@ mod tests {
                 );
                 assert_eq!(bytes, shred.payload().as_ref());
             }
-            if let Shred::ShredCode(_) = shred {
+            if let Shred::ShredCode(shred) = shred {
                 assert_matches!(get_flags(bytes), Err(Error::InvalidShredType));
                 assert_matches!(get_data(bytes), Err(Error::InvalidShredType));
+                let coding_header = shred.coding_header();
+                assert_eq!(
+                    get_erasure_config(bytes).unwrap(),
+                    ErasureConfig {
+                        num_data: usize::from(coding_header.num_data_shreds),
+                        num_coding: usize::from(coding_header.num_coding_shreds),
+                    },
+                    "the erasure config read off the wire is the one the coding header holds",
+                );
             }
             if let Shred::ShredData(shred) = shred {
+                assert_matches!(get_erasure_config(bytes), Err(Error::InvalidShredType));
                 let shred_data_header = shred.data_header();
                 assert_eq!(
                     get_parent_offset(bytes).unwrap(),

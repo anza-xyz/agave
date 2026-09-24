@@ -19,7 +19,7 @@ use {
         constants::{
             OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_POSITION, Sections, sections_with_proof_entries,
         },
-        kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
+        kind::{Code as CodeLayout, Data as DataLayout, ShredLayout},
     },
     assert_matches::debug_assert_matches,
     itertools::Itertools,
@@ -1221,6 +1221,7 @@ mod test {
     use {
         super::*,
         crate::shred::{ShredFlags, ShredId, ShredType, merkle_tree::get_proof_size},
+        agave_shred_wire_format::constants::Section,
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::{CryptoRng, Rng, seq::SliceRandom},
@@ -1235,6 +1236,109 @@ mod test {
         },
         test_case::{test_case, test_matrix},
     };
+
+    // The arithmetic this crate used determine positions of shred sections, reimplemented
+    // in a test such that we can confirm no regressions/drift occur.
+    //
+    //TODO: delete along with `sections_with_proof_entries` once SIMD317 enforcement is active
+    fn assert_sections_match_legacy<L: ShredLayout>(
+        size_of_payload: usize,
+        size_of_headers: usize,
+        erasure_shard_start: usize,
+    ) {
+        // `ShredVariant::try_from` reads the proof length out of the variant byte's low nibble.
+        const MAX_ADDRESSABLE_PROOF_SIZE: u8 = 0x0F;
+        for proof_size in 0..=MAX_ADDRESSABLE_PROOF_SIZE {
+            for resigned in [false, true] {
+                let legacy_capacity = size_of_payload.checked_sub(
+                    size_of_headers
+                        + SIZE_OF_MERKLE_ROOT
+                        + usize::from(proof_size) * SIZE_OF_MERKLE_PROOF_ENTRY
+                        + if resigned { SIZE_OF_SIGNATURE } else { 0 },
+                );
+                let sections = sections_with_proof_entries::<L>(usize::from(proof_size), resigned);
+                assert_eq!(
+                    legacy_capacity.is_some(),
+                    sections.is_some(),
+                    "both descriptions reject the same proof lengths (proof_size: {proof_size}, \
+                     resigned: {resigned})"
+                );
+                let (Some(legacy_capacity), Some(sections)) = (legacy_capacity, sections) else {
+                    continue;
+                };
+                // Named after the accessors they replaced in this file and in `wire`.
+                let legacy_chained_merkle_root_offset = size_of_headers + legacy_capacity;
+                let legacy_proof_offset = legacy_chained_merkle_root_offset + SIZE_OF_MERKLE_ROOT;
+                let legacy_retransmitter_signature_offset =
+                    legacy_proof_offset + usize::from(proof_size) * SIZE_OF_MERKLE_PROOF_ENTRY;
+                let context = format!("proof_size: {proof_size}, resigned: {resigned}");
+                assert_eq!(
+                    sections.signature.as_range(),
+                    0..SIZE_OF_SIGNATURE,
+                    "{context}"
+                );
+                assert_eq!(
+                    sections.headers.as_range(),
+                    SIZE_OF_SIGNATURE..size_of_headers,
+                    "{context}"
+                );
+                assert_eq!(
+                    sections.body.as_range(),
+                    size_of_headers..legacy_chained_merkle_root_offset,
+                    "{context}"
+                );
+                assert_eq!(sections.body.len(), legacy_capacity, "{context}");
+                assert_eq!(
+                    sections.chained_merkle_root.as_range(),
+                    legacy_chained_merkle_root_offset..legacy_proof_offset,
+                    "{context}"
+                );
+                assert_eq!(
+                    sections.merkle_proof.as_range(),
+                    legacy_proof_offset..legacy_retransmitter_signature_offset,
+                    "{context}"
+                );
+                assert_eq!(
+                    sections.retransmitter_signature.map(Section::as_range),
+                    resigned.then(|| {
+                        legacy_retransmitter_signature_offset
+                            ..legacy_retransmitter_signature_offset + SIZE_OF_SIGNATURE
+                    }),
+                    "a retransmitter signature is reserved exactly for resigned variants \
+                     ({context})"
+                );
+                assert_eq!(
+                    sections.merkle_leaf.as_range(),
+                    SIZE_OF_SIGNATURE..legacy_proof_offset,
+                    "{context}"
+                );
+                assert_eq!(
+                    sections.erasure_shard.as_range(),
+                    erasure_shard_start..legacy_chained_merkle_root_offset,
+                    "{context}"
+                );
+                // The payload is exactly the sections, with nothing left over.
+                let end_of_shred = sections
+                    .retransmitter_signature
+                    .map_or(sections.merkle_proof.end, |section| section.end);
+                assert_eq!(end_of_shred, size_of_payload, "{context}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_sections_match_legacy() {
+        assert_sections_match_legacy::<DataLayout>(
+            ShredData::SIZE_OF_PAYLOAD,
+            ShredData::SIZE_OF_HEADERS,
+            ShredData::ERASURE_SHARD_START_OFFSET,
+        );
+        assert_sections_match_legacy::<CodeLayout>(
+            ShredCode::SIZE_OF_PAYLOAD,
+            ShredCode::SIZE_OF_HEADERS,
+            ShredCode::ERASURE_SHARD_START_OFFSET,
+        );
+    }
 
     // Total size of a data shred including headers and merkle proof.
     fn shred_data_size_of_payload(proof_size: u8, resigned: bool) -> usize {
