@@ -14,8 +14,8 @@ use {
     agave_shred_wire_format::{
         constants::{
             OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
-            OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VARIANT, OFFSET_OF_VERSION,
-            Sections, sections_with_proof_entries,
+            OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VERSION, Sections,
+            sections_with_proof_entries,
         },
         kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
         view::{peek_header, peek_variant_byte},
