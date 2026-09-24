@@ -10,7 +10,7 @@ use {
 ///
 /// This is what makes a kind-erased shred possible: erasing the header field is enough, because
 /// everything else about a shred is either common to both kinds or derived from the variant byte.
-/// See `agave_shred::shred::AnyShred`.
+/// See [`AnyShredView`](crate::view::AnyShredView).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnyHeader {
     /// A data shred's header.
@@ -72,7 +72,7 @@ pub struct CodeHeader {
     pub position: u16,
 }
 
-/// Data shred flags: a 6-bit reference tick plus two completion markers.
+/// Data shred flags: two completion markers and a 6-bit reference tick.
 ///
 /// Every byte deserializes, but not every byte is a legal combination: the slot-end bit is defined
 /// only together with the FEC-set-end bit. [`is_valid`](Self::is_valid) is what says so, and
@@ -83,14 +83,14 @@ pub struct CodeHeader {
 pub struct ShredFlags(u8);
 
 impl ShredFlags {
+    /// Mask of the bits holding the shred flags.
+    pub const FLAGS_MASK: u8 = 0b1100_0000;
     /// Mask of the bits holding the reference tick.
-    pub const REFERENCE_TICK_MASK: u8 = 0b0011_1111;
+    pub const REFERENCE_TICK_MASK: u8 = !Self::FLAGS_MASK;
     /// Marks the last data shred of an FEC set.
     pub const DATA_COMPLETE_SHRED: u8 = 0b0100_0000;
     /// Marks the last data shred of a slot. Implies [`Self::DATA_COMPLETE_SHRED`].
     pub const LAST_SHRED_IN_SLOT: u8 = 0b1100_0000;
-    /// The slot-end half of [`Self::LAST_SHRED_IN_SLOT`], which carries no meaning on its own.
-    const SLOT_END: u8 = 0b1000_0000;
 
     /// The raw byte.
     #[inline]
@@ -98,17 +98,13 @@ impl ShredFlags {
         self.0
     }
 
-    /// Whether the completion markers are a combination the protocol defines.
-    ///
-    /// A shred that ends its slot also ends its FEC set, so the slot-end bit without the
-    /// FEC-set-end bit describes nothing. Accepting it would have this node ingest shreds that
-    /// every node running the previous implementation rejects.
+    /// Whether the flags are a combination the protocol defines.
     #[inline]
     pub const fn is_valid(self) -> bool {
-        self.0 & Self::SLOT_END == 0 || self.data_complete()
+        self.0 & Self::FLAGS_MASK == 0 || self.data_complete()
     }
 
-    /// The reference tick, saturated at [`Self::REFERENCE_TICK_MASK`] by the sender.
+    /// The reference tick.
     #[inline]
     pub const fn reference_tick(self) -> u8 {
         self.0 & Self::REFERENCE_TICK_MASK

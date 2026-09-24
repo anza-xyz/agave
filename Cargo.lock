@@ -346,7 +346,6 @@ dependencies = [
 name = "agave-shred-wire-format"
 version = "4.5.0-alpha.2"
 dependencies = [
- "bytes",
  "solana-clock",
  "solana-hash",
  "solana-packet",

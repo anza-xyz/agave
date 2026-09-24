@@ -9,9 +9,6 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
-# TODO: reserve `agave-shred-wire-format` on crates.io and drop this; `solana-ledger` is published
-# and cannot depend on an unpublished path crate.
-publish = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -22,7 +19,6 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
-bytes = { workspace = true }
 solana-clock = { workspace = true }
 solana-hash = { workspace = true, features = ["copy", "decode", "wincode"] }
 solana-packet = { workspace = true }

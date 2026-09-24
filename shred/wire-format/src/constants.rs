@@ -18,7 +18,7 @@
 //! [`SIZE_OF_BODY_RESIGNED`](ShredLayout::SIZE_OF_BODY_RESIGNED) per kind, four values in all. It
 //! is a length, not a count of useful bytes: a data shred's body ends in zero padding, and
 //! [`data_len`](crate::kind::data_len) is what says where the useful bytes stop. The four values
-//! are tabulated by the `const_assert_eq!`s at the bottom of this file.
+//! are pinned by `const_assert_eq!`s further down.
 //!
 //! The wire format should be written down once, declaratively, in the order the bytes appear.
 //! Deriving a single wincode schema for a whole shred is still not possible, because the two layouts
@@ -26,8 +26,10 @@
 //! the section sizes up in wire order, and every boundary is derived from it.
 //!
 //! The sizes below are read off the wincode schemas of the types that occupy each section, so the
-//! shred's own header definitions are the only place they are stated. The `const_assert_eq!`s at the
-//! bottom pin them: a schema change that moves a boundary is a protocol change, and a compile error.
+//! shred's own header definitions are the only place they are stated. The `const_assert_eq!`s
+//! pin them: a schema change that moves a boundary is a protocol change, and a compile error.
+//! Reordering two fields of equal width moves no boundary, so it is caught by the serialization
+//! tests instead.
 
 use {
     crate::{
@@ -35,7 +37,6 @@ use {
         kind::{Code, Data, ShredLayout},
         shred_variant::ShredVariant,
     },
-    bytes::{Bytes, BytesMut},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
@@ -75,8 +76,8 @@ pub const fn is_fec_set_start(fec_set_index: u32) -> bool {
 
 /// One entry of a Merkle proof, which is a hash truncated to its first 20 bytes.
 ///
-/// The hashing itself is `agave-shred-verify`, which asserts that its own copy of this width
-/// agrees with this one.
+/// The hashing itself is `solana-ledger`'s `shred::merkle_tree`, which asserts that its own copy of
+/// this width agrees with this one.
 pub type ProofEntry = [u8; 20];
 /// Size of one Merkle proof entry.
 pub const SIZE_OF_MERKLE_PROOF_ENTRY: usize = size_of::<ProofEntry>();
@@ -140,8 +141,8 @@ pub const SIZE_OF_DATA_PAYLOAD: usize =
 /// A code shred is the longer of the two payloads, and a repair response appends a nonce to
 /// whatever it serves, so this is the most any one shred buffer ever has to hold. Allocating both
 /// kinds at the same size gives the shred path a single allocation size, so a freed buffer can be
-/// handed straight back out for the next shred either way, and leaves the nonce room to be written
-/// where the payload already is instead of into a copy of it.
+/// handed straight back out for the next shred either way, and leaves room for the nonce to be
+/// written where the payload already is instead of into a copy of it.
 pub const SIZE_OF_SHRED_BUFFER: usize = SIZE_OF_CODE_PAYLOAD.saturating_add(SIZE_OF_NONCE);
 
 // Offsets of the individual header fields within a shred's payload.
@@ -149,11 +150,12 @@ pub const SIZE_OF_SHRED_BUFFER: usize = SIZE_OF_CODE_PAYLOAD.saturating_add(SIZE
 // `sections` brackets the headers as a block, which is what a reader of a whole shred needs. A
 // reader after one field indexes the payload directly instead, and these are where it indexes.
 //
-// Each offset is the running sum of the wincode sizes of the fields that precede it, so the header
-// structs stay the only statement of the layout. The `const_assert_eq!`s below pin both the
-// resulting numbers and the fact that each running sum lands exactly on the end of the header it
-// walks: a field added, removed, resized or reordered is a compile error, as it is a protocol
-// change.
+// Each offset is the running sum of the wincode sizes of the fields that precede it. The
+// `const_assert_eq!`s below pin both the resulting numbers and the fact that each running sum lands
+// exactly on the end of the header it walks: a field added, removed or resized is a compile error,
+// as it is a protocol change. The running sums name field types, not fields, so swapping two fields
+// of the same width (`index` and `fec_set_index`, say) still compiles; the serialization tests are
+// what catch that.
 
 /// Offset of [`CommonHeader::variant`], which follows the signature.
 pub const OFFSET_OF_VARIANT: usize = SIZE_OF_SIGNATURE;
@@ -196,8 +198,8 @@ static_assertions::const_assert_eq!(SIZE_OF_DATA_PAYLOAD, 1203);
 static_assertions::const_assert_eq!(SIZE_OF_CODE_PAYLOAD, 1228);
 static_assertions::const_assert_eq!(Data::SIZE_OF_HEADERS, 88);
 static_assertions::const_assert_eq!(Code::SIZE_OF_HEADERS, 89);
-// The four body sizes, which are the one table this crate does not derive at compile time. Pinned
-// here so it cannot go stale without the crate failing to build.
+// The four body sizes, derived from the payload, header and trailer sizes. Pinned so that a change
+// to any of them that moves the body cannot go unnoticed.
 static_assertions::const_assert_eq!(Data::SIZE_OF_BODY, 963);
 static_assertions::const_assert_eq!(Data::SIZE_OF_BODY_RESIGNED, 899);
 static_assertions::const_assert_eq!(Code::SIZE_OF_BODY, 987);
@@ -230,39 +232,6 @@ static_assertions::const_assert_eq!(OFFSET_OF_NUM_DATA_SHREDS, 83);
 static_assertions::const_assert_eq!(OFFSET_OF_NUM_CODE_SHREDS, 85);
 static_assertions::const_assert_eq!(OFFSET_OF_POSITION, 87);
 
-/// A zeroed payload buffer for a shred of kind `K`, allocated at [`SIZE_OF_SHRED_BUFFER`].
-///
-/// Every shred this crate writes starts here, so the write path allocates one size and the spare
-/// bytes past the payload are where [`form_repair_response`] puts the nonce.
-pub fn payload_buffer<K: ShredLayout>() -> Vec<u8> {
-    let mut payload = Vec::with_capacity(SIZE_OF_SHRED_BUFFER);
-    payload.resize(K::SIZE_OF_PAYLOAD, 0);
-    payload
-}
-
-/// Form the repair response: `payload` followed by the nonce of the request it answers.
-///
-/// The inverse of the split [`read_repair_packet`](crate::view::ShredView::read_repair_packet).
-/// Neither signature covers the nonce, which is why appending it to a finished shred is sound.
-/// Takes the payload by value so the nonce can be written into existing allocation (if it has room).
-pub fn form_repair_response(payload: Bytes, nonce: Nonce) -> Bytes {
-    let mut packet = payload.try_into_mut().unwrap_or_else(|payload| {
-        let mut copy = BytesMut::with_capacity(payload.len().saturating_add(SIZE_OF_NONCE));
-        copy.extend_from_slice(&payload);
-        copy
-    });
-    packet.extend_from_slice(&nonce_bytes(nonce));
-    packet.freeze()
-}
-
-/// A repair nonce as it appears on the wire.
-pub fn nonce_bytes(nonce: Nonce) -> [u8; SIZE_OF_NONCE] {
-    let mut bytes = [0u8; SIZE_OF_NONCE];
-    wincode::serialize_into(bytes.as_mut_slice(), &nonce)
-        .expect("a nonce fits the bytes its own schema asks for");
-    bytes
-}
-
 /// A range over shred's bytes.
 // Not a [`Range`], so that [`Sections`] can be `Copy`: these are boundaries, never iterated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -280,8 +249,7 @@ impl Section {
         self.end.saturating_sub(self.start)
     }
 
-    /// Whether the section is empty, which no section of a shred is. Exists because a type with
-    /// `len` and no `is_empty` is a lint.
+    /// Whether the section is empty, as the Merkle proof is in a layout with zero proof entries.
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.len() == 0
@@ -314,7 +282,26 @@ pub struct Sections {
     pub erasure_shard: Section,
 }
 
-/// The section layout of a shred of kind `K`
+/// The section layout of a shred of kind `K`, whose Merkle proof is [`MERKLE_PROOF_ENTRIES`] long.
+///
+/// # This is not the layout of an arbitrary shred
+///
+/// The proof length is assumed, not read. A shred whose variant byte claims any other length has
+/// every boundary from [`Sections::body`] onwards somewhere else, and this function will not say so
+/// — it returns the fixed layout regardless, so a caller that guessed wrong reads the wrong bytes
+/// silently rather than failing.
+///
+/// That is sound only where the proof length has already been established as
+/// [`MERKLE_PROOF_ENTRIES`], which inside this crate means after
+/// [`peek_variant`](crate::view::peek_variant) has decoded the byte: [`ShredVariant`] has a tag per
+/// legal byte and no others, so a variant that exists at all has the fixed proof length.
+///
+/// The incumbent parser in `solana-ledger` has established no such thing. It masks the low nibble
+/// and accepts proof lengths `0..=15`, because SIMD-317's enforcement is still gated on a slot
+/// number, so shreds of other depths are still addressable. Every `solana-ledger` caller must
+/// therefore use [`sections_with_proof_entries`] and pass the length the shred itself claims.
+//TODO: once SIMD-317's enforcement is unconditional this distinction disappears along with
+// `sections_with_proof_entries`, and this becomes the only layout function.
 pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
     match sections_with_proof_entries::<K>(MERKLE_PROOF_ENTRIES, resigned) {
         Some(sections) => sections,
@@ -326,10 +313,17 @@ pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
 /// if a proof that long leaves no room for a body.
 ///
 /// Exists only because the incumbent parser in `solana-ledger` still addresses shreds whose proof
-/// is not [`MERKLE_PROOF_ENTRIES`] long: SIMD-317 fixes the erasure batch at 32:32, and so the
-/// proof at that one length, but its enforcement is gated on a slot. Until that gate is
-/// unconditional, such a shred has to be readable in order to be judged. Delete this along with it
-/// and keep [`sections`], which is this function at the one length that will remain.
+/// is not [`MERKLE_PROOF_ENTRIES`] long: it masks the low nibble of the variant byte and accepts
+/// `0..=15`, and SIMD-317's enforcement of the fixed 32:32 batch is gated on a slot number
+/// (`enforce_correct_proof_size_from`) rather than unconditional. Until that gate is always on,
+/// a `solana-ledger` caller that reached for [`sections`] instead would mislocate every boundary
+/// after the body of any shred a peer sent at another depth, so this is the one it must use.
+///
+/// `solana-ledger`'s `shred::merkle::test::test_sections_match_legacy` pins the result
+/// against the arithmetic that crate used before it took the layout from here, for every length it
+/// accepts.
+//TODO: Delete this, its ledger-side callers and that test once SIMD-317's enforcement is
+// unconditional; `sections` is then correct everywhere.
 pub const fn sections_with_proof_entries<K: ShredLayout>(
     proof_entries: usize,
     resigned: bool,

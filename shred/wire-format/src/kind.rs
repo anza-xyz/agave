@@ -1,14 +1,14 @@
 //! The two shred kinds, and the layout constants that distinguish them.
 //!
-//! The kind is a type parameter of `agave_shred::shred::Shred` rather than a runtime tag, so
-//! that accessors which only make sense for one kind (`parent_offset` on data shreds, `position` on
-//! code shreds) simply do not exist on the other.
+//! The kind is a type parameter of [`ShredView`](crate::view::ShredView) rather than a runtime tag,
+//! so that the header it hands out is the one kind's own (`parent_offset` on data shreds,
+//! `position` on code shreds).
 //!
 //! # Where the kind has to be a runtime tag
 //!
-//! `agave_shred::shred::AnyShred` allows for the same shred with the header field represented
-//! as an enum. Everything else about a shred is either common to both kinds or derived from the
-//! variant byte.
+//! [`AnyShredView`](crate::view::AnyShredView) holds the same shred with the kind's header
+//! represented as an enum. Everything else about a shred is either common to both kinds or derived
+//! from the variant byte.
 
 use {
     crate::{
@@ -32,8 +32,8 @@ mod sealed {
 pub trait ShredLayout: sealed::Sealed + 'static {
     /// The header this kind carries after the common header.
     ///
-    /// [`Into<AnyHeader>`] is required so that kind-generic code can hand a shred to the
-    /// kind-erased `agave_shred::shred::AnyShred` without knowing which kind it holds.
+    /// [`Into<AnyHeader>`] is required so that kind-generic code can turn a view into the
+    /// kind-erased [`AnyShredView`](crate::view::AnyShredView) without knowing which kind it holds.
     type Header: Copy
         + Debug
         + Into<AnyHeader>
@@ -57,9 +57,9 @@ pub trait ShredLayout: sealed::Sealed + 'static {
     /// Index of this shred's erasure shard within its FEC set, which is also the index of its leaf
     /// in the FEC set's Merkle tree. Data shards come first, then code shards.
     ///
-    /// Infallible because [`check_header`](Self::check_header) rejects headers that describe no
-    /// shard, so a shred that exists at all has one.
-    fn erasure_shard_index(common: &CommonHeader, header: &Self::Header) -> usize;
+    /// `None` if the headers describe no shard. [`check_header`](Self::check_header) rejects such
+    /// headers, so it is never `None` for headers read through a [`ShredView`](crate::view::ShredView).
+    fn erasure_shard_index(common: &CommonHeader, header: &Self::Header) -> Option<usize>;
 
     /// Checks what this kind's headers claim about the shard and about the bytes the layout leaves
     /// for it, given that `body`.
@@ -93,21 +93,14 @@ impl ShredLayout for Data {
     // A data shred's own signature is not erasure coded; everything after it is.
     const ERASURE_SHARD_START: usize = constants::SIZE_OF_SIGNATURE;
 
-    fn erasure_shard_index(common: &CommonHeader, _header: &DataHeader) -> usize {
-        let shard = common
-            .index
-            .checked_sub(common.fec_set_index)
-            .expect("checked while reading: a data shred's index is not below its FEC set's");
-        usize::try_from(shard).expect("a u32 fits a usize on every target this runs on")
+    fn erasure_shard_index(common: &CommonHeader, _header: &DataHeader) -> Option<usize> {
+        let shard = common.index.checked_sub(common.fec_set_index)?;
+        usize::try_from(shard).ok()
     }
 
     /// The `size` field covers the headers as well as the ledger data, and whoever built the shred
-    /// chose it, so it is checked against the layout here rather than trusted by
-    /// `agave_shred::shred::DataShred::data`. The index is checked against the FEC set's for the
-    /// same reason: their difference is the shard index, which
-    /// [`erasure_shard_index`](Self::erasure_shard_index) then reads off infallibly. The flags are
-    /// checked here rather than against the admission policy because an undefined combination is
-    /// not a matter of what this node currently accepts.
+    /// chose it, so it is checked against the layout here rather than trusted by whoever reads the
+    /// data through [`data_len`]. Invalid flag combinations result in error.
     fn check_header(
         common: &CommonHeader,
         header: &DataHeader,
@@ -135,8 +128,8 @@ impl ShredLayout for Data {
 /// a region inside a body of `body_len` bytes.
 ///
 /// Shared by [`Data::check_header`], which is where the `None` case is turned into a
-/// [`ParseError`], and `agave_shred::shred::DataShred::data`, which is why that case cannot
-/// happen.
+/// [`ParseError`], and by readers of a data shred's ledger data, which is why that case cannot
+/// happen for a shred read through a [`ShredView`](crate::view::ShredView).
 pub fn data_len(header: &DataHeader, body_len: usize) -> Option<usize> {
     let len = usize::from(header.size).checked_sub(Data::SIZE_OF_HEADERS)?;
     if len > body_len {
@@ -156,18 +149,29 @@ impl ShredLayout for Code {
     // Code shred headers cannot be erasure coded: the codes are generated before them.
     const ERASURE_SHARD_START: usize = Self::SIZE_OF_HEADERS;
 
-    /// Both fields are `u16`, so their sum cannot leave the shard index's type. Whether it lands
-    /// inside the batch is a question about the batch, which is checked where one is assembled.
-    fn erasure_shard_index(_common: &CommonHeader, header: &CodeHeader) -> usize {
-        usize::from(header.num_data_shreds).saturating_add(usize::from(header.position))
+    /// Both fields are `u16`, so their sum cannot leave the shard index's type. Whether the batch
+    /// shape the header claims is allowed is a question about the batch, which is checked where one
+    /// is assembled.
+    fn erasure_shard_index(_common: &CommonHeader, header: &CodeHeader) -> Option<usize> {
+        usize::from(header.num_data_shreds).checked_add(usize::from(header.position))
     }
 
-    /// A code shred's body is its erasure codes, which the header claims nothing about.
+    /// A code shred's body is its erasure codes, which the header claims nothing about. The
+    /// position is checked against the index and the number of code shreds: the index minus the
+    /// position is the FEC set's first code index, and a position past the last code shred
+    /// describes no shard.
     fn check_header(
-        _common: &CommonHeader,
-        _header: &CodeHeader,
+        common: &CommonHeader,
+        header: &CodeHeader,
         _body: &[u8],
     ) -> Result<(), ParseError> {
+        if common.index < u32::from(header.position) || header.position >= header.num_code_shreds {
+            return Err(ParseError::InvalidCodePosition {
+                index: common.index,
+                position: header.position,
+                num_code_shreds: header.num_code_shreds,
+            });
+        }
         Ok(())
     }
 }
