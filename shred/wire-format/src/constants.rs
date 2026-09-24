@@ -326,10 +326,8 @@ pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
 /// if a proof that long leaves no room for a body.
 ///
 /// Exists only because the incumbent parser in `solana-ledger` still addresses shreds whose proof
-/// is not [`MERKLE_PROOF_ENTRIES`] long: SIMD-317 fixes the erasure batch at 32:32, and so the
-/// proof at that one length, but its enforcement is gated on a slot. Until that gate is
-/// unconditional, such a shred has to be readable in order to be judged. Delete this along with it
-/// and keep [`sections`], which is this function at the one length that will remain.
+/// is not [`MERKLE_PROOF_ENTRIES`] long.
+//TODO: Delete this once relevant feature gate is active.
 pub const fn sections_with_proof_entries<K: ShredLayout>(
     proof_entries: usize,
     resigned: bool,

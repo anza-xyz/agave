@@ -14,11 +14,11 @@ use {
     agave_shred_wire_format::{
         constants::{
             OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
-            OFFSET_OF_NUM_CODE_SHREDS, OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_PARENT_OFFSET,
-            OFFSET_OF_SLOT, OFFSET_OF_VARIANT, OFFSET_OF_VERSION, Sections,
-            sections_with_proof_entries,
+            OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VARIANT, OFFSET_OF_VERSION,
+            Sections, sections_with_proof_entries,
         },
         kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
+        view::{peek_header, peek_variant_byte},
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -45,10 +45,6 @@ fn get_shred_size(shred: &[u8]) -> Option<usize> {
 
 /// Where each of this shred's sections lies, as `agave-shred-wire-format` derives it from the wire
 /// format's own schemas.
-///
-/// The general form rather than its `sections`, because `proof_size` is whatever the variant byte
-/// says: SIMD-317 fixes the erasure batch at 32:32, and so the proof at one length, but its
-/// enforcement is gated on a slot and a shred has to be readable in order to be judged.
 #[inline]
 fn get_sections(shred: &[u8]) -> Result<Sections, Error> {
     let (proof_size, resigned) = match get_shred_variant(shred)? {
@@ -110,9 +106,7 @@ pub(crate) const SIGNATURE_RANGE: Range<usize> = 0..SIGNATURE_BYTES;
 
 #[inline]
 pub(super) fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
-    let Some(&shred_variant) = shred.get(OFFSET_OF_VARIANT) else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
+    let shred_variant = peek_variant_byte(shred)?;
     ShredVariant::try_from(shred_variant).map_err(|_| Error::InvalidShredVariant)
 }
 
@@ -211,30 +205,14 @@ pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
 /// the shred is a data shred
 #[inline]
 pub(crate) fn get_erasure_config(shred: &[u8]) -> Result<ErasureConfig, Error> {
-    if !matches!(get_shred_type(shred).unwrap(), ShredType::Code) {
+    if !matches!(get_shred_type(shred)?, ShredType::Code) {
         return Err(Error::InvalidShredType);
     }
-    let Some(num_data_bytes) = shred.get(OFFSET_OF_NUM_DATA_SHREDS..OFFSET_OF_NUM_DATA_SHREDS + 2)
-    else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
-    let Some(num_coding_bytes) =
-        shred.get(OFFSET_OF_NUM_CODE_SHREDS..OFFSET_OF_NUM_CODE_SHREDS + 2)
-    else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
-    let num_data = <[u8; 2]>::try_from(num_data_bytes)
-        .map(u16::from_le_bytes)
-        .map(usize::from)
-        .map_err(|_| Error::InvalidErasureConfig)?;
-    let num_coding = <[u8; 2]>::try_from(num_coding_bytes)
-        .map(u16::from_le_bytes)
-        .map(usize::from)
-        .map_err(|_| Error::InvalidErasureConfig)?;
-
+    // Parse the code header only, rather than the whole shred: its offset and length are fixed.
+    let header = peek_header::<CodeLayout>(shred)?;
     Ok(ErasureConfig {
-        num_data,
-        num_coding,
+        num_data: usize::from(header.num_data_shreds),
+        num_coding: usize::from(header.num_code_shreds),
     })
 }
 

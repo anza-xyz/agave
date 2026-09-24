@@ -57,6 +57,7 @@ use {
     crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},
     agave_shred_wire_format::{
         constants as wire_format,
+        error::ParseError,
         kind::{Code, Data, ShredLayout as _},
     },
     bitflags::bitflags,
@@ -231,8 +232,6 @@ pub enum Error {
     InvalidDataSize { size: u16, payload: usize },
     #[error("Invalid deshred set")]
     InvalidDeshredSet,
-    #[error("Invalid erasure config")]
-    InvalidErasureConfig,
     #[error("Invalid erasure shard index: {0:?}")]
     InvalidErasureShardIndex(/*headers:*/ Box<dyn Debug + Send>),
     #[error("Invalid merkle proof")]
@@ -269,6 +268,45 @@ pub enum Error {
     UnknownProofSize,
     #[error("Empty shreds list")]
     EmptyIterator,
+}
+
+impl From<ParseError> for Error {
+    /// Restates what `agave-shred-wire-format` found wrong with a shred in the vocabulary this
+    /// crate's callers already match on.
+    ///
+    /// The mapping is lossy in both directions: this enum has no variant for a nonce that is
+    /// missing rather than malformed, and none of its variants records the shred kind, so several
+    /// parse errors land on the same one. Nothing is invented — where a `ParseError` carries less
+    /// than the variant here wants, the missing number is one the parser had already established.
+    fn from(err: ParseError) -> Self {
+        match err {
+            ParseError::InvalidVariant(_) => Self::InvalidShredVariant,
+            // A packet that does not hold a whole shred is the same failure as one that holds a
+            // payload of the wrong length, which is what this variant reports elsewhere.
+            ParseError::TooShort { len, expected: _ } => Self::InvalidPayloadSize(len),
+            // Framing, not payload: the shred itself parsed, and the packet was the wrong size for
+            // it.
+            ParseError::TrailingBytes(_) | ParseError::MissingNonce => Self::InvalidPacketSize,
+            ParseError::UnexpectedKind {
+                expected: _,
+                found: _,
+            } => Self::InvalidShredType,
+            // The parser reaches this only after fixing the payload at the one length a data shred
+            // has, so naming that length here states what it checked against rather than guessing.
+            ParseError::InvalidDataSize { size } => Self::InvalidDataSize {
+                size,
+                payload: Data::SIZE_OF_PAYLOAD,
+            },
+            ParseError::InvalidShredFlags { flags } => Self::InvalidShredFlags(flags),
+            // Only a data shred's index is checked against its FEC set's, so the kind is not a
+            // guess.
+            ParseError::IndexBeforeFecSet {
+                index,
+                fec_set_index: _,
+            } => Self::InvalidShredIndex(ShredType::Data, index),
+            ParseError::Read(err) => Self::WincodeRead(err),
+        }
+    }
 }
 
 #[repr(u8)]

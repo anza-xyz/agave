@@ -237,10 +237,8 @@ macro_rules! impl_merkle_shred {
             }
         }
 
-        // Where each of this shred's sections lies, as `agave-shred-wire-format` derives it from
-        // the wire format's own schemas. The general form rather than its `sections`, because
-        // `proof_size` is whatever the variant byte says, and SIMD-317's enforcement of the one
-        // valid length is still gated on a slot.
+        // Where each of this shred's sections lies. This allows for dynamic amount of
+        // proof entries unless that is forced by feature activation.
         fn sections(proof_size: u8, resigned: bool) -> Result<Sections, Error> {
             sections_with_proof_entries::<$layout>(usize::from(proof_size), resigned)
                 .ok_or(Error::InvalidProofSize(proof_size))

@@ -6,8 +6,8 @@
 use {
     crate::{
         constants::{
-            MERKLE_PROOF_ENTRIES, Nonce, OFFSET_OF_VARIANT, ProofEntry, SIZE_OF_NONCE, Section,
-            Sections, sections,
+            MERKLE_PROOF_ENTRIES, Nonce, OFFSET_OF_KIND_HEADER, OFFSET_OF_VARIANT, ProofEntry,
+            SIZE_OF_NONCE, Section, Sections, sections,
         },
         error::ParseError,
         headers::{AnyHeader, CommonHeader},
@@ -84,17 +84,42 @@ impl<'a, K: ShredLayout> From<ShredView<'a, K>> for AnyShredView<'a> {
     }
 }
 
-/// Reads the variant byte without committing to a shred kind.
+/// Extracts the variant byte.
 ///
-/// This is all a caller needs to pick the `K` that [`ShredView`] should be instantiated with.
-pub fn peek_variant(bytes: &[u8]) -> Result<ShredVariant, ParseError> {
+// TODO: this is only needed for migration, should be inlined later.
+#[inline]
+pub fn peek_variant_byte(bytes: &[u8]) -> Result<u8, ParseError> {
     let Some(&byte) = bytes.get(OFFSET_OF_VARIANT) else {
         return Err(ParseError::TooShort {
             len: bytes.len(),
             expected: OFFSET_OF_VARIANT.saturating_add(1),
         });
     };
-    ShredVariant::try_from(byte)
+    Ok(byte)
+}
+/// Reads the variant byte without committing to a shred kind.
+///
+/// This is all a caller needs to pick the `K` that [`ShredView`] should be instantiated with.
+#[inline]
+pub fn peek_variant(bytes: &[u8]) -> Result<ShredVariant, ParseError> {
+    ShredVariant::try_from(peek_variant_byte(bytes)?)
+}
+
+/// Reads the header a shred of kind `K` carries after the common one, without reading anything
+/// else.
+///
+/// The kind's header sits at a fixed offset and is of a fixed length, `bytes` must be long enough
+/// to contain it, and whether it is a shred of kind `K` at all is the caller's to establish.
+//TODO: this function is only useful for migration, delete it after
+#[inline]
+pub fn peek_header<K: ShredLayout>(bytes: &[u8]) -> Result<K::Header, ParseError> {
+    let Some(mut header) = bytes.get(OFFSET_OF_KIND_HEADER..K::SIZE_OF_HEADERS) else {
+        return Err(ParseError::TooShort {
+            len: bytes.len(),
+            expected: K::SIZE_OF_HEADERS,
+        });
+    };
+    read::<K::Header>(&mut header)
 }
 
 impl<'a, K: ShredLayout> ShredView<'a, K> {
