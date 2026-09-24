@@ -822,7 +822,8 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         invoke_context,
     )?;
     check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
-    invoke_context.prepare_next_cpi_instruction(instruction, &signers)?;
+    invoke_context.build_instruction_frame(instruction)?;
+    invoke_context.verify_instruction_accounts(&signers)?;
 
     let mut accounts =
         S::translate_accounts(account_infos_addr, account_infos_len, invoke_context)?;

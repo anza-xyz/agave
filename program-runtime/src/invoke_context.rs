@@ -355,7 +355,10 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
     /// Verifies if all the CPI accounts are present in the caller, and checks writability and
     /// signing permissions.
-    fn verify_instruction_accounts(&mut self, signers: &[Pubkey]) -> Result<(), InstructionError> {
+    pub(crate) fn verify_instruction_accounts(
+        &mut self,
+        signers: &[Pubkey],
+    ) -> Result<(), InstructionError> {
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         let next_context = self.transaction_context.get_next_instruction_context()?;
         let callee_instruction_accounts = next_context.instruction_accounts();
@@ -417,7 +420,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         Ok(())
     }
 
-    fn build_instruction_frame(
+    /// Convert an SDK Instruction from CPI to an InstructionFrame used by runtime.
+    pub(crate) fn build_instruction_frame(
         &mut self,
         instruction: Instruction,
     ) -> Result<(), InstructionError> {
@@ -565,17 +569,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             result.map_err(|err| (top_level_instruction_index as u8, err))?;
         }
 
-        Ok(())
-    }
-    /// Helper to prepare for process_instruction() when the instruction is not a top level one,
-    /// and depends on `AccountMeta`s
-    pub fn prepare_next_cpi_instruction(
-        &mut self,
-        instruction: Instruction,
-        signers: &[Pubkey],
-    ) -> Result<(), InstructionError> {
-        self.build_instruction_frame(instruction)?;
-        self.verify_instruction_accounts(signers)?;
         Ok(())
     }
 
@@ -1604,9 +1597,11 @@ mod tests {
             },
             metas,
         );
+
         invoke_context
-            .prepare_next_cpi_instruction(inner_instruction, &[])
+            .build_instruction_frame(inner_instruction)
             .unwrap();
+        invoke_context.verify_instruction_accounts(&[]).unwrap();
 
         let mut compute_units_consumed = 0;
         let result = invoke_context
@@ -1817,13 +1812,19 @@ mod tests {
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_cpi_instruction(instruction_1, &[fee_payer.pubkey()])
+            .build_instruction_frame(instruction_1)
+            .unwrap();
+        invoke_context
+            .verify_instruction_accounts(&[fee_payer.pubkey()])
             .unwrap();
         test_case_1(&invoke_context);
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_cpi_instruction(instruction_2, &[fee_payer.pubkey()])
+            .build_instruction_frame(instruction_2)
+            .unwrap();
+        invoke_context
+            .verify_instruction_accounts(&[fee_payer.pubkey()])
             .unwrap();
         test_case_2(&invoke_context);
     }
@@ -1900,8 +1901,9 @@ mod tests {
             account_metas.iter().cloned().rev().collect(),
         );
 
+        invoke_context.build_instruction_frame(instruction).unwrap();
         invoke_context
-            .prepare_next_cpi_instruction(instruction, &[fee_payer.pubkey()])
+            .verify_instruction_accounts(&[fee_payer.pubkey()])
             .unwrap();
         let instruction_context = invoke_context
             .transaction_context
