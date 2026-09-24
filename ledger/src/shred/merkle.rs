@@ -15,6 +15,12 @@ use {
         },
         shredder::ReedSolomonCache,
     },
+    agave_shred_wire_format::{
+        constants::{
+            OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_POSITION, Sections, sections_with_proof_entries,
+        },
+        kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
+    },
     assert_matches::debug_assert_matches,
     itertools::Itertools,
     reed_solomon_erasure::Error::{InvalidIndex, TooFewParityShards},
@@ -35,6 +41,19 @@ use {
 
 const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, 1203);
 const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
+// Every offset within a shred now comes from the layout `agave-shred-wire-format` derives, so the
+// two descriptions have to agree on the payload that layout divides up, and on where within it the
+// erasure coding starts.
+const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, DataLayout::SIZE_OF_PAYLOAD);
+const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, CodeLayout::SIZE_OF_PAYLOAD);
+const_assert_eq!(
+    ShredData::ERASURE_SHARD_START_OFFSET,
+    DataLayout::ERASURE_SHARD_START
+);
+const_assert_eq!(
+    ShredCode::ERASURE_SHARD_START_OFFSET,
+    CodeLayout::ERASURE_SHARD_START
+);
 
 // Layout: {common, data} headers | data buffer
 //     | [Merkle root of the previous erasure batch if chained]
@@ -64,7 +83,7 @@ pub struct ShredCode {
 }
 
 impl ShredData {
-    impl_merkle_shred!(MerkleData);
+    impl_merkle_shred!(MerkleData, DataLayout);
 
     // Offset into the payload where the erasure coded slice begins.
     const ERASURE_SHARD_START_OFFSET: usize = SIZE_OF_SIGNATURE;
@@ -105,7 +124,10 @@ impl ShredData {
                 .map(usize::try_from)?
                 .ok()?
         };
-        let proof_offset = Self::get_proof_offset(proof_size, resigned).ok()?;
+        let proof_offset = Self::sections(proof_size, resigned)
+            .ok()?
+            .merkle_proof
+            .start;
         let proof = get_merkle_proof(shred, proof_offset, proof_size).ok()?;
         let node = get_merkle_node(shred, SIZE_OF_SIGNATURE..proof_offset).ok()?;
         get_merkle_root(index, node, proof).ok()
@@ -114,13 +136,8 @@ impl ShredData {
     pub(crate) const fn const_capacity(proof_size: u8, resigned: bool) -> Result<usize, u8> {
         // Merkle proof is generated and signed after coding shreds are
         // generated. Coding shred headers cannot be erasure coded either.
-        match Self::SIZE_OF_PAYLOAD.checked_sub(
-            Self::SIZE_OF_HEADERS
-                + SIZE_OF_MERKLE_ROOT
-                + (proof_size as usize) * SIZE_OF_MERKLE_PROOF_ENTRY
-                + if resigned { SIZE_OF_SIGNATURE } else { 0 },
-        ) {
-            Some(v) => Ok(v),
+        match sections_with_proof_entries::<DataLayout>(proof_size as usize, resigned) {
+            Some(sections) => Ok(sections.body.len()),
             None => Err(proof_size),
         }
     }
@@ -144,7 +161,7 @@ impl ShredData {
 }
 
 impl ShredCode {
-    impl_merkle_shred!(MerkleCode);
+    impl_merkle_shred!(MerkleCode, CodeLayout);
 
     // Offset into the payload where the erasure coded slice begins.
     const ERASURE_SHARD_START_OFFSET: usize = Self::SIZE_OF_HEADERS;
@@ -159,17 +176,23 @@ impl ShredCode {
         );
         // Shred index in the erasure batch.
         let index = {
-            let num_data_shreds = <[u8; 2]>::try_from(shred.get(83..85)?)
-                .map(u16::from_le_bytes)
-                .map(usize::from)
-                .ok()?;
-            let position = <[u8; 2]>::try_from(shred.get(87..89)?)
-                .map(u16::from_le_bytes)
-                .map(usize::from)
-                .ok()?;
+            let num_data_shreds = <[u8; 2]>::try_from(
+                shred.get(OFFSET_OF_NUM_DATA_SHREDS..OFFSET_OF_NUM_DATA_SHREDS + 2)?,
+            )
+            .map(u16::from_le_bytes)
+            .map(usize::from)
+            .ok()?;
+            let position =
+                <[u8; 2]>::try_from(shred.get(OFFSET_OF_POSITION..OFFSET_OF_POSITION + 2)?)
+                    .map(u16::from_le_bytes)
+                    .map(usize::from)
+                    .ok()?;
             num_data_shreds.checked_add(position)?
         };
-        let proof_offset = Self::get_proof_offset(proof_size, resigned).ok()?;
+        let proof_offset = Self::sections(proof_size, resigned)
+            .ok()?
+            .merkle_proof
+            .start;
         let proof = get_merkle_proof(shred, proof_offset, proof_size).ok()?;
         let node = get_merkle_node(shred, SIZE_OF_SIGNATURE..proof_offset).ok()?;
         get_merkle_root(index, node, proof).ok()
@@ -204,7 +227,7 @@ impl ShredCode {
 }
 
 macro_rules! impl_merkle_shred {
-    ($variant:ident) => {
+    ($variant:ident, $layout:ty) => {
         // proof_size is the number of merkle proof entries.
         #[inline]
         pub(super) fn proof_size(&self) -> Result<u8, Error> {
@@ -212,6 +235,15 @@ macro_rules! impl_merkle_shred {
                 ShredVariant::$variant { proof_size, .. } => Ok(proof_size),
                 _ => Err(Error::InvalidShredVariant),
             }
+        }
+
+        // Where each of this shred's sections lies, as `agave-shred-wire-format` derives it from
+        // the wire format's own schemas. The general form rather than its `sections`, because
+        // `proof_size` is whatever the variant byte says, and SIMD-317's enforcement of the one
+        // valid length is still gated on a slot.
+        fn sections(proof_size: u8, resigned: bool) -> Result<Sections, Error> {
+            sections_with_proof_entries::<$layout>(usize::from(proof_size), resigned)
+                .ok_or(Error::InvalidProofSize(proof_size))
         }
 
         // For ShredCode, size of buffer embedding erasure codes.
@@ -223,48 +255,28 @@ macro_rules! impl_merkle_shred {
         pub fn capacity(proof_size: u8, resigned: bool) -> Result<usize, Error> {
             // Merkle proof is generated and signed after coding shreds are
             // generated. Coding shred headers cannot be erasure coded either.
-            Self::SIZE_OF_PAYLOAD
-                .checked_sub(
-                    Self::SIZE_OF_HEADERS
-                        + SIZE_OF_MERKLE_ROOT
-                        + usize::from(proof_size) * SIZE_OF_MERKLE_PROOF_ENTRY
-                        + if resigned { SIZE_OF_SIGNATURE } else { 0 },
-                )
-                .ok_or(Error::InvalidProofSize(proof_size))
+            Ok(Self::sections(proof_size, resigned)?.body.len())
+        }
+
+        // Where this shred's own variant byte says each of its sections lies.
+        fn sections_of(&self) -> Result<Sections, Error> {
+            let ShredVariant::$variant {
+                proof_size,
+                resigned,
+            } = self.common_header.shred_variant
+            else {
+                return Err(Error::InvalidShredVariant);
+            };
+            Self::sections(proof_size, resigned)
         }
 
         // Where the merkle proof starts in the shred binary.
         fn proof_offset(&self) -> Result<usize, Error> {
-            let ShredVariant::$variant {
-                proof_size,
-                resigned,
-            } = self.common_header.shred_variant
-            else {
-                return Err(Error::InvalidShredVariant);
-            };
-            Self::get_proof_offset(proof_size, resigned)
-        }
-
-        fn get_proof_offset(proof_size: u8, resigned: bool) -> Result<usize, Error> {
-            Ok(Self::SIZE_OF_HEADERS + Self::capacity(proof_size, resigned)? + SIZE_OF_MERKLE_ROOT)
+            Ok(self.sections_of()?.merkle_proof.start)
         }
 
         fn chained_merkle_root_offset(&self) -> Result<usize, Error> {
-            let ShredVariant::$variant {
-                proof_size,
-                resigned,
-            } = self.common_header.shred_variant
-            else {
-                return Err(Error::InvalidShredVariant);
-            };
-            Self::get_chained_merkle_root_offset(proof_size, resigned)
-        }
-
-        pub(super) fn get_chained_merkle_root_offset(
-            proof_size: u8,
-            resigned: bool,
-        ) -> Result<usize, Error> {
-            Ok(Self::SIZE_OF_HEADERS + Self::capacity(proof_size, resigned)?)
+            Ok(self.sections_of()?.chained_merkle_root.start)
         }
 
         pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error> {
@@ -361,25 +373,18 @@ macro_rules! impl_merkle_shred {
         }
 
         pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
-            let ShredVariant::$variant {
-                proof_size,
-                resigned,
-            } = self.common_header.shred_variant
-            else {
+            let ShredVariant::$variant { resigned, .. } = self.common_header.shred_variant else {
                 return Err(Error::InvalidShredVariant);
             };
-            Self::get_retransmitter_signature_offset(proof_size, resigned)
-        }
-
-        pub(super) fn get_retransmitter_signature_offset(
-            proof_size: u8,
-            resigned: bool,
-        ) -> Result<usize, Error> {
+            // Checked before the layout is computed, so that an unresigned variant is reported
+            // as such whatever its proof size claims.
             if !resigned {
                 return Err(Error::InvalidShredVariant);
             }
-            let proof_offset = Self::get_proof_offset(proof_size, resigned)?;
-            Ok(proof_offset + usize::from(proof_size) * SIZE_OF_MERKLE_PROOF_ENTRY)
+            self.sections_of()?
+                .retransmitter_signature
+                .map(|section| section.start)
+                .ok_or(Error::InvalidShredVariant)
         }
 
         // Returns the offsets into the payload which are erasure coded.
@@ -387,15 +392,7 @@ macro_rules! impl_merkle_shred {
             if self.payload.len() != Self::SIZE_OF_PAYLOAD {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
             }
-            let ShredVariant::$variant {
-                proof_size,
-                resigned,
-            } = self.common_header.shred_variant
-            else {
-                return Err(Error::InvalidShredVariant);
-            };
-            let offset = Self::SIZE_OF_HEADERS + Self::capacity(proof_size, resigned)?;
-            Ok(Self::ERASURE_SHARD_START_OFFSET..offset)
+            Ok(self.sections_of()?.erasure_shard.as_range())
         }
 
         // Returns the erasure coded slice as an immutable reference.
