@@ -212,7 +212,7 @@ pub(crate) fn submit_gossip_stats(
     gossip: &CrdsGossip,
     stakes: &HashMap<Pubkey, u64>,
 ) {
-    let (crds_stats, table_size, num_nodes, num_pubkeys, purged_values_size, failed_inserts_size) = {
+    let (crds_stats, table_size, num_nodes, num_pubkeys, purged_values_size) = {
         let gossip_crds = gossip.crds.read();
         (
             gossip_crds.take_stats(),
@@ -220,9 +220,9 @@ pub(crate) fn submit_gossip_stats(
             gossip_crds.num_nodes(),
             gossip_crds.num_pubkeys(),
             gossip_crds.num_purged(),
-            gossip.pull.failed_inserts_size(),
         )
     };
+    let failed_inserts_size = gossip.pull.failed_inserts_size();
     let num_nodes_staked = stakes.values().filter(|stake| **stake > 0).count();
     let packets_sent_gossip_requests_count: u64 = [
         &stats.packets_sent_ping_messages_count,
