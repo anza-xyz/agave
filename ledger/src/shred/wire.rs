@@ -14,7 +14,7 @@ use {
     agave_shred_wire_format::{
         constants::{
             OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
-            OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VERSION, Sections,
+            OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VERSION, Section, Sections,
             sections_with_proof_entries,
         },
         kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
@@ -47,21 +47,18 @@ fn get_shred_size(shred: &[u8]) -> Option<usize> {
 /// format's own schemas.
 #[inline]
 fn get_sections(shred: &[u8]) -> Result<Sections, Error> {
-    let (proof_size, resigned) = match get_shred_variant(shred)? {
+    match get_shred_variant(shred)? {
         ShredVariant::MerkleCode {
             proof_size,
             resigned,
-        } => {
-            return sections_with_proof_entries::<CodeLayout>(usize::from(proof_size), resigned)
-                .ok_or(Error::InvalidProofSize(proof_size));
-        }
+        } => sections_with_proof_entries::<CodeLayout>(usize::from(proof_size), resigned)
+            .ok_or(Error::InvalidProofSize(proof_size)),
         ShredVariant::MerkleData {
             proof_size,
             resigned,
-        } => (proof_size, resigned),
-    };
-    sections_with_proof_entries::<DataLayout>(usize::from(proof_size), resigned)
-        .ok_or(Error::InvalidProofSize(proof_size))
+        } => sections_with_proof_entries::<DataLayout>(usize::from(proof_size), resigned)
+            .ok_or(Error::InvalidProofSize(proof_size)),
+    }
 }
 
 #[inline]
@@ -239,14 +236,14 @@ pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
 }
 
 pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
-    let offset = get_sections(shred).ok()?.chained_merkle_root.start;
-    let merkle_root = shred.get(offset..offset + SIZE_OF_MERKLE_ROOT)?;
+    let section = get_sections(shred).ok()?.chained_merkle_root;
+    let merkle_root = shred.get(section.as_range())?;
     Some(Hash::from(
         <[u8; SIZE_OF_MERKLE_ROOT]>::try_from(merkle_root).unwrap(),
     ))
 }
 
-fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
+fn get_retransmitter_signature_section(shred: &[u8]) -> Result<Section, Error> {
     // Checked before the layout is computed, so that an unresigned variant is reported as such
     // whatever its proof size claims.
     if !is_retransmitter_signed_variant(shred)? {
@@ -254,13 +251,12 @@ fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
     }
     get_sections(shred)?
         .retransmitter_signature
-        .map(|section| section.start)
         .ok_or(Error::InvalidShredVariant)
 }
 
 pub fn get_retransmitter_signature(shred: &[u8]) -> Result<Signature, Error> {
-    let offset = get_retransmitter_signature_offset(shred)?;
-    let Some(bytes) = shred.get(offset..offset + SIGNATURE_BYTES) else {
+    let section = get_retransmitter_signature_section(shred)?;
+    let Some(bytes) = shred.get(section.as_range()) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
     Ok(Signature::from(
@@ -282,8 +278,8 @@ pub fn is_retransmitter_signed_variant(shred: &[u8]) -> Result<bool, Error> {
 }
 
 pub fn set_retransmitter_signature(shred: &mut [u8], signature: &Signature) -> Result<(), Error> {
-    let offset = get_retransmitter_signature_offset(shred)?;
-    let Some(buffer) = shred.get_mut(offset..offset + SIGNATURE_BYTES) else {
+    let section = get_retransmitter_signature_section(shred)?;
+    let Some(buffer) = shred.get_mut(section.as_range()) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
     buffer.copy_from_slice(signature.as_ref());
@@ -322,9 +318,9 @@ pub fn resign_packet(packet: &mut PacketRefMut, keypair: &Keypair) -> Result<(),
 /// Turbine broadcast tree. This signature is in addition to leader's
 /// signature which is left intact.
 pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
-    let offset = get_retransmitter_signature_offset(shred)?;
+    let section = get_retransmitter_signature_section(shred)?;
     let merkle_root = get_merkle_root(shred).ok_or(Error::InvalidMerkleRoot)?;
-    let Some(buffer) = shred.get_mut(offset..offset + SIGNATURE_BYTES) else {
+    let Some(buffer) = shred.get_mut(section.as_range()) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
     let signature = keypair.sign_message(merkle_root.as_ref());
@@ -553,9 +549,12 @@ mod tests {
             );
             assert_eq!(is_retransmitter_signed_variant(bytes).unwrap(), resigned);
             if resigned {
+                let offset = shred.retransmitter_signature_offset().unwrap();
                 assert_eq!(
-                    get_retransmitter_signature_offset(bytes).unwrap(),
-                    shred.retransmitter_signature_offset().unwrap(),
+                    get_retransmitter_signature_section(bytes)
+                        .unwrap()
+                        .as_range(),
+                    offset..offset + SIGNATURE_BYTES,
                 );
                 assert_eq!(
                     get_retransmitter_signature(bytes).unwrap(),
@@ -580,7 +579,7 @@ mod tests {
                 }
             } else {
                 assert_matches!(
-                    get_retransmitter_signature_offset(bytes),
+                    get_retransmitter_signature_section(bytes),
                     Err(Error::InvalidShredVariant)
                 );
                 assert_matches!(

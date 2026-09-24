@@ -56,7 +56,7 @@ use {
     self::traits::{Shred as _, ShredData as _},
     crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},
     agave_shred_wire_format::{
-        constants as wire_format,
+        constants as wire_format_consts,
         error::ParseError,
         kind::{Code, Data, ShredLayout as _},
     },
@@ -116,24 +116,11 @@ pub const SIZE_OF_NONCE: usize = std::mem::size_of::<Nonce>();
 
 /// The following constants are computed by hand, and hardcoded.
 /// `test_shred_constants` ensures that the values are correct.
-const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
-pub const SIZE_OF_DATA_SHRED_HEADERS: usize = 88;
-const SIZE_OF_CODING_SHRED_HEADERS: usize = 89;
+const SIZE_OF_COMMON_SHRED_HEADER: usize =
+    wire_format_consts::SIZE_OF_COMMON_HEADER + SIGNATURE_BYTES;
+const SIZE_OF_CODING_SHRED_HEADERS: usize = Code::SIZE_OF_HEADERS;
+pub const SIZE_OF_DATA_SHRED_HEADERS: usize = Data::SIZE_OF_HEADERS;
 const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
-
-// The same layout, stated a second time by `agave-shred-wire-format` and derived there from the
-// wincode schemas of its own header structs. Neither description of the wire format can drift
-// without this failing to compile. Mind the naming: what the ledger calls the common shred header
-// includes the signature, so it corresponds to the offset at which the kind's own header begins,
-// not to `wire_format::SIZE_OF_COMMON_HEADER`, which is 19.
-const_assert_eq!(
-    SIZE_OF_COMMON_SHRED_HEADER,
-    wire_format::OFFSET_OF_KIND_HEADER
-);
-const_assert_eq!(SIZE_OF_DATA_SHRED_HEADERS, Data::SIZE_OF_HEADERS);
-const_assert_eq!(SIZE_OF_CODING_SHRED_HEADERS, Code::SIZE_OF_HEADERS);
-const_assert_eq!(SIZE_OF_SIGNATURE, wire_format::SIZE_OF_SIGNATURE);
-const_assert_eq!(SIZE_OF_NONCE, wire_format::SIZE_OF_NONCE);
 
 // Shreds are uniformly split into erasure batches with a "target" number of
 // data shreds per each batch as below. The actual number of data shreds in
@@ -152,14 +139,11 @@ pub const MAX_CODE_SHREDS_PER_SLOT: usize = DEFAULT_MAX_CODE_SHREDS_PER_SLOT as 
 pub const MAX_FEC_SETS_PER_SLOT: u32 =
     MAX_DATA_SHREDS_PER_SLOT as u32 / DATA_SHREDS_PER_FEC_BLOCK as u32;
 
-#[cfg(any(test, feature = "dev-context-only-utils"))]
-pub(crate) const OFFSET_OF_SHRED_VARIANT: usize = wire_format::OFFSET_OF_VARIANT;
-
 /// Rewrites the Merkle proof height of the serialized shred in `payload`,
 /// leaving its signature stale; the caller re-signs if the shred has to verify.
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 pub fn override_proof_size(payload: &mut [u8], proof_size: u8) {
-    let byte = &mut payload[OFFSET_OF_SHRED_VARIANT];
+    let byte = &mut payload[wire_format_consts::OFFSET_OF_VARIANT];
     let shred_variant = ShredVariant::try_from(*byte).expect("payload holds a merkle shred");
     *byte = u8::from(match shred_variant {
         ShredVariant::MerkleCode { resigned, .. } => ShredVariant::MerkleCode {
@@ -964,6 +948,7 @@ mod tests {
     pub(super) use agave_shred_wire_format::constants::{
         OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS as OFFSET_OF_SHRED_FLAGS,
         OFFSET_OF_INDEX as OFFSET_OF_SHRED_INDEX, OFFSET_OF_NUM_DATA_SHREDS as OFFSET_OF_NUM_DATA,
+        OFFSET_OF_VARIANT as OFFSET_OF_SHRED_VARIANT,
     };
     use {
         super::*,
