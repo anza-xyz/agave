@@ -22,7 +22,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::{declare_builtin_function, elf::get_sbpf_version, program::SBPFVersion},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
-    solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
+    solana_svm_log_collector::{LogCollector, ic_logger_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, instruction as system_instruction},
@@ -37,19 +37,50 @@ const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 
+// `UpgradeableLoaderInstruction::Write`
+const WRITE_INSTRUCTION_TAG: [u8; 4] = 1u32.to_le_bytes();
+
+// u32 tag, u32 offset, u64 payload length
+const WRITE_INSTRUCTION_HEADER_LEN: usize = 16;
+
+fn parse_write_instruction(instruction_data: &[u8]) -> Result<(u32, &[u8]), InstructionError> {
+    fn read_array<const N: usize>(data: &[u8], at: usize) -> Option<[u8; N]> {
+        data.get(at..at.checked_add(N)?)?.try_into().ok()
+    }
+
+    let offset = read_array::<4>(instruction_data, 4)
+        .map(u32::from_le_bytes)
+        .ok_or(InstructionError::InvalidInstructionData)?;
+
+    let bytes_len = read_array::<8>(instruction_data, 8)
+        .map(u64::from_le_bytes)
+        .and_then(|len| usize::try_from(len).ok())
+        .ok_or(InstructionError::InvalidInstructionData)?;
+
+    if bytes_len > solana_packet::PACKET_DATA_SIZE.saturating_sub(WRITE_INSTRUCTION_HEADER_LEN) {
+        return Err(InstructionError::InvalidInstructionData);
+    }
+
+    let bytes = WRITE_INSTRUCTION_HEADER_LEN
+        .checked_add(bytes_len)
+        .and_then(|end| instruction_data.get(WRITE_INSTRUCTION_HEADER_LEN..end))
+        .ok_or(InstructionError::InvalidInstructionData)?;
+
+    Ok((offset, bytes))
+}
+
 fn write_program_data(
     program_data_offset: usize,
     bytes: &[u8],
-    invoke_context: &mut InvokeContext,
+    instruction_context: &InstructionContext,
+    log_collector: &Option<Rc<RefCell<LogCollector>>>,
 ) -> Result<(), InstructionError> {
-    let transaction_context = &invoke_context.transaction_context;
-    let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut program = instruction_context.try_borrow_instruction_account(0)?;
     let data = program.get_data_mut()?;
     let write_offset = program_data_offset.saturating_add(bytes.len());
     if data.len() < write_offset {
-        ic_msg!(
-            invoke_context,
+        ic_logger_msg!(
+            log_collector,
             "Write overflow: {} < {}",
             data.len(),
             write_offset,
@@ -155,7 +186,17 @@ fn process_loader_upgradeable_instruction(
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_program_key()?;
 
-    match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
+    let instruction = if instruction_data.starts_with(&WRITE_INSTRUCTION_TAG) {
+        // `Write` is parsed in-place in the match arm
+        UpgradeableLoaderInstruction::Write {
+            offset: 0,
+            bytes: Vec::new(),
+        }
+    } else {
+        limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?
+    };
+
+    match instruction {
         UpgradeableLoaderInstruction::InitializeBuffer => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let mut buffer = instruction_context.try_borrow_instruction_account(0)?;
@@ -171,7 +212,8 @@ fn process_loader_upgradeable_instruction(
                 authority_address: authority_key,
             })?;
         }
-        UpgradeableLoaderInstruction::Write { offset, bytes } => {
+        UpgradeableLoaderInstruction::Write { .. } => {
+            let (offset, bytes) = parse_write_instruction(instruction_data)?;
             instruction_context.check_number_of_instruction_accounts(2)?;
             let buffer = instruction_context.try_borrow_instruction_account(0)?;
 
@@ -196,8 +238,9 @@ fn process_loader_upgradeable_instruction(
             drop(buffer);
             write_program_data(
                 UpgradeableLoaderState::size_of_buffer_metadata().saturating_add(offset as usize),
-                &bytes,
-                invoke_context,
+                bytes,
+                &instruction_context,
+                &log_collector,
             )?;
         }
         UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
@@ -1767,6 +1810,110 @@ mod tests {
         let mut data = account.data().to_vec();
         data.truncate(len);
         account.set_data_from_slice(&data);
+    }
+
+    #[test]
+    fn test_bpf_loader_upgradeable_write_parsing() {
+        let loader_id = bpf_loader_upgradeable::id();
+        let buffer_address = Pubkey::new_unique();
+        let max_bytes = solana_packet::PACKET_DATA_SIZE - WRITE_INSTRUCTION_HEADER_LEN;
+        let mut buffer_account = AccountSharedData::new(
+            1,
+            UpgradeableLoaderState::size_of_buffer(max_bytes + 1),
+            &loader_id,
+        );
+        buffer_account
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(buffer_address),
+            })
+            .unwrap();
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: buffer_address,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: buffer_address,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+        // Hand-assembled `Write`, so the declared length and the bytes actually
+        // present can disagree.
+        let write = |declared_len: u64, present: usize, trailing: usize| {
+            let mut data = WRITE_INSTRUCTION_TAG.to_vec();
+            data.extend_from_slice(&0u32.to_le_bytes());
+            data.extend_from_slice(&declared_len.to_le_bytes());
+            data.extend(std::iter::repeat_n(42u8, present));
+            data.extend(std::iter::repeat_n(7u8, trailing));
+            data
+        };
+
+        // Case: Trailing bytes are ignored, only the declared payload is written
+        let accounts = process_instruction(
+            &loader_id,
+            &write(9, 9, 100),
+            vec![(buffer_address, buffer_account.clone())],
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+        let (written, untouched) = accounts
+            .first()
+            .unwrap()
+            .data()
+            .get(UpgradeableLoaderState::size_of_buffer_metadata()..)
+            .unwrap()
+            .split_at(9);
+        assert_eq!(written, &[42; 9]);
+        assert!(untouched.iter().all(|byte| *byte == 0));
+
+        // Case: Largest payload that fits under the limit
+        process_instruction(
+            &loader_id,
+            &write(max_bytes as u64, max_bytes, 0),
+            vec![(buffer_address, buffer_account.clone())],
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+
+        // Case: One byte over the limit
+        process_instruction(
+            &loader_id,
+            &write(max_bytes as u64 + 1, max_bytes + 1, 0),
+            vec![(buffer_address, buffer_account.clone())],
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+
+        // Case: Declared length exceeds the bytes present
+        process_instruction(
+            &loader_id,
+            &write(600, 512, 0),
+            vec![(buffer_address, buffer_account.clone())],
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+
+        // Case: Absurd declared length
+        process_instruction(
+            &loader_id,
+            &write(u64::MAX, 512, 0),
+            vec![(buffer_address, buffer_account.clone())],
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+
+        // Case: Truncated header
+        process_instruction(
+            &loader_id,
+            write(0, 0, 0)
+                .get(..WRITE_INSTRUCTION_HEADER_LEN - 1)
+                .unwrap(),
+            vec![(buffer_address, buffer_account)],
+            instruction_accounts,
+            Err(InstructionError::InvalidInstructionData),
+        );
     }
 
     #[test_case(true; "simd_0433_enabled")]
