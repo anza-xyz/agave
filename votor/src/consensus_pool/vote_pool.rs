@@ -282,7 +282,7 @@ struct AccumulatorsFreeList(Vec<AggregateAccumulator>);
 
 impl AccumulatorsFreeList {
     fn alloc_accumulator(&mut self, max_validators: usize) -> AggregateAccumulator {
-        while let Some(mut acc) = self.0.pop() {
+        if let Some(mut acc) = self.0.pop() {
             acc.reset(max_validators);
             return acc;
         }
@@ -366,6 +366,42 @@ mod tests {
         assert_eq!(pools.acc_freelist.borrow().0.len(), 4);
         let (accumulated, stake) = add_vote(&mut pools, new_root, 0);
         assert_eq!(accumulated, stake);
+    }
+
+    #[test]
+    fn test_purge_recycles_multiple_accumulators_from_one_pool() {
+        let ctx = TestContext::new();
+        let mut pools = VotePools::new(10);
+        let total_stake = ctx
+            .bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .get_rank_map(0)
+            .unwrap()
+            .total_stake();
+
+        for vote in [Vote::new_skip_vote(10), Vote::new_skip_fallback_vote(10)] {
+            let msg = PoolVote::Own(ctx.new_vote_msg(0, vote));
+            pools
+                .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
+                .unwrap();
+        }
+        assert_eq!(pools.pools.iter().filter(|pool| pool.is_some()).count(), 1);
+
+        pools.purge(11);
+        assert_eq!(pools.acc_freelist.borrow().0.len(), 2);
+
+        for vote in [Vote::new_skip_vote(11), Vote::new_skip_fallback_vote(11)] {
+            let vote_msg = ctx.new_vote_msg(0, vote);
+            let stake = vote_msg.stake.get();
+            let msg = PoolVote::Own(vote_msg);
+            let (accumulated, _) = pools
+                .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
+                .unwrap();
+            assert_eq!(accumulated, stake);
+        }
+        assert!(pools.acc_freelist.borrow().0.is_empty());
     }
 
     #[test]
