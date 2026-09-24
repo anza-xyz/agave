@@ -25,7 +25,7 @@ dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-vote-interface/frozen-abi",
+    "solana-vote-interface/stable-abi",
 ]
 
 [dependencies]
@@ -38,8 +38,8 @@ solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }

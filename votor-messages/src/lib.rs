@@ -1,6 +1,5 @@
 #![cfg(feature = "agave-unstable-api")]
 //! Alpenglow vote message types
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![deny(missing_docs)]
 
 use {solana_clock::Slot, solana_pubkey::Pubkey, std::sync::Arc};

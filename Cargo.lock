@@ -7321,8 +7321,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "solana-frozen-abi",
- "solana-frozen-abi-macro",
  "solana-signature",
  "solana-signer",
  "subtle",
@@ -10559,8 +10557,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c75782529cc4521114c1ecd71c7e2cdebd41a6fe9844b5d088fd36ef08c57c36"
 dependencies = [
  "serde_core",
- "solana-frozen-abi",
- "solana-frozen-abi-macro",
  "wincode",
 ]
 

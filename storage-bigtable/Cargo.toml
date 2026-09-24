@@ -23,9 +23,9 @@ name = "solana_storage_bigtable"
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-signature/frozen-abi",
-    "solana-transaction/frozen-abi",
-    "solana-transaction-error/frozen-abi",
+    "solana-signature/stable-abi",
+    "solana-transaction/stable-abi",
+    "solana-transaction-error/stable-abi",
 ]
 agave-unstable-api = []
 
@@ -46,8 +46,8 @@ serde = { workspace = true }
 smpl_jwt = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }

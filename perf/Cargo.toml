@@ -35,8 +35,7 @@ dev-context-only-utils = [
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-packet/frozen-abi",
-    "solana-short-vec/frozen-abi",
+    "solana-packet/stable-abi",
     "solana-vote-program/frozen-abi",
 ]
 
@@ -52,8 +51,8 @@ rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 solana-clock = { workspace = true, optional = true }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }

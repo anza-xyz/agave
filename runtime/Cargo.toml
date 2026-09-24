@@ -36,17 +36,15 @@ dev-context-only-utils = [
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-account/frozen-abi",
+    "solana-account/stable-abi",
     "solana-accounts-db/frozen-abi",
-    "solana-bls-signatures/frozen-abi",
-    "solana-epoch-schedule/frozen-abi",
-    "solana-hard-forks/frozen-abi",
-    "solana-inflation/frozen-abi",
-    "solana-instruction/frozen-abi",
-    "solana-instruction-error/frozen-abi",
-    "solana-rent/frozen-abi",
-    "solana-stake-interface/frozen-abi",
-    "solana-transaction-error/frozen-abi",
+    "solana-epoch-schedule/stable-abi",
+    "solana-hard-forks/stable-abi",
+    "solana-inflation/stable-abi",
+    "solana-instruction-error/stable-abi",
+    "solana-rent/stable-abi",
+    "solana-stake-interface/stable-abi",
+    "solana-transaction-error/stable-abi",
     "solana-version/frozen-abi",
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
@@ -116,8 +114,8 @@ solana-feature-gate-interface = { workspace = true, features = ["wincode"] }
 solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true, features = ["wincode"] }
 solana-fee-structure = { workspace = true, features = ["serde"] }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-genesis-config = { workspace = true, features = ["serde"] }
 solana-hard-forks = { workspace = true, features = ["serde", "wincode"] }
 solana-hash = { workspace = true, features = ["atomic", "wincode", "rand"] }

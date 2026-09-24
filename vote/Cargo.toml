@@ -32,10 +32,10 @@ frozen-abi = [
     "dep:solana-bls-signatures",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-account/frozen-abi",
+    "solana-account/stable-abi",
     "solana-bls-signatures/solana-signer-derive",
-    "solana-pubkey/frozen-abi",
-    "solana-vote-interface/frozen-abi",
+    "solana-pubkey/stable-abi",
+    "solana-vote-interface/stable-abi",
 ]
 
 [dependencies]
@@ -48,8 +48,8 @@ solana-account = { workspace = true, features = ["serde", "wincode"] }
 solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true, optional = true }
 solana-clock = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-hash = { workspace = true, features = ["copy"] }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
