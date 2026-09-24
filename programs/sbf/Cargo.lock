@@ -9344,9 +9344,9 @@ dependencies = [
 
 [[package]]
 name = "solana-stake-interface"
-version = "5.0.0"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6e97b8c64af0f2257dc25185c07ef1d2a462e47187ce124e2498d23ad6ed349"
+checksum = "9b5120d68ec674551562e20906ed202a55af23f4b532cc4c12568150eb4a8536"
 dependencies = [
  "num-traits",
  "serde",
