@@ -4,6 +4,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     crate::{
+        leader_updater::SlotEstimate,
         logging::{debug, error, info, warn},
         node_address_service::SlotReceiver,
     },
@@ -44,7 +45,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            lookahead_leaders: 1,
+            lookahead_leaders: 2,
             refresh_nodes_info_every: Duration::from_secs(5 * 60),
             max_consecutive_failures: 10,
         }
@@ -71,24 +72,20 @@ impl LeaderUpdateReceiver {
         &self,
         num_lookahead_leaders: usize,
         lookahead_leaders: &mut Vec<SocketAddr>,
-    ) {
+    ) -> Option<SlotEstimate> {
         let tpu_info = self.receiver.borrow();
-        let num_lookahead_leaders = if tpu_info.extend {
-            num_lookahead_leaders.saturating_add(1)
-        } else {
-            num_lookahead_leaders
-        };
         lookahead_leaders.extend(tpu_info.leaders.iter().take(num_lookahead_leaders).copied());
+        tpu_info.slot_estimate
     }
 }
 
 /// [`NodesTpuInfo`] holds the TPU addresses of the nodes scheduled to be leaders for upcoming
-/// slots. The `extend` flag indicates whether the list of leaders was extended by one to account
-/// for the case when the current slot is the last slot in a leader's consecutive slots.
+/// slots.
 #[derive(Clone)]
 struct NodesTpuInfo {
     leaders: Vec<SocketAddr>,
-    extend: bool,
+    /// Present only when the first candidate belongs to the estimated current window.
+    slot_estimate: Option<SlotEstimate>,
 }
 
 impl LeaderTpuCacheService {
@@ -105,11 +102,10 @@ impl LeaderTpuCacheService {
             config.max_consecutive_failures,
         )
         .await?;
-        let current_slot = slot_receiver.slot();
-        let lookahead_leaders =
-            adjust_lookahead(current_slot, &slot_leaders, config.lookahead_leaders);
-        let leaders = leader_sockets(
-            current_slot,
+        let slot_estimate = slot_receiver.slot();
+        let lookahead_leaders = config.lookahead_leaders;
+        let (leaders, first_leader_in_current_window) = leader_sockets(
+            slot_estimate.slot,
             lookahead_leaders,
             &slot_leaders,
             &leader_tpu_map,
@@ -117,7 +113,7 @@ impl LeaderTpuCacheService {
 
         let (leaders_sender, leaders_receiver) = watch::channel(NodesTpuInfo {
             leaders,
-            extend: config.lookahead_leaders != lookahead_leaders,
+            slot_estimate: first_leader_in_current_window.then_some(slot_estimate),
         });
 
         let handle = tokio::spawn(Self::run_loop(
@@ -182,26 +178,23 @@ impl LeaderTpuCacheService {
                         break;
                     }
 
-                    let estimated_current_slot = slot_receiver.slot();
+                    let slot_estimate = slot_receiver.slot();
                     update_leader_info(
-                        estimated_current_slot,
+                        slot_estimate.slot,
                         cluster_info.as_ref(),
                         &mut epoch_info,
                         &mut slot_leaders,
                         &mut num_consecutive_failures,
                         config.max_consecutive_failures,
                     ).await?;
-                    let current_slot = slot_receiver.slot();
-                    let lookahead_leaders = adjust_lookahead(
-                        current_slot,
-                        &slot_leaders,
-                        config.lookahead_leaders,
-                    );
-                    let leaders = leader_sockets(current_slot, lookahead_leaders, &slot_leaders, &leader_tpu_map);
+                    let slot_estimate = slot_receiver.slot();
+                    let lookahead_leaders =
+                        config.lookahead_leaders;
+                    let (leaders, first_leader_in_current_window) = leader_sockets(slot_estimate.slot, lookahead_leaders, &slot_leaders, &leader_tpu_map);
 
                     if let Err(e) = leaders_sender.send(NodesTpuInfo {
                         leaders,
-                        extend: config.lookahead_leaders != lookahead_leaders
+                        slot_estimate: first_leader_in_current_window.then_some(slot_estimate)
                     }) {
                         warn!("Unexpectedly dropped leaders_sender: {e}");
                         return Err(Error::ChannelClosed);
@@ -290,6 +283,7 @@ async fn update_leader_info(
 
 /// Get the TPU sockets for slots starting from `first_slot` and until `first_slot +
 /// lookahead_leaders * NUM_CONSECUTIVE_LEADER_SLOTS`.
+/// Also returns whether the first socket belongs to the window containing `first_slot`.
 ///
 /// If it returns an empty vector, it might mean that we overran the local leader schedule cache or,
 /// less probable, that there is no TPU info available for corresponding slot leaders.
@@ -298,10 +292,11 @@ fn leader_sockets(
     lookahead_leaders: u8,
     slot_leaders: &SlotLeaders,
     leader_tpu_map: &LeaderTpuMap,
-) -> Vec<SocketAddr> {
+) -> (Vec<SocketAddr>, bool) {
     let lookahead_leaders = lookahead_leaders as usize;
     let fanout_slots = lookahead_leaders.saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS.get()) as u64;
     let mut leader_sockets = Vec::with_capacity(lookahead_leaders);
+    let mut first_leader_in_current_window = false;
     // `slot_leaders.first_slot` might have been advanced since caller last read it. Take the
     // greater of the two values to ensure we are reading from the latest leader schedule.
     let current_slot = std::cmp::max(first_slot, slot_leaders.first_slot);
@@ -310,6 +305,11 @@ fn leader_sockets(
     {
         if let Some(leader) = slot_leaders.slot_leader(leader_slot) {
             if let Some(tpu_socket) = leader_tpu_map.get(leader) {
+                if leader_sockets.is_empty() {
+                    let slots_per_window = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
+                    first_leader_in_current_window =
+                        leader_slot / slots_per_window == first_slot / slots_per_window;
+                }
                 leader_sockets.push(*tpu_socket);
                 debug!("Pushed leader {leader} TPU socket: {tpu_socket}");
             } else {
@@ -327,7 +327,7 @@ fn leader_sockets(
         }
     }
 
-    leader_sockets
+    (leader_sockets, first_leader_in_current_window)
 }
 
 async fn initialize_state(
@@ -346,7 +346,7 @@ async fn initialize_state(
             leader_tpu_map = LeaderTpuMap::new(cluster_info).await.ok();
         }
         if epoch_info.is_none() {
-            epoch_info = EpochInfo::new(cluster_info, slot_receiver.slot())
+            epoch_info = EpochInfo::new(cluster_info, slot_receiver.slot().slot)
                 .await
                 .ok();
         }
@@ -356,7 +356,7 @@ async fn initialize_state(
         {
             slot_leaders = SlotLeaders::new(
                 cluster_info,
-                slot_receiver.slot(),
+                slot_receiver.slot().slot,
                 epoch_info.slots_in_epoch,
             )
             .await
@@ -377,17 +377,6 @@ async fn initialize_state(
         }
     }
     Err(Error::InitializationFailed)
-}
-
-fn adjust_lookahead(slot: Slot, slot_leaders: &SlotLeaders, lookahead_leaders: u8) -> u8 {
-    if slot_leaders
-        .is_leader_last_consecutive_slot(slot)
-        .unwrap_or(true)
-    {
-        lookahead_leaders.saturating_add(1)
-    } else {
-        lookahead_leaders
-    }
 }
 
 async fn try_update<F, Fut, T>(
@@ -468,18 +457,6 @@ impl SlotLeaders {
         slot.checked_sub(self.first_slot)
             .and_then(|index| self.leaders.get(index as usize))
     }
-
-    /// Returns `Some(true)` if the given `slot` is the last slot in the leader consecutive slots.
-    fn is_leader_last_consecutive_slot(&self, slot: Slot) -> Option<bool> {
-        slot.checked_sub(self.first_slot).and_then(|index| {
-            let index = index as usize;
-            if index + 1 < self.leaders.len() {
-                Some(self.leaders[index] != self.leaders[index + 1])
-            } else {
-                None
-            }
-        })
-    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -545,4 +522,132 @@ fn extract_cluster_tpu_sockets(
             Some((pubkey, socket))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deadline_matches_first_returned_leader_window() {
+        let available_leader = Pubkey::new_unique();
+        let missing_leader = Pubkey::new_unique();
+        let address: SocketAddr = "127.0.0.1:8000".parse().unwrap();
+        let leader_tpu_map = LeaderTpuMap {
+            leader_tpu_map: HashMap::from([(available_leader, address)]),
+        };
+        for (
+            name,
+            cache_first_slot,
+            scheduled_leaders,
+            lookahead,
+            expected_sockets,
+            matches_window,
+        ) in [
+            (
+                "current window available",
+                4,
+                vec![available_leader; 8],
+                2,
+                vec![address, address],
+                true,
+            ),
+            (
+                "current window missing",
+                4,
+                [vec![missing_leader; 4], vec![available_leader; 4]].concat(),
+                2,
+                vec![address],
+                false,
+            ),
+            (
+                "all addresses missing",
+                4,
+                vec![missing_leader; 8],
+                2,
+                vec![],
+                false,
+            ),
+            (
+                "cache starts in the next window with the same leader",
+                8,
+                vec![available_leader; 4],
+                1,
+                vec![address],
+                false,
+            ),
+            (
+                "cache starts later in the current window",
+                6,
+                vec![available_leader; 4],
+                1,
+                vec![address],
+                true,
+            ),
+            (
+                "no candidates requested from cache",
+                4,
+                vec![available_leader; 4],
+                0,
+                vec![],
+                false,
+            ),
+        ] {
+            let slot_leaders = SlotLeaders {
+                first_slot: cache_first_slot,
+                leaders: scheduled_leaders,
+            };
+            let (leaders, first_leader_in_current_window) =
+                leader_sockets(5, lookahead, &slot_leaders, &leader_tpu_map);
+            assert_eq!(leaders, expected_sockets, "{name}");
+            assert_eq!(first_leader_in_current_window, matches_window, "{name}");
+
+            let (_sender, receiver) = watch::channel(NodesTpuInfo {
+                leaders,
+                slot_estimate: first_leader_in_current_window.then_some(SlotEstimate {
+                    slot: 5,
+                    leader_window_end_ms: Some(10_000),
+                }),
+            });
+            let receiver = LeaderUpdateReceiver { receiver };
+            let mut candidates = Vec::new();
+            let estimate = receiver.next_leaders(1, &mut candidates);
+            assert_eq!(
+                candidates,
+                expected_sockets[..expected_sockets.len().min(1)],
+                "{name}"
+            );
+            let expected_estimate = matches_window.then_some(SlotEstimate {
+                slot: 5,
+                leader_window_end_ms: Some(10_000),
+            });
+            assert_eq!(estimate, expected_estimate, "{name}");
+
+            candidates.clear();
+            let estimate = receiver.next_leaders(0, &mut candidates);
+            assert!(candidates.is_empty(), "{name}");
+            assert_eq!(estimate, expected_estimate, "{name}");
+            assert_eq!(receiver.receiver.borrow().slot_estimate, expected_estimate);
+        }
+    }
+
+    #[test]
+    fn test_matching_window_with_unknown_deadline_keeps_slot_estimate() {
+        let address: SocketAddr = "127.0.0.1:8000".parse().unwrap();
+        let slot_estimate = SlotEstimate {
+            slot: 5,
+            leader_window_end_ms: None,
+        };
+        let (_sender, receiver) = watch::channel(NodesTpuInfo {
+            leaders: vec![address],
+            slot_estimate: Some(slot_estimate),
+        });
+        let receiver = LeaderUpdateReceiver { receiver };
+        let mut candidates = Vec::new();
+        assert_eq!(
+            receiver.next_leaders(1, &mut candidates),
+            Some(slot_estimate)
+        );
+        assert_eq!(candidates, [address]);
+    }
 }
