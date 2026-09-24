@@ -500,33 +500,42 @@ impl CrdsGossipPull {
         // Values removed from the table between chunks may cause other values
         // to be skipped, which only results in redundant pull responses.
         thread_pool.install(|| {
-            let values = (0..num_values)
+            (0..num_values)
                 .into_par_iter()
                 .step_by(LOCK_CHUNK_SIZE)
-                .map(|start| {
-                    let mut hashes = Vec::with_capacity(LOCK_CHUNK_SIZE);
-                    let crds = crds.read();
-                    hashes.extend(
-                        crds.value_hashes(start..start + LOCK_CHUNK_SIZE)
-                            .filter(|v| filters.is_active(v)),
-                    );
-                    hashes
+                .for_each(|start| {
+                    let mut hashes = [Hash::default(); LOCK_CHUNK_SIZE];
+                    let mut len = 0;
+                    {
+                        let crds = crds.read();
+                        for hash in crds
+                            .value_hashes(start..start + LOCK_CHUNK_SIZE)
+                            .filter(|v| filters.is_active(v))
+                        {
+                            hashes[len] = *hash;
+                            len += 1;
+                        }
+                    }
+                    hashes[..len].iter().for_each(|v| filters.add(*v));
                 });
-            let purged = (0..num_purged)
+            (0..num_purged)
                 .into_par_iter()
                 .step_by(LOCK_CHUNK_SIZE)
-                .map(|start| {
-                    let mut hashes = Vec::with_capacity(LOCK_CHUNK_SIZE);
-                    let crds = crds.read();
-                    hashes.extend(
-                        crds.purged_hashes(start..start + LOCK_CHUNK_SIZE)
-                            .filter(|v| filters.is_active(v)),
-                    );
-                    hashes
+                .for_each(|start| {
+                    let mut hashes = [Hash::default(); LOCK_CHUNK_SIZE];
+                    let mut len = 0;
+                    {
+                        let crds = crds.read();
+                        for hash in crds
+                            .purged_hashes(start..start + LOCK_CHUNK_SIZE)
+                            .filter(|v| filters.is_active(v))
+                        {
+                            hashes[len] = *hash;
+                            len += 1;
+                        }
+                    }
+                    hashes[..len].iter().for_each(|v| filters.add(*v));
                 });
-            values
-                .chain(purged)
-                .for_each(|hashes| hashes.into_iter().for_each(|v| filters.add(v)));
         });
         filters.into()
     }
