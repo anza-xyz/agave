@@ -111,7 +111,7 @@ impl AggregateAccumulator {
     ///
     /// Uses base3 encoding when the fallback partition is usable, and base2 encoding when only
     /// the primary partition is usable.
-    pub fn try_build_base3_cert(
+    pub(crate) fn try_build_base3_cert(
         cert_type: CertificateType,
         total_stake: NonZero<u64>,
         primary: Option<&AggregateAccumulator>,
@@ -183,6 +183,18 @@ impl AggregateAccumulator {
     /// Accessor for stake
     pub fn stake(&self) -> u64 {
         self.stake
+    }
+
+    pub(crate) fn reset(&mut self, max_validators: usize) {
+        let Self {
+            ranks,
+            signature,
+            stake,
+        } = self;
+        ranks.resize(max_validators, false);
+        ranks.fill(false);
+        *signature = SignatureProjective::identity();
+        *stake = 0;
     }
 
     fn is_identity(&self) -> bool {
