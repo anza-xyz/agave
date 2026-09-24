@@ -105,7 +105,7 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_packet::Packet,
-        solana_perf::packet::RecycledPacketBatch,
+        solana_perf::packet::BytesPacketBatch,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
@@ -211,9 +211,10 @@ mod tests {
 
         let mut batches = [make_packet_batch(&keypair, slot)];
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        batches[0]
-            .iter_mut()
-            .for_each(|mut packet_ref| packet_ref.meta_mut().size = 0);
+        batches[0].iter_mut().for_each(|mut packet_ref| {
+            packet_ref.copy_from_slice(&[]);
+            packet_ref.meta_mut().size = 0;
+        });
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
         assert!(
             batches
@@ -273,9 +274,10 @@ mod tests {
         );
 
         let mut batches = [make_packet_batch(&keypair, slot)];
-        batches[0]
-            .iter_mut()
-            .for_each(|mut pr| pr.meta_mut().size = 0);
+        batches[0].iter_mut().for_each(|mut packet_ref| {
+            packet_ref.copy_from_slice(&[]);
+            packet_ref.meta_mut().size = 0;
+        });
         let leader_slots: SlotPubkeys = [(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]
             .into_iter()
             .collect();
@@ -289,7 +291,6 @@ mod tests {
     }
 
     fn make_packet_batch(keypair: &Keypair, slot: u64) -> PacketBatch {
-        let mut batch = RecycledPacketBatch::default();
         let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
         let reed_solomon_cache = ReedSolomonCache::default();
         let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
@@ -302,12 +303,11 @@ mod tests {
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
-        batch.resize(shreds.len(), Packet::default());
-        for i in 0..shreds.len() {
-            batch[i].buffer_mut()[..shreds[i].payload().len()].copy_from_slice(shreds[i].payload());
-            batch[i].meta_mut().size = shreds[i].payload().len();
-        }
-        PacketBatch::from(batch)
+        shreds
+            .iter()
+            .map(|shred| shred.payload().to_bytes_packet(None))
+            .collect::<BytesPacketBatch>()
+            .into()
     }
 
     #[test]
@@ -396,15 +396,12 @@ mod tests {
     }
 
     fn make_packets<R: Rng>(rng: &mut R, shreds: &[Shred]) -> Vec<PacketBatch> {
-        let mut packets = shreds.iter().map(|shred| {
-            let mut packet = Packet::default();
-            shred.copy_to_packet(&mut packet);
-            packet
-        });
+        let mut packets = shreds
+            .iter()
+            .map(|shred| shred.payload().to_bytes_packet(None));
         let packets: Vec<PacketBatch> = repeat_with(|| {
             let size = rng.random_range(0..16);
-            let packets = packets.by_ref().take(size).collect();
-            let batch = RecycledPacketBatch::new(packets);
+            let batch = packets.by_ref().take(size).collect::<BytesPacketBatch>();
             (size == 0 || !batch.is_empty()).then_some(batch.into())
         })
         .while_some()
@@ -444,15 +441,12 @@ mod tests {
         let expected_discards = packets
             .iter_mut()
             .map(|packets| {
-                let PacketBatch::Pinned(packets) = packets else {
-                    unreachable!()
-                };
                 packets
                     .iter_mut()
-                    .map(|packet| {
+                    .map(|mut packet| {
                         let coin_flip: bool = rng.random();
                         if !coin_flip {
-                            shred::layout::corrupt_packet(&mut rng, packet, &keypairs);
+                            shred::layout::corrupt_packet(&mut rng, &mut packet, &keypairs);
                         }
                         !coin_flip
                     })

@@ -22,7 +22,6 @@ use {
 #[cfg(test)]
 use {
     rand::{Rng, prelude::IndexedMutRandom as _},
-    solana_perf::packet::Packet,
     std::collections::HashMap,
 };
 
@@ -342,17 +341,16 @@ pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
 #[allow(clippy::indexing_slicing)]
 pub(crate) fn corrupt_packet<R: Rng>(
     rng: &mut R,
-    packet: &mut Packet,
+    packet: &mut PacketRefMut<'_>,
     keypairs: &HashMap<Slot, Keypair>,
 ) {
-    fn modify_packet<R: Rng>(rng: &mut R, packet: &mut Packet, offsets: Range<usize>) {
-        let buffer = packet.buffer_mut();
+    fn modify_packet<R: Rng>(rng: &mut R, packet: &mut PacketRefMut<'_>, offsets: Range<usize>) {
+        let mut buffer = packet.data(..).unwrap().to_vec();
         let byte = buffer[offsets].choose_mut(rng).unwrap();
         *byte = rng.random::<u8>().max(1u8).wrapping_add(*byte);
+        packet.copy_from_slice(&buffer);
     }
-    // We need to re-borrow the `packet` here, otherwise compiler considers it
-    // as moved.
-    let shred = get_shred(&*packet).unwrap();
+    let shred = get_shred(packet.as_ref()).unwrap();
     let (proof_size, resigned) = match get_shred_variant(shred).unwrap() {
         ShredVariant::MerkleCode {
             proof_size,
@@ -374,7 +372,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
         modify_packet(rng, packet, size - offset..size);
     }
     // Assert that the signature no longer verifies.
-    let shred = get_shred(packet).unwrap();
+    let shred = get_shred(packet.as_ref()).unwrap();
     let slot = get_slot(shred).unwrap();
     let signature = get_signature(shred).unwrap();
     if coin_flip {
