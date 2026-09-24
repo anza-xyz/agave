@@ -8993,6 +8993,7 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-reserved-account-keys",
+ "agave-shred-wire-format",
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor-messages",
