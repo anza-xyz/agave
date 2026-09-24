@@ -44,5 +44,8 @@ solana-signer-store = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
+[dev-dependencies]
+agave-votor-messages = { path = ".", features = ["dev-context-only-utils"] }
+
 [lints]
 workspace = true
