@@ -6,10 +6,10 @@
 use {
     crate::{
         constants::{
-            MERKLE_PROOF_ENTRIES, Nonce, OFFSET_OF_VARIANT, ProofEntry, SIZE_OF_NONCE, Section,
-            Sections, sections,
+            MERKLE_PROOF_ENTRIES, Nonce, OFFSET_OF_KIND_HEADER, OFFSET_OF_VARIANT, ProofEntry,
+            SIZE_OF_NONCE, Section, Sections, sections,
         },
-        error::ParseError,
+        error::{ParseError, WriteError},
         headers::{AnyHeader, CommonHeader},
         kind::ShredLayout,
         shred_variant::ShredVariant,
@@ -84,17 +84,42 @@ impl<'a, K: ShredLayout> From<ShredView<'a, K>> for AnyShredView<'a> {
     }
 }
 
-/// Reads the variant byte without committing to a shred kind.
+/// Extracts the variant byte.
 ///
-/// This is all a caller needs to pick the `K` that [`ShredView`] should be instantiated with.
-pub fn peek_variant(bytes: &[u8]) -> Result<ShredVariant, ParseError> {
+// TODO: this is only needed for migration, should be inlined later.
+#[inline]
+pub fn peek_variant_byte(bytes: &[u8]) -> Result<u8, ParseError> {
     let Some(&byte) = bytes.get(OFFSET_OF_VARIANT) else {
         return Err(ParseError::TooShort {
             len: bytes.len(),
             expected: OFFSET_OF_VARIANT.saturating_add(1),
         });
     };
-    ShredVariant::try_from(byte)
+    Ok(byte)
+}
+/// Reads the variant byte without committing to a shred kind.
+///
+/// This is all a caller needs to pick the `K` that [`ShredView`] should be instantiated with.
+#[inline]
+pub fn peek_variant(bytes: &[u8]) -> Result<ShredVariant, ParseError> {
+    ShredVariant::try_from(peek_variant_byte(bytes)?)
+}
+
+/// Reads the header a shred of kind `K` carries after the common one, without reading anything
+/// else.
+///
+/// The kind's header sits at a fixed offset and is of a fixed length, `bytes` must be long enough
+/// to contain it, and whether it is a shred of kind `K` at all is the caller's to establish.
+//TODO: this function is only useful for migration, delete it after
+#[inline]
+pub fn peek_header<K: ShredLayout>(bytes: &[u8]) -> Result<K::Header, ParseError> {
+    let Some(mut header) = bytes.get(OFFSET_OF_KIND_HEADER..K::SIZE_OF_HEADERS) else {
+        return Err(ParseError::TooShort {
+            len: bytes.len(),
+            expected: K::SIZE_OF_HEADERS,
+        });
+    };
+    read::<K::Header>(&mut header)
 }
 
 impl<'a, K: ShredLayout> ShredView<'a, K> {
@@ -111,14 +136,13 @@ impl<'a, K: ShredLayout> ShredView<'a, K> {
     /// arrives in a repair response.
     ///
     /// The nonce is not optional. Whether one follows the shred is settled by the socket the packet
-    /// came from. A Turbine packet goes through [`read_exact`](Self::read_exact) instead, which
-    /// rejects the same four bytes it requires here.
+    /// came from. A Turbine packet must not have a nonce, while repair must have it. The nonce is
+    /// read from the bytes right after the shred, never from inside it.
     pub fn read_repair_packet(bytes: &'a [u8]) -> Result<(Self, Nonce), ParseError> {
         let (view, mut trailer) = Self::read_prefix(bytes)?;
         match trailer.len() {
             SIZE_OF_NONCE => Ok((view, read::<Nonce>(&mut trailer)?)),
-            0 => Err(ParseError::MissingNonce),
-            len => Err(ParseError::TrailingBytes(len)),
+            _ => Err(ParseError::InvalidNonce),
         }
     }
 
@@ -182,6 +206,7 @@ impl<'a, K: ShredLayout> ShredView<'a, K> {
 /// proof and signature the FEC set's tree produces.
 pub struct ShredViewMut<'a, K: ShredLayout> {
     payload: &'a mut [u8],
+    variant: ShredVariant,
     sections: Sections,
     _kind: PhantomData<K>,
 }
@@ -200,27 +225,36 @@ impl<'a, K: ShredLayout> ShredViewMut<'a, K> {
             });
         }
         if payload.len() != K::SIZE_OF_PAYLOAD {
-            return Err(ParseError::TooShort {
+            return Err(ParseError::WrongLength {
                 len: payload.len(),
                 expected: K::SIZE_OF_PAYLOAD,
             });
         }
         Ok(Self {
             payload,
+            variant,
             sections: sections::<K>(variant.resigned()),
             _kind: PhantomData,
         })
     }
 
     /// Writes the headers, the variant byte included.
+    ///
+    /// `common.variant` must be the variant this buffer was laid out for in [`new`](Self::new).
     #[inline]
     pub fn write_headers(
         &mut self,
         common: &CommonHeader,
         header: &K::Header,
-    ) -> Result<(), wincode::WriteError> {
+    ) -> Result<(), WriteError> {
+        if common.variant != self.variant {
+            return Err(WriteError::VariantMismatch {
+                expected: self.variant,
+                found: common.variant,
+            });
+        }
         let dst = section_mut(self.payload, self.sections.headers);
-        wincode::serialize_into(dst, &(*common, *header))
+        Ok(wincode::serialize_into(dst, &(*common, *header))?)
     }
 
     /// The body, to be filled with ledger data or erasure codes.
