@@ -18,7 +18,7 @@ impl Default for RpcBootstrapConfig {
             no_genesis_fetch: false,
             no_snapshot_fetch: false,
             check_vote_account: None,
-            only_known_rpc: false,
+            only_known_rpc: true,
             max_genesis_archive_unpacked_size: 10485760,
             incremental_snapshot_fetch: true,
         }
@@ -35,7 +35,7 @@ impl FromClapArgMatches for RpcBootstrapConfig {
             .value_of("check_vote_account")
             .map(|url| url.to_string());
 
-        let only_known_rpc = matches.is_present("only_known_rpc");
+        let only_known_rpc = !matches.is_present("unsafely_allow_unknown_rpc");
 
         let max_genesis_archive_unpacked_size =
             value_t!(matches, "max_genesis_archive_unpacked_size", u64).map_err(|err| {
@@ -80,12 +80,15 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
                  must expose `--full-rpc-api`",
             ),
-        Arg::with_name("only_known_rpc")
-            .alias("no-untrusted-rpc")
-            .long("only-known-rpc")
+        Arg::with_name("unsafely_allow_unknown_rpc")
+            .long("unsafely-allow-unknown-rpc")
             .takes_value(false)
-            .requires("known_validators")
-            .help("Use the RPC service of known validators only"),
+            .help(
+                "Allow downloading snapshots and genesis from RPC nodes that are not in the \
+                 --known-validator set (i.e. peers discovered via gossip). This is UNSAFE: a \
+                 malicious peer can serve a crafted snapshot. By default, only known validators \
+                 are used as snapshot and genesis sources.",
+            ),
         Arg::with_name("max_genesis_archive_unpacked_size")
             .long("max-genesis-archive-unpacked-size")
             .value_name("NUMBER")
@@ -106,11 +109,7 @@ mod tests {
         crate::commands::run::args::{
             RunArgs, tests::verify_args_struct_by_command_run_with_identity_setup,
         },
-        solana_pubkey::Pubkey,
-        std::{
-            collections::HashSet,
-            net::{IpAddr, Ipv4Addr, SocketAddr},
-        },
+        std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
 
     #[test]
@@ -184,56 +183,39 @@ mod tests {
     }
 
     #[test]
-    fn verify_args_struct_by_command_run_with_only_known_rpc() {
-        // long arg
-        {
-            let default_run_args = RunArgs::default();
-            let known_validators_pubkey = Pubkey::new_unique();
-            let known_validators = Some(HashSet::from([known_validators_pubkey]));
-            let expected_args = RunArgs {
-                known_validators,
-                rpc_bootstrap_config: RpcBootstrapConfig {
-                    only_known_rpc: true,
-                    ..RpcBootstrapConfig::default()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec![
-                    // required by --only-known-rpc
-                    "--known-validator",
-                    &known_validators_pubkey.to_string(),
-                    "--only-known-rpc",
-                ],
-                expected_args,
-            );
-        }
+    fn verify_args_struct_by_command_run_defaults_to_only_known_rpc() {
+        // With no snapshot-source flag, snapshots must only be downloaded from
+        // trusted (known) validators.
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            rpc_bootstrap_config: RpcBootstrapConfig {
+                only_known_rpc: true,
+                ..RpcBootstrapConfig::default()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![],
+            expected_args,
+        );
+    }
 
-        // alias
-        {
-            let default_run_args = RunArgs::default();
-            let known_validators_pubkey = Pubkey::new_unique();
-            let known_validators = Some(HashSet::from([known_validators_pubkey]));
-            let expected_args = RunArgs {
-                known_validators,
-                rpc_bootstrap_config: RpcBootstrapConfig {
-                    only_known_rpc: true,
-                    ..RpcBootstrapConfig::default()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec![
-                    // required by --no-untrusted-rpc
-                    "--known-validator",
-                    &known_validators_pubkey.to_string(),
-                    "--no-untrusted-rpc",
-                ],
-                expected_args,
-            );
-        }
+    #[test]
+    fn verify_args_struct_by_command_run_with_unsafely_allow_unknown_rpc() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            rpc_bootstrap_config: RpcBootstrapConfig {
+                only_known_rpc: false,
+                ..RpcBootstrapConfig::default()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--unsafely-allow-unknown-rpc"],
+            expected_args,
+        );
     }
 
     #[test]
