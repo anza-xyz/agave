@@ -64,6 +64,8 @@ const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // target: 1 signature reported per minute
 // log2(680k) = ~19.375.
 pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
+// Number of entries read per crds read lock in chunked walks.
+pub(crate) const LOCK_CHUNK_SIZE: usize = 128;
 
 pub struct Crds {
     /// Stores the map of labels and values
@@ -150,6 +152,16 @@ impl Cursor {
     #[inline]
     fn consume(&mut self, ordinal: u64) {
         self.0 = self.0.max(ordinal + 1);
+    }
+}
+
+/// Cursor for Crds::get_nodes_chunk. Positions below it are yet to be read.
+#[derive(Default)]
+pub(crate) struct NodesCursor(Option<usize>);
+
+impl NodesCursor {
+    pub(crate) fn is_done(&self) -> bool {
+        self.0 == Some(0)
     }
 }
 
@@ -381,6 +393,23 @@ impl Crds {
     /// Returns all entries which are ContactInfo.
     pub(crate) fn get_nodes(&self) -> impl Iterator<Item = &VersionedCrdsValue> {
         self.nodes.iter().map(move |i| self.table.index(*i))
+    }
+
+    /// Returns the next chunk of up to `size` nodes, walking from the back.
+    /// Crds::remove only moves the last node into the freed position, so a node
+    /// present for the whole walk is read at least once, even if the lock is
+    /// released between chunks, but may be read more than once.
+    pub(crate) fn get_nodes_chunk<'a>(
+        &'a self,
+        cursor: &'a mut NodesCursor,
+        size: usize,
+    ) -> impl Iterator<Item = &'a VersionedCrdsValue> {
+        let end = cursor.0.unwrap_or(usize::MAX).min(self.nodes.len());
+        cursor.0 = Some(end);
+        (end.saturating_sub(size)..end).rev().map(move |k| {
+            cursor.0 = Some(k);
+            self.table.index(self.nodes[k])
+        })
     }
 
     /// Returns ContactInfo of all known nodes.
@@ -652,8 +681,9 @@ impl Crds {
             self.shards.insert(index, value);
             match value.value.data() {
                 CrdsData::ContactInfo(_) => {
-                    self.nodes.swap_remove(&size);
-                    self.nodes.insert(index);
+                    // Keep the node's position for get_nodes_chunk.
+                    let k = self.nodes.get_index_of(&size).unwrap();
+                    self.nodes.replace_index(k, index).unwrap();
                 }
                 CrdsData::Vote(_, _) => {
                     self.votes.insert(value.ordinal, index);
@@ -1395,6 +1425,89 @@ mod tests {
             if crds.table.len() % 16 == 0 {
                 check_crds_value_indices(&mut rng, &crds);
             }
+        }
+    }
+
+    fn insert_rand<R: Rng>(rng: &mut R, crds: &mut Crds, pubkeys: &[Pubkey]) {
+        let pubkey = pubkeys[rng.random_range(0..pubkeys.len())];
+        let value = CrdsValue::new_unsigned(CrdsData::new_rand(rng, Some(pubkey)));
+        let local_timestamp = new_rand_timestamp(rng);
+        let _ = crds.insert(value, local_timestamp, GossipRoute::LocalMessage);
+    }
+
+    #[test]
+    fn test_get_nodes_chunk() {
+        const CHUNK_SIZE: usize = 16;
+        fn walk(crds: &mut Crds, mut f: impl FnMut(&mut Crds)) -> Vec<Pubkey> {
+            let mut cursor = NodesCursor::default();
+            let mut reads = Vec::new();
+            while !cursor.is_done() {
+                reads.extend(
+                    crds.get_nodes_chunk(&mut cursor, CHUNK_SIZE)
+                        .map(|value| value.value.pubkey()),
+                );
+                f(crds);
+            }
+            reads
+        }
+        let mut rng = rng();
+        let pubkeys: Vec<_> = repeat_with(Pubkey::new_unique).take(512).collect();
+        for _ in 0..4 {
+            let mut crds = Crds::default();
+            for _ in 0..4096 {
+                insert_rand(&mut rng, &mut crds, &pubkeys);
+            }
+            // Churn the table so that positions in nodes and table diverge.
+            for _ in 0..256 {
+                crds.drop_random(1, &HashSet::new(), /*now=*/ 0);
+                for _ in 0..8 {
+                    insert_rand(&mut rng, &mut crds, &pubkeys);
+                }
+            }
+            let nodes: Vec<Pubkey> = crds.get_nodes().map(|v| v.value.pubkey()).collect();
+            assert!(nodes.len() > 10 * CHUNK_SIZE, "num nodes: {}", nodes.len());
+
+            // Removing other values and inserting new ones does not move nodes.
+            let reads = walk(&mut crds, |crds| {
+                for _ in 0..rng.random_range(1..8) {
+                    let index = rng.random_range(0..crds.table.len());
+                    let key = crds.table.get_index(index).unwrap().0.clone();
+                    if !matches!(key, CrdsValueLabel::ContactInfo(_)) {
+                        crds.remove(&key, /*now=*/ 0);
+                    }
+                }
+                for _ in 0..rng.random_range(1..8) {
+                    insert_rand(&mut rng, crds, &pubkeys);
+                }
+            });
+            assert!(reads.into_iter().eq(nodes.into_iter().rev()));
+
+            // Removing nodes as trim_crds_table does may cause repeats but not skips.
+            let nodes: Vec<Pubkey> = crds.get_nodes().map(|v| v.value.pubkey()).collect();
+            let mut removed = HashSet::new();
+            let reads = walk(&mut crds, |crds| {
+                let size = if removed.is_empty() {
+                    crds.num_pubkeys() / 2
+                } else {
+                    rng.random_range(1..4)
+                };
+                crds.drop_random(size, &HashSet::new(), /*now=*/ 0);
+                removed.extend(
+                    nodes
+                        .iter()
+                        .copied()
+                        .filter(|&node| crds.get::<&ContactInfo>(node).is_none()),
+                );
+                for _ in 0..rng.random_range(0..8) {
+                    insert_rand(&mut rng, crds, &pubkeys);
+                }
+            });
+            assert!(reads.len() <= nodes.len());
+            let reads: HashSet<_> = reads.into_iter().collect();
+            for node in nodes.iter().filter(|node| !removed.contains(node)) {
+                assert!(reads.contains(node), "skipped node: {node}");
+            }
+            check_crds_value_indices(&mut rng, &crds);
         }
     }
 
