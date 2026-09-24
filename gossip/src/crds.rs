@@ -38,7 +38,7 @@ use {
     },
     assert_matches::debug_assert_matches,
     indexmap::{
-        map::{Entry, IndexMap, rayon::ParValues},
+        map::{Entry, IndexMap},
         set::IndexSet,
     },
     lazy_lru::LruCache,
@@ -50,7 +50,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
-        ops::{Bound, Index, IndexMut},
+        ops::{Bound, Index, IndexMut, Range},
         sync::Mutex,
     },
 };
@@ -479,16 +479,22 @@ impl Crds {
         self.table.values()
     }
 
-    pub(crate) fn par_values(&self) -> ParValues<'_, CrdsValueLabel, VersionedCrdsValue> {
-        self.table.par_values()
+    /// Returns hashes of the values at the given positions in the table.
+    pub(crate) fn value_hashes(&self, range: Range<usize>) -> impl Iterator<Item = &Hash> {
+        let end = range.end.min(self.table.len());
+        (range.start.min(end)..end).map(|index| self.table.index(index).value.hash())
     }
 
     pub(crate) fn num_purged(&self) -> usize {
         self.purged.len()
     }
 
-    pub(crate) fn purged(&self) -> impl IndexedParallelIterator<Item = Hash> + '_ {
-        self.purged.par_iter().map(|(hash, _)| *hash)
+    /// Returns purged value hashes at the given positions.
+    pub(crate) fn purged_hashes(&self, range: Range<usize>) -> impl Iterator<Item = &Hash> {
+        let end = range.end.min(self.purged.len());
+        self.purged
+            .range(range.start.min(end)..end)
+            .map(|(hash, _)| hash)
     }
 
     /// Drops purged value hashes with timestamp less than the given one.
