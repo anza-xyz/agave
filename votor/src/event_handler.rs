@@ -1866,6 +1866,29 @@ mod tests {
     }
 
     #[test]
+    fn test_try_skip_window_clears_pending_blocks() {
+        let mut test_context = setup();
+
+        // Without a parent ready, the replayed block for slot 1 can't be voted on yet
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        test_context.create_block_and_send_block_event(1, root_bank);
+        test_context.check_no_vote_or_commitment();
+        assert!(test_context.local_context.pending_blocks.contains_key(&1));
+
+        // Skipping the window means we will never vote notarize on the pending block
+        test_context.send_timeout_event(1);
+        test_context.check_for_vote(&Vote::new_skip_vote(1));
+        test_context.check_for_vote(&Vote::new_skip_vote(2));
+        test_context.check_for_vote(&Vote::new_skip_vote(3));
+        assert!(test_context.local_context.pending_blocks.is_empty());
+    }
+
+    #[test]
     fn test_received_safe_to_notar() {
         let mut test_context = setup();
 
