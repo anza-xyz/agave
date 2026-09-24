@@ -3,13 +3,25 @@
 #![deny(clippy::indexing_slicing)]
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(test)]
+use {
+    crate::shred::merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY,
+    rand::{Rng, prelude::IndexedMutRandom as _},
+    solana_perf::packet::Packet,
+    std::collections::HashMap,
+};
 use {
     crate::{
         blockstore_meta::ErasureConfig,
         shred::{
-            self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, ShredFlags, ShredId, ShredType,
-            ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred as ShredTrait,
+            self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, SIZE_OF_NONCE, ShredFlags, ShredId,
+            ShredType, ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred as ShredTrait,
         },
+    },
+    agave_shred_wire_format::constants::{
+        OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
+        OFFSET_OF_NUM_CODE_SHREDS, OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_PARENT_OFFSET,
+        OFFSET_OF_SLOT, OFFSET_OF_VARIANT, OFFSET_OF_VERSION,
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -18,12 +30,6 @@ use {
     solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
     std::ops::Range,
-};
-#[cfg(test)]
-use {
-    rand::{Rng, prelude::IndexedMutRandom as _},
-    solana_perf::packet::Packet,
-    std::collections::HashMap,
 };
 
 #[inline]
@@ -55,8 +61,8 @@ pub fn get_shred_and_repair_nonce(packet: PacketRef<'_>) -> Option<(&[u8], Optio
     if !packet.meta().repair() {
         return Some((shred, None));
     }
-    let offset = data.len().checked_sub(4)?;
-    let nonce = <[u8; 4]>::try_from(data.get(offset..)?).ok()?;
+    let offset = data.len().checked_sub(SIZE_OF_NONCE)?;
+    let nonce = <[u8; SIZE_OF_NONCE]>::try_from(data.get(offset..)?).ok()?;
     let nonce = u32::from_le_bytes(nonce);
     Some((shred, Some(nonce)))
 }
@@ -76,7 +82,7 @@ pub(crate) const SIGNATURE_RANGE: Range<usize> = 0..SIGNATURE_BYTES;
 
 #[inline]
 pub(super) fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
-    let Some(&shred_variant) = shred.get(64) else {
+    let Some(&shred_variant) = shred.get(OFFSET_OF_VARIANT) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
     ShredVariant::try_from(shred_variant).map_err(|_| Error::InvalidShredVariant)
@@ -89,25 +95,27 @@ pub fn get_shred_type(shred: &[u8]) -> Result<ShredType, Error> {
 
 #[inline]
 pub fn get_slot(shred: &[u8]) -> Option<Slot> {
-    let bytes = <[u8; 8]>::try_from(shred.get(65..65 + 8)?).unwrap();
+    let bytes = <[u8; 8]>::try_from(shred.get(OFFSET_OF_SLOT..OFFSET_OF_SLOT + 8)?).unwrap();
     Some(Slot::from_le_bytes(bytes))
 }
 
 #[inline]
 pub fn get_index(shred: &[u8]) -> Option<u32> {
-    let bytes = <[u8; 4]>::try_from(shred.get(73..73 + 4)?).unwrap();
+    let bytes = <[u8; 4]>::try_from(shred.get(OFFSET_OF_INDEX..OFFSET_OF_INDEX + 4)?).unwrap();
     Some(u32::from_le_bytes(bytes))
 }
 
 #[inline]
 pub(super) fn get_version(shred: &[u8]) -> Option<u16> {
-    let bytes = <[u8; 2]>::try_from(shred.get(77..77 + 2)?).unwrap();
+    let bytes = <[u8; 2]>::try_from(shred.get(OFFSET_OF_VERSION..OFFSET_OF_VERSION + 2)?).unwrap();
     Some(u16::from_le_bytes(bytes))
 }
 
 #[inline]
 pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
-    let bytes = <[u8; 4]>::try_from(shred.get(79..79 + 4)?).unwrap();
+    let bytes =
+        <[u8; 4]>::try_from(shred.get(OFFSET_OF_FEC_SET_INDEX..OFFSET_OF_FEC_SET_INDEX + 4)?)
+            .unwrap();
     Some(u32::from_le_bytes(bytes))
 }
 
@@ -115,7 +123,9 @@ pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
 #[inline]
 pub(crate) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
     debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
-    let bytes = <[u8; 2]>::try_from(shred.get(83..83 + 2)?).unwrap();
+    let bytes =
+        <[u8; 2]>::try_from(shred.get(OFFSET_OF_PARENT_OFFSET..OFFSET_OF_PARENT_OFFSET + 2)?)
+            .unwrap();
     Some(u16::from_le_bytes(bytes))
 }
 
@@ -124,7 +134,10 @@ pub(crate) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
 pub(crate) fn corrupt_and_set_parent_offset(shred: &mut [u8], parent_offset: u16) {
     let bytes = parent_offset.to_le_bytes();
     assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
-    shred.get_mut(83..83 + 2).unwrap().copy_from_slice(&bytes);
+    shred
+        .get_mut(OFFSET_OF_PARENT_OFFSET..OFFSET_OF_PARENT_OFFSET + 2)
+        .unwrap()
+        .copy_from_slice(&bytes);
 }
 
 // Returns DataShredHeader.flags if the shred is data.
@@ -134,7 +147,7 @@ pub fn get_flags(shred: &[u8]) -> Result<ShredFlags, Error> {
     match get_shred_type(shred)? {
         ShredType::Code => Err(Error::InvalidShredType),
         ShredType::Data => {
-            let Some(flags) = shred.get(85).copied() else {
+            let Some(flags) = shred.get(OFFSET_OF_FLAGS).copied() else {
                 return Err(Error::InvalidPayloadSize(shred.len()));
             };
             ShredFlags::from_bits(flags).ok_or(Error::InvalidShredFlags(flags))
@@ -147,7 +160,7 @@ pub fn get_flags(shred: &[u8]) -> Result<ShredFlags, Error> {
 #[inline]
 fn get_data_size(shred: &[u8]) -> Result<u16, Error> {
     debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
-    let Some(bytes) = shred.get(86..86 + 2) else {
+    let Some(bytes) = shred.get(OFFSET_OF_DATA_SIZE..OFFSET_OF_DATA_SIZE + 2) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
     let bytes = <[u8; 2]>::try_from(bytes).unwrap();
@@ -173,10 +186,13 @@ pub(crate) fn get_erasure_config(shred: &[u8]) -> Result<ErasureConfig, Error> {
     if !matches!(get_shred_type(shred).unwrap(), ShredType::Code) {
         return Err(Error::InvalidShredType);
     }
-    let Some(num_data_bytes) = shred.get(83..83 + 2) else {
+    let Some(num_data_bytes) = shred.get(OFFSET_OF_NUM_DATA_SHREDS..OFFSET_OF_NUM_DATA_SHREDS + 2)
+    else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
-    let Some(num_coding_bytes) = shred.get(85..85 + 2) else {
+    let Some(num_coding_bytes) =
+        shred.get(OFFSET_OF_NUM_CODE_SHREDS..OFFSET_OF_NUM_CODE_SHREDS + 2)
+    else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
     let num_data = <[u8; 2]>::try_from(num_data_bytes)
@@ -368,8 +384,8 @@ pub(crate) fn corrupt_packet<R: Rng>(
         // Corrupt one byte within the signature offsets.
         modify_packet(rng, packet, SIGNATURE_RANGE);
     } else {
-        // Corrupt the merkle proof. Proof entries are each 20 bytes at the end of shreds.
-        let offset = usize::from(proof_size) * 20;
+        // Corrupt the merkle proof, whose entries sit at the end of the shred.
+        let offset = usize::from(proof_size) * SIZE_OF_MERKLE_PROOF_ENTRY;
         let size = shred.len() - if resigned { SIGNATURE_BYTES } else { 0 };
         modify_packet(rng, packet, size - offset..size);
     }

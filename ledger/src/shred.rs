@@ -55,6 +55,10 @@ use rand::Rng;
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},
+    agave_shred_wire_format::{
+        constants as wire_format,
+        kind::{Code, Data, ShredLayout as _},
+    },
     bitflags::bitflags,
     itertools::Either,
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -116,6 +120,20 @@ pub const SIZE_OF_DATA_SHRED_HEADERS: usize = 88;
 const SIZE_OF_CODING_SHRED_HEADERS: usize = 89;
 const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 
+// The same layout, stated a second time by `agave-shred-wire-format` and derived there from the
+// wincode schemas of its own header structs. Neither description of the wire format can drift
+// without this failing to compile. Mind the naming: what the ledger calls the common shred header
+// includes the signature, so it corresponds to the offset at which the kind's own header begins,
+// not to `wire_format::SIZE_OF_COMMON_HEADER`, which is 19.
+const_assert_eq!(
+    SIZE_OF_COMMON_SHRED_HEADER,
+    wire_format::OFFSET_OF_KIND_HEADER
+);
+const_assert_eq!(SIZE_OF_DATA_SHRED_HEADERS, Data::SIZE_OF_HEADERS);
+const_assert_eq!(SIZE_OF_CODING_SHRED_HEADERS, Code::SIZE_OF_HEADERS);
+const_assert_eq!(SIZE_OF_SIGNATURE, wire_format::SIZE_OF_SIGNATURE);
+const_assert_eq!(SIZE_OF_NONCE, wire_format::SIZE_OF_NONCE);
+
 // Shreds are uniformly split into erasure batches with a "target" number of
 // data shreds per each batch as below. The actual number of data shreds in
 // each erasure batch depends on the number of shreds obtained from serializing
@@ -134,7 +152,7 @@ pub const MAX_FEC_SETS_PER_SLOT: u32 =
     MAX_DATA_SHREDS_PER_SLOT as u32 / DATA_SHREDS_PER_FEC_BLOCK as u32;
 
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-pub(crate) const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
+pub(crate) const OFFSET_OF_SHRED_VARIANT: usize = wire_format::OFFSET_OF_VARIANT;
 
 /// Rewrites the Merkle proof height of the serialized shred in `payload`,
 /// leaving its signature stale; the caller re-signs if the shred has to verify.
@@ -904,6 +922,11 @@ pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
 
 #[cfg(test)]
 mod tests {
+    // Re-exported under the names the tests here and in `filter` have always used.
+    pub(super) use agave_shred_wire_format::constants::{
+        OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS as OFFSET_OF_SHRED_FLAGS,
+        OFFSET_OF_INDEX as OFFSET_OF_SHRED_INDEX, OFFSET_OF_NUM_DATA_SHREDS as OFFSET_OF_NUM_DATA,
+    };
     use {
         super::*,
         assert_matches::assert_matches,
@@ -915,20 +938,6 @@ mod tests {
     pub(super) const SIZE_OF_SHRED_INDEX: usize = 4;
     pub(super) const SIZE_OF_SHRED_SLOT: usize = 8;
     pub(super) const SIZE_OF_SHRED_VARIANT: usize = 1;
-    pub(super) const SIZE_OF_VERSION: usize = 2;
-    pub(super) const SIZE_OF_FEC_SET_INDEX: usize = 4;
-    pub(super) const SIZE_OF_PARENT_OFFSET: usize = 2;
-
-    pub(super) const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
-    pub(super) const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
-    pub(super) const OFFSET_OF_FEC_SET_INDEX: usize =
-        OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + SIZE_OF_VERSION;
-    pub(super) const OFFSET_OF_NUM_DATA: usize = OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
-
-    pub(super) const OFFSET_OF_PARENT_OFFSET: usize =
-        OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
-    pub(super) const OFFSET_OF_SHRED_FLAGS: usize = OFFSET_OF_PARENT_OFFSET + SIZE_OF_PARENT_OFFSET;
-    pub(super) const OFFSET_OF_DATA_SIZE: usize = OFFSET_OF_SHRED_FLAGS + 1;
 
     #[test]
     fn test_shred_constants() {
