@@ -1,11 +1,12 @@
 use {
+    log::debug,
     solana_borsh::v1::try_from_slice_unchecked,
     solana_clap_utils::compute_budget::ComputeUnitLimit,
     solana_compute_budget_interface::{self as compute_budget, ComputeBudgetInstruction},
     solana_instruction::Instruction,
     solana_message::Message,
     solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client::{nonblocking::rpc_client::RpcClient, rpc_client::SerializableTransaction},
     solana_rpc_client_api::config::RpcSimulateTransactionConfig,
     solana_transaction::Transaction,
 };
@@ -39,14 +40,13 @@ fn get_compute_unit_limit_instruction_index(message: &Message) -> Option<usize> 
 
 /// Like `simulate_for_compute_unit_limit`, but does not check that the message
 /// contains a compute unit limit instruction.
-async fn simulate_for_compute_unit_limit_unchecked(
+pub(crate) async fn simulate_transaction_for_compute_unit_limit_unchecked(
     rpc_client: &RpcClient,
-    message: &Message,
+    transaction: &impl SerializableTransaction,
 ) -> Result<u32, Box<dyn std::error::Error>> {
-    let transaction = Transaction::new_unsigned(message.clone());
     let simulate_result = rpc_client
         .simulate_transaction_with_config(
-            &transaction,
+            transaction,
             RpcSimulateTransactionConfig {
                 replace_recent_blockhash: true,
                 commitment: Some(rpc_client.commitment()),
@@ -58,6 +58,11 @@ async fn simulate_for_compute_unit_limit_unchecked(
 
     // Bail if the simulated transaction failed
     if let Some(err) = simulate_result.err {
+        if let Some(logs) = simulate_result.logs {
+            for (index, log) in logs.iter().enumerate() {
+                debug!("simulation log {:>3}: {log}", index.saturating_add(1));
+            }
+        }
         return Err(err.into());
     }
 
@@ -66,6 +71,17 @@ async fn simulate_for_compute_unit_limit_unchecked(
         .expect("compute units unavailable");
 
     u32::try_from(units_consumed).map_err(Into::into)
+}
+
+async fn simulate_for_compute_unit_limit_unchecked(
+    rpc_client: &RpcClient,
+    message: &Message,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    simulate_transaction_for_compute_unit_limit_unchecked(
+        rpc_client,
+        &Transaction::new_unsigned(message.clone()),
+    )
+    .await
 }
 
 /// Simulates a message and returns the index of the compute unit limit
