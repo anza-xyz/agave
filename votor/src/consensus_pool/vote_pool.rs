@@ -16,8 +16,10 @@ use {
     },
     solana_clock::Slot,
     std::{
+        cell::RefCell,
         collections::{BTreeMap, HashMap},
         num::NonZero,
+        rc::Rc,
         sync::Arc,
     },
     thiserror::Error,
@@ -27,13 +29,15 @@ use {
 struct VotePool {
     max_validators: usize,
     accumulators: HashMap<Vote, AggregateAccumulator>,
+    acc_freelist: Rc<RefCell<AccumulatorsFreeList>>,
 }
 
 impl VotePool {
-    fn new(max_validators: usize) -> Self {
+    fn new(max_validators: usize, acc_freelist: Rc<RefCell<AccumulatorsFreeList>>) -> Self {
         Self {
             max_validators,
             accumulators: HashMap::new(),
+            acc_freelist,
         }
     }
 
@@ -146,16 +150,16 @@ impl VotePool {
     /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
     fn add_pool_vote(
         &mut self,
-        acc_freelist: &mut AccumulatorsFreeList,
         total_stake: NonZero<u64>,
         msg: &PoolVote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<(u64, Option<Certificate>), AggregateAccumulatorError> {
         let vote = *msg.vote();
-        let acc = self
-            .accumulators
-            .entry(vote)
-            .or_insert_with(|| acc_freelist.alloc_accumulator(self.max_validators));
+        let acc = self.accumulators.entry(vote).or_insert_with(|| {
+            self.acc_freelist
+                .borrow_mut()
+                .alloc_accumulator(self.max_validators)
+        });
         let stake = match msg {
             PoolVote::Own(vote_msg) => acc.add_own_vote_message(vote_msg),
             PoolVote::External(a) => acc.add_aggregate(a),
@@ -166,6 +170,15 @@ impl VotePool {
             .expect("the accumulator was created above");
         let cert = self.try_produce_cert(total_stake, vote, completed_certs, acc)?;
         Ok((stake, cert))
+    }
+}
+
+impl Drop for VotePool {
+    fn drop(&mut self) {
+        let mut acc_freelist = self.acc_freelist.borrow_mut();
+        for (_, acc) in self.accumulators.drain() {
+            acc_freelist.return_accumulator(acc);
+        }
     }
 }
 
@@ -186,7 +199,7 @@ const VOTE_POOLS_CAPACITY: usize = MAX_VOTE_SLOT_DISTANCE_FROM_ROOT as usize + 1
 /// can receive votes in a fixed sized ring buffer which is pruned when the root_slot updates.
 pub(super) struct VotePools {
     pools: Box<[Option<VotePool>; VOTE_POOLS_CAPACITY]>,
-    acc_freelist: AccumulatorsFreeList,
+    acc_freelist: Rc<RefCell<AccumulatorsFreeList>>,
     root_slot: Slot,
     offset: usize,
 }
@@ -200,7 +213,7 @@ impl VotePools {
             .try_into()
             .expect("the sizes of the array should match");
         Self {
-            acc_freelist: AccumulatorsFreeList::default(),
+            acc_freelist: Rc::new(RefCell::new(AccumulatorsFreeList::default())),
             pools,
             root_slot,
             offset: 0,
@@ -231,15 +244,15 @@ impl VotePools {
         let ind = (self.offset.saturating_add(diff)).rem_euclid(self.pools.len());
         match &mut self.pools[ind] {
             None => {
-                let mut pool = VotePool::new(max_validators);
+                let mut pool = VotePool::new(max_validators, Rc::clone(&self.acc_freelist));
                 let res = pool
-                    .add_pool_vote(&mut self.acc_freelist, total_stake, msg, completed_certs)
+                    .add_pool_vote(total_stake, msg, completed_certs)
                     .map_err(VotePoolError::AddVote)?;
                 self.pools[ind] = Some(pool);
                 Ok(res)
             }
             Some(pool) => pool
-                .add_pool_vote(&mut self.acc_freelist, total_stake, msg, completed_certs)
+                .add_pool_vote(total_stake, msg, completed_certs)
                 .map_err(VotePoolError::AddVote),
         }
     }
@@ -250,22 +263,12 @@ impl VotePools {
         };
         let diff = diff as usize;
         if diff >= self.pools.len() {
-            for pool in self.pools.iter_mut() {
-                if let Some(pool) = pool.take() {
-                    for (_, acc) in pool.accumulators {
-                        self.acc_freelist.return_accumulator(acc);
-                    }
-                }
-            }
+            self.pools.fill_with(|| None);
             self.offset = 0;
         } else {
             for ind in self.offset..(self.offset.saturating_add(diff)) {
                 let ind = ind.rem_euclid(self.pools.len());
-                if let Some(pool) = self.pools[ind].take() {
-                    for (_, acc) in pool.accumulators {
-                        self.acc_freelist.return_accumulator(acc);
-                    }
-                }
+                self.pools[ind] = None;
             }
             self.offset = (self.offset.saturating_add(diff)).rem_euclid(self.pools.len());
         }
@@ -273,7 +276,7 @@ impl VotePools {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 /// A freelist of `AggregateAccumulator`s to support recycling memory.
 struct AccumulatorsFreeList(Vec<AggregateAccumulator>);
 
@@ -353,12 +356,14 @@ mod tests {
 
         // Partial purges retain the new root's votes.
         pools.purge(1024);
+        assert_eq!(pools.acc_freelist.borrow().0.len(), 3);
         let (accumulated, stake) = add_vote(&mut pools, 1024, 2);
         assert_eq!(accumulated, 3 * stake);
 
         // Advancing by the full capacity clears all previous accumulators.
         let new_root = 1024 + pools.pools.len() as Slot;
         pools.purge(new_root);
+        assert_eq!(pools.acc_freelist.borrow().0.len(), 4);
         let (accumulated, stake) = add_vote(&mut pools, new_root, 0);
         assert_eq!(accumulated, stake);
     }

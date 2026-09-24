@@ -1297,10 +1297,10 @@ mod tests {
             Block::new_unique(next_leader_slot.checked_sub(1).unwrap()),
         );
         ctx.ctx.vote_history_highest_parent_ready = Some(restored_parent_ready);
-        let mut consensus_pool = ctx.ctx.new_consensus_pool();
         let exit = ctx.ctx.exit.clone();
 
         let handle = thread::spawn(move || {
+            let mut consensus_pool = ctx.ctx.new_consensus_pool();
             let mut stats = ConsensusPoolServiceStats::new();
             let _ = ConsensusPoolService::main_loop(&mut ctx.ctx, &mut consensus_pool, &mut stats);
         });
