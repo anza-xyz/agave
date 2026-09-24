@@ -22,6 +22,10 @@ pub struct RpcHealth {
     blockstore: Arc<Blockstore>,
     highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     migration_status: Arc<MigrationStatus>,
+    // Latest optimistically confirmed slot in the Blockstore when this node started. It was
+    // recorded by a previous run of the node, so it does not reflect the current tip of the
+    // cluster.
+    startup_optimistic_slot: Option<Slot>,
     health_check_slot_distance: u64,
     override_health_check: Arc<AtomicBool>,
     #[cfg(test)]
@@ -37,11 +41,19 @@ impl RpcHealth {
         health_check_slot_distance: u64,
         override_health_check: Arc<AtomicBool>,
     ) -> Self {
+        let startup_optimistic_slot = match blockstore.get_latest_optimistic_slots(1) {
+            Ok(mut infos) => infos.pop().map(|(slot, _, _)| slot),
+            Err(err) => {
+                warn!("health check: blockstore error: {err}");
+                None
+            }
+        };
         Self {
             optimistically_confirmed_bank,
             blockstore,
             highest_finalized,
             migration_status,
+            startup_optimistic_slot,
             health_check_slot_distance,
             override_health_check,
             #[cfg(test)]
@@ -114,6 +126,18 @@ impl RpcHealth {
                 );
                 return RpcHealthStatus::Unknown;
             };
+            // An optimistic slot recorded before this node started says nothing about how far
+            // the cluster has progressed since. Wait until one is observed through gossip.
+            if self
+                .startup_optimistic_slot
+                .is_some_and(|startup_slot| slot <= startup_slot)
+            {
+                warn!(
+                    "health check: no optimistically confirmed slots observed since startup, \
+                     latest slot {slot} is from before the restart"
+                );
+                return RpcHealthStatus::Unknown;
+            }
             slot
         };
 
@@ -263,6 +287,61 @@ pub mod tests {
 
         let bank20 = Arc::new(Bank::new_from_parent(bank16, SlotLeader::default(), 20));
         optimistically_confirmed_bank.write().unwrap().bank = bank20;
+        assert_eq!(health.check(), RpcHealthStatus::Ok);
+    }
+
+    #[test]
+    fn test_get_health_after_restart() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let bank0 = bank_forks.read().unwrap().root_bank();
+
+        // Slot 100 was observed as optimistically confirmed by the previous run of this node and
+        // persisted in the Blockstore before the node went down. The cluster kept making progress
+        // while the node was down.
+        blockstore
+            .insert_optimistic_slot(100, &Hash::default(), UnixTimestamp::default())
+            .unwrap();
+
+        // The node restarts and RPC health is created before gossip delivers any new votes
+        let health_check_slot_distance = 10;
+        let health = RpcHealth::new(
+            optimistically_confirmed_bank.clone(),
+            blockstore.clone(),
+            Arc::default(),
+            Arc::default(),
+            health_check_slot_distance,
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        // The node starts from a local snapshot at slot 95, taken shortly before it went down. The
+        // only optimistic slot known is from the previous run, so the node cannot tell how far
+        // behind the cluster it is and must not report ok.
+        let bank95 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 95));
+        optimistically_confirmed_bank.write().unwrap().bank = bank95.clone();
+        assert_eq!(health.check(), RpcHealthStatus::Unknown);
+
+        // An older slot observed in this run does not move the latest optimistic slot past the
+        // one from the previous run - status still unknown
+        blockstore
+            .insert_optimistic_slot(99, &Hash::default(), UnixTimestamp::default())
+            .unwrap();
+        assert_eq!(health.check(), RpcHealthStatus::Unknown);
+
+        // Gossip delivers votes and the cluster tip is observed in this run - status is behind
+        blockstore
+            .insert_optimistic_slot(500, &Hash::default(), UnixTimestamp::default())
+            .unwrap();
+        assert_eq!(health.check(), RpcHealthStatus::Behind { num_slots: 405 });
+
+        // Node catches up with the cluster
+        let bank500 = Arc::new(Bank::new_from_parent(bank95, SlotLeader::default(), 500));
+        optimistically_confirmed_bank.write().unwrap().bank = bank500;
         assert_eq!(health.check(), RpcHealthStatus::Ok);
     }
 }
