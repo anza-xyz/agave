@@ -316,15 +316,39 @@ pub struct Sections {
 
 /// The section layout of a shred of kind `K`
 pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
+    match sections_with_proof_entries::<K>(MERKLE_PROOF_ENTRIES, resigned) {
+        Some(sections) => sections,
+        None => panic!("the fixed proof length leaves a body in every payload, as asserted below"),
+    }
+}
+
+/// The section layout of a shred of kind `K` whose Merkle proof is `proof_entries` long, or `None`
+/// if a proof that long leaves no room for a body.
+///
+/// Exists only because the incumbent parser in `solana-ledger` still addresses shreds whose proof
+/// is not [`MERKLE_PROOF_ENTRIES`] long: SIMD-317 fixes the erasure batch at 32:32, and so the
+/// proof at that one length, but its enforcement is gated on a slot. Until that gate is
+/// unconditional, such a shred has to be readable in order to be judged. Delete this along with it
+/// and keep [`sections`], which is this function at the one length that will remain.
+pub const fn sections_with_proof_entries<K: ShredLayout>(
+    proof_entries: usize,
+    resigned: bool,
+) -> Option<Sections> {
+    let Some(size_of_merkle_proof) = proof_entries.checked_mul(SIZE_OF_MERKLE_PROOF_ENTRY) else {
+        return None;
+    };
     let end_of_signature = SIZE_OF_SIGNATURE;
     let end_of_headers = K::SIZE_OF_HEADERS;
-    let end_of_body = end_of_headers.saturating_add(if resigned {
-        K::SIZE_OF_BODY_RESIGNED
-    } else {
-        K::SIZE_OF_BODY
-    });
+    // The body is what the headers and the trailer leave, so a long enough proof leaves none.
+    let size_of_trailer = SIZE_OF_MERKLE_ROOT
+        .saturating_add(size_of_merkle_proof)
+        .saturating_add(if resigned { SIZE_OF_SIGNATURE } else { 0 });
+    let end_of_body = match K::SIZE_OF_PAYLOAD.checked_sub(size_of_trailer) {
+        Some(end_of_body) if end_of_body >= end_of_headers => end_of_body,
+        _ => return None,
+    };
     let end_of_chained_merkle_root = end_of_body.saturating_add(SIZE_OF_MERKLE_ROOT);
-    let end_of_merkle_proof = end_of_chained_merkle_root.saturating_add(SIZE_OF_MERKLE_PROOF);
+    let end_of_merkle_proof = end_of_chained_merkle_root.saturating_add(size_of_merkle_proof);
     let retransmitter_signature = if resigned {
         Some(Section {
             start: end_of_merkle_proof,
@@ -333,7 +357,7 @@ pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
     } else {
         None
     };
-    Sections {
+    Some(Sections {
         signature: Section {
             start: 0,
             end: end_of_signature,
@@ -367,7 +391,7 @@ pub const fn sections<K: ShredLayout>(resigned: bool) -> Sections {
             start: K::ERASURE_SHARD_START,
             end: end_of_body,
         },
-    }
+    })
 }
 
 /// The payload is exactly the sections, with nothing left over, for all four layouts.
@@ -383,6 +407,17 @@ const _: () = {
     assert!(end_of_shred::<Data>(true) == SIZE_OF_DATA_PAYLOAD);
     assert!(end_of_shred::<Code>(false) == SIZE_OF_CODE_PAYLOAD);
     assert!(end_of_shred::<Code>(true) == SIZE_OF_CODE_PAYLOAD);
+};
+
+/// The body a proof of the fixed length leaves is the one the per-kind constants name, so the
+/// subtraction [`sections_with_proof_entries`] does and the one [`ShredLayout`] states agree.
+const _: () = {
+    const fn check_body_len<K: ShredLayout>() {
+        assert!(sections::<K>(false).body.len() == K::SIZE_OF_BODY);
+        assert!(sections::<K>(true).body.len() == K::SIZE_OF_BODY_RESIGNED);
+    }
+    check_body_len::<Data>();
+    check_body_len::<Code>();
 };
 
 /// Both kinds' erasure-coded regions are the same length, which is what sets the two payload sizes
