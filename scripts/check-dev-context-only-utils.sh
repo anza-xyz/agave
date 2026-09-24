@@ -3,9 +3,6 @@
 set -eo pipefail
 cd "$(dirname "$0")/.."
 source ci/_
-# only nightly is used uniformly as we contain good amount of nightly-only code
-# (benches, frozen abi...)
-source ci/rust-version.sh nightly
 
 # There's a special common feature called `dev-context-only-utils` to
 # overcome cargo's issue: https://github.com/rust-lang/cargo/issues/8379
@@ -46,6 +43,13 @@ case "$mode" in
     ;;
 esac
 
+# only the compiling modes need nightly, for `-Z threads=8` below
+toolchain=()
+if [[ $mode != "tree" ]]; then
+  source ci/rust-version.sh nightly
+  toolchain=("+$rust_nightly")
+fi
+
 if [[ $mode = "tree" || $mode = "full" ]]; then
   query=$(cat <<EOF
 .packages
@@ -73,7 +77,7 @@ if [[ $mode = "tree" || $mode = "full" ]]; then
 EOF
   )
 
-  abusers="$(_ cargo "+${rust_nightly}" metadata --format-version=1 |
+  abusers="$(_ cargo "${toolchain[@]}" metadata --format-version=1 |
     jq -r "$query")"
   if [[ -n "$abusers" ]]; then
     cat <<EOF 1>&2
@@ -117,7 +121,7 @@ EOF
     )
 
     misconfigured_crates=$(
-      _ cargo "+${rust_nightly}" metadata \
+      _ cargo "${toolchain[@]}" metadata \
         --format-version=1 \
         | jq -r "$query"
     )
@@ -149,6 +153,7 @@ fi
 # dcou tends to newly trigger `unused_imports` and `dead_code` lints.
 # We could selectively deny (= `-D`) them here, however, deny all warnings for
 # consistency with other CI steps and for the possibility of new similar lints.
+# `cargo hack` builds one member at a time, so parallelize within the crate
 export RUSTFLAGS="-D warnings -Z threads=8 $RUSTFLAGS"
 
 # As this environment value is used by the rather deep crate of our dep graph
@@ -161,8 +166,8 @@ export RUSTFLAGS="-D warnings -Z threads=8 $RUSTFLAGS"
 unset CI_COMMIT
 
 if [[ $mode = "check-bins-and-lib" || $mode = "full" ]]; then
-  _ cargo "+${rust_nightly}" hack "$@" check
+  _ cargo "${toolchain[@]}" hack "$@" check
 fi
 if [[ $mode = "check-all-targets" || $mode = "full" ]]; then
-  _ cargo "+${rust_nightly}" hack "$@" check --all-targets
+  _ cargo "${toolchain[@]}" hack "$@" check --all-targets
 fi
