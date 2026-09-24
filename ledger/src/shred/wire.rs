@@ -3,25 +3,22 @@
 #![deny(clippy::indexing_slicing)]
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-#[cfg(test)]
-use {
-    crate::shred::merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY,
-    rand::{Rng, prelude::IndexedMutRandom as _},
-    solana_perf::packet::Packet,
-    std::collections::HashMap,
-};
 use {
     crate::{
         blockstore_meta::ErasureConfig,
         shred::{
             self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, SIZE_OF_NONCE, ShredFlags, ShredId,
-            ShredType, ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred as ShredTrait,
+            ShredType, ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT,
         },
     },
-    agave_shred_wire_format::constants::{
-        OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
-        OFFSET_OF_NUM_CODE_SHREDS, OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_PARENT_OFFSET,
-        OFFSET_OF_SLOT, OFFSET_OF_VARIANT, OFFSET_OF_VERSION,
+    agave_shred_wire_format::{
+        constants::{
+            OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
+            OFFSET_OF_NUM_CODE_SHREDS, OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_PARENT_OFFSET,
+            OFFSET_OF_SLOT, OFFSET_OF_VARIANT, OFFSET_OF_VERSION, Sections,
+            sections_with_proof_entries,
+        },
+        kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -31,13 +28,44 @@ use {
     solana_signer::Signer,
     std::ops::Range,
 };
+#[cfg(test)]
+use {
+    rand::{Rng, prelude::IndexedMutRandom as _},
+    solana_perf::packet::Packet,
+    std::collections::HashMap,
+};
 
 #[inline]
 fn get_shred_size(shred: &[u8]) -> Option<usize> {
     Some(match get_shred_variant(shred).ok()? {
-        ShredVariant::MerkleCode { .. } => shred::merkle::ShredCode::SIZE_OF_PAYLOAD,
-        ShredVariant::MerkleData { .. } => shred::merkle::ShredData::SIZE_OF_PAYLOAD,
+        ShredVariant::MerkleCode { .. } => CodeLayout::SIZE_OF_PAYLOAD,
+        ShredVariant::MerkleData { .. } => DataLayout::SIZE_OF_PAYLOAD,
     })
+}
+
+/// Where each of this shred's sections lies, as `agave-shred-wire-format` derives it from the wire
+/// format's own schemas.
+///
+/// The general form rather than its `sections`, because `proof_size` is whatever the variant byte
+/// says: SIMD-317 fixes the erasure batch at 32:32, and so the proof at one length, but its
+/// enforcement is gated on a slot and a shred has to be readable in order to be judged.
+#[inline]
+fn get_sections(shred: &[u8]) -> Result<Sections, Error> {
+    let (proof_size, resigned) = match get_shred_variant(shred)? {
+        ShredVariant::MerkleCode {
+            proof_size,
+            resigned,
+        } => {
+            return sections_with_proof_entries::<CodeLayout>(usize::from(proof_size), resigned)
+                .ok_or(Error::InvalidProofSize(proof_size));
+        }
+        ShredVariant::MerkleData {
+            proof_size,
+            resigned,
+        } => (proof_size, resigned),
+    };
+    sections_with_proof_entries::<DataLayout>(usize::from(proof_size), resigned)
+        .ok_or(Error::InvalidProofSize(proof_size))
 }
 
 #[inline]
@@ -233,17 +261,7 @@ pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
 }
 
 pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
-    let offset = match get_shred_variant(shred).ok()? {
-        ShredVariant::MerkleCode {
-            proof_size,
-            resigned,
-        } => shred::merkle::ShredCode::get_chained_merkle_root_offset(proof_size, resigned),
-        ShredVariant::MerkleData {
-            proof_size,
-            resigned,
-        } => shred::merkle::ShredData::get_chained_merkle_root_offset(proof_size, resigned),
-    }
-    .ok()?;
+    let offset = get_sections(shred).ok()?.chained_merkle_root.start;
     let merkle_root = shred.get(offset..offset + SIZE_OF_MERKLE_ROOT)?;
     Some(Hash::from(
         <[u8; SIZE_OF_MERKLE_ROOT]>::try_from(merkle_root).unwrap(),
@@ -251,16 +269,15 @@ pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
 }
 
 fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
-    match get_shred_variant(shred)? {
-        ShredVariant::MerkleCode {
-            proof_size,
-            resigned,
-        } => shred::merkle::ShredCode::get_retransmitter_signature_offset(proof_size, resigned),
-        ShredVariant::MerkleData {
-            proof_size,
-            resigned,
-        } => shred::merkle::ShredData::get_retransmitter_signature_offset(proof_size, resigned),
+    // Checked before the layout is computed, so that an unresigned variant is reported as such
+    // whatever its proof size claims.
+    if !is_retransmitter_signed_variant(shred)? {
+        return Err(Error::InvalidShredVariant);
     }
+    get_sections(shred)?
+        .retransmitter_signature
+        .map(|section| section.start)
+        .ok_or(Error::InvalidShredVariant)
 }
 
 pub fn get_retransmitter_signature(shred: &[u8]) -> Result<Signature, Error> {
@@ -327,24 +344,8 @@ pub fn resign_packet(packet: &mut PacketRefMut, keypair: &Keypair) -> Result<(),
 /// Turbine broadcast tree. This signature is in addition to leader's
 /// signature which is left intact.
 pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
-    let (offset, merkle_root) = match get_shred_variant(shred)? {
-        ShredVariant::MerkleCode {
-            proof_size,
-            resigned,
-        } => (
-            shred::merkle::ShredCode::get_retransmitter_signature_offset(proof_size, resigned)?,
-            shred::merkle::ShredCode::get_merkle_root(shred, proof_size, resigned)
-                .ok_or(Error::InvalidMerkleRoot)?,
-        ),
-        ShredVariant::MerkleData {
-            proof_size,
-            resigned,
-        } => (
-            shred::merkle::ShredData::get_retransmitter_signature_offset(proof_size, resigned)?,
-            shred::merkle::ShredData::get_merkle_root(shred, proof_size, resigned)
-                .ok_or(Error::InvalidMerkleRoot)?,
-        ),
-    };
+    let offset = get_retransmitter_signature_offset(shred)?;
+    let merkle_root = get_merkle_root(shred).ok_or(Error::InvalidMerkleRoot)?;
     let Some(buffer) = shred.get_mut(offset..offset + SIGNATURE_BYTES) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
@@ -369,25 +370,13 @@ pub(crate) fn corrupt_packet<R: Rng>(
     // We need to re-borrow the `packet` here, otherwise compiler considers it
     // as moved.
     let shred = get_shred(&*packet).unwrap();
-    let (proof_size, resigned) = match get_shred_variant(shred).unwrap() {
-        ShredVariant::MerkleCode {
-            proof_size,
-            resigned,
-        }
-        | ShredVariant::MerkleData {
-            proof_size,
-            resigned,
-        } => (proof_size, resigned),
-    };
+    let merkle_proof = get_sections(shred).unwrap().merkle_proof;
     let coin_flip: bool = rng.random();
     if coin_flip {
         // Corrupt one byte within the signature offsets.
         modify_packet(rng, packet, SIGNATURE_RANGE);
     } else {
-        // Corrupt the merkle proof, whose entries sit at the end of the shred.
-        let offset = usize::from(proof_size) * SIZE_OF_MERKLE_PROOF_ENTRY;
-        let size = shred.len() - if resigned { SIGNATURE_BYTES } else { 0 };
-        modify_packet(rng, packet, size - offset..size);
+        modify_packet(rng, packet, merkle_proof.as_range());
     }
     // Assert that the signature no longer verifies.
     let shred = get_shred(packet).unwrap();
