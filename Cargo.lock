@@ -403,6 +403,7 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-transaction",
  "solana-transaction-error",
+ "tempfile",
  "wincode",
 ]
 
