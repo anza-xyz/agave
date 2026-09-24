@@ -13,7 +13,7 @@ use {
     agave_transaction_view::transaction_data::TransactionData,
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         migration::MigrationStatus,
         unverified_vote_message::UnverifiedCertificate,
     },
@@ -518,7 +518,7 @@ impl BlockComponentProcessor {
         let genesis_cert = GenesisCert {
             block: Block {
                 slot: genesis_block_marker.slot,
-                block_id: genesis_block_marker.block_id,
+                block_id: BlockId::from(genesis_block_marker.block_id),
             },
             signature: CertSignature {
                 signature: genesis_block_marker.bls_signature,

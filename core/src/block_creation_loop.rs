@@ -603,7 +603,7 @@ fn produce_window(
         slot_metrics,
         start_slot,
         parent_block.slot,
-        Some(parent_block.block_id),
+        Some(parent_block.block_id.to_hash()),
         block_timer,
     )?;
 
@@ -943,7 +943,7 @@ fn send_update_parent(
 ) -> Result<(), PohRecorderError> {
     let update_parent = UpdateParentV1 {
         new_parent_slot: new_parent_block.slot,
-        new_parent_block_id: new_parent_block.block_id,
+        new_parent_block_id: new_parent_block.block_id.to_hash(),
     };
     let marker = VersionedBlockMarker::from_update_parent(update_parent);
     poh_recorder.write().unwrap().send_marker(marker)?;
@@ -1024,7 +1024,7 @@ fn handle_parent_ready(
             slot,
             cleared_bank_id,
             parent_slot: new_parent_slot,
-            parent_block_id: new_parent_hash,
+            parent_block_id: new_parent_hash.to_hash(),
         }))
     {
         warn!("UpdateParent entry notification send failed: {err:?}");
@@ -1036,7 +1036,7 @@ fn handle_parent_ready(
         slot_metrics,
         slot,
         new_parent_slot,
-        Some(new_parent_hash),
+        Some(new_parent_hash.to_hash()),
         *block_timer,
         entry_bytes_consumed,
     )
@@ -1461,6 +1461,7 @@ mod tests {
         super::*,
         crate::banking_trace::BankingTracer,
         agave_banking_stage_ingress_types::BankingPacketReceiver,
+        agave_votor_messages::consensus_message::BlockId,
         crossbeam_channel::bounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{block_component::VersionedUpdateParent, recorder_message::RecorderMessage},
@@ -1981,7 +1982,7 @@ mod tests {
                 4,
                 Block {
                     slot: new_parent_slot,
-                    block_id: new_parent_hash,
+                    block_id: BlockId::from(new_parent_hash),
                 },
             ))),
             highest_finalized: Arc::new(RwLock::new(None)),
@@ -2034,7 +2035,7 @@ mod tests {
             end_slot: 7,
             parent_block: Block {
                 slot: new_parent_slot,
-                block_id: new_parent_hash,
+                block_id: BlockId::from(new_parent_hash),
             },
             block_timer: parent_ready_started_at,
         };
@@ -2044,7 +2045,7 @@ mod tests {
             parent_ready,
             Block {
                 slot: optimistic_parent_slot,
-                block_id: optimistic_parent_hash,
+                block_id: BlockId::from(optimistic_parent_hash),
             },
             vec![accumulated_tx.clone()],
             &mut Instant::now(),

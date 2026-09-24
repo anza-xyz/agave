@@ -21,7 +21,9 @@ use {
         votor::{ExitOnDrop, SharedContext},
     },
     agave_votor_messages::{
-        consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
+        consensus_message::{Block, BlockId},
+        metric_types::ConsensusMetricsEvent,
+        migration::MigrationStatus,
         vote::Vote,
     },
     crossbeam_channel::select,
@@ -619,7 +621,7 @@ impl EventHandler {
             // We haven't finished replay for the block, so we can't trigger parent ready
             return None;
         }
-        if bank.block_id() != Some(block_id) {
+        if bank.block_id() != Some(block_id.to_hash()) {
             // We have a different block id for the slot, repair should kick in later
             return None;
         }
@@ -640,7 +642,7 @@ impl EventHandler {
         );
         Some(Block {
             slot: parent_slot,
-            block_id: parent_block_id,
+            block_id: BlockId::from(parent_block_id),
         })
     }
 
@@ -715,7 +717,7 @@ impl EventHandler {
         let slot = bank.slot();
         let block = Block {
             slot,
-            block_id: bank.block_id().expect("Block id must be set upstream"),
+            block_id: BlockId::from(bank.block_id().expect("Block id must be set upstream")),
         };
         let parent_slot = bank.parent_slot();
         let parent_block_id = bank.parent_block_id().unwrap_or_else(|| {
@@ -728,7 +730,7 @@ impl EventHandler {
         });
         let parent_block = Block {
             slot: parent_slot,
-            block_id: parent_block_id,
+            block_id: BlockId::from(parent_block_id),
         };
         (block, parent_block)
     }
@@ -943,7 +945,7 @@ impl EventHandler {
 
                 // Check for bank hash mismatch
                 if bank.is_frozen()
-                    && bank.block_id() == Some(block.block_id)
+                    && bank.block_id() == Some(block.block_id.to_hash())
                     && let Some(expected_hash) = bank.expected_bank_hash()
                     && expected_hash != bank.hash()
                 {
@@ -966,7 +968,9 @@ impl EventHandler {
                 (block.slot > old_root
                     && vctx.vote_history.voted(block.slot)
                     && bank.is_frozen()
-                    && bank.block_id().is_some_and(|bid| bid == block.block_id))
+                    && bank
+                        .block_id()
+                        .is_some_and(|bid| bid == block.block_id.to_hash()))
                 .then_some((block, bank.hash()))
             })
             .max_by_key(|(block, _)| block.slot)
@@ -1647,7 +1651,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank1 = test_context.create_block_and_send_block_event(slot, root_bank);
-        let block_id_1 = bank1.block_id().unwrap();
+        let block_id_1 = BlockId::from(bank1.block_id().unwrap());
 
         test_context.check_for_metrics_event(ConsensusMetricsEvent::ParentReadySeen { slot });
 
@@ -1664,7 +1668,7 @@ mod tests {
         let slot = 2;
         let bank2 = test_context.create_block_and_send_block_event(slot, bank1.clone());
         test_context.check_alpenglow_slot(1);
-        let block_id_2 = bank2.block_id().unwrap();
+        let block_id_2 = BlockId::from(bank2.block_id().unwrap());
 
         // Because 2 is middle of window, we should see Notarize vote for block 2 even without parentready
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
@@ -1679,7 +1683,7 @@ mod tests {
         // Slot 4 completed replay without parent ready or parent notarized should not trigger Notarize vote
         let slot = 4;
         let bank4 = test_context.create_block_and_send_block_event(slot, bank2);
-        let block_id_4 = bank4.block_id().unwrap();
+        let block_id_4 = BlockId::from(bank4.block_id().unwrap());
 
         // Send parent ready for slot 4 should trigger Notarize vote for slot 4
         test_context.send_parent_ready_event(
@@ -1735,7 +1739,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1 = bank1.block_id().unwrap();
+        let block_id_1 = BlockId::from(bank1.block_id().unwrap());
 
         // Add parent ready for 0 to trigger notar vote for 1
         test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
@@ -1753,7 +1757,7 @@ mod tests {
         test_context.check_for_vote(&Vote::new_finalization_vote(1));
 
         let bank2 = test_context.create_block_and_send_block_event(2, bank1);
-        let block_id_2 = bank2.block_id().unwrap();
+        let block_id_2 = BlockId::from(bank2.block_id().unwrap());
         // Both Notarize and Finalize votes should trigger for 2
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
             slot: 2,
@@ -1769,7 +1773,7 @@ mod tests {
         // Create bank3 but do not Notarize, so Finalize vote should not trigger
         let slot = 3;
         let bank3 = test_context.create_block_only(slot, bank2);
-        let block_id_3 = bank3.block_id().unwrap();
+        let block_id_3 = BlockId::from(bank3.block_id().unwrap());
         // Check no notarization vote for 3
         test_context.check_no_vote_or_commitment();
 
@@ -1878,7 +1882,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1_old = bank_1.block_id().unwrap();
+        let block_id_1_old = BlockId::from(bank_1.block_id().unwrap());
         test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
         test_context.check_parent_ready_slot((1, test_context.local_context.genesis_block));
@@ -1889,7 +1893,7 @@ mod tests {
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
 
         // Now we got safe_to_notar event for slot 1 and a different block id
-        let block_id_1_1 = Hash::new_unique();
+        let block_id_1_1 = BlockId::new_unique();
         test_context.send_safe_to_notar_event(Block {
             slot: 1,
             block_id: block_id_1_1,
@@ -1907,7 +1911,7 @@ mod tests {
         // In this test you can trigger this any number of times, but the white paper
         // proved we can only get up to 3 different block ids on a slot, and our
         // certificate pool implementation checks that.
-        let block_id_1_2 = Hash::new_unique();
+        let block_id_1_2 = BlockId::new_unique();
         test_context.send_safe_to_notar_event(Block {
             slot: 1,
             block_id: block_id_1_2,
@@ -1939,7 +1943,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1 = bank_1.block_id().unwrap();
+        let block_id_1 = BlockId::from(bank_1.block_id().unwrap());
         test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
         test_context.check_parent_ready_slot((1, test_context.local_context.genesis_block));
@@ -1980,7 +1984,7 @@ mod tests {
         );
 
         // Suddenly I found out I produced block 1 already, send new produce window event
-        let block_id_1 = Hash::new_unique();
+        let block_id_1 = BlockId::new_unique();
         test_context.send_produce_window_event(
             2,
             3,
@@ -2013,7 +2017,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1 = bank1.block_id().unwrap();
+        let block_id_1 = BlockId::from(bank1.block_id().unwrap());
 
         test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
@@ -2050,7 +2054,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank = test_context.create_block_only(1, root_bank);
-        let block_id = bank.block_id().unwrap();
+        let block_id = BlockId::from(bank.block_id().unwrap());
         let expected_hash = Hash::new_unique();
         bank.set_expected_bank_hash(expected_hash);
 
@@ -2069,7 +2073,7 @@ mod tests {
         let bank = test_context.create_block_only(1, root_bank);
         let expected_hash = Hash::new_unique();
         bank.set_expected_bank_hash(expected_hash);
-        let finalized_block_id = Hash::new_unique();
+        let finalized_block_id = BlockId::new_unique();
 
         test_context.send_finalized_event(
             Block {
@@ -2092,10 +2096,10 @@ mod tests {
             .sharable_banks()
             .root();
         let bank4 = test_context.create_block_and_send_block_event(4, root_bank);
-        let block_id_4 = bank4.block_id().unwrap();
+        let block_id_4 = BlockId::from(bank4.block_id().unwrap());
 
         let bank5 = test_context.create_block_and_send_block_event(5, bank4);
-        let block_id_5 = bank5.block_id().unwrap();
+        let block_id_5 = BlockId::from(bank5.block_id().unwrap());
 
         test_context.send_finalized_event(
             Block {
@@ -2117,7 +2121,7 @@ mod tests {
         // We are partitioned off from rest of the network, and suddenly received finalize for
         // slot 9 a little before we finished replay slot 9
         let bank9 = test_context.create_block_only(9, bank5);
-        let block_id_9 = bank9.block_id().unwrap();
+        let block_id_9 = BlockId::from(bank9.block_id().unwrap());
         test_context.send_finalized_event(
             Block {
                 slot: 9,
@@ -2149,10 +2153,10 @@ mod tests {
             .sharable_banks()
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1 = bank1.block_id().unwrap();
+        let block_id_1 = BlockId::from(bank1.block_id().unwrap());
 
         let bank4 = test_context.create_block_and_send_block_event(4, bank1);
-        let block_id_4 = bank4.block_id().unwrap();
+        let block_id_4 = BlockId::from(bank4.block_id().unwrap());
 
         test_context.send_finalized_event(
             Block {
@@ -2183,7 +2187,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1 = bank1.block_id().unwrap();
+        let block_id_1 = BlockId::from(bank1.block_id().unwrap());
         test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
 
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
@@ -2289,7 +2293,7 @@ mod tests {
         // We should now be able to vote again
         let slot = 4;
         let bank4 = test_context.create_block_and_send_block_event(slot, root_bank);
-        let block_id_4 = bank4.block_id().unwrap();
+        let block_id_4 = BlockId::from(bank4.block_id().unwrap());
         test_context.send_parent_ready_event(slot, test_context.local_context.genesis_block);
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
             slot,
@@ -2386,7 +2390,7 @@ mod tests {
         let rooted_bank = test_context.create_block_and_send_block_event(effective_root, root_bank);
         let rooted_block = Block {
             slot: effective_root,
-            block_id: rooted_bank.block_id().unwrap(),
+            block_id: BlockId::from(rooted_bank.block_id().unwrap()),
         };
         test_context.send_parent_ready_event(effective_root, Block::default());
         test_context.send_finalized_event(rooted_block, true);
@@ -2496,7 +2500,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1 = bank1.block_id().unwrap();
+        let block_id_1 = BlockId::from(bank1.block_id().unwrap());
         test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
         let block = Block {
             slot: 1,
