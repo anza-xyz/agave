@@ -163,7 +163,7 @@ solana-svm-timings = { path = "../../svm-timings", version = "=4.5.0-alpha.0" }
 solana-svm-transaction = "6.0.0"
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.5.0-alpha.0" }
 solana-system-interface = { version = "=3.3.0", features = ["bincode"] }
-solana-sysvar = "=4.3.0"
+solana-sysvar = "=5.0.0"
 solana-sysvar-id = "=3.1.0"
 solana-test-validator = { path = "../../test-validator", version = "=4.5.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.5.0-alpha.0" }
@@ -224,7 +224,7 @@ solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = "4.3.0"
+solana-sysvar = "5.0.0"
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction = "5.1.0"
 solana-transaction-error = "4.1.0"
