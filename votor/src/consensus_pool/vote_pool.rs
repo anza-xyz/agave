@@ -16,24 +16,28 @@ use {
     },
     solana_clock::Slot,
     std::{
+        cell::RefCell,
         collections::{BTreeMap, HashMap},
         num::NonZero,
+        rc::Rc,
         sync::Arc,
     },
     thiserror::Error,
 };
 
 #[derive(Debug)]
-pub(super) struct VotePool {
+struct VotePool {
     max_validators: usize,
     accumulators: HashMap<Vote, AggregateAccumulator>,
+    acc_freelist: Rc<RefCell<AccumulatorsFreeList>>,
 }
 
 impl VotePool {
-    pub(super) fn new(max_validators: usize) -> Self {
+    fn new(max_validators: usize, acc_freelist: Rc<RefCell<AccumulatorsFreeList>>) -> Self {
         Self {
             max_validators,
             accumulators: HashMap::new(),
+            acc_freelist,
         }
     }
 
@@ -144,17 +148,18 @@ impl VotePool {
     }
 
     /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
-    pub(super) fn add_pool_vote(
+    fn add_pool_vote(
         &mut self,
         total_stake: NonZero<u64>,
         msg: &PoolVote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<(u64, Option<Certificate>), AggregateAccumulatorError> {
         let vote = *msg.vote();
-        let acc = self
-            .accumulators
-            .entry(vote)
-            .or_insert_with(|| AggregateAccumulator::new(self.max_validators));
+        let acc = self.accumulators.entry(vote).or_insert_with(|| {
+            self.acc_freelist
+                .borrow_mut()
+                .alloc_accumulator(self.max_validators)
+        });
         let stake = match msg {
             PoolVote::Own(vote_msg) => acc.add_own_vote_message(vote_msg),
             PoolVote::External(a) => acc.add_aggregate(a),
@@ -165,6 +170,15 @@ impl VotePool {
             .expect("the accumulator was created above");
         let cert = self.try_produce_cert(total_stake, vote, completed_certs, acc)?;
         Ok((stake, cert))
+    }
+}
+
+impl Drop for VotePool {
+    fn drop(&mut self) {
+        let mut acc_freelist = self.acc_freelist.borrow_mut();
+        for (_, acc) in self.accumulators.drain() {
+            acc_freelist.return_accumulator(acc);
+        }
     }
 }
 
@@ -185,6 +199,7 @@ const VOTE_POOLS_CAPACITY: usize = MAX_VOTE_SLOT_DISTANCE_FROM_ROOT as usize + 1
 /// can receive votes in a fixed sized ring buffer which is pruned when the root_slot updates.
 pub(super) struct VotePools {
     pools: Box<[Option<VotePool>; VOTE_POOLS_CAPACITY]>,
+    acc_freelist: Rc<RefCell<AccumulatorsFreeList>>,
     root_slot: Slot,
     offset: usize,
 }
@@ -198,6 +213,7 @@ impl VotePools {
             .try_into()
             .expect("the sizes of the array should match");
         Self {
+            acc_freelist: Rc::new(RefCell::new(AccumulatorsFreeList::default())),
             pools,
             root_slot,
             offset: 0,
@@ -228,7 +244,7 @@ impl VotePools {
         let ind = (self.offset.saturating_add(diff)).rem_euclid(self.pools.len());
         match &mut self.pools[ind] {
             None => {
-                let mut pool = VotePool::new(max_validators);
+                let mut pool = VotePool::new(max_validators, Rc::clone(&self.acc_freelist));
                 let res = pool
                     .add_pool_vote(total_stake, msg, completed_certs)
                     .map_err(VotePoolError::AddVote)?;
@@ -257,6 +273,24 @@ impl VotePools {
             self.offset = (self.offset.saturating_add(diff)).rem_euclid(self.pools.len());
         }
         self.root_slot = root_slot;
+    }
+}
+
+#[derive(Debug, Default)]
+/// A freelist of `AggregateAccumulator`s to support recycling memory.
+struct AccumulatorsFreeList(Vec<AggregateAccumulator>);
+
+impl AccumulatorsFreeList {
+    fn alloc_accumulator(&mut self, max_validators: usize) -> AggregateAccumulator {
+        if let Some(mut acc) = self.0.pop() {
+            acc.reset(max_validators);
+            return acc;
+        }
+        AggregateAccumulator::new(max_validators)
+    }
+
+    fn return_accumulator(&mut self, acc: AggregateAccumulator) {
+        self.0.push(acc);
     }
 }
 
@@ -322,14 +356,52 @@ mod tests {
 
         // Partial purges retain the new root's votes.
         pools.purge(1024);
+        assert_eq!(pools.acc_freelist.borrow().0.len(), 3);
         let (accumulated, stake) = add_vote(&mut pools, 1024, 2);
         assert_eq!(accumulated, 3 * stake);
 
         // Advancing by the full capacity clears all previous accumulators.
         let new_root = 1024 + pools.pools.len() as Slot;
         pools.purge(new_root);
+        assert_eq!(pools.acc_freelist.borrow().0.len(), 4);
         let (accumulated, stake) = add_vote(&mut pools, new_root, 0);
         assert_eq!(accumulated, stake);
+    }
+
+    #[test]
+    fn test_purge_recycles_multiple_accumulators_from_one_pool() {
+        let ctx = TestContext::new();
+        let mut pools = VotePools::new(10);
+        let total_stake = ctx
+            .bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .get_rank_map(0)
+            .unwrap()
+            .total_stake();
+
+        for vote in [Vote::new_skip_vote(10), Vote::new_skip_fallback_vote(10)] {
+            let msg = PoolVote::Own(ctx.new_vote_msg(0, vote));
+            pools
+                .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
+                .unwrap();
+        }
+        assert_eq!(pools.pools.iter().filter(|pool| pool.is_some()).count(), 1);
+
+        pools.purge(11);
+        assert_eq!(pools.acc_freelist.borrow().0.len(), 2);
+
+        for vote in [Vote::new_skip_vote(11), Vote::new_skip_fallback_vote(11)] {
+            let vote_msg = ctx.new_vote_msg(0, vote);
+            let stake = vote_msg.stake.get();
+            let msg = PoolVote::Own(vote_msg);
+            let (accumulated, _) = pools
+                .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
+                .unwrap();
+            assert_eq!(accumulated, stake);
+        }
+        assert!(pools.acc_freelist.borrow().0.is_empty());
     }
 
     #[test]
