@@ -228,6 +228,12 @@ where
             if let Some(index) = existing_index
                 && n == index
             {
+                // The connection for this address cannot be evicted. With a single
+                // entry in the map there is nothing else to evict either, so break
+                // instead of spinning forever while holding the write lock.
+                if map.len() == 1 {
+                    break;
+                }
                 continue;
             }
             map.swap_remove_index(n);
@@ -769,5 +775,29 @@ mod tests {
             NonblockingClientConnection::server_addr(&*conn).port(),
             port
         );
+    }
+
+    // Test that get_connection does not spin forever when the cache is at
+    // max_connections == 1 and the requested address is the only entry in the
+    // map: its connection cannot be evicted, so the eviction loop must break
+    // instead of spinning while holding the write lock.
+    #[test]
+    fn test_connection_cache_max_connections_one_existing_address() {
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8000u16);
+        let connection_manager = MockConnectionManager::default();
+        let connection_cache = ConnectionCache::new_with_max_connections(
+            "connection_cache_test",
+            connection_manager,
+            2, // pool size, so the pool is PartiallyFull after the first connection
+            1, // max connections
+        )
+        .unwrap();
+
+        let _conn = connection_cache.get_connection(&addr);
+        // A second call reaches the eviction loop with the address already in the
+        // map; it must return rather than spin forever.
+        let _conn = connection_cache.get_connection(&addr);
+        let map = connection_cache.map.read().unwrap();
+        assert_eq!(map.len(), 1);
     }
 }
