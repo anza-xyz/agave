@@ -128,6 +128,10 @@ fn percent_of_max_entries(percent: Percent) -> usize {
     MAX_LOADED_ENTRY_COUNT.saturating_mul(percent as usize) / 100
 }
 
+fn is_loaded(entry: &&Arc<ProgramCacheEntry>) -> bool {
+    matches!(entry.program, ProgramCacheEntryType::Loaded(_))
+}
+
 /// Relationship between two fork IDs
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum BlockRelation {
@@ -260,6 +264,9 @@ pub struct ProgramCache<FG: ForkGraph> {
     pub fork_graph: Option<Weak<RwLock<FG>>>,
     /// Coordinates TX batches waiting for others to complete their task during cooperative loading
     pub loading_task_waiter: Arc<LoadingTaskWaiter>,
+    /// Number of [`ProgramCacheEntryType::Loaded`] entries in `index`, so that [`Self::needs_eviction`]
+    /// is O(1) under a read lock.
+    loaded_entry_count: usize,
 }
 
 impl<FG: ForkGraph> std::fmt::Debug for ProgramCache<FG> {
@@ -393,6 +400,23 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             stats: ProgramCacheStats::default(),
             fork_graph: None,
             loading_task_waiter: Arc::new(LoadingTaskWaiter::default()),
+            loaded_entry_count: 0,
+        }
+    }
+
+    /// The cache is full; an eviction pass shrinking it below
+    /// [`MAX_LOADED_ENTRY_COUNT`] is due. Checking this under the read lock
+    /// keeps the write lock to one pass per shrink instead of one per load.
+    pub fn needs_eviction(&self) -> bool {
+        self.loaded_entry_count >= MAX_LOADED_ENTRY_COUNT
+    }
+
+    /// Walks the index; used where entries are removed in bulk.
+    fn count_loaded_entries(&self) -> usize {
+        match &self.index {
+            IndexImplementation::V1 { entries, .. } => {
+                entries.values().flatten().filter(is_loaded).count()
+            }
         }
     }
 
@@ -427,6 +451,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
                 let slot_versions = &mut entries.entry(key).or_default();
+                let loaded_before = slot_versions.iter().filter(is_loaded).count();
                 let insertion_point = slot_versions.binary_search_by(|at| {
                     at.deployment_slot
                         .cmp(&entry.deployment_slot)
@@ -495,6 +520,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             .unwrap_or(false)
                         || Arc::ptr_eq(existing, &entry)
                 });
+                let loaded_after = slot_versions.iter().filter(is_loaded).count();
+                self.loaded_entry_count = self
+                    .loaded_entry_count
+                    .saturating_add(loaded_after)
+                    .saturating_sub(loaded_before);
             }
         }
         false
@@ -509,6 +539,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 self.remove_programs_with_no_entries();
             }
         }
+        self.loaded_entry_count = self.count_loaded_entries();
     }
 
     /// Before rerooting the blockstore this removes all superfluous entries
@@ -600,6 +631,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             }
         }
         self.remove_programs_with_no_entries();
+        self.loaded_entry_count = self.count_loaded_entries();
         debug_assert!(self.latest_root_slot <= new_root_slot);
         self.latest_root_slot = new_root_slot;
     }
@@ -906,6 +938,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 }
             }
         }
+        self.loaded_entry_count = self.count_loaded_entries();
     }
 
     /// This function removes the given entry for the given program from the cache.
@@ -932,6 +965,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         .and_modify(|c| *c = c.saturating_add(1))
                         .or_insert(1);
                     *candidate = Arc::new(unloaded);
+                    self.loaded_entry_count = self.loaded_entry_count.saturating_sub(1);
                 }
             }
         }
@@ -1142,6 +1176,133 @@ pub(crate) mod tests {
         for slot in next_slot + 10..next_slot + 20 {
             insert_unloaded_entry(cache, program, slot);
         }
+    }
+
+    /// Pins the eviction contract the SVM relies on: a cache at or below the
+    /// shrink target loses nothing, one entry over it loses exactly one.
+    #[test]
+    fn test_eviction_is_noop_at_or_below_target() {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        let shrink_to_percent: Percent = 1;
+        let target = crate::loaded_programs::percent_of_max_entries(shrink_to_percent);
+        let count_loaded = |cache: &ProgramCache<TestForkGraph>| {
+            num_matching_entries(cache, |program_type| {
+                matches!(program_type, ProgramCacheEntryType::Loaded(_))
+            })
+        };
+        let count_unloaded = |cache: &ProgramCache<TestForkGraph>| {
+            num_matching_entries(cache, |program_type| {
+                matches!(program_type, ProgramCacheEntryType::Unloaded(_))
+            })
+        };
+
+        for _ in 0..target {
+            cache.assign_program(&env, Pubkey::new_unique(), 0, new_test_entry(0));
+        }
+        assert_eq!(count_loaded(&cache), target);
+
+        cache.evict_using_random_selection(shrink_to_percent, 5);
+        assert_eq!(count_loaded(&cache), target);
+        assert_eq!(count_unloaded(&cache), 0);
+
+        cache.assign_program(&env, Pubkey::new_unique(), 0, new_test_entry(0));
+        cache.evict_using_random_selection(shrink_to_percent, 5);
+        assert_eq!(count_loaded(&cache), target);
+        assert_eq!(count_unloaded(&cache), 1);
+    }
+
+    /// `loaded_entry_count` must track the index through every mutator:
+    /// insert, tombstone/unloaded replacement, eviction, prune and removal.
+    #[test]
+    fn test_loaded_entry_count_tracks_index() {
+        let mut programs = vec![];
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let recount = |cache: &ProgramCache<TestForkGraph>| {
+            num_matching_entries(cache, |program_type| {
+                matches!(program_type, ProgramCacheEntryType::Loaded(_))
+            })
+        };
+        assert_eq!(cache.loaded_entry_count, 0);
+
+        let program = Pubkey::new_unique();
+        program_deploy_test_helper(
+            &mut cache,
+            program,
+            vec![0, 10, 20],
+            vec![1, 2, 3],
+            &mut programs,
+        );
+        program_deploy_test_helper(
+            &mut cache,
+            Pubkey::new_unique(),
+            vec![5, 15],
+            vec![4, 5],
+            &mut programs,
+        );
+        assert_eq!(cache.loaded_entry_count, 5);
+        assert_eq!(cache.loaded_entry_count, recount(&cache));
+
+        // Re-assigning a loaded entry over an unloaded one at the same slot (a reload).
+        let reloaded = cache.assign_program(
+            &get_mock_program_runtime_environment(),
+            program,
+            33,
+            new_test_entry(33),
+        );
+        assert!(!reloaded);
+        assert_eq!(cache.loaded_entry_count, recount(&cache));
+
+        cache.sort_and_unload(0);
+        assert_eq!(cache.loaded_entry_count, 0);
+        assert_eq!(recount(&cache), 0);
+
+        program_deploy_test_helper(
+            &mut cache,
+            Pubkey::new_unique(),
+            vec![40, 41],
+            vec![1, 1],
+            &mut programs,
+        );
+        assert_eq!(cache.loaded_entry_count, 2);
+
+        cache.prune_by_deployment_slot(40);
+        assert_eq!(cache.loaded_entry_count, 1);
+        assert_eq!(cache.loaded_entry_count, recount(&cache));
+
+        cache.remove_programs(programs.iter().map(|(key, _, _)| *key));
+        assert_eq!(cache.loaded_entry_count, 0);
+        assert_eq!(recount(&cache), 0);
+    }
+
+    /// Eviction is due only once the cache holds `MAX_LOADED_ENTRY_COUNT`
+    /// loaded entries; tombstones and unloaded entries do not count.
+    #[test]
+    fn test_needs_eviction_hysteresis() {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        for _ in 0..crate::loaded_programs::MAX_LOADED_ENTRY_COUNT - 1 {
+            cache.assign_program(&env, Pubkey::new_unique(), 0, new_test_entry(0));
+        }
+        assert!(!cache.needs_eviction());
+
+        // Non-loaded entries never tip it over.
+        set_failed_verification_tombstone(&mut cache, Pubkey::new_unique(), 0, env.clone());
+        insert_unloaded_entry(&mut cache, Pubkey::new_unique(), 0);
+        assert!(!cache.needs_eviction());
+
+        cache.assign_program(&env, Pubkey::new_unique(), 0, new_test_entry(0));
+        assert!(cache.needs_eviction());
+
+        // The pass shrinks below the maximum, so the next load does not trigger another.
+        cache.evict_using_random_selection(90, 1);
+        assert_eq!(
+            cache.loaded_entry_count,
+            crate::loaded_programs::percent_of_max_entries(90)
+        );
+        assert!(!cache.needs_eviction());
+        cache.assign_program(&env, Pubkey::new_unique(), 0, new_test_entry(0));
+        assert!(!cache.needs_eviction());
     }
 
     #[test]

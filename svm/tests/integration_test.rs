@@ -28,7 +28,11 @@ use {
         execution_budget::{
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
         },
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        loaded_programs::{
+            MAX_LOADED_ENTRY_COUNT, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+        },
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        solana_sbpf::elf::Executable,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
@@ -66,7 +70,12 @@ use {
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
-    std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
+    std::{
+        collections::HashMap,
+        num::NonZeroU32,
+        slice,
+        sync::atomic::{AtomicU64, Ordering},
+    },
     test_case::{test_case, test_matrix},
 };
 
@@ -4253,4 +4262,66 @@ mod balance_collector {
             }
         }
     }
+}
+
+/// A batch that loads a program evicts only once the global cache is full,
+/// and then shrinks it below the maximum.
+#[test_case(MAX_LOADED_ENTRY_COUNT - 1, MAX_LOADED_ENTRY_COUNT * 90 / 100; "full cache is shrunk")]
+#[test_case(MAX_LOADED_ENTRY_COUNT - 2, MAX_LOADED_ENTRY_COUNT - 1; "cache one short of full is left alone")]
+fn program_cache_eviction_gate(prefilled: usize, expected_loaded: usize) {
+    let mut test_entry = SvmTestEntry::default();
+    let program_name = "hello-solana";
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+    test_entry.add_initial_account(fee_payer, &fee_payer_data);
+    test_entry
+        .initial_programs
+        .push((program_name.to_string(), DEPLOYMENT_SLOT, None));
+    test_entry.push_transaction(Transaction::new_signed_with_payer(
+        &[Instruction::new_with_bytes(
+            program_address(program_name),
+            &[],
+            vec![],
+        )],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        Hash::default(),
+    ));
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+    let env = SvmTestEnvironment::create(test_entry);
+
+    let runtime_environment = env
+        .batch_processor
+        .program_runtime_environment_for_epoch(EXECUTION_EPOCH);
+    let elf = load_program(program_name.to_string());
+    let mut global_program_cache = env.batch_processor.global_program_cache.write().unwrap();
+    for _ in 0..prefilled {
+        let executable = Executable::load(&elf, Arc::clone(&*runtime_environment)).unwrap();
+        global_program_cache.assign_program(
+            &runtime_environment,
+            Pubkey::new_unique(),
+            DEPLOYMENT_SLOT,
+            Arc::new(ProgramCacheEntry {
+                program: ProgramCacheEntryType::Loaded(executable),
+                account_owner: ProgramCacheEntryOwner::LoaderV2,
+                deployment_slot: DEPLOYMENT_SLOT,
+                stats: Arc::default(),
+                latest_access_slot: AtomicU64::new(DEPLOYMENT_SLOT),
+            }),
+        );
+    }
+    drop(global_program_cache);
+
+    env.execute();
+
+    let global_program_cache = env.batch_processor.global_program_cache.read().unwrap();
+    let loaded = global_program_cache
+        .get_flattened_entries_for_tests()
+        .iter()
+        .filter(|(_, entry)| matches!(entry.program, ProgramCacheEntryType::Loaded(_)))
+        .count();
+    assert_eq!(loaded, expected_loaded);
+    assert!(!global_program_cache.needs_eviction());
 }

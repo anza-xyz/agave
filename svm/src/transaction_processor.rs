@@ -717,7 +717,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
+        let cache_grew =
+            program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified;
+        // Read guard released before the write lock below is requested.
+        let needs_eviction =
+            cache_grew && self.global_program_cache.read().unwrap().needs_eviction();
+        if needs_eviction {
             // NOTE: this is a percentage; do not set above 100.
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: Percent = 90;
             self.global_program_cache
