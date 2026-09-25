@@ -3500,8 +3500,8 @@ fn test_read_only_accounts_cache_not_populated_from_older_ancestors() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let account_key = Pubkey::new_unique();
-    let slot1_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-    let slot2_account = AccountSharedData::new(2, 0, AccountSharedData::default().owner());
+    let slot1_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let slot2_account = AccountSharedData::new(2, 0, &Pubkey::default());
     db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
     db.add_root(1);
     db.flush_rooted_accounts_cache_without_clean();
@@ -3598,8 +3598,8 @@ fn test_read_only_accounts_cache_skips_zero_lamport() {
     ));
 
     let account_key = Pubkey::new_unique();
-    let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-    let slot0_account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
+    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let slot0_account = AccountSharedData::new(1, 1, &Pubkey::default());
     db.store_for_tests((0, &[(&account_key, &slot0_account)][..]));
     db.add_root(0);
     db.flush_rooted_accounts_cache_without_clean();
