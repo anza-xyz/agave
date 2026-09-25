@@ -7,7 +7,7 @@
 //! test harness.
 
 use {
-    agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
+    agave_cpu_utils::{CpuId, cpu_affinity, discover_topology, online_cpus, set_cpu_affinity},
     std::{io, thread},
 };
 
@@ -73,5 +73,35 @@ fn test_invalid_cpu_index_rejected() {
             .unwrap_err()
             .raw_os_error(),
         Some(libc::EINVAL)
+    );
+}
+
+#[test]
+fn test_discover_topology_for_current_affinity() {
+    let affinity = current_affinity();
+    let cpu = affinity
+        .first()
+        .copied()
+        .expect("current CPU affinity mask should not be empty");
+
+    let topology = discover_topology([cpu]).expect("failed to query CPU topology");
+
+    assert_eq!(topology.cpus().len(), 1);
+    assert_eq!(topology.cpus()[0].cpu_id(), cpu);
+    assert!(topology.cpus()[0].core_cpus().contains(&cpu));
+}
+
+#[test]
+fn test_discover_topology_for_online_cpus() {
+    let cpus = online_cpus().expect("failed to query online CPUs");
+    let topology = discover_topology(cpus.iter().copied()).expect("failed to query CPU topology");
+
+    assert_eq!(topology.cpus().len(), cpus.len());
+    assert!(
+        topology
+            .cpus()
+            .iter()
+            .map(|cpu| cpu.cpu_id())
+            .eq(cpus.iter().copied())
     );
 }

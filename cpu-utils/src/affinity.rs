@@ -2,7 +2,7 @@
 
 use std::{io, mem, ops::Deref};
 
-const CPU_SETSIZE: usize = libc::CPU_SETSIZE as usize;
+pub(crate) const CPU_SETSIZE: usize = libc::CPU_SETSIZE as usize;
 
 /// Identifies a logical CPU (hardware thread) by its kernel-assigned ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
