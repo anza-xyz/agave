@@ -39,7 +39,7 @@ use {
     solana_signature::Signature,
     solana_stake_history::StakeHistoryItem,
     solana_stake_interface::state::{Authorized, Lockup},
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
@@ -2954,14 +2954,14 @@ pub struct ReturnSignersConfig {
 }
 
 pub fn return_signers(
-    tx: &Transaction,
+    tx: &VersionedTransaction,
     output_format: &OutputFormat,
 ) -> Result<String, Box<dyn std::error::Error>> {
     return_signers_with_config(tx, output_format, &ReturnSignersConfig::default())
 }
 
 pub fn return_signers_with_config(
-    tx: &Transaction,
+    tx: &VersionedTransaction,
     output_format: &OutputFormat,
     config: &ReturnSignersConfig,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -2969,14 +2969,17 @@ pub fn return_signers_with_config(
     Ok(output_format.formatted_string(&cli_command))
 }
 
-pub fn return_signers_data(tx: &Transaction, config: &ReturnSignersConfig) -> CliSignOnlyData {
-    let message_data = tx.message_data();
+pub fn return_signers_data(
+    tx: &VersionedTransaction,
+    config: &ReturnSignersConfig,
+) -> CliSignOnlyData {
+    let message_data = tx.message.serialize();
     let mut signers = Vec::new();
     let mut absent = Vec::new();
     let mut bad_sig = Vec::new();
     tx.signatures
         .iter()
-        .zip(tx.message.account_keys.iter())
+        .zip(tx.message.static_account_keys().iter())
         .for_each(|(sig, key)| {
             if *sig == Signature::default() {
                 absent.push(key.to_string());
@@ -2993,7 +2996,7 @@ pub fn return_signers_data(tx: &Transaction, config: &ReturnSignersConfig) -> Cl
     };
 
     CliSignOnlyData {
-        blockhash: tx.message.recent_blockhash.to_string(),
+        blockhash: tx.message.recent_blockhash().to_string(),
         message,
         signers,
         absent,
@@ -3705,6 +3708,7 @@ mod tests {
         let signers = vec![present.as_ref(), absent.as_ref(), bad.as_ref()];
         let blockhash = Hash::new_from_array([7u8; 32]);
         tx.try_partial_sign(&signers, blockhash).unwrap();
+        let tx = VersionedTransaction::from(tx);
         let res = return_signers(&tx, &OutputFormat::JsonCompact).unwrap();
         let sign_only = parse_sign_only_reply_string(&res);
         assert_eq!(sign_only.blockhash, blockhash);

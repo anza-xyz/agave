@@ -13,7 +13,9 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
+    solana_hash::Hash,
     solana_instruction_error::InstructionError,
+    solana_message::VersionedMessage,
     solana_offchain_message::OffchainMessage,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -38,6 +40,35 @@ use {
 pub const DEFAULT_RPC_TIMEOUT_SECONDS: &str = "30";
 pub const DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS: &str = "5";
 const CHECKED: bool = true;
+
+/// Sign a message, allowing missing signatures only for offline sign-only output.
+pub(crate) fn sign_transaction(
+    mut message: VersionedMessage,
+    signers: &[&dyn Signer],
+    blockhash: Hash,
+    sign_only: bool,
+) -> Result<VersionedTransaction, SignerError> {
+    message.set_recent_blockhash(blockhash);
+    let required_signers =
+        &message.static_account_keys()[..usize::from(message.header().num_required_signatures)];
+    let message_data = message.serialize();
+    let mut signatures = vec![Signature::default(); required_signers.len()];
+    for signer in signers {
+        let pubkey = signer.try_pubkey()?;
+        let index = required_signers
+            .iter()
+            .position(|key| *key == pubkey)
+            .ok_or(SignerError::KeypairPubkeyMismatch)?;
+        signatures[index] = signer.try_sign_message(&message_data)?;
+    }
+    if !sign_only && signatures.contains(&Signature::default()) {
+        return Err(SignerError::NotEnoughSigners);
+    }
+    Ok(VersionedTransaction {
+        signatures,
+        message,
+    })
+}
 
 #[derive(Debug, PartialEq)]
 #[allow(clippy::large_enum_variant)]
@@ -1934,6 +1965,63 @@ mod tests {
         solana_transaction_error::TransactionError,
         solana_transaction_status::TransactionConfirmationStatus,
     };
+
+    #[test_case::test_case(0; "legacy")]
+    #[test_case::test_case(1; "v0")]
+    #[test_case::test_case(2; "v1")]
+    fn test_sign_transaction(version: u8) {
+        let payer = Keypair::new();
+        let from = Keypair::new();
+        let instructions = [solana_system_interface::instruction::transfer(
+            &from.pubkey(),
+            &Pubkey::new_unique(),
+            1,
+        )];
+        let blockhash = Hash::new_unique();
+        let message = match version {
+            0 => VersionedMessage::Legacy(solana_message::Message::new(
+                &instructions,
+                Some(&payer.pubkey()),
+            )),
+            1 => VersionedMessage::V0(
+                solana_message::v0::Message::try_compile(
+                    &payer.pubkey(),
+                    &instructions,
+                    &[],
+                    Hash::default(),
+                )
+                .unwrap(),
+            ),
+            _ => VersionedMessage::V1(
+                solana_message::v1::Message::try_compile_with_config(
+                    &payer.pubkey(),
+                    &instructions,
+                    Hash::default(),
+                    solana_message::v1::TransactionConfig::empty(),
+                )
+                .unwrap(),
+            ),
+        };
+        let partial = sign_transaction(message.clone(), &[&from], blockhash, true).unwrap();
+        let output = solana_cli_output::return_signers_data(
+            &partial,
+            &solana_cli_output::ReturnSignersConfig::default(),
+        );
+        assert_eq!(output.absent, vec![payer.pubkey().to_string()]);
+        assert_eq!(output.signers.len(), 1);
+        assert!(output.bad_sig.is_empty());
+        assert_eq!(*partial.message.recent_blockhash(), blockhash);
+        assert!(matches!(
+            sign_transaction(message.clone(), &[&from], blockhash, false),
+            Err(SignerError::NotEnoughSigners)
+        ));
+        assert!(matches!(
+            sign_transaction(message.clone(), &[&Keypair::new()], blockhash, true),
+            Err(SignerError::KeypairPubkeyMismatch)
+        ));
+        let tx = sign_transaction(message, &[&from, &payer, &payer], blockhash, false).unwrap();
+        tx.verify_and_hash_message().unwrap();
+    }
 
     fn make_tmp_path(name: &str) -> String {
         let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());
