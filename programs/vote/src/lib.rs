@@ -3,7 +3,7 @@
 pub mod vote_processor;
 pub mod vote_state;
 
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 extern crate solana_frozen_abi_macro;
 
 pub use solana_vote_interface::{

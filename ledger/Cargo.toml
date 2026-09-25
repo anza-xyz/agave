@@ -21,10 +21,10 @@ name = "solana_ledger"
 
 [features]
 dev-context-only-utils = ["solana-perf/dev-context-only-utils", "solana-runtime/dev-context-only-utils"]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-runtime/frozen-abi",
+    "solana-runtime/stable-abi",
 ]
 agave-unstable-api = []
 

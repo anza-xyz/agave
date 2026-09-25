@@ -14,7 +14,7 @@ use {
     },
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum SavedTowerVersions {
     V1_17_14(SavedTower1_7_14),
@@ -77,7 +77,7 @@ impl From<SavedTower1_7_14> for SavedTowerVersions {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(abi_digest = "6U5RkdsuzLHyWpjGWKCHj9AzGFreginb6cXUiXodbgRv")
 )]

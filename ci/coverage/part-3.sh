@@ -17,7 +17,7 @@ exclude_packages+=(--exclude solana-local-cluster)
 
 echo "--- coverage: coverage (part 3)"
 "$git_root"/ci/test-coverage.sh \
-  --features frozen-abi \
+  --features stable-abi \
   --features dev-context-only-utils \
   --workspace \
   --lib \

@@ -151,7 +151,7 @@ rust-version = "1.98.1"
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
-    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+    'cfg(feature, values("stable-abi", "no-entrypoint"))',
     'cfg(target_arch, values("sbf"))',
 ]
 

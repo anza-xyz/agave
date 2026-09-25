@@ -58,7 +58,7 @@ pub(crate) type GossipProtocolWincodeConfig =
 
 /// Gossip protocol messages base enum
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
@@ -84,7 +84,7 @@ pub(crate) enum Protocol {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     frozen_abi(
         abi_digest = "Gab1D5ug6ZAB5sRNmBpoM8JyxsixccLLaWxYZwmueVYA",
         abi_serializer = ["wincode"],
@@ -104,7 +104,7 @@ pub(crate) fn deserialize_protocol(input: &[u8]) -> wincode::ReadResult<Protocol
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "GomZf5rFL743zPKH71UShh64JfNvrDBBEC2o2VehinsT",

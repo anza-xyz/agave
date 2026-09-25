@@ -56,7 +56,7 @@ ffi = [
     "dep:solana-syscalls",
     "solana-svm/conformance",
 ]
-frozen-abi = []
+stable-abi = []
 
 [dependencies]
 agave-feature-set = { workspace = true, optional = true }

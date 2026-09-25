@@ -21,7 +21,7 @@ name = "solana_version"
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = []
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+stable-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [dependencies]
 agave-feature-set = { workspace = true }

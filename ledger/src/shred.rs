@@ -255,7 +255,7 @@ pub enum Error {
 
 #[repr(u8)]
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "7R7R5DNkXYiSA35A6p5Ej79TmHSAdLicCo5HUkRAMD9Z",

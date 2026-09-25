@@ -12,7 +12,7 @@ use {
     thiserror::Error,
     wincode::SchemaWrite,
 };
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 use {
     solana_frozen_abi::stable_abi::StableAbi,
     solana_stake_interface::{stake_flags::StakeFlags, state::Meta},
@@ -22,14 +22,14 @@ use {
 /// Generic type T enforces type-safety so that StakeAccount<Delegation> can
 /// only wrap a stake-state which is a Delegation; whereas StakeAccount<()>
 /// wraps any account with stake state.
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Default)]
 pub struct StakeAccount<T> {
     // Skipped by the custom (delegation/stake-format) serializer; sample the default.
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
     account: AccountSharedData,
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "sample_delegated_stake_state(rng)")
     )]
     stake_state: StakeStateV2,
@@ -57,7 +57,7 @@ unsafe impl<C: wincode::config::Config> SchemaWrite<C> for StakeAccount<Delegati
 
 /// Samples a random `StakeStateV2::Stake`; the delegation-format serializer unwraps
 /// `delegation_ref()`, which would panic on any other variant.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 fn sample_delegated_stake_state(
     rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
 ) -> StakeStateV2 {

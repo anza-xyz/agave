@@ -32,11 +32,11 @@ dev-context-only-utils = [
     "solana-hash/atomic",
     "solana-transaction/wincode",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-packet/stable-abi",
-    "solana-vote-program/frozen-abi",
+    "solana-vote-program/stable-abi",
 ]
 
 [dependencies]

@@ -28,7 +28,7 @@ dev-context-only-utils = [
     "dep:solana-bls-signatures",
     "solana-bls-signatures/solana-signer-derive",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-bls-signatures",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",

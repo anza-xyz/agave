@@ -21,14 +21,14 @@ pod_wrapper! {
 /// The seed used to derive the BLS keypair
 pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 fn sample_hash(rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized)) -> Hash {
     use solana_frozen_abi::stable_abi::StableAbi;
     Hash::new_from_array(<[u8; solana_hash::HASH_BYTES] as StableAbi>::random(rng))
 }
 
 /// An alpenglow block
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(
     Clone,
     Copy,
@@ -49,7 +49,7 @@ pub struct Block {
     /// The slot in the block.
     pub slot: Slot,
     /// The block_id of the block.
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "sample_hash(rng)"))]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "sample_hash(rng)"))]
     pub block_id: Hash,
 }
 

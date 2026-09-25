@@ -22,7 +22,7 @@ name = "solana_bloom"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-hash/stable-abi",

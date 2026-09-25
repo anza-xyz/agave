@@ -180,7 +180,7 @@ sbf_sanity_list = []
 sbpf-v3 = []
 dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list", "sbpf-v3"]
 # This was needed for ci
-frozen-abi = []
+stable-abi = []
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }

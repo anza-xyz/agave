@@ -572,7 +572,7 @@ pub fn create_genesis_config_with_leader_ex(
 }
 
 /// Wincode mirror of the deprecated [`StakeConfig`], since that type has no wincode schema.
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(SchemaRead, SchemaWrite)]
 struct SerializableStakeConfig {
     warmup_cooldown_rate: f64,
@@ -584,7 +584,7 @@ struct SerializableStakeConfig {
 ///
 /// The digest freezes this layout, since genesis writes it on chain.
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "FrxVmDThystn6yVz3PjV9BTxGKocrq7LcKfk4VYk5efq",
@@ -596,14 +596,14 @@ struct SerializableStakeConfig {
 struct GenesisStakeConfigAccount {
     /// `ConfigKeys` has no `StableAbi` of its own, so sample the key list directly.
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "sample_config_keys(rng)")
     )]
     keys: ConfigKeys,
     config: SerializableStakeConfig,
 }
 
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 fn sample_config_keys(rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized)) -> ConfigKeys {
     use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
     ConfigKeys {

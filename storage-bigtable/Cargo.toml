@@ -20,12 +20,12 @@ crate-type = ["lib"]
 name = "solana_storage_bigtable"
 
 [features]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-signature/stable-abi",
-    "solana-transaction/stable-abi",
     "solana-transaction-error/stable-abi",
+    "solana-transaction/stable-abi",
 ]
 agave-unstable-api = []
 

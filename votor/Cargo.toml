@@ -22,13 +22,13 @@ dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-ledger/frozen-abi",
-    "solana-runtime/frozen-abi",
+    "solana-ledger/stable-abi",
+    "solana-runtime/stable-abi",
     "solana-signature/stable-abi",
-    "agave-votor-messages/frozen-abi",
+    "agave-votor-messages/stable-abi",
 ]
 
 [dependencies]

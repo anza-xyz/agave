@@ -21,7 +21,7 @@ edition = "2024"
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
-    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+    'cfg(feature, values("stable-abi", "no-entrypoint"))',
 ]
 
 # Clippy lint configuration that can not be applied in clippy.toml

@@ -13,7 +13,7 @@ done
 
 echo "--- coverage: root (part 1)"
 "$git_root"/ci/test-coverage.sh \
-  --features frozen-abi \
+  --features stable-abi \
   --features dev-context-only-utils \
   --lib \
   --bins \

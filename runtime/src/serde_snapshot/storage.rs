@@ -7,7 +7,7 @@ pub(crate) type SerializedAccountsFileId = usize;
 // the wire shape of the deprecated storage entries map in the snapshot manifest.
 #[repr(C)]
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "CMckX3HiC6K5FSmFo4tH44wU1mvGfabNtYAs65uaGvGU",

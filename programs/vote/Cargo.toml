@@ -22,7 +22,7 @@ name = "solana_vote_program"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = ["dep:qualifier_attr"]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-vote-interface/stable-abi",

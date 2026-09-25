@@ -28,21 +28,21 @@ dev-context-only-utils = [
     "solana-streamer/dev-context-only-utils",
     "solana-tpu-client-next/dev-context-only-utils",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-accounts-db/frozen-abi",
+    "solana-accounts-db/stable-abi",
     "solana-frozen-abi/stable-abi",
-    "solana-gossip/frozen-abi",
+    "solana-gossip/stable-abi",
     "solana-hash/stable-abi",
-    "solana-ledger/frozen-abi",
+    "solana-ledger/stable-abi",
     "solana-packet/stable-abi",
-    "solana-perf/frozen-abi",
+    "solana-perf/stable-abi",
     "solana-pubkey/stable-abi",
-    "solana-runtime/frozen-abi",
+    "solana-runtime/stable-abi",
     "solana-signature/stable-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
+    "solana-vote/stable-abi",
+    "solana-vote-program/stable-abi",
 ]
 
 [dependencies]

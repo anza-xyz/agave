@@ -19,19 +19,19 @@ rustdoc-args = ["--cfg=docsrs"]
 bench = false
 
 [features]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-bloom/frozen-abi",
+    "solana-bloom/stable-abi",
     "solana-hash/stable-abi",
-    "solana-ledger/frozen-abi",
-    "solana-perf/frozen-abi",
+    "solana-ledger/stable-abi",
+    "solana-perf/stable-abi",
     "solana-pubkey/stable-abi",
     "solana-signature/stable-abi",
     "solana-transaction/stable-abi",
-    "solana-version/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
+    "solana-version/stable-abi",
+    "solana-vote-program/stable-abi",
+    "solana-vote/stable-abi",
 ]
 agave-unstable-api = []
 dev-context-only-utils = [

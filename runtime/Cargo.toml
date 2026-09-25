@@ -33,11 +33,11 @@ dev-context-only-utils = [
     "solana-runtime-transaction/dev-context-only-utils",
     "solana-vote/dev-context-only-utils",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-account/stable-abi",
-    "solana-accounts-db/frozen-abi",
+    "solana-accounts-db/stable-abi",
     "solana-epoch-schedule/stable-abi",
     "solana-hard-forks/stable-abi",
     "solana-inflation/stable-abi",
@@ -45,9 +45,9 @@ frozen-abi = [
     "solana-rent/stable-abi",
     "solana-stake-interface/stable-abi",
     "solana-transaction-error/stable-abi",
-    "solana-version/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
+    "solana-version/stable-abi",
+    "solana-vote-program/stable-abi",
+    "solana-vote/stable-abi",
 ]
 shuttle-test = ["dep:shuttle"]
 

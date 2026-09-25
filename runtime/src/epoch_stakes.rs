@@ -168,7 +168,7 @@ impl BLSPubkeyToRankMap {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NodeVoteAccounts {
     pub vote_accounts: Vec<Pubkey>,
@@ -180,7 +180,7 @@ pub struct NodeVoteAccounts {
 /// Its bincode serializaiton format is identical as `VersionedEpochStakes`, but allows faster
 /// deserialization by ignoring serialized stake delegations entirely.
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(SchemaWrite, StableAbi, StableAbiSample)
 )]
 #[derive(Clone, Debug, SchemaRead)]
@@ -188,7 +188,7 @@ pub struct NodeVoteAccounts {
 pub(crate) enum DeserializableVersionedEpochStakes {
     Current {
         #[cfg_attr(
-            feature = "frozen-abi",
+            feature = "stable-abi",
             stable_abi_sample(with = "stable_abi_sample_deserializable_epoch_stakes(rng)")
         )]
         stakes: DeserializableEpochStakes,
@@ -200,7 +200,7 @@ pub(crate) enum DeserializableVersionedEpochStakes {
 
 /// Draws in `EpochStakes` declaration order (`epoch` first, not wire order) so the sample matches
 /// the serialize side; the serializer injects empty `stake_delegations`/zero `unused`, mirrored here.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 fn stable_abi_sample_deserializable_epoch_stakes(
     rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
 ) -> DeserializableEpochStakes {
@@ -218,7 +218,7 @@ fn stable_abi_sample_deserializable_epoch_stakes(
 }
 
 #[derive(Clone, Debug, SchemaWrite)]
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
     Current {
@@ -227,7 +227,7 @@ pub enum VersionedEpochStakes {
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
-        #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
+        #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
         #[wincode(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
@@ -390,7 +390,7 @@ impl VersionedEpochStakes {
 
 /// The current version of epoch stakes
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct EpochStakes {
     epoch: Epoch,
@@ -465,7 +465,7 @@ impl From<SerdeStakesToStakeFormat> for EpochStakes {
 /// Needed because snapshots contain additional fields no longer present in EpochStakes.
 // Sampling is overridden at the parent (`DeserializableVersionedEpochStakes::Current.stakes`), so
 // no StableAbi/StableAbiSample is needed here.
-#[cfg_attr(feature = "frozen-abi", derive(SchemaWrite))]
+#[cfg_attr(feature = "stable-abi", derive(SchemaWrite))]
 #[derive(Clone, Debug, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableEpochStakes {
