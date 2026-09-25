@@ -388,7 +388,13 @@ impl EventHandler {
                 if vctx.vote_history.voted(slot) || local_context.received_shred.contains(&slot) {
                     return Ok(votes);
                 }
-                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
+                Self::try_skip_window(
+                    &local_context.my_pubkey,
+                    slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )?;
             }
 
             // Skip timer for the slot has fired
@@ -397,13 +403,25 @@ impl EventHandler {
                 if vctx.vote_history.voted(slot) {
                     return Ok(votes);
                 }
-                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
+                Self::try_skip_window(
+                    &local_context.my_pubkey,
+                    slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )?;
             }
 
             // We have observed the safe to notar condition, and can send a notar fallback vote
             VotorEvent::SafeToNotar(block) => {
                 info!("{}: SafeToNotar {block:?}", local_context.my_pubkey);
-                Self::try_skip_window(&local_context.my_pubkey, block.slot, vctx, &mut votes)?;
+                Self::try_skip_window(
+                    &local_context.my_pubkey,
+                    block.slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )?;
                 if vctx.vote_history.its_over(block.slot)
                     || vctx
                         .vote_history
@@ -426,7 +444,13 @@ impl EventHandler {
             // We have observed the safe to skip condition, and can send a skip fallback vote
             VotorEvent::SafeToSkip(slot) => {
                 info!("{}: SafeToSkip {slot}", local_context.my_pubkey);
-                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
+                Self::try_skip_window(
+                    &local_context.my_pubkey,
+                    slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )?;
                 if vctx.vote_history.its_over(slot) || vctx.vote_history.voted_skip_fallback(slot) {
                     return Ok(votes);
                 }
@@ -862,6 +886,7 @@ impl EventHandler {
     fn try_skip_window(
         my_pubkey: &Pubkey,
         slot: Slot,
+        pending_blocks: &mut PendingBlocks,
         voting_context: &mut VotingContext,
         votes: &mut Vec<BLSOp>,
     ) -> Result<(), VoteError> {
@@ -883,6 +908,7 @@ impl EventHandler {
             {
                 votes.push(bls_op);
             }
+            pending_blocks.remove(&s);
         }
         Ok(())
     }
@@ -1863,6 +1889,29 @@ mod tests {
         test_context.check_for_vote(&Vote::new_skip_vote(3));
         assert!(test_context.bls_ops.is_empty());
         test_context.check_no_own_vote();
+    }
+
+    #[test]
+    fn test_try_skip_window_clears_pending_blocks() {
+        let mut test_context = setup();
+
+        // Without a parent ready, the replayed block for slot 1 can't be voted on yet
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        test_context.create_block_and_send_block_event(1, root_bank);
+        test_context.check_no_vote_or_commitment();
+        assert!(test_context.local_context.pending_blocks.contains_key(&1));
+
+        // Skipping the window means we will never vote notarize on the pending block
+        test_context.send_timeout_event(1);
+        test_context.check_for_vote(&Vote::new_skip_vote(1));
+        test_context.check_for_vote(&Vote::new_skip_vote(2));
+        test_context.check_for_vote(&Vote::new_skip_vote(3));
+        assert!(test_context.local_context.pending_blocks.is_empty());
     }
 
     #[test]
