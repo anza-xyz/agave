@@ -6659,8 +6659,6 @@ version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0788d74ee15778deecaa15ed1a1e37727ba954f86cbc35225450a1f2b5012969"
 dependencies = [
- "serde",
- "serde_derive",
  "solana-get-sysvar",
  "solana-hash",
  "solana-sdk-ids",
@@ -7088,8 +7086,6 @@ version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5099e736c3c06c451b307a60637d69eb65b3144143ebeed899e2fd1134f4fc35"
 dependencies = [
- "serde",
- "serde_derive",
  "solana-get-sysvar",
  "solana-sdk-ids",
  "solana-sdk-macro",
@@ -7521,13 +7517,13 @@ dependencies = [
 name = "solana-program-binaries"
 version = "4.5.0-alpha.0"
 dependencies = [
- "bincode",
  "solana-account",
  "solana-loader-v3-interface",
  "solana-pubkey 4.4.0",
  "solana-rent",
  "solana-sdk-ids",
  "spl-generic-token",
+ "wincode",
 ]
 
 [[package]]
@@ -7580,12 +7576,10 @@ name = "solana-program-runtime"
 version = "4.5.0-alpha.0"
 dependencies = [
  "base64 0.23.1",
- "bincode",
  "itertools 0.15.0",
  "log",
  "qualifier_attr",
  "rand 0.9.4",
- "serde",
  "solana-account",
  "solana-account-info",
  "solana-clock",
@@ -8328,8 +8322,6 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3da667c6de47dd04fa03cd3a29f2ce046627407f0de0dc56c5d78ed1ba23785"
 dependencies = [
- "serde",
- "serde_derive",
  "solana-get-sysvar",
  "solana-hash",
  "solana-sdk-ids",
@@ -8344,8 +8336,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4560fde841a6f2001aedc33b74fe99840ee3d56a71fe9b98ee332303b8597900"
 dependencies = [
  "bv",
- "serde",
- "serde_derive",
  "solana-get-sysvar",
  "solana-sdk-ids",
  "solana-sysvar-id",
@@ -8511,7 +8501,6 @@ dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "ahash 0.8.12",
- "bincode",
  "log",
  "prost",
  "protosol",
@@ -8582,11 +8571,9 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-precompiles",
- "bincode",
  "clap 4.6.1",
  "prost",
  "protosol",
- "serde",
  "solana-account",
  "solana-clock",
  "solana-compute-budget",
@@ -8598,6 +8585,7 @@ dependencies = [
  "solana-syscalls",
  "solana-system-interface",
  "solana-system-program",
+ "wincode",
 ]
 
 [[package]]
@@ -8649,7 +8637,6 @@ dependencies = [
 name = "solana-syscalls"
 version = "4.5.0-alpha.0"
 dependencies = [
- "bincode",
  "libsecp256k1",
  "num-traits",
  "solana-account",
@@ -8749,8 +8736,6 @@ checksum = "bcfc1dead2b328974e09500feb2e413fc2be82bb3ffebc87132804cdce87d31b"
 dependencies = [
  "base64 0.22.1",
  "lazy_static",
- "serde",
- "serde_derive",
  "solana-account-info",
  "solana-clock",
  "solana-define-syscall 5.2.0",

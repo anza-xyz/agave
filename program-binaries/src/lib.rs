@@ -116,7 +116,7 @@ pub fn bpf_loader_upgradeable_program_accounts(
     let program_account = {
         let space = UpgradeableLoaderState::size_of_program();
         let lamports = rent.minimum_balance(space);
-        let data = bincode::serialize(&UpgradeableLoaderState::Program {
+        let data = wincode::serialize(&UpgradeableLoaderState::Program {
             programdata_address,
         })
         .unwrap();
@@ -131,7 +131,7 @@ pub fn bpf_loader_upgradeable_program_accounts(
     let programdata_account = {
         let space = UpgradeableLoaderState::size_of_programdata_metadata() + elf.len();
         let lamports = rent.minimum_balance(space);
-        let mut data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
+        let mut data = wincode::serialize(&UpgradeableLoaderState::ProgramData {
             slot: 0,
             upgrade_authority_address: Some(*upgrade_authority_address),
         })

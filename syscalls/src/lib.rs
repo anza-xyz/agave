@@ -3064,9 +3064,9 @@ mod tests {
         assert_eq!(pubkey, *translated_pubkey);
 
         // Instruction
-        let instruction = Instruction::new_with_bincode(
+        let instruction = Instruction::new_with_bytes(
             solana_pubkey::new_rand(),
-            &"foobar",
+            b"foobar",
             vec![AccountMeta::new(solana_pubkey::new_rand(), false)],
         );
         let instruction = StableInstruction::from(instruction);
@@ -4436,7 +4436,7 @@ mod tests {
             );
             assert_eq!(result.unwrap(), 0);
 
-            let clock_from_buf = bincode::deserialize::<Clock>(&got_clock_buf).unwrap();
+            let clock_from_buf = wincode::deserialize::<Clock>(&got_clock_buf).unwrap();
 
             assert_eq!(clock_from_buf, src_clock);
             assert!(are_bytes_equal(&clock_from_buf, &clean_clock));
@@ -4508,7 +4508,7 @@ mod tests {
             assert_eq!(result.unwrap(), 0);
 
             let epochschedule_from_buf =
-                bincode::deserialize::<EpochSchedule>(&got_epochschedule_buf).unwrap();
+                wincode::deserialize::<EpochSchedule>(&got_epochschedule_buf).unwrap();
 
             assert_eq!(epochschedule_from_buf, src_epochschedule);
 
@@ -4594,7 +4594,7 @@ mod tests {
             );
             assert_eq!(result.unwrap(), 0);
 
-            let rent_from_buf = bincode::deserialize::<Rent>(&got_rent_buf).unwrap();
+            let rent_from_buf = wincode::deserialize::<Rent>(&got_rent_buf).unwrap();
 
             assert_eq!(rent_from_buf, src_rent);
 
@@ -4660,7 +4660,7 @@ mod tests {
             );
             assert_eq!(result.unwrap(), 0);
 
-            let rewards_from_buf = bincode::deserialize::<EpochRewards>(&got_rewards_buf).unwrap();
+            let rewards_from_buf = wincode::deserialize::<EpochRewards>(&got_rewards_buf).unwrap();
 
             assert_eq!(rewards_from_buf, src_rewards);
 
@@ -4720,7 +4720,7 @@ mod tests {
             assert_eq!(result.unwrap(), 0);
 
             let restart_from_buf =
-                bincode::deserialize::<LastRestartSlot>(&got_restart_buf).unwrap();
+                wincode::deserialize::<LastRestartSlot>(&got_restart_buf).unwrap();
 
             assert_eq!(restart_from_buf, src_restart);
             assert!(are_bytes_equal(&restart_from_buf, &clean_restart));
@@ -4752,9 +4752,6 @@ mod tests {
         }
 
         let src_history = src_history;
-
-        let mut src_history_buf = vec![0; STAKE_HISTORY_ACCOUNT_SIZE];
-        bincode::serialize_into(&mut src_history_buf, &src_history).unwrap();
 
         let transaction_accounts = vec![(
             sysvar::stake_history::id(),
@@ -4793,7 +4790,7 @@ mod tests {
             );
             assert_eq!(result.unwrap(), 0);
 
-            let history_from_buf = bincode::deserialize::<StakeHistory>(&got_history_buf).unwrap();
+            let history_from_buf = wincode::deserialize::<StakeHistory>(&got_history_buf).unwrap();
             assert_eq!(history_from_buf, src_history);
         }
     }
@@ -5038,7 +5035,7 @@ mod tests {
             )
             .unwrap();
 
-            let clock_from_buf = bincode::deserialize::<Clock>(&got_clock_buf_rw).unwrap();
+            let clock_from_buf = wincode::deserialize::<Clock>(&got_clock_buf_rw).unwrap();
 
             assert_eq!(clock_from_buf, src_clock);
         }

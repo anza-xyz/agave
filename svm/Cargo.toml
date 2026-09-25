@@ -33,9 +33,9 @@ conformance = [
     "dep:solana-zk-elgamal-proof-program",
     "dep:xxhash-rust",
     "dev-context-only-utils",
-    "solana-instruction-error/serde",
+    "solana-instruction-error/wincode",
     "solana-pubkey/default",
-    "solana-transaction-error/serde",
+    "solana-transaction-error/wincode",
 ]
 dev-context-only-utils = [
     "dep:agave-feature-set",
@@ -68,7 +68,6 @@ svm-internal = ["dep:qualifier_attr"]
 agave-feature-set = { workspace = true, optional = true }
 agave-precompiles = { workspace = true, optional = true }
 ahash = { workspace = true }
-bincode = { workspace = true }
 log = { workspace = true }
 prost = { workspace = true, optional = true }
 protosol = { workspace = true, optional = true }
@@ -76,9 +75,9 @@ qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true, features = ["wincode"] }
-solana-address-lookup-table-interface = { workspace = true, optional = true, features = ["bincode", "bytemuck"] }
+solana-address-lookup-table-interface = { workspace = true, optional = true, features = ["bytemuck", "wincode"] }
 solana-bpf-loader-program = { workspace = true, optional = true }
-solana-clock = { workspace = true }
+solana-clock = { workspace = true, features = ["wincode"] }
 solana-compute-budget = { workspace = true, optional = true }
 solana-compute-budget-instruction = { workspace = true, optional = true }
 solana-compute-budget-program = { workspace = true, optional = true }
@@ -98,7 +97,7 @@ solana-program-entrypoint = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-rent = { workspace = true }
+solana-rent = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true, optional = true, features = ["wincode"] }
@@ -134,7 +133,7 @@ solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
-solana-epoch-schedule = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
 solana-native-token = { workspace = true }
@@ -152,7 +151,7 @@ solana-system-program = { path = "../programs/system", features = ["agave-unstab
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-token-interface = { workspace = true }
 test-case = { workspace = true }
 

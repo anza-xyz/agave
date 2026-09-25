@@ -1166,7 +1166,6 @@ mod tests {
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
-        serde::{Deserialize, Serialize},
         solana_account::{Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount},
         solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_keypair::{Address, Keypair},
@@ -1186,7 +1185,7 @@ mod tests {
         test_case::test_case,
     };
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, wincode::SchemaRead, wincode::SchemaWrite)]
     enum MockInstruction {
         NoopSuccess,
         NoopFail,
@@ -1232,7 +1231,7 @@ mod tests {
                 instruction_context.get_key_of_instruction_account(0)?
             );
 
-            if let Ok(instruction) = bincode::deserialize(instruction_data) {
+            if let Ok(instruction) = wincode::deserialize(instruction_data) {
                 match instruction {
                     MockInstruction::NoopSuccess => (),
                     MockInstruction::NoopFail => return Err(InstructionError::GenericError),
@@ -1260,7 +1259,7 @@ mod tests {
                                 false,
                             ),
                         ];
-                        let inner_instruction = Instruction::new_with_bincode(
+                        let inner_instruction = Instruction::new_with_wincode(
                             program_id,
                             &MockInstruction::NoopSuccess,
                             metas,
@@ -1534,7 +1533,7 @@ mod tests {
             .unwrap();
         invoke_context.push().unwrap();
         let inner_instruction =
-            Instruction::new_with_bincode(callee_program_id, &instruction, metas);
+            Instruction::new_with_wincode(callee_program_id, &instruction, metas);
         let result = invoke_context
             .native_invoke_signed(inner_instruction, &[])
             .and(invoke_context.pop());
@@ -1589,7 +1588,7 @@ mod tests {
             .configure_top_level_instruction_for_tests(4, instruction_accounts, vec![])
             .unwrap();
         invoke_context.push().unwrap();
-        let inner_instruction = Instruction::new_with_bincode(
+        let inner_instruction = Instruction::new_with_wincode(
             callee_program_id,
             &MockInstruction::ConsumeComputeUnits {
                 compute_units_to_consume,
@@ -1669,7 +1668,7 @@ mod tests {
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
         let new_len = (user_account_data_len as i64).saturating_add(resize_delta) as u64;
-        let instruction_data = bincode::serialize(&MockInstruction::Resize { new_len }).unwrap();
+        let instruction_data = wincode::serialize(&MockInstruction::Resize { new_len }).unwrap();
 
         invoke_context
             .transaction_context
@@ -1982,7 +1981,7 @@ mod tests {
     fn test_native_invoke_signed_with_valid_pda_signer() {
         let (pda_key, bump_seed) =
             Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
-        let instruction = Instruction::new_with_bincode(
+        let instruction = Instruction::new_with_wincode(
             TEST_CALLEE_PROGRAM_ID,
             &MockInstruction::NoopSuccess,
             vec![
@@ -2003,7 +2002,7 @@ mod tests {
     // maps to `Custom(0)`.
     #[test]
     fn test_native_invoke_signed_with_invalid_seeds() {
-        let instruction = Instruction::new_with_bincode(
+        let instruction = Instruction::new_with_wincode(
             TEST_CALLEE_PROGRAM_ID,
             &MockInstruction::NoopSuccess,
             vec![AccountMeta::new(TEST_ACCOUNT_KEY, true)],
@@ -2024,7 +2023,7 @@ mod tests {
     fn test_native_invoke_signed_pda_privilege_escalation_without_seeds() {
         let (pda_key, _bump_seed) =
             Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
-        let instruction = Instruction::new_with_bincode(
+        let instruction = Instruction::new_with_wincode(
             TEST_CALLEE_PROGRAM_ID,
             &MockInstruction::NoopSuccess,
             vec![AccountMeta::new(pda_key, true)],
@@ -2038,7 +2037,7 @@ mod tests {
     #[test]
     fn test_native_invoke_signed_uses_caller_program_id_for_pda() {
         let (pda_key, bump_seed) = Pubkey::find_program_address(&[b"seed"], &TEST_WRONG_PROGRAM_ID);
-        let instruction = Instruction::new_with_bincode(
+        let instruction = Instruction::new_with_wincode(
             TEST_CALLEE_PROGRAM_ID,
             &MockInstruction::NoopSuccess,
             vec![AccountMeta::new(pda_key, true)],
@@ -2053,7 +2052,7 @@ mod tests {
     fn test_native_invoke_signed_top_level_signer_needs_no_seeds() {
         let (pda_key, _bump_seed) =
             Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
-        let instruction = Instruction::new_with_bincode(
+        let instruction = Instruction::new_with_wincode(
             TEST_CALLEE_PROGRAM_ID,
             &MockInstruction::NoopSuccess,
             vec![
@@ -2120,7 +2119,7 @@ mod tests {
 
     #[test]
     fn test_process_message_readonly_handling() {
-        #[derive(serde::Serialize, serde::Deserialize)]
+        #[derive(wincode::SchemaRead, wincode::SchemaWrite)]
         enum MockSystemInstruction {
             Correct,
             TransferLamports { lamports: u64 },
@@ -2131,7 +2130,7 @@ mod tests {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
-            if let Ok(instruction) = bincode::deserialize(instruction_data) {
+            if let Ok(instruction) = wincode::deserialize(instruction_data) {
                 match instruction {
                     MockSystemInstruction::Correct => Ok(()),
                     MockSystemInstruction::TransferLamports { lamports } => {
@@ -2199,7 +2198,7 @@ mod tests {
             account_keys.clone(),
             Hash::default(),
             AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
+                Instruction::new_with_wincode(
                     mock_system_program_id,
                     &MockSystemInstruction::Correct,
                     account_metas.clone(),
@@ -2253,7 +2252,7 @@ mod tests {
             account_keys.clone(),
             Hash::default(),
             AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
+                Instruction::new_with_wincode(
                     mock_system_program_id,
                     &MockSystemInstruction::TransferLamports { lamports: 50 },
                     account_metas.clone(),
@@ -2291,7 +2290,7 @@ mod tests {
             account_keys.clone(),
             Hash::default(),
             AccountKeys::new(&account_keys, None).compile_instructions(&[
-                Instruction::new_with_bincode(
+                Instruction::new_with_wincode(
                     mock_system_program_id,
                     &MockSystemInstruction::ChangeData { data: 50 },
                     account_metas,
@@ -2324,7 +2323,7 @@ mod tests {
 
     #[test]
     fn test_process_message_duplicate_accounts() {
-        #[derive(serde::Serialize, serde::Deserialize)]
+        #[derive(wincode::SchemaRead, wincode::SchemaWrite)]
         enum MockSystemInstruction {
             BorrowFail,
             MultiBorrowMut,
@@ -2336,7 +2335,7 @@ mod tests {
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
             let mut to_account = instruction_context.try_borrow_instruction_account(1)?;
-            if let Ok(instruction) = bincode::deserialize(instruction_data) {
+            if let Ok(instruction) = wincode::deserialize(instruction_data) {
                 match instruction {
                     MockSystemInstruction::BorrowFail => {
                         let from_account = instruction_context.try_borrow_instruction_account(0)?;
@@ -2415,7 +2414,7 @@ mod tests {
 
         // Try to borrow mut the same account
         let message = new_sanitized_message(Message::new(
-            &[Instruction::new_with_bincode(
+            &[Instruction::new_with_wincode(
                 mock_program_id,
                 &MockSystemInstruction::BorrowFail,
                 account_metas.clone(),
@@ -2448,7 +2447,7 @@ mod tests {
 
         // Try to borrow mut the same account in a safe way
         let message = new_sanitized_message(Message::new(
-            &[Instruction::new_with_bincode(
+            &[Instruction::new_with_wincode(
                 mock_program_id,
                 &MockSystemInstruction::MultiBorrowMut,
                 account_metas.clone(),
@@ -2481,7 +2480,7 @@ mod tests {
 
         // Do work on the same transaction account but at different instruction accounts
         let message = new_sanitized_message(Message::new(
-            &[Instruction::new_with_bincode(
+            &[Instruction::new_with_wincode(
                 mock_program_id,
                 &MockSystemInstruction::DoWork {
                     lamports: 10,

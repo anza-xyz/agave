@@ -181,7 +181,7 @@ mod tests {
             address: sysvar::rent::id().to_bytes().to_vec(),
             lamports: 1,
             data_repr: Some(DataRepr::Data(
-                bincode::serialize(&Rent::default()).unwrap(),
+                wincode::serialize(&Rent::default()).unwrap(),
             )),
             executable: false,
             owner: sysvar::id().to_bytes().to_vec(),

@@ -134,7 +134,7 @@ mod tests {
         }
     }
 
-    fn proto_sysvar_account<T: serde::Serialize>(
+    fn proto_sysvar_account<T: wincode::Serialize<Src = T>>(
         pubkey: Pubkey,
         sysvar: &T,
     ) -> protosol::protos::AcctState {
@@ -142,7 +142,7 @@ mod tests {
             address: pubkey.to_bytes().to_vec(),
             owner: solana_sdk_ids::sysvar::id().to_bytes().to_vec(),
             lamports: 1,
-            data_repr: Some(DataRepr::Data(bincode::serialize(sysvar).unwrap())),
+            data_repr: Some(DataRepr::Data(wincode::serialize(sysvar).unwrap())),
             executable: false,
         }
     }

@@ -2903,7 +2903,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
 
     // upgrade or close a deployed program
     let change_instruction = if upgrade_program {
-        let mut data = bincode::serialize(&UpgradeableLoaderState::Buffer {
+        let mut data = wincode::serialize(&UpgradeableLoaderState::Buffer {
             authority_address: Some(fee_payer),
         })
         .unwrap();
@@ -3011,7 +3011,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     let deploy_keypair = Keypair::new();
     let deploy = deploy_keypair.pubkey();
 
-    let mut buffer_data = bincode::serialize(&UpgradeableLoaderState::Buffer {
+    let mut buffer_data = wincode::serialize(&UpgradeableLoaderState::Buffer {
         authority_address: Some(fee_payer),
     })
     .unwrap();
@@ -3029,7 +3029,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     test_entry.add_initial_account(target, &buffer_account);
     test_entry.add_initial_account(deploy, &buffer_account);
 
-    let program_data = bincode::serialize(&UpgradeableLoaderState::Program {
+    let program_data = wincode::serialize(&UpgradeableLoaderState::Program {
         programdata_address,
     })
     .unwrap();
@@ -3141,7 +3141,7 @@ fn program_cache_stats() {
     // set up a future upgrade after the first batch
     let buffer_address = Pubkey::new_unique();
     {
-        let mut data = bincode::serialize(&UpgradeableLoaderState::Buffer {
+        let mut data = wincode::serialize(&UpgradeableLoaderState::Buffer {
             authority_address: Some(fee_payer),
         })
         .unwrap();

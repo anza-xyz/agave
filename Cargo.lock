@@ -9584,13 +9584,13 @@ dependencies = [
 name = "solana-program-binaries"
 version = "4.5.0-alpha.0"
 dependencies = [
- "bincode",
  "solana-account",
  "solana-loader-v3-interface",
  "solana-pubkey 4.4.0",
  "solana-rent",
  "solana-sdk-ids",
  "spl-generic-token",
+ "wincode",
 ]
 
 [[package]]
@@ -9646,14 +9646,12 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "assert_matches",
  "base64 0.23.1",
- "bincode",
  "itertools 0.15.0",
  "libsecp256k1",
  "log",
  "openssl",
  "qualifier_attr",
  "rand 0.9.4",
- "serde",
  "solana-account",
  "solana-account-info",
  "solana-clock",
@@ -10851,7 +10849,6 @@ dependencies = [
  "agave-precompiles",
  "ahash 0.8.12",
  "assert_matches",
- "bincode",
  "env_logger",
  "libsecp256k1",
  "log",
@@ -10985,7 +10982,6 @@ name = "solana-syscalls"
 version = "4.5.0-alpha.0"
 dependencies = [
  "assert_matches",
- "bincode",
  "libsecp256k1",
  "num-traits",
  "solana-account",

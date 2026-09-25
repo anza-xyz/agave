@@ -146,7 +146,7 @@ impl MockBankCallback {
         };
 
         let mut account_data = AccountSharedData::default();
-        account_data.set_data_from_slice(&bincode::serialize(&clock).unwrap());
+        account_data.set_data_from_slice(&wincode::serialize(&clock).unwrap());
         self.account_shared_data
             .write()
             .unwrap()
@@ -156,7 +156,7 @@ impl MockBankCallback {
         let rent = Rent::default();
 
         let mut account_data = AccountSharedData::default();
-        account_data.set_data_from_slice(&bincode::serialize(&rent).unwrap());
+        account_data.set_data_from_slice(&wincode::serialize(&rent).unwrap());
         self.account_shared_data
             .write()
             .unwrap()
@@ -169,7 +169,7 @@ impl MockBankCallback {
         let recent_blockhashes = vec![BlockhashesEntry::default()];
 
         let mut account_data = AccountSharedData::default();
-        account_data.set_data_from_slice(&bincode::serialize(&recent_blockhashes).unwrap());
+        account_data.set_data_from_slice(&wincode::serialize(&recent_blockhashes).unwrap());
         #[allow(deprecated)]
         self.account_shared_data
             .write()
@@ -180,7 +180,7 @@ impl MockBankCallback {
         let epoch_schedule = EpochSchedule::without_warmup();
 
         let mut account_data = AccountSharedData::default();
-        account_data.set_data_from_slice(&bincode::serialize(&epoch_schedule).unwrap());
+        account_data.set_data_from_slice(&wincode::serialize(&epoch_schedule).unwrap());
         self.account_shared_data
             .write()
             .unwrap()
@@ -232,7 +232,7 @@ pub fn deploy_program_with_upgrade_authority(
 
     // The program account must have funds and hold the executable binary
     let mut account_data = AccountSharedData::default();
-    let buffer = bincode::serialize(&state).unwrap();
+    let buffer = wincode::serialize(&state).unwrap();
     account_data.set_lamports(rent.minimum_balance(buffer.len()));
     account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
     account_data.set_executable(true);
@@ -248,7 +248,7 @@ pub fn deploy_program_with_upgrade_authority(
         slot: deployment_slot,
         upgrade_authority_address,
     };
-    let mut header = bincode::serialize(&state).unwrap();
+    let mut header = wincode::serialize(&state).unwrap();
     let mut complement = vec![
         0;
         std::cmp::max(

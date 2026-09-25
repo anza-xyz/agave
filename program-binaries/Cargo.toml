@@ -18,13 +18,13 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
-bincode = { workspace = true }
 solana-account = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["wincode", "serde"] }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 spl-generic-token = { workspace = true }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

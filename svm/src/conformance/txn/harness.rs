@@ -386,7 +386,7 @@ mod tests {
                 clock_pubkey,
                 Account {
                     lamports: 1,
-                    data: bincode::serialize(&Clock {
+                    data: wincode::serialize(&Clock {
                         slot: 1,
                         ..Clock::default()
                     })
