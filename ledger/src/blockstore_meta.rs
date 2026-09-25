@@ -571,6 +571,15 @@ impl ShredIndexRef<'_> {
         self.num_shreds
     }
 
+    pub(crate) fn count_range<R>(&self, bounds: R) -> usize
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index.range((start, end)).count_ones()
+    }
+
     pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
     where
         R: RangeBounds<u64>,
@@ -763,10 +772,6 @@ impl ErasureMeta {
 
     pub(crate) fn config(&self) -> ErasureConfig {
         self.config
-    }
-
-    pub(crate) fn fec_set_index(&self) -> u32 {
-        self.fec_set_index
     }
 
     pub(crate) fn data_shreds_indices(&self) -> Range<u64> {
