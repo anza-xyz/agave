@@ -4,7 +4,6 @@ use {
         compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
-    bincode::{deserialize, serialized_size},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     reqwest::blocking::Client,
     serde_json::{Map, Value},
@@ -32,6 +31,7 @@ use {
     solana_signer::Signer,
     solana_transaction::Transaction,
     std::{error, rc::Rc},
+    wincode::{deserialize, serialized_size},
 };
 
 // Return an error if a validator details are longer than the max length.
@@ -494,8 +494,8 @@ mod tests {
     use {
         super::*,
         crate::clap_app::get_clap_app,
-        bincode::{serialize, serialized_size},
         serde_json::json,
+        wincode::{serialize, serialized_size},
     };
 
     #[test]

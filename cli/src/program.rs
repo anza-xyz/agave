@@ -1340,7 +1340,7 @@ async fn process_program_deploy(
             true
         } else if let Ok(UpgradeableLoaderState::Program {
             programdata_address,
-        }) = bincode::deserialize(&account.data)
+        }) = wincode::deserialize(&account.data)
         {
             if let Some(account) = rpc_client
                 .get_account_with_commitment(&programdata_address, config.commitment)
@@ -1350,7 +1350,7 @@ async fn process_program_deploy(
                 if let Ok(UpgradeableLoaderState::ProgramData {
                     slot: _,
                     upgrade_authority_address: program_authority_pubkey,
-                }) = bincode::deserialize(&account.data)
+                }) = wincode::deserialize(&account.data)
                 {
                     if program_authority_pubkey.is_none() {
                         return Err(
@@ -1554,7 +1554,7 @@ async fn fetch_buffer_program_data(
     }
 
     if let Ok(UpgradeableLoaderState::Buffer { authority_address }) =
-        bincode::deserialize(&account.data)
+        wincode::deserialize(&account.data)
     {
         if authority_address.is_none() {
             return Err(format!("Buffer {buffer_pubkey} is immutable").into());
@@ -1940,7 +1940,7 @@ async fn get_buffers(
              Ensure that the account was fetched using a binary encoding.",
         );
         if let Ok(UpgradeableLoaderState::Buffer { authority_address }) =
-            bincode::deserialize(&account.data)
+            wincode::deserialize(&account.data)
         {
             buffers.push(CliUpgradeableBuffer {
                 address: address.to_string(),
@@ -1997,7 +1997,7 @@ async fn get_programs(
         if let Ok(UpgradeableLoaderState::ProgramData {
             slot,
             upgrade_authority_address,
-        }) = bincode::deserialize(&programdata_account.data)
+        }) = wincode::deserialize(&programdata_account.data)
         {
             let mut bytes = vec![2, 0, 0, 0];
             bytes.extend_from_slice(programdata_address.as_ref());
@@ -2083,7 +2083,7 @@ async fn process_show(
             } else if account.owner == bpf_loader_upgradeable::id() {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = bincode::deserialize(&account.data)
+                }) = wincode::deserialize(&account.data)
                 {
                     if let Some(programdata_account) = rpc_client
                         .get_account_with_commitment(&programdata_address, config.commitment)
@@ -2093,7 +2093,7 @@ async fn process_show(
                         if let Ok(UpgradeableLoaderState::ProgramData {
                             upgrade_authority_address,
                             slot,
-                        }) = bincode::deserialize(&programdata_account.data)
+                        }) = wincode::deserialize(&programdata_account.data)
                         {
                             Ok(config
                                 .output_format
@@ -2118,7 +2118,7 @@ async fn process_show(
                         Err(format!("Program {account_pubkey} has been closed").into())
                     }
                 } else if let Ok(UpgradeableLoaderState::Buffer { authority_address }) =
-                    bincode::deserialize(&account.data)
+                    wincode::deserialize(&account.data)
                 {
                     Ok(config
                         .output_format
@@ -2178,7 +2178,7 @@ async fn process_dump(
             } else if account.owner == bpf_loader_upgradeable::id() {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = bincode::deserialize(&account.data)
+                }) = wincode::deserialize(&account.data)
                 {
                     if let Some(programdata_account) = rpc_client
                         .get_account_with_commitment(&programdata_address, config.commitment)
@@ -2186,7 +2186,7 @@ async fn process_dump(
                         .value
                     {
                         if let Ok(UpgradeableLoaderState::ProgramData { .. }) =
-                            bincode::deserialize(&programdata_account.data)
+                            wincode::deserialize(&programdata_account.data)
                         {
                             let offset = UpgradeableLoaderState::size_of_programdata_metadata();
                             let program_data = &programdata_account.data[offset..];
@@ -2200,7 +2200,7 @@ async fn process_dump(
                         Err(format!("Program {account_pubkey} has been closed").into())
                     }
                 } else if let Ok(UpgradeableLoaderState::Buffer { .. }) =
-                    bincode::deserialize(&account.data)
+                    wincode::deserialize(&account.data)
                 {
                     let offset = UpgradeableLoaderState::size_of_buffer_metadata();
                     let program_data = &account.data[offset..];
@@ -2289,7 +2289,7 @@ async fn process_close(
             .await?
             .value
         {
-            match bincode::deserialize(&account.data) {
+            match wincode::deserialize(&account.data) {
                 Ok(UpgradeableLoaderState::Buffer { authority_address }) => {
                     if authority_address != Some(authority_signer.pubkey()) {
                         return Err(format!(
@@ -2335,7 +2335,7 @@ async fn process_close(
                         if let Ok(UpgradeableLoaderState::ProgramData {
                             slot: _,
                             upgrade_authority_address: authority_pubkey,
-                        }) = bincode::deserialize(&account.data)
+                        }) = wincode::deserialize(&account.data)
                         {
                             if authority_pubkey != Some(authority_signer.pubkey()) {
                                 Err(format!(
@@ -2443,7 +2443,7 @@ async fn process_extend_program(
         return Err(format!("Account {program_pubkey} is not an upgradeable program").into());
     }
 
-    let programdata_pubkey = match bincode::deserialize(&program_account.data) {
+    let programdata_pubkey = match wincode::deserialize(&program_account.data) {
         Ok(UpgradeableLoaderState::Program {
             programdata_address: programdata_pubkey,
         }) => Ok(programdata_pubkey),
@@ -2461,7 +2461,7 @@ async fn process_extend_program(
         None => Err(format!("Program {program_pubkey} is closed")),
     }?;
 
-    let upgrade_authority_address = match bincode::deserialize(&programdata_account.data) {
+    let upgrade_authority_address = match wincode::deserialize(&programdata_account.data) {
         Ok(UpgradeableLoaderState::ProgramData {
             slot: _,
             upgrade_authority_address,
@@ -2539,7 +2539,7 @@ async fn process_extend_program(
 }
 
 pub fn calculate_max_chunk_size(baseline_msg: Message) -> usize {
-    let tx_size = bincode::serialized_size(&Transaction {
+    let tx_size = wincode::serialized_size(&Transaction {
         signatures: vec![
             Signature::default();
             baseline_msg.header.num_required_signatures as usize
@@ -2989,7 +2989,7 @@ async fn extend_program_data_if_needed(
         return Ok(());
     };
 
-    let upgrade_authority_address = match bincode::deserialize(&program_data_account.data) {
+    let upgrade_authority_address = match wincode::deserialize(&program_data_account.data) {
         Ok(UpgradeableLoaderState::ProgramData {
             slot: _,
             upgrade_authority_address,

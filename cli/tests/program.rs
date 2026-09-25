@@ -1357,7 +1357,7 @@ async fn test_cli_program_deploy_with_authority() {
     if let UpgradeableLoaderState::ProgramData {
         slot: _,
         upgrade_authority_address,
-    } = bincode::deserialize(&programdata_account.data).unwrap()
+    } = wincode::deserialize(&programdata_account.data).unwrap()
     {
         assert_eq!(upgrade_authority_address, None);
     } else {
@@ -1561,7 +1561,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     if let UpgradeableLoaderState::ProgramData {
         slot: _,
         upgrade_authority_address,
-    } = bincode::deserialize(&programdata_account.data).unwrap()
+    } = wincode::deserialize(&programdata_account.data).unwrap()
     {
         assert_eq!(upgrade_authority_address, None);
     } else {
@@ -2078,7 +2078,7 @@ async fn test_cli_program_write_buffer() {
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(keypair.pubkey()));
     } else {
@@ -2125,7 +2125,7 @@ async fn test_cli_program_write_buffer() {
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(keypair.pubkey()));
     } else {
@@ -2197,7 +2197,7 @@ async fn test_cli_program_write_buffer() {
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(authority_keypair.pubkey()));
     } else {
@@ -2239,7 +2239,7 @@ async fn test_cli_program_write_buffer() {
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(authority_keypair.pubkey()));
     } else {
@@ -2589,7 +2589,7 @@ async fn test_cli_program_set_buffer_authority() {
         .await
         .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(keypair.pubkey()));
     } else {
@@ -2623,7 +2623,7 @@ async fn test_cli_program_set_buffer_authority() {
         .await
         .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(new_buffer_authority.pubkey()));
     } else {
@@ -2686,7 +2686,7 @@ async fn test_cli_program_set_buffer_authority() {
         .await
         .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(buffer_keypair.pubkey()));
     } else {
@@ -2784,7 +2784,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         .await
         .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(buffer_authority.pubkey()));
     } else {
@@ -3376,7 +3376,7 @@ async fn create_buffer_with_offline_authority<'a>(
         .await
         .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(online_signer.pubkey()));
     } else {
@@ -3397,7 +3397,7 @@ async fn create_buffer_with_offline_authority<'a>(
         .await
         .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
+        wincode::deserialize(&buffer_account.data).unwrap()
     {
         assert_eq!(authority_address, Some(offline_signer.pubkey()));
     } else {

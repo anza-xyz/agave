@@ -7555,7 +7555,6 @@ dependencies = [
  "agave-votor-messages",
  "assert_matches",
  "async-trait",
- "bincode",
  "bip39",
  "bs58",
  "clap 2.33.3",
