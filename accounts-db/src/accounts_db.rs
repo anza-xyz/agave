@@ -1535,7 +1535,7 @@ impl AccountsDb {
             .max_clean_root(Some(max_clean_root_inclusive))
             .expect("max_clean_root_inclusive must be Some");
 
-        self.report_store_stats();
+        let (_, report_store_stats_us) = measure_us!(self.report_store_stats());
 
         // purge_slots_from_cache delays handling of the pubkeys it removes from the cache
         // so that the purge path never modifies the accounts index. Handle them here
@@ -1686,6 +1686,7 @@ impl AccountsDb {
             "clean_accounts",
             ("max_clean_root", max_clean_root_inclusive, i64),
             ("total_us", measure_all.as_us(), i64),
+            ("report_store_stats_us", report_store_stats_us, i64),
             (
                 "collect_delta_keys_us",
                 key_timings.collect_delta_keys_us,
