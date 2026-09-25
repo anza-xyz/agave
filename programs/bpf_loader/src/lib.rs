@@ -52,21 +52,24 @@ fn parse_write_instruction(instruction_data: &[u8]) -> Result<(u32, &[u8]), Inst
         .map(u32::from_le_bytes)
         .ok_or(InstructionError::InvalidInstructionData)?;
 
-    let bytes_len = read_array::<8>(instruction_data, 8)
+    let payload_len = read_array::<8>(instruction_data, 8)
         .map(u64::from_le_bytes)
         .and_then(|len| usize::try_from(len).ok())
         .ok_or(InstructionError::InvalidInstructionData)?;
 
-    if bytes_len > solana_packet::PACKET_DATA_SIZE.saturating_sub(WRITE_INSTRUCTION_HEADER_LEN) {
+    let declared_len = WRITE_INSTRUCTION_HEADER_LEN
+        .checked_add(payload_len)
+        .ok_or(InstructionError::InvalidInstructionData)?;
+
+    if declared_len > solana_packet::PACKET_DATA_SIZE {
         return Err(InstructionError::InvalidInstructionData);
     }
 
-    let bytes = WRITE_INSTRUCTION_HEADER_LEN
-        .checked_add(bytes_len)
-        .and_then(|end| instruction_data.get(WRITE_INSTRUCTION_HEADER_LEN..end))
+    let payload = instruction_data
+        .get(WRITE_INSTRUCTION_HEADER_LEN..declared_len)
         .ok_or(InstructionError::InvalidInstructionData)?;
 
-    Ok((offset, bytes))
+    Ok((offset, payload))
 }
 
 fn write_program_data(
@@ -213,7 +216,7 @@ fn process_loader_upgradeable_instruction(
             })?;
         }
         UpgradeableLoaderInstruction::Write { .. } => {
-            let (offset, bytes) = parse_write_instruction(instruction_data)?;
+            let (offset, payload) = parse_write_instruction(instruction_data)?;
             instruction_context.check_number_of_instruction_accounts(2)?;
             let buffer = instruction_context.try_borrow_instruction_account(0)?;
 
@@ -238,7 +241,7 @@ fn process_loader_upgradeable_instruction(
             drop(buffer);
             write_program_data(
                 UpgradeableLoaderState::size_of_buffer_metadata().saturating_add(offset as usize),
-                bytes,
+                payload,
                 &instruction_context,
                 &log_collector,
             )?;
