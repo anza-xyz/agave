@@ -200,6 +200,9 @@ pub struct ClusterInfo {
     sigverify_cache: SigVerifyCache,
     /// Alpenglow migration status
     migration_status: OnceLock<Arc<MigrationStatus>>,
+    /// Set once any other node's ContactInfo is in CRDS, never cleared. Used
+    /// to carry our own ContactInfo in pull responses before the first peer appears.
+    has_any_peer_contact_info: AtomicBool,
 }
 
 impl ClusterInfo {
@@ -239,6 +242,7 @@ impl ClusterInfo {
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
             migration_status: OnceLock::new(),
+            has_any_peer_contact_info: AtomicBool::new(false),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -1423,6 +1427,24 @@ impl ClusterInfo {
         Ok(())
     }
 
+    /// Sets `has_any_peer_contact_info` once another node's ContactInfo is in CRDS.
+    fn refresh_has_any_peer_contact_info(&self) {
+        if self.has_any_peer_contact_info.load(Ordering::Relaxed) {
+            return;
+        }
+        let self_pubkey = self.id();
+        let found = self
+            .gossip
+            .crds
+            .read()
+            .get_nodes_contact_info()
+            .any(|node| node.pubkey() != &self_pubkey);
+        if found {
+            self.has_any_peer_contact_info
+                .store(true, Ordering::Relaxed);
+        }
+    }
+
     fn process_entrypoints(&self) -> bool {
         let mut entrypoints = self.entrypoints.write();
         if entrypoints.is_empty() {
@@ -1526,6 +1548,8 @@ impl ClusterInfo {
                         self.save_contact_info();
                         last_contact_info_save = start;
                     }
+                    self.refresh_has_any_peer_contact_info();
+
                     let stakes = epoch_specs
                         .as_mut()
                         .map(|es| es.current_epoch_staked_nodes())
@@ -1734,6 +1758,34 @@ impl ClusterInfo {
                 &self.stats,
             )
         };
+        // A node that boots from genesis with no entrypoint holds only its own
+        // ContactInfo and cannot push it, since push targets come from CRDS.
+        // Carry it in every pull response until some peer is known.
+        let pull_responses: Vec<Vec<CrdsValue>> =
+            if self.has_any_peer_contact_info.load(Ordering::Relaxed) {
+                pull_responses
+            } else {
+                // Signed once, and only if some response lacks it.
+                let mut self_contact_info = None;
+                pull_responses
+                    .into_iter()
+                    .map(|mut values| {
+                        if !values.iter().any(|value| {
+                            matches!(value.data(), CrdsData::ContactInfo(node)
+                                     if node.pubkey() == &self_id)
+                        }) {
+                            let value = self_contact_info.get_or_insert_with(|| {
+                                CrdsValue::new(
+                                    CrdsData::ContactInfo(self.my_contact_info()),
+                                    &self.keypair(),
+                                )
+                            });
+                            values.push(value.clone());
+                        }
+                        values
+                    })
+                    .collect()
+            };
         // Prioritize more recent values, staked values and ContactInfos.
         let get_score = |value: &CrdsValue| -> u64 {
             let age = now.saturating_sub(value.wallclock());
