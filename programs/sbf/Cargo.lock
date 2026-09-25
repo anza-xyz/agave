@@ -7101,23 +7101,6 @@ dependencies = [
 
 [[package]]
 name = "solana-instructions-sysvar"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e38363a181313d607f7a118df2b401bb27b477a0104b09283cbf504f5f0f00cc"
-dependencies = [
- "bitflags 2.13.2",
- "solana-account-info",
- "solana-instruction 3.5.1",
- "solana-instruction-error 2.5.0",
- "solana-program-error",
- "solana-sanitize",
- "solana-sdk-ids",
- "solana-serialize-utils 3.1.2",
- "solana-sysvar-id",
-]
-
-[[package]]
-name = "solana-instructions-sysvar"
 version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b74c3b078450525dcb84536c51299d5b0dc052f33699b07276d6870bd1ebed6"
@@ -8559,7 +8542,7 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
- "solana-instructions-sysvar 4.0.0",
+ "solana-instructions-sysvar 5.0.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -8960,7 +8943,7 @@ dependencies = [
  "solana-account-info",
  "solana-define-syscall 3.0.0",
  "solana-instruction 4.0.0",
- "solana-instructions-sysvar 4.0.0",
+ "solana-instructions-sysvar 5.0.0",
  "solana-msg",
  "solana-program-entrypoint",
  "solana-program-error",
